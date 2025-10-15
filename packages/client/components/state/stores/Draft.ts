@@ -428,7 +428,7 @@ export class Draft extends AbstractStore<"draft", TypeDraft> {
     return {
       content,
       replies,
-      files,
+      files: files?.slice(0, CONFIGURATION.MAX_ATTACHMENTS),
     };
   }
 
