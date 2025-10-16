@@ -2,7 +2,7 @@ import { Match, Show, Switch } from "solid-js";
 
 import { Trans } from "@lingui-solid/solid/macro";
 import { PublicChannelInvite } from "revolt.js";
-import { cva } from "styled-system/css";
+import { css, cva } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 
 import { IS_DEV, useClient } from "@revolt/client";
@@ -27,16 +27,9 @@ import MdPayments from "@material-design-icons/svg/filled/payments.svg?component
 import MdRateReview from "@material-design-icons/svg/filled/rate_review.svg?component-solid";
 import MdSettings from "@material-design-icons/svg/filled/settings.svg?component-solid";
 
-import wordmark from "../../public/assets/web/wordmark.svg";
+import Wordmark from "../../public/assets/web/wordmark.svg?component-solid";
 
 import { HeaderIcon } from "./common/CommonHeader";
-
-const Logo = styled("img", {
-  base: {
-    width: '160px',
-    fill: "var(--md-sys-color-on-surface)",
-  },
-});
 
 /**
  * Base layout of the home page (i.e. the header/background)
@@ -121,7 +114,12 @@ export function HomePage() {
           <span class={typography({ class: "headline" })}>
             <Trans>Welcome to</Trans>
           </span>
-          <Logo src={wordmark} />
+          <Wordmark
+            class={css({
+              width: "160px",
+              fill: "var(--md-sys-color-on-surface)",
+            })}
+          />
         </Column>
         <Buttons>
           <SeparatedColumn>
@@ -162,7 +160,9 @@ export function HomePage() {
                   onClick={() => {
                     client()
                       .api.get("/invites/Testers")
-                      .then((invite) => PublicChannelInvite.from(client(), invite))
+                      .then((invite) =>
+                        PublicChannelInvite.from(client(), invite),
+                      )
                       .then((invite) => openModal({ type: "invite", invite }));
                   }}
                   description={
@@ -207,7 +207,13 @@ export function HomePage() {
               </CategoryButton>
             </Show>
             <CategoryButton
-              onClick={() => openModal({ type: "settings", config: "user", context: { page: "feedback" } })}
+              onClick={() =>
+                openModal({
+                  type: "settings",
+                  config: "user",
+                  context: { page: "feedback" },
+                })
+              }
               description={
                 <Trans>
                   Let us know how we can improve our app by giving us feedback.
