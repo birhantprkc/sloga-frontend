@@ -1,8 +1,8 @@
 import { Accessor, Setter, createSignal } from "solid-js";
 
 import { detect } from "detect-browser";
-import { API, Client, ConnectionState } from "revolt.js";
-import { ProtocolV1 } from "revolt.js/lib/events/v1";
+import { API, Client, ConnectionState } from "stoat.js";
+import { ProtocolV1 } from "stoat.js/lib/events/v1";
 
 import { CONFIGURATION } from "@revolt/common";
 import { ModalControllerExtended } from "@revolt/modal";
@@ -43,29 +43,29 @@ export enum TransitionType {
 
 export type Transition =
   | {
-      type: TransitionType.LoginUncached | TransitionType.LoginCached;
-      session: Session;
-    }
+    type: TransitionType.LoginUncached | TransitionType.LoginCached;
+    session: Session;
+  }
   | {
-      type: TransitionType.PermanentFailure;
-      error: string;
-    }
+    type: TransitionType.PermanentFailure;
+    error: string;
+  }
   | {
-      type:
-        | TransitionType.NoUser
-        | TransitionType.UserCreated
-        | TransitionType.TemporaryFailure
-        | TransitionType.SocketConnected
-        | TransitionType.DeviceOffline
-        | TransitionType.DeviceOnline
-        | TransitionType.Cancel
-        | TransitionType.Dismiss
-        | TransitionType.Ready
-        | TransitionType.Retry
-        | TransitionType.Dispose
-        | TransitionType.DisposeOnly
-        | TransitionType.Logout;
-    };
+    type:
+    | TransitionType.NoUser
+    | TransitionType.UserCreated
+    | TransitionType.TemporaryFailure
+    | TransitionType.SocketConnected
+    | TransitionType.DeviceOffline
+    | TransitionType.DeviceOnline
+    | TransitionType.Cancel
+    | TransitionType.Dismiss
+    | TransitionType.Ready
+    | TransitionType.Retry
+    | TransitionType.Dispose
+    | TransitionType.DisposeOnly
+    | TransitionType.Logout;
+  };
 
 type PolicyAttentionRequired = [
   ProtocolV1["types"]["policyChange"][],
@@ -152,7 +152,6 @@ class Lifecycle {
         captcha: {} as never,
         email: true,
         invite_only: false,
-        voso: {} as never,
       },
       vapid: String(),
       ws: CONFIGURATION.DEFAULT_WS_URL,

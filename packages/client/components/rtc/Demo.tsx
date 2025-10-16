@@ -35,7 +35,7 @@ import MdMicOn from "@material-design-icons/svg/outlined/mic.svg?component-solid
 import MdMicOff from "@material-design-icons/svg/outlined/mic_off.svg?component-solid";
 
 import { InRoom, useVoice } from ".";
-import { Channel } from "revolt.js";
+import { Channel } from "stoat.js";
 
 export function RoomParticipants() {
   const tracks = useTracks(

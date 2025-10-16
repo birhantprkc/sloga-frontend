@@ -1,5 +1,5 @@
 import { useLingui } from "@lingui-solid/solid/macro";
-import { API } from "revolt.js";
+import { API } from "stoat.js";
 
 /**
  * Translate any error

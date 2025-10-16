@@ -4,7 +4,7 @@ import { Show } from "solid-js";
 import { Trans } from "@lingui-solid/solid/macro";
 import { t } from "@lingui/core/macro";
 import { useMutation } from "@tanstack/solid-query";
-import { API, ChannelWebhook } from "revolt.js";
+import { API, ChannelWebhook } from "stoat.js";
 
 import { useClient } from "@revolt/client";
 import { CONFIGURATION } from "@revolt/common";

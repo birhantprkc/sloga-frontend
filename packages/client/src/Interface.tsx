@@ -1,6 +1,6 @@
 import { JSX, Match, Show, Switch, createEffect } from "solid-js";
 
-import { Server } from "revolt.js";
+import { Server } from "stoat.js";
 import { styled } from "styled-system/jsx";
 
 import { ChannelContextMenu, ServerContextMenu } from "@revolt/app";

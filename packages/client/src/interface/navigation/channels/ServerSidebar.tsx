@@ -8,7 +8,7 @@ import { Accessor, JSX, Match, Show, Switch, createMemo } from "solid-js";
 import { Setter } from "solid-js";
 
 import { useLingui } from "@lingui-solid/solid/macro";
-import type { API, Channel, Server, ServerFlags } from "revolt.js";
+import type { API, Channel, Server, ServerFlags } from "stoat.js";
 import { styled } from "styled-system/jsx";
 
 import { KeybindAction, createKeybind } from "@revolt/keybinds";

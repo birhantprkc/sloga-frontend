@@ -1,7 +1,7 @@
 import { For, Match, Show, Switch, onMount } from "solid-js";
 
 import { useLingui } from "@lingui-solid/solid/macro";
-import { Message as MessageInterface, WebsiteEmbed } from "revolt.js";
+import { Message as MessageInterface, WebsiteEmbed } from "stoat.js";
 import { cva } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 import { decodeTime } from "ulid";

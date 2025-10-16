@@ -1,6 +1,6 @@
 import { Component, Match, Show, Switch, createMemo } from "solid-js";
 
-import { Channel } from "revolt.js";
+import { Channel } from "stoat.js";
 import { styled } from "styled-system/jsx";
 
 import { useClient } from "@revolt/client";

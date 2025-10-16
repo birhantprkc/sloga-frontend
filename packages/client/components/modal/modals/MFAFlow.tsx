@@ -11,7 +11,7 @@ import {
 
 import { Trans } from "@lingui-solid/solid/macro";
 import { t } from "@lingui/core/macro";
-import type { API } from "revolt.js";
+import type { API } from "stoat.js";
 
 import {
   CategoryButton,

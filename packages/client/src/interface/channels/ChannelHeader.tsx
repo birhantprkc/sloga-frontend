@@ -2,7 +2,7 @@ import { BiRegularAt } from "solid-icons/bi";
 import { Accessor, Match, Setter, Show, Switch } from "solid-js";
 
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
-import { Channel } from "revolt.js";
+import { Channel } from "stoat.js";
 import { css } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 
@@ -100,7 +100,6 @@ export function ChannelHeader(props: Props) {
         <Match
           when={
             props.channel.type === "TextChannel" ||
-            props.channel.type === "VoiceChannel" ||
             props.channel.type === "Group"
           }
         >

@@ -8,7 +8,7 @@ import {
   useContext,
 } from "solid-js";
 
-import type { Client, User } from "revolt.js";
+import type { Client, User } from "stoat.js";
 
 import { useModals } from "@revolt/modal";
 import { State } from "@revolt/state";

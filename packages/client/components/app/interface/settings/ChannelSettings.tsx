@@ -7,7 +7,7 @@ import {
 
 import { Trans } from "@lingui-solid/solid/macro";
 import { t } from "@lingui/core/macro";
-import { Channel } from "revolt.js";
+import { Channel } from "stoat.js";
 
 import { useClient } from "@revolt/client";
 import { TextWithEmoji } from "@revolt/markdown";

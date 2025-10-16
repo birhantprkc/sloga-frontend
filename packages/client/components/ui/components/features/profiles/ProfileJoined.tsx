@@ -1,7 +1,7 @@
 import { Show } from "solid-js";
 
 import { Trans } from "@lingui-solid/solid/macro";
-import { ServerMember, User } from "revolt.js";
+import { ServerMember, User } from "stoat.js";
 
 import { useTime } from "@revolt/i18n";
 

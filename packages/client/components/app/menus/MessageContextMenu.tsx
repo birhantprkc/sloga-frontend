@@ -1,7 +1,7 @@
 import { For, Match, Show, Switch } from "solid-js";
 
 import { Trans } from "@lingui-solid/solid/macro";
-import { Message } from "revolt.js";
+import { Message } from "stoat.js";
 
 import { useClient, useUser } from "@revolt/client";
 import { CustomEmoji, UnicodeEmoji } from "@revolt/markdown/emoji";

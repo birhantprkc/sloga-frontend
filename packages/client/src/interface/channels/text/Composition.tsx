@@ -12,7 +12,7 @@ import {
 
 import { useLingui } from "@lingui-solid/solid/macro";
 import { Node } from "prosemirror-model";
-import { Channel } from "revolt.js";
+import { Channel } from "stoat.js";
 
 import { useClient } from "@revolt/client";
 import { debounce } from "@revolt/common";

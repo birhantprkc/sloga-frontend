@@ -3,7 +3,7 @@ import { For, Match, Show, Switch } from "solid-js";
 
 import { Trans } from "@lingui-solid/solid/macro";
 import { t } from "@lingui/core/macro";
-import { Server } from "revolt.js";
+import { Server } from "stoat.js";
 import { css } from "styled-system/css";
 
 import { useClient } from "@revolt/client";

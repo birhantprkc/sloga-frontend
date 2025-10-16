@@ -2,7 +2,7 @@ import { Match, Show, Switch, createMemo, splitProps } from "solid-js";
 
 import { Plural, Trans, useLingui } from "@lingui-solid/solid/macro";
 import { VirtualContainer } from "@minht11/solid-virtual-container";
-import { Channel } from "revolt.js";
+import { Channel } from "stoat.js";
 import { css } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 

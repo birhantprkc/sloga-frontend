@@ -40,8 +40,8 @@ pnpm i --frozen-lockfile
 # build deps:
 pnpm build:deps
 
-# or build a specific dep (e.g. revolt.js updates):
-# pnpm --filter revolt.js run build
+# or build a specific dep (e.g. stoat.js updates):
+# pnpm --filter stoat.js run build
 
 # customise the .env
 cp packages/client/.env.example packages/client/.env
@@ -67,18 +67,6 @@ You can switch back to the fallback assets by running deinit and continuing as n
 # deinit submodule which clears directory
 git submodule deinit packages/client/assets
 ```
-
-### Faster iteration with Revolt.js
-
-To make it easier to work with `revolt.js`, you may want to temporarily make this change:
-
-```diff
-# packages/revolt.js/package.json
--  "module": "lib/esm/index.js",
-+  "module": "src/index.ts",
-```
-
-Any edits to the revolt.js codebase will immediately be reflected while developing.
 
 ## Deployment Guide
 

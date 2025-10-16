@@ -1,8 +1,8 @@
 import { For, Match, Show, Switch, createSignal } from "solid-js";
 
 import { useLingui } from "@lingui-solid/solid/macro";
-import { API, Channel, Server } from "revolt.js";
-import { DEFAULT_PERMISSION_DIRECT_MESSAGE } from "revolt.js";
+import { API, Channel, Server } from "stoat.js";
+import { DEFAULT_PERMISSION_DIRECT_MESSAGE } from "stoat.js";
 import { css } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 
@@ -146,7 +146,6 @@ export function ChannelPermissionsEditor(props: Props) {
       description: {
         Group: t`Whether other users can edit these settings`,
         TextChannel: t`Edit channel-specific role and default permissions`,
-        VoiceChannel: t`Edit channel-specific role and default permissions`,
         Server: t`Edit any permissions on the server`,
       },
     },
@@ -238,7 +237,6 @@ export function ChannelPermissionsEditor(props: Props) {
       title: t`View Channel`,
       description: {
         TextChannel: t`Able to access this channel`,
-        VoiceChannel: t`Able to access this channel`,
         Server: t`Able to access channels on this server`,
       },
     },
@@ -345,7 +343,7 @@ export function ChannelPermissionsEditor(props: Props) {
       value: 1 << 30,
       title: t`Connect`,
       description: {
-        VoiceChannel: t`Connect to voice channel`,
+        TextChannel: t`Connect to voice channel`,
         Server: t`Connect to voice channel`,
       },
     },

@@ -2,7 +2,7 @@ import { createFormControl, createFormGroup } from "solid-forms";
 
 import { Trans } from "@lingui-solid/solid/macro";
 import { t } from "@lingui/core/macro";
-import { API } from "revolt.js";
+import { API } from "stoat.js";
 
 import { useClient } from "@revolt/client";
 import { CONFIGURATION } from "@revolt/common";

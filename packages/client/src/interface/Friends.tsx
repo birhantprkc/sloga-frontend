@@ -13,7 +13,7 @@ import {
 import { Trans } from "@lingui-solid/solid/macro";
 import { t } from "@lingui/core/macro";
 import { VirtualContainer } from "@minht11/solid-virtual-container";
-import type { User } from "revolt.js";
+import type { User } from "stoat.js";
 import { styled } from "styled-system/jsx";
 
 import { UserContextMenu } from "@revolt/app";
@@ -35,9 +35,9 @@ import {
   UserStatus,
   main,
 } from "@revolt/ui";
+import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
 import { HeaderIcon } from "./common/CommonHeader";
-import { Symbol } from "@revolt/ui/components/utils/Symbol"
 
 /**
  * Base layout of the friends page
@@ -142,13 +142,22 @@ export function Friends() {
               </IconButton>
             </div>
 
-            <NavigationRailItem icon={<Symbol css={{marginTop: "10px"}}>waving_hand</Symbol>} value="online">
+            <NavigationRailItem
+              icon={<Symbol css={{ marginTop: "10px" }}>waving_hand</Symbol>}
+              value="online"
+            >
               <Trans>Online</Trans>
             </NavigationRailItem>
-            <NavigationRailItem icon={<Symbol css={{marginTop: "10px"}}>all_inbox</Symbol>} value="all">
+            <NavigationRailItem
+              icon={<Symbol css={{ marginTop: "10px" }}>all_inbox</Symbol>}
+              value="all"
+            >
               <Trans>All</Trans>
             </NavigationRailItem>
-            <NavigationRailItem icon={<Symbol css={{marginTop: "10px"}}>notifications</Symbol>} value="pending">
+            <NavigationRailItem
+              icon={<Symbol css={{ marginTop: "10px" }}>notifications</Symbol>}
+              value="pending"
+            >
               <Trans>Pending</Trans>
               <Show when={pending()}>
                 <Badge slot="badge" variant="large">
@@ -156,7 +165,10 @@ export function Friends() {
                 </Badge>
               </Show>
             </NavigationRailItem>
-            <NavigationRailItem icon={<Symbol css={{marginTop: "10px"}}>block</Symbol>} value="blocked">
+            <NavigationRailItem
+              icon={<Symbol css={{ marginTop: "10px" }}>block</Symbol>}
+              value="blocked"
+            >
               <Trans>Blocked</Trans>
             </NavigationRailItem>
           </NavigationRail>

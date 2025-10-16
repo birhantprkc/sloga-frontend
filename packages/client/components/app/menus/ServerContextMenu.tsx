@@ -2,7 +2,7 @@ import { For, Show } from "solid-js";
 
 import { Trans } from "@lingui-solid/solid/macro";
 import dayjs from "dayjs";
-import { Server } from "revolt.js";
+import { Server } from "stoat.js";
 
 import { useClient } from "@revolt/client";
 import { useModals } from "@revolt/modal";

@@ -9,7 +9,7 @@ import {
 } from "solid-icons/bi";
 import { Match, Show, Switch } from "solid-js";
 
-import { File, MessageEmbed } from "revolt.js";
+import { File, MessageEmbed } from "stoat.js";
 import { styled } from "styled-system/jsx";
 
 import { RenderAnchor } from "@revolt/markdown/plugins/anchors";

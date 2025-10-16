@@ -2,7 +2,7 @@ import { createFormControl, createFormGroup } from "solid-forms";
 import { Show, createMemo, createSignal } from "solid-js";
 
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
-import { Server } from "revolt.js";
+import { Server } from "stoat.js";
 import { cva } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 import { decodeTime } from "ulid";

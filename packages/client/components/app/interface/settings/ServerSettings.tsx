@@ -10,7 +10,7 @@ import {
 
 import { Trans } from "@lingui-solid/solid/macro";
 import { t } from "@lingui/core/macro";
-import { Server } from "revolt.js";
+import { Server } from "stoat.js";
 
 import { useUser } from "@revolt/client";
 import { TextWithEmoji } from "@revolt/markdown";

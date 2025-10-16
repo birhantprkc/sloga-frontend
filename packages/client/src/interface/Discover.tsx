@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 
-import { PublicChannelInvite } from "revolt.js";
+import { PublicChannelInvite } from "stoat.js";
 import { styled } from "styled-system/jsx";
 
 import { useClient } from "@revolt/client";
