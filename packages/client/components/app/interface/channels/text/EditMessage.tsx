@@ -10,6 +10,7 @@ import { KeybindAction, createKeybind } from "@revolt/keybinds";
 import { useModals } from "@revolt/modal";
 import { useState } from "@revolt/state";
 import { Text, TextEditor } from "@revolt/ui";
+import { TextEditor2 } from "@revolt/ui/components/features/texteditor/TextEditor2";
 import { generateSearchSpaceFrom } from "@revolt/ui/components/utils/autoComplete";
 
 export function EditMessage(props: { message: Message }) {
@@ -51,7 +52,7 @@ export function EditMessage(props: { message: Message }) {
   return (
     <>
       <EditorBox class={css({ flexGrow: 1 })}>
-        <TextEditor
+        <TextEditor2
           autoFocus
           onComplete={saveMessage}
           onChange={state.draft.setEditingMessageContent}

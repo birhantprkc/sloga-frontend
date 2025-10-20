@@ -9,6 +9,8 @@ import { styled } from "styled-system/jsx";
 import { Row, TextEditor } from "@revolt/ui";
 import { AutoCompleteSearchSpace } from "@revolt/ui/components/utils/autoComplete";
 
+import { TextEditor2 } from "../../texteditor/TextEditor2";
+
 interface Props {
   /**
    * Initial content
@@ -90,7 +92,6 @@ interface Props {
 const Base = styled("div", {
   base: {
     flexGrow: 1,
-    flexShrink: 0,
 
     paddingInlineEnd: "var(--gap-md)",
     paddingBlock: "var(--gap-sm)",
@@ -180,18 +181,16 @@ export function MessageBox(props: Props) {
         <Switch
           fallback={
             <>
-              <div class={css({ flexGrow: 1 })}>
-                <TextEditor
-                  placeholder={props.placeholder}
-                  initialValue={props.initialValue}
-                  nodeReplacement={props.nodeReplacement}
-                  onChange={props.setContent}
-                  onComplete={props.onSendMessage}
-                  onTyping={props.onTyping}
-                  onPreviousContext={props.onEditLastMessage}
-                  autoCompleteSearchSpace={props.autoCompleteSearchSpace}
-                />
-              </div>
+              <TextEditor2
+                placeholder={props.placeholder}
+                initialValue={props.initialValue}
+                nodeReplacement={props.nodeReplacement}
+                onChange={props.setContent}
+                onComplete={props.onSendMessage}
+                onTyping={props.onTyping}
+                onPreviousContext={props.onEditLastMessage}
+                autoCompleteSearchSpace={props.autoCompleteSearchSpace}
+              />
               <Show when={props.sendingAllowed}>{props.actionsEnd}</Show>
             </>
           }

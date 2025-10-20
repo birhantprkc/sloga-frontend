@@ -22,6 +22,7 @@ import {
   TextEditor,
   TextField,
 } from "../design";
+import { TextEditor2 } from "../features/texteditor/TextEditor2";
 
 import { FileInput } from "./files";
 
@@ -71,7 +72,7 @@ const FormTextEditor = (
 
   return (
     <EditorBox>
-      <TextEditor
+      <TextEditor2
         {...remote}
         onChange={(value) => {
           local.control.setValue(value);
