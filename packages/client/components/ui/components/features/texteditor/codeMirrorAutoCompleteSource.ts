@@ -50,7 +50,7 @@ export function codeMirrorAutoCompleteSource(
       client().emojis.map((emoji) => ({
         type: "emoji",
         label: `:${emoji.name}:`,
-        apply: `:${emoji.id}:`,
+        apply: `:${emoji.id}: `,
         url: emoji.url,
       })),
     );
@@ -73,7 +73,7 @@ export function codeMirrorAutoCompleteSource(
           entry.displayName !== user.username
             ? `${user.username}#${user.discriminator}`
             : undefined,
-        apply: `<@${typeof entry.id === "string" ? entry.id : entry.id.user}>`,
+        apply: `<@${typeof entry.id === "string" ? entry.id : entry.id.user}> `,
         url: entry.animatedAvatarURL,
       };
     }),
@@ -87,7 +87,7 @@ export function codeMirrorAutoCompleteSource(
             type: "role",
             label: "%" + entry.name,
             displayLabel: entry.name,
-            apply: `<%${entry.id}>`,
+            apply: `<%${entry.id}> `,
             colour: entry.colour,
           }) as Completion,
       ) ?? []
@@ -100,7 +100,7 @@ export function codeMirrorAutoCompleteSource(
         ({
           type: "channel",
           label: "#" + entry.name,
-          apply: `<#${entry.id}>`,
+          apply: `<#${entry.id}> `,
         }) as Completion,
     ),
   );

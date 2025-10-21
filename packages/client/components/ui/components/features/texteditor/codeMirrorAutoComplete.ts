@@ -51,7 +51,7 @@ const completionTheme = EditorView.theme({
     "height": "24px",
     "vertical-align": "baseline",
     // "margin-bottom": "-0.2em",
-    "object-fit": "contain",
+    "object-fit": "cover",
     "padding": "var(--gap-xxs)",
     "border-radius": "var(--borderRadius-circle)"
   },

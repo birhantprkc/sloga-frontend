@@ -48,7 +48,7 @@ export const markdownHighlightStyle = HighlightStyle.define([
 
   { tag: t.atom, class: "md-meta-atom" },
 
-  { tag: t.comment, class: "md-comment" },
+  // { tag: t.comment, class: "md-comment" },
   { tag: t.link, class: "md-link" },
   { tag: t.url, class: "md-link" },
   { tag: t.monospace, class: "md-code" },
