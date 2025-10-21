@@ -206,6 +206,10 @@ const editor = css({
   fontSize: "var(--message-size)",
   fontFamily: "var(--fonts-primary)",
 
+  "& .cm-editor.cm-focused": {
+    outline: "none",
+  },
+
   // copied from elements.ts
   "& .md-h1": {
     fontSize: "2em",
