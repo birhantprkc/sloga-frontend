@@ -48,14 +48,12 @@ interface Props {
 
   /**
    * Event is fired when any keys are input
-   * todo: add this back
    */
   onTyping?: () => void;
 
   /**
    * Event is fired when 'previous context' is requested
    * i.e. edit the last message (given current is empty)
-   * todo: add this back
    */
   onPreviousContext?: () => void;
 
@@ -96,6 +94,20 @@ export function TextEditor2(props: Props) {
   ]);
 
   /**
+   * Handle 'ArrowUp' key presses
+   */
+  const arrowUpKeymap = keymap.of([
+    {
+      key: "ArrowUp",
+      run: (view) => {
+        if (view.state.doc.length > 0 || !props.onPreviousContext) return false;
+        props.onPreviousContext();
+        return true;
+      },
+    },
+  ]);
+
+  /**
    * CodeMirror instance
    */
   const view = new EditorView({
@@ -103,9 +115,10 @@ export function TextEditor2(props: Props) {
     state: EditorState.create({
       doc: props.initialValue?.[0],
       extensions: [
-        /* Handle 'Enter' key presses */
+        /* Mount keymaps */
         enterKeymap,
         keymap.of(defaultKeymap as never), // required for atomic ranges to work: https://github.com/codemirror/dev/issues/923
+        arrowUpKeymap,
 
         /* Enable history */
         history(),
@@ -133,7 +146,9 @@ export function TextEditor2(props: Props) {
         /* Handle change event */
         EditorView.updateListener.of((view) => {
           if (view.docChanged) {
-            props.onChange?.(view.state.doc.toString().trim());
+            const text = view.state.doc.toString().trim();
+            props.onChange?.(text);
+            if (text) props.onTyping?.();
           }
         }),
       ],
@@ -188,6 +203,7 @@ export function TextEditor2(props: Props) {
           const text = value[0];
           if (text !== "_focus") {
             view.dispatch(view.state.replaceSelection(text));
+            if (text) props.onTyping?.();
             props.onChange(view.state.doc.toString());
           }
         }
