@@ -376,10 +376,13 @@ export function MessageComposition(props: Props) {
         updateDraftSelection={(start, end) =>
           state.draft.setSelection(props.channel.id, start, end)
         }
+        hasActionsAppend={
+          state.settings.getValue("appearance:show_send_button") || false
+        }
         actionsAppend={
           <Show when={state.settings.getValue("appearance:show_send_button")}>
             <IconButton
-              _fullHeight
+              _compositionSendMessage
               size="sm"
               variant={canSend() ? "filled" : "tonal"}
               shape="square"

@@ -62,6 +62,11 @@ interface Props {
   actionsAppend: JSX.Element;
 
   /**
+   * Whether there are elements appended after the message box row
+   */
+  hasActionsAppend: boolean;
+
+  /**
    * Placeholder in message box
    */
   placeholder: string;
@@ -93,11 +98,24 @@ const Base = styled("div", {
 
     paddingInlineEnd: "var(--gap-md)",
     paddingBlock: "var(--gap-sm)",
-    borderRadius: "var(--borderRadius-xl)",
+    borderStartRadius: "var(--borderRadius-xl)",
 
     display: "flex",
     background: "var(--md-sys-color-surface-container-high)",
     color: "var(--md-sys-color-on-surface)",
+  },
+  variants: {
+    hasActionsAppend: {
+      true: {
+        borderEndRadius: "var(--borderRadius-md)",
+      },
+      false: {
+        borderEndRadius: "var(--borderRadius-xl)",
+      },
+    },
+  },
+  defaultVariants: {
+    hasActionsAppend: false,
   },
 });
 
@@ -129,9 +147,10 @@ const Blocked = styled(Row, {
  */
 export const InlineIcon = styled("div", {
   base: {
-    display: "grid",
     flexShrink: 0,
-    placeItems: "center",
+    display: "flex",
+    alignItems: "end",
+    justifyContent: "center",
   },
   variants: {
     size: {
@@ -166,7 +185,7 @@ export function MessageBox(props: Props) {
 
   return (
     <Parent>
-      <Base>
+      <Base hasActionsAppend={props.hasActionsAppend}>
         <Switch fallback={props.actionsStart}>
           <Match when={!props.sendingAllowed}>
             <InlineIcon size="wide">
