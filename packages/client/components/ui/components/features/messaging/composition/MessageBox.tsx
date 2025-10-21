@@ -1,12 +1,10 @@
 import { BiRegularBlock } from "solid-icons/bi";
-import { JSX, Match, Show, Switch, onMount } from "solid-js";
+import { Accessor, JSX, Match, Show, Switch, onMount } from "solid-js";
 
 import { Trans } from "@lingui-solid/solid/macro";
-import { Node } from "prosemirror-model";
-import { css } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 
-import { Row, TextEditor } from "@revolt/ui";
+import { Row } from "@revolt/ui";
 import { AutoCompleteSearchSpace } from "@revolt/ui/components/utils/autoComplete";
 
 import { TextEditor2 } from "../../texteditor/TextEditor2";
@@ -20,7 +18,7 @@ interface Props {
   /**
    * Node replacement
    */
-  nodeReplacement?: Node | readonly ["_focus"];
+  nodeReplacement?: readonly [string | "_focus"];
 
   /**
    * Text content
@@ -76,7 +74,7 @@ interface Props {
   /**
    * Auto complete config
    */
-  autoCompleteSearchSpace?: AutoCompleteSearchSpace;
+  autoCompleteSearchSpace?: Accessor<AutoCompleteSearchSpace>;
 
   /**
    * Update the current draft selection

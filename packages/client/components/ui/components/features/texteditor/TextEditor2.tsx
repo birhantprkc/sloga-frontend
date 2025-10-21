@@ -1,20 +1,18 @@
-import { onMount } from "solid-js";
+import { Accessor, createEffect, on, onMount } from "solid-js";
 
 import { defaultKeymap, history } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { EditorState } from "@codemirror/state";
 import { EditorView, keymap, placeholder } from "@codemirror/view";
-import { type Node } from "prosemirror-model";
 import { css } from "styled-system/css";
-import { styled } from "styled-system/jsx";
 
 import { AutoCompleteSearchSpace } from "../../utils/autoComplete";
 
-import { autocomplete } from "./codeMirrorAutoComplete";
+import { codeMirrorAutoComplete } from "./codeMirrorAutoComplete";
 import { isInFencedCodeBlock } from "./codeMirrorCommon";
 import { smartLineWrapping } from "./codeMirrorLineWrap";
 import { markdownTheme } from "./codeMirrorTheme";
-import { widgets } from "./codeMirrorWidgets";
+import { codeMirrorWidgets } from "./codeMirrorWidgets";
 
 interface Props {
   /**
@@ -35,7 +33,7 @@ interface Props {
   /**
    * Signal for sending a node replacement or focus request to the editor
    */
-  nodeReplacement?: Node | readonly ["_focus"];
+  nodeReplacement?: readonly [string | "_focus"];
 
   /**
    * Event is fired when the text content changes
@@ -50,16 +48,21 @@ interface Props {
 
   /**
    * Event is fired when any keys are input
+   * todo: add this back
    */
   onTyping?: () => void;
 
   /**
    * Event is fired when 'previous context' is requested
    * i.e. edit the last message (given current is empty)
+   * todo: add this back
    */
   onPreviousContext?: () => void;
 
-  autoCompleteSearchSpace?: AutoCompleteSearchSpace;
+  /**
+   * Auto complete search space
+   */
+  autoCompleteSearchSpace?: Accessor<AutoCompleteSearchSpace>;
 }
 
 /**
@@ -69,6 +72,10 @@ export function TextEditor2(props: Props) {
   const codeMirror = document.createElement("div");
   codeMirror.className = editor;
 
+  /**
+   * Handle 'Enter' key presses
+   * Submit only if not currently in a code block
+   */
   const enterKeymap = keymap.of([
     {
       key: "Enter",
@@ -91,6 +98,9 @@ export function TextEditor2(props: Props) {
     },
   ]);
 
+  /**
+   * CodeMirror instance
+   */
   const view = new EditorView({
     parent: codeMirror,
     state: EditorState.create({
@@ -98,7 +108,7 @@ export function TextEditor2(props: Props) {
       extensions: [
         /* Handle 'Enter' key presses */
         enterKeymap,
-        keymap.of(defaultKeymap), // required for atomic ranges to work: https://github.com/codemirror/dev/issues/923
+        keymap.of(defaultKeymap as never), // required for atomic ranges to work: https://github.com/codemirror/dev/issues/923
 
         /* Enable history */
         history(),
@@ -113,10 +123,10 @@ export function TextEditor2(props: Props) {
         ...(props.placeholder ? [placeholder(props.placeholder)] : []),
 
         /* Autocomplete */
-        autocomplete(),
+        codeMirrorAutoComplete(props.autoCompleteSearchSpace),
 
         /* Custom items */
-        widgets,
+        codeMirrorWidgets(),
 
         /* Widgets */
         markdownTheme,
@@ -130,6 +140,47 @@ export function TextEditor2(props: Props) {
       ],
     }),
   });
+
+  // set initial value
+  createEffect(
+    on(
+      () => props.initialValue?.[0] ?? "",
+      (text) => {
+        view.dispatch(
+          view.state.update({
+            changes: { from: 0, to: view.state.doc.length, insert: text },
+            selection: {
+              anchor: text.length,
+            },
+          }),
+        );
+      },
+      {
+        defer: true,
+      },
+    ),
+  );
+
+  // apply changes
+  createEffect(
+    on(
+      () => props.nodeReplacement,
+      (value) => {
+        if (value) {
+          view.dom.focus();
+
+          const text = value[0];
+          if (text !== "_focus") {
+            view.dispatch(view.state.replaceSelection(text));
+            props.onChange(view.state.doc.toString());
+          }
+        }
+      },
+      {
+        defer: true,
+      },
+    ),
+  );
 
   // auto focus on mount
   onMount(
@@ -151,11 +202,14 @@ export function TextEditor2(props: Props) {
 }
 
 const editor = css({
+  flexGrow: 1,
   alignSelf: "center",
 
-  flexGrow: 1,
-  fontFamily: "var(--fonts-primary)",
   color: "var(--md-sys-color-on-surface)",
+
+  fontWeight: 400,
+  fontSize: "var(--message-size)",
+  fontFamily: "var(--fonts-primary)",
 
   "& .md-h1": {
     fontSize: "2em",
