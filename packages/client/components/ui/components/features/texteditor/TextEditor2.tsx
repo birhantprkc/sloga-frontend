@@ -82,7 +82,6 @@ export function TextEditor2(props: Props) {
       run: (view) => {
         const cursor = view.state.selection.main;
         if (!isInFencedCodeBlock(view.state, cursor.from, cursor.to)) {
-          props.onChange?.(view.state.doc.toString());
           props.onComplete?.();
           view.dispatch(
             view.state.update({
@@ -134,7 +133,7 @@ export function TextEditor2(props: Props) {
         /* Handle change event */
         EditorView.updateListener.of((view) => {
           if (view.docChanged) {
-            props.onChange?.(view.state.doc.toString());
+            props.onChange?.(view.state.doc.toString().trim());
           }
         }),
       ],
@@ -211,6 +210,7 @@ const editor = css({
   fontSize: "var(--message-size)",
   fontFamily: "var(--fonts-primary)",
 
+  // copied from elements.ts
   "& .md-h1": {
     fontSize: "2em",
     fontWeight: 600,
@@ -271,6 +271,26 @@ const editor = css({
 
   "& .md-code": {
     fontFamily: "var(--fonts-monospace)",
+  },
+
+  // adapted from elements.ts
+  "& .md-quote.md-meta": {
+    fontWeight: "bold",
+  },
+
+  "& .md-quote": {
+    '&, &[class*="md-quote md-quote md-quote"]': {
+      color: "var(--md-sys-color-on-secondary-container)",
+      background: "var(--md-sys-color-secondary-container)",
+      "--border": "var(--md-sys-color-secondary)",
+    },
+
+    '&[class="md-quote md-quote"], &[class="md-quote md-quote md-meta"], &[class="md-quote md-quote md-text"], &[class*="md-quote md-quote md-quote md-quote"]':
+      {
+        color: "var(--md-sys-color-on-tertiary-container)",
+        background: "var(--md-sys-color-tertiary-container)",
+        "--border": "var(--md-sys-color-tertiary)",
+      },
   },
 
   // "& .md-comment": {},
