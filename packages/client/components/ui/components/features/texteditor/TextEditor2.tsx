@@ -244,7 +244,7 @@ const editor = css({
   fontFamily: "var(--fonts-primary)",
 
   "& .cm-editor.cm-focused": {
-    outline: "none",
+    outline: "none !important",
   },
 
   // copied from elements.ts
