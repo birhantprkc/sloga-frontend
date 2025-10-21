@@ -2,7 +2,7 @@ import { Accessor, createEffect, on, onMount } from "solid-js";
 
 import { defaultKeymap, history } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
-import { EditorState } from "@codemirror/state";
+import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView, keymap, placeholder } from "@codemirror/view";
 import { css } from "styled-system/css";
 
@@ -65,6 +65,8 @@ interface Props {
   autoCompleteSearchSpace?: Accessor<AutoCompleteSearchSpace>;
 }
 
+const placeholderCompartment = new Compartment();
+
 /**
  * Text editor powered by CodeMirror
  */
@@ -114,8 +116,10 @@ export function TextEditor2(props: Props) {
         /* Linewrapping */
         smartLineWrapping,
 
-        /* Show a placeholder */
-        ...(props.placeholder ? [placeholder(props.placeholder)] : []),
+        /* Placeholder */
+        placeholderCompartment.of(
+          props.placeholder ? placeholder(props.placeholder) : [],
+        ),
 
         /* Autocomplete */
         codeMirrorAutoComplete(props.autoCompleteSearchSpace),
@@ -135,6 +139,23 @@ export function TextEditor2(props: Props) {
       ],
     }),
   });
+
+  // connect signals to extensions
+  createEffect(
+    on(
+      () => props.placeholder,
+      (text) => {
+        view.dispatch({
+          effects: placeholderCompartment.reconfigure(
+            text ? placeholder(text) : [],
+          ),
+        });
+      },
+      {
+        defer: true,
+      },
+    ),
+  );
 
   // set initial value
   createEffect(
