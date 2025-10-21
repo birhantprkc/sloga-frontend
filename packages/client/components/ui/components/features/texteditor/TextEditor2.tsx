@@ -80,15 +80,11 @@ export function TextEditor2(props: Props) {
     {
       key: "Enter",
       run: (view) => {
+        if (!props.onComplete) return false;
+
         const cursor = view.state.selection.main;
         if (!isInFencedCodeBlock(view.state, cursor.from, cursor.to)) {
-          props.onComplete?.();
-          view.dispatch(
-            view.state.update({
-              changes: { from: 0, to: view.state.doc.length, insert: "" },
-            }),
-          );
-
+          props.onComplete();
           return true;
         } else {
           return false;

@@ -76,13 +76,11 @@ const completionTheme = EditorView.theme({
 });
 
 export function codeMirrorAutoComplete(searchSpace?: Accessor<AutoCompleteSearchSpace>) {
-  if (!searchSpace) return [];
-
   const extension = autocompletion({
     activateOnTyping: true,
     aboveCursor: true,
     icons: false,
-    override: [codeMirrorAutoCompleteSource(searchSpace)],
+    override: [codeMirrorAutoCompleteSource(() => searchSpace?.() ?? {})],
     closeOnBlur: false, // note: disable to debug styles
     tooltipClass: (state) => {
       const completions = currentCompletions(state);

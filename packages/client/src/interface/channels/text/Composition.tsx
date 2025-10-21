@@ -325,7 +325,7 @@ export function MessageComposition(props: Props) {
       <MessageBox
         initialValue={initialValue()}
         nodeReplacement={nodeReplacement()}
-        onSendMessage={sendMessage}
+        onSendMessage={() => sendMessage()}
         onTyping={delayedStopTyping}
         onEditLastMessage={() => state.draft.setEditingMessage(true)}
         content={draft()?.content ?? ""}
