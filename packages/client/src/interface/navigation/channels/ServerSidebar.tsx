@@ -15,9 +15,10 @@ import type {
   ServerFlags,
   VoiceParticipant,
 } from "stoat.js";
+import { cva } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 
-import { CategoryContextMenu } from "@revolt/app";
+import { CategoryContextMenu, UserContextMenu } from "@revolt/app";
 import { KeybindAction, createKeybind } from "@revolt/keybinds";
 import { TextWithEmoji } from "@revolt/markdown";
 import { useUser } from "@revolt/markdown/users";
@@ -559,7 +560,6 @@ function Entry(
 
         <Show when={props.channel.voiceParticipants.size}>
           <PreviewBox>
-            <Ripple />
             <For each={[...props.channel.voiceParticipants.values()]}>
               {(participant) => <VoicePreviewUser participant={participant} />}
             </For>
@@ -574,29 +574,74 @@ function VoicePreviewUser(props: { participant: VoiceParticipant }) {
   const user = useUser(props.participant.userId);
 
   return (
-    <Row>
+    <div
+      class={previewUser()}
+      use:floating={{
+        userCard: {
+          user: user().user!,
+          member: user().member,
+        },
+        contextMenu: () => (
+          <UserContextMenu user={user().user!} member={user().member} />
+        ),
+      }}
+    >
+      <Ripple />
       <Avatar size={24} src={user().avatar} fallback={user().username} />{" "}
-      <Text>{user().username}</Text>
-    </Row>
+      <PreviewUsername>{user().username}</PreviewUsername>
+      <Row gap="sm">
+        <Show when={!props.participant.isPublishing()}>
+          <Symbol size={16}>mic_off</Symbol>
+        </Show>
+        <Show when={!props.participant.isReceiving()}>
+          <Symbol size={16}>headset_off</Symbol>
+        </Show>
+        <Show when={props.participant.isCamera()}>
+          <Symbol size={16}>camera_video</Symbol>
+        </Show>
+        <Show when={props.participant.isCamera()}>
+          <Symbol size={16}>screen_share</Symbol>
+        </Show>
+      </Row>
+    </div>
   );
 }
 
 const PreviewBox = styled("div", {
   base: {
-    position: "relative", // for <Ripple />
-    cursor: "pointer",
-
+    minWidth: 0,
     display: "flex",
     flexDirection: "column",
 
-    gap: "var(--gap-md)",
-    paddingBlock: "var(--gap-sm)",
-    paddingInline: "var(--gap-xl)",
-    marginInline: "var(--gap-md)",
+    marginBlock: "var(--gap-sm)",
+    marginInlineStart: "var(--gap-xl)",
+    marginInlineEnd: "var(--gap-md)",
 
     color: "var(--md-sys-color-outline)",
 
     borderRadius: "var(--borderRadius-md)",
+  },
+});
+
+const previewUser = cva({
+  base: {
+    padding: "var(--gap-sm)",
+    position: "relative", // ... <Ripple />
+    display: "flex",
+    gap: "var(--gap-md)",
+    alignItems: "center",
+    borderRadius: "var(--borderRadius-md)",
+  },
+});
+
+const PreviewUsername = styled("span", {
+  base: {
+    ...typography.raw(),
+
+    flexGrow: 1,
+    overflow: "hidden",
+    whiteSpace: "nowrap",
+    textOverflow: "ellipsis",
   },
 });
 
