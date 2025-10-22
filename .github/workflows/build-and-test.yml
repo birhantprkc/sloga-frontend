@@ -68,6 +68,8 @@ jobs:
     permissions:
       contents: write
 
+    if: github.ref == 'refs/heads/main'
+
     needs:
       - typecheck
       - e2e
