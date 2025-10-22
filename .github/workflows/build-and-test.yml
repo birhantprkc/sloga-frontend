@@ -73,6 +73,9 @@ jobs:
       - e2e
     
     steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - run: git push origin main:stable
 
   # deploy:
