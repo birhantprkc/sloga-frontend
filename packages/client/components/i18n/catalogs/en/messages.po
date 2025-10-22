@@ -276,7 +276,7 @@ msgstr "Add a new friend"
 msgid "Add friend"
 msgstr "Add friend"
 
-#: src/interface/channels/ChannelHeader.tsx:220
+#: src/interface/channels/ChannelHeader.tsx:204
 #: components/modal/modals/AddMembersToGroup.tsx:66
 msgid "Add friends to group"
 msgstr "Add friends to group"
@@ -574,7 +574,7 @@ msgstr "Channel Info"
 msgid "Channel Name"
 msgstr "Channel Name"
 
-#: src/interface/channels/ChannelHeader.tsx:198
+#: src/interface/channels/ChannelHeader.tsx:182
 msgid "Channel Settings"
 msgstr "Channel Settings"
 
@@ -602,7 +602,7 @@ msgstr "Clear status"
 msgid "Click on the items below to learn more about different changes!"
 msgstr "Click on the items below to learn more about different changes!"
 
-#: src/interface/channels/ChannelHeader.tsx:133
+#: src/interface/channels/ChannelHeader.tsx:117
 msgid "Click to show full description"
 msgstr "Click to show full description"
 
@@ -1427,7 +1427,7 @@ msgstr "Join"
 msgid "Join a server"
 msgstr "Join a server"
 
-#: src/interface/channels/ChannelHeader.tsx:173
+#: src/interface/channels/ChannelHeader.tsx:157
 msgid "Join call"
 msgstr "Join call"
 
@@ -1632,21 +1632,25 @@ msgstr "Members"
 msgid "Mention"
 msgstr "Mention"
 
-#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx:391
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx:392
 msgid "Mention Everyone"
 msgstr "Mention Everyone"
 
-#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx:393
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx:394
 msgid "Mention everyone and online members inside the server"
 msgstr "Mention everyone and online members inside the server"
 
-#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx:399
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx:400
 msgid "Mention Roles"
 msgstr "Mention Roles"
 
-#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx:401
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx:402
 msgid "Mention specific roles"
 msgstr "Mention specific roles"
+
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx:389
+msgid "Mentions"
+msgstr "Mentions"
 
 #: components/app/menus/ServerContextMenu.tsx:260
 #: components/app/menus/shared/NotificationContextMenu.tsx:132
@@ -1831,7 +1835,7 @@ msgstr "Off"
 msgid "Official Communication"
 msgstr "Official Communication"
 
-#: src/interface/navigation/channels/ServerSidebar.tsx:299
+#: src/interface/navigation/channels/ServerSidebar.tsx:300
 msgid "Official Server"
 msgstr "Official Server"
 
@@ -2195,7 +2199,7 @@ msgstr "Save to your notes"
 
 #: src/interface/navigation/channels/HomeSidebar.tsx:120
 #: src/interface/navigation/channels/HomeSidebar.tsx:137
-#: src/interface/channels/ChannelHeader.tsx:158
+#: src/interface/channels/ChannelHeader.tsx:142
 msgid "Saved Notes"
 msgstr "Saved Notes"
 
@@ -2708,7 +2712,7 @@ msgstr "Users will be asked to confirm their age before opening this channel."
 msgid "Users will no longer be asked to confirm their age before joining this channel.<0/> Please ensure the content is appropriate for all ages."
 msgstr "Users will no longer be asked to confirm their age before joining this channel.<0/> Please ensure the content is appropriate for all ages."
 
-#: src/interface/navigation/channels/ServerSidebar.tsx:299
+#: src/interface/navigation/channels/ServerSidebar.tsx:300
 msgid "Verified"
 msgstr "Verified"
 
@@ -2733,7 +2737,7 @@ msgstr "View Channel"
 msgid "View currently active bug reports here."
 msgstr "View currently active bug reports here."
 
-#: src/interface/channels/ChannelHeader.tsx:273
+#: src/interface/channels/ChannelHeader.tsx:257
 msgid "View members"
 msgstr "View members"
 
@@ -2741,7 +2745,7 @@ msgstr "View members"
 msgid "View older updates"
 msgstr "View older updates"
 
-#: src/interface/channels/ChannelHeader.tsx:233
+#: src/interface/channels/ChannelHeader.tsx:217
 msgid "View pinned messages"
 msgstr "View pinned messages"
 

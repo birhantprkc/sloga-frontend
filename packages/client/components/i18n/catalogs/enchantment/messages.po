@@ -276,7 +276,7 @@ msgstr ""
 msgid "Add friend"
 msgstr "ᔑ↸↸ ⎓∷╎ᒷリ↸"
 
-#: src/interface/channels/ChannelHeader.tsx:220
+#: src/interface/channels/ChannelHeader.tsx:204
 #: components/modal/modals/AddMembersToGroup.tsx:66
 msgid "Add friends to group"
 msgstr ""
@@ -574,7 +574,7 @@ msgstr ""
 msgid "Channel Name"
 msgstr "ᓵ⍑ᔑリリᒷꖎ リᔑᒲᒷ"
 
-#: src/interface/channels/ChannelHeader.tsx:198
+#: src/interface/channels/ChannelHeader.tsx:182
 msgid "Channel Settings"
 msgstr ""
 
@@ -602,7 +602,7 @@ msgstr "ᓵꖎᒷᔑ∷ ᓭℸᔑℸ⚍ᓭ"
 msgid "Click on the items below to learn more about different changes!"
 msgstr ""
 
-#: src/interface/channels/ChannelHeader.tsx:133
+#: src/interface/channels/ChannelHeader.tsx:117
 msgid "Click to show full description"
 msgstr ""
 
@@ -1427,7 +1427,7 @@ msgstr ""
 msgid "Join a server"
 msgstr ""
 
-#: src/interface/channels/ChannelHeader.tsx:173
+#: src/interface/channels/ChannelHeader.tsx:157
 msgid "Join call"
 msgstr ""
 
@@ -1632,20 +1632,24 @@ msgstr "ᒲᒷᒲʖᒷ∷ᓭ"
 msgid "Mention"
 msgstr "ᒲᒷリℸ╎𝙹リ"
 
-#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx:391
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx:392
 msgid "Mention Everyone"
 msgstr ""
 
-#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx:393
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx:394
 msgid "Mention everyone and online members inside the server"
 msgstr ""
 
-#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx:399
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx:400
 msgid "Mention Roles"
 msgstr ""
 
-#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx:401
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx:402
 msgid "Mention specific roles"
+msgstr ""
+
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx:389
+msgid "Mentions"
 msgstr ""
 
 #: components/app/menus/ServerContextMenu.tsx:260
@@ -1831,7 +1835,7 @@ msgstr "𝙹⎓⎓"
 msgid "Official Communication"
 msgstr "𝙹⎓⎓╎ᓵ╎ᔑꖎ ᓵ𝙹ᒲᒲ⚍リ╎ᓵᔑℸ╎𝙹リ"
 
-#: src/interface/navigation/channels/ServerSidebar.tsx:299
+#: src/interface/navigation/channels/ServerSidebar.tsx:300
 msgid "Official Server"
 msgstr "𝙹⎓⎓╎ᓵ╎ᔑꖎ ᓭᒷ∷⍊ᒷ∷"
 
@@ -2195,7 +2199,7 @@ msgstr "ᓭᔑ⍊ᒷ ℸ𝙹 ||𝙹⚍∷ リ𝙹ℸᒷᓭ"
 
 #: src/interface/navigation/channels/HomeSidebar.tsx:120
 #: src/interface/navigation/channels/HomeSidebar.tsx:137
-#: src/interface/channels/ChannelHeader.tsx:158
+#: src/interface/channels/ChannelHeader.tsx:142
 msgid "Saved Notes"
 msgstr "ᓭᔑ⍊ᒷ↸ リ𝙹ℸᒷᓭ"
 
@@ -2708,7 +2712,7 @@ msgstr ""
 msgid "Users will no longer be asked to confirm their age before joining this channel.<0/> Please ensure the content is appropriate for all ages."
 msgstr ""
 
-#: src/interface/navigation/channels/ServerSidebar.tsx:299
+#: src/interface/navigation/channels/ServerSidebar.tsx:300
 msgid "Verified"
 msgstr ""
 
@@ -2733,7 +2737,7 @@ msgstr "⍊╎ᒷ∴ ᓵ⍑ᔑリリᒷꖎ"
 msgid "View currently active bug reports here."
 msgstr "⍊╎ᒷ∴ ᓵ⚍∷∷ᒷリℸꖎ|| ᔑᓵℸ╎⍊ᒷ ʖ⚍⊣ ∷ᒷ!¡𝙹∷ℸᓭ ⍑ᒷ∷ᒷ."
 
-#: src/interface/channels/ChannelHeader.tsx:273
+#: src/interface/channels/ChannelHeader.tsx:257
 msgid "View members"
 msgstr ""
 
@@ -2741,7 +2745,7 @@ msgstr ""
 msgid "View older updates"
 msgstr "⍊╎ᒷ∴ 𝙹ꖎ↸ᒷ∷ ⚍!¡↸ᔑℸᒷᓭ"
 
-#: src/interface/channels/ChannelHeader.tsx:233
+#: src/interface/channels/ChannelHeader.tsx:217
 msgid "View pinned messages"
 msgstr ""
 
