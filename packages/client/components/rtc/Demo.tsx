@@ -315,11 +315,11 @@ export function Demo(props: { channel: Channel }) {
             <div
               use:floating={{
                 tooltip: props.channel.havePermission("Speak")
-                  ? {
+                  ? undefined
+                  : {
                       placement: "top",
                       content: "No permission to speak",
-                    }
-                  : undefined,
+                    },
               }}
             >
               <IconButton
