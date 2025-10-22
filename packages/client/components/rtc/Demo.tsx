@@ -11,7 +11,8 @@ import {
   useTracks,
 } from "solid-livekit-components";
 
-import { Room, Track } from "livekit-client";
+import { Track } from "livekit-client";
+import { Channel } from "stoat.js";
 import { css } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 
@@ -35,7 +36,6 @@ import MdMicOn from "@material-design-icons/svg/outlined/mic.svg?component-solid
 import MdMicOff from "@material-design-icons/svg/outlined/mic_off.svg?component-solid";
 
 import { InRoom, useVoice } from ".";
-import { Channel } from "stoat.js";
 
 export function RoomParticipants() {
   const tracks = useTracks(
@@ -220,13 +220,15 @@ export function DemoWrapper(props: { channel: Channel }) {
   const shouldShow = () => {
     const room = voice.room();
     return !room ? !!props.channel.server : voice.roomId() === props.channel.id;
-  }
+  };
 
-  return <Switch>
-    <Match when={shouldShow()}>
-      <Demo />
-    </Match>
-  </Switch>
+  return (
+    <Switch>
+      <Match when={shouldShow()}>
+        <Demo />
+      </Match>
+    </Switch>
+  );
 }
 
 export function Demo() {
@@ -251,11 +253,12 @@ export function Demo() {
           [h]: v,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ node: "worldwide" }),
+        body: JSON.stringify({ node: "worldwide", force_disconnect: true }),
       },
     ).then((r) => r.json());
 
     if (token && url) {
+      // console.info(url, token);
       voice.connect(url, token, params().channelId!);
     }
   }

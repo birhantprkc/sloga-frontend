@@ -83,7 +83,9 @@ class Voice {
     room.addListener("connected", () => this.#setState("CONNECTED"));
     room.addListener("disconnected", () => this.#setState("DISCONNECTED"));
 
-    await room.connect(url, token);
+    await room.connect(url, token, {
+      autoSubscribe: false,
+    });
   }
 
   disconnect() {
@@ -151,8 +153,9 @@ export function RoomAudioManager() {
   );
 
   createEffect(() => {
-    console.info("filtered tracks", filteredTracks());
-    for (const track of filteredTracks()) {
+    const tracks = filteredTracks();
+    console.info("[rtc] filtered tracks", filteredTracks());
+    for (const track of tracks) {
       (track.publication as RemoteTrackPublication).setSubscribed(true);
     }
   });

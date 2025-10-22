@@ -74,7 +74,7 @@ export function ChannelHeader(props: Props) {
           [h]: v,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ node: "worldwide" }),
+        body: JSON.stringify({ node: "worldwide", force_disconnect: true }),
       },
     ).then((r) => r.json());
 
