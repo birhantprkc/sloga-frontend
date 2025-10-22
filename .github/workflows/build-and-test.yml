@@ -78,7 +78,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - run: git push origin main:stable
+      - run: |
+          git fetch origin stable:stable
+          git push origin main:stable
 
   # deploy:
   #   name: Deploy
