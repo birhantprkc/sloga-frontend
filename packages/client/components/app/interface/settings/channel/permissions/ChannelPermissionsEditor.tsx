@@ -386,6 +386,7 @@ export function ChannelPermissionsEditor(props: Props) {
       },
     },
     {
+      heading: t`Mentions`,
       key: "MentionEveryone",
       value: 2n ** 37n,
       title: t`Mention Everyone`,
