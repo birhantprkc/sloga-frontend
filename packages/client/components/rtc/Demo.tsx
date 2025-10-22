@@ -219,7 +219,9 @@ export function DemoWrapper(props: { channel: Channel }) {
 
   const shouldShow = () => {
     const room = voice.room();
-    return !room ? !!props.channel.server : voice.roomId() === props.channel.id;
+    return !room
+      ? !!props.channel.server
+      : voice.channel()?.id === props.channel.id;
   };
 
   return (
@@ -241,24 +243,7 @@ export function Demo(props: { channel: Channel }) {
    * todo: make this consistnet
    */
   async function joinCall() {
-    const [h, v] = client()!.authenticationHeader;
-
-    const { token, url } = await fetch(
-      client()!.api.config.baseURL + `/channels/${props.channel.id}/join_call`,
-      {
-        method: "POST",
-        headers: {
-          [h]: v,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ node: "worldwide", force_disconnect: true }),
-      },
-    ).then((r) => r.json());
-
-    if (token && url) {
-      // console.info(url, token);
-      voice.connect(url, token, props.channel.id);
-    }
+    voice.connect(props.channel);
   }
 
   return (
