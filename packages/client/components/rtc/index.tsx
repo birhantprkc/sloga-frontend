@@ -199,8 +199,13 @@ export function VoiceContext(props: { children: JSX.Element }) {
 
 export function InRoom(props: { children: JSX.Element }) {
   const room = useMaybeRoomContext();
+  const voice = useVoice();
 
-  return <Show when={room?.()}>{props.children}</Show>;
+  return (
+    <Show when={room?.() && voice.state() === "CONNECTED"}>
+      {props.children}
+    </Show>
+  );
 }
 
 export const useVoice = () => useContext(voiceContext);

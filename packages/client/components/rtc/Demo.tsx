@@ -286,6 +286,9 @@ export function Demo(props: { channel: Channel }) {
       })}
     >
       {/* <FakeParticipants /> */}
+      <Show when={voice.state() === "CONNECTING"}>
+        <span>Connecting...</span>
+      </Show>
       <InRoom>
         <RoomParticipants />
       </InRoom>
