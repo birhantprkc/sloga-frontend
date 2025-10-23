@@ -10,7 +10,7 @@ import { KeybindAction, createKeybind } from "@revolt/keybinds";
 import { TextWithEmoji } from "@revolt/markdown";
 import { useModals } from "@revolt/modal";
 import { useNavigate } from "@revolt/routing";
-import { InRoom, useChannelInCall, useVoice } from "@revolt/rtc";
+import { useVoice } from "@revolt/rtc";
 import { useState } from "@revolt/state";
 import {
   Avatar,
@@ -450,7 +450,7 @@ function Entry(
       (props.channel.mentions?.size || true),
   );
 
-  const inCall = useChannelInCall(props.channel);
+  const inCall = () => props.channel.id === voice.channel()?.id;
 
   const attentionState = createMemo(() =>
     props.active

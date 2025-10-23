@@ -16,7 +16,6 @@ import { DraftMessages, Messages } from "@revolt/app";
 import { useClient } from "@revolt/client";
 import { Keybind, KeybindAction, createKeybind } from "@revolt/keybinds";
 import { useNavigate, useSmartParams } from "@revolt/routing";
-import { Demo, DemoWrapper } from "@revolt/rtc/Demo";
 import { useState } from "@revolt/state";
 import { LAYOUT_SECTIONS } from "@revolt/state/stores/Layout";
 import {
@@ -27,6 +26,7 @@ import {
   TypingIndicator,
   main,
 } from "@revolt/ui";
+import { VoiceChannelCallCardMount } from "@revolt/ui/components/features/voice/callCard/VoiceCallCard";
 
 import { ChannelHeader } from "../ChannelHeader";
 import { ChannelPageProps } from "../ChannelPage";
@@ -162,22 +162,25 @@ export function TextChannel(props: ChannelPageProps) {
           setSidebarState={setSidebarState}
         />
       </Header>
-
-      <Show when={props.channel.isVoice}>
-        <DemoWrapper channel={props.channel} />
-      </Show>
-
       <Content>
         <main class={main()}>
-          <BelowFloatingHeader>
-            <div>
-              <NewMessages
-                lastId={lastId}
-                jumpBack={() => navigate(lastId()!)}
-                dismiss={() => setLastId()}
-              />
-            </div>
-          </BelowFloatingHeader>
+          <Show
+            when={props.channel.isVoice}
+            fallback={
+              <BelowFloatingHeader>
+                <div>
+                  <NewMessages
+                    lastId={lastId}
+                    jumpBack={() => navigate(lastId()!)}
+                    dismiss={() => setLastId()}
+                  />
+                </div>
+              </BelowFloatingHeader>
+            }
+          >
+            <VoiceChannelCallCardMount channel={props.channel} />
+          </Show>
+
           <Messages
             channel={props.channel}
             limit={150}

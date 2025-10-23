@@ -15,7 +15,7 @@ type Props = Omit<
       JSX.ButtonHTMLAttributes<HTMLButtonElement>,
       "role" | "tabIndex" | "aria-selected"
     >,
-  "onClick"
+  "onClick" | "disabled"
 >;
 
 /**
@@ -45,7 +45,10 @@ export function IconButton(props: Props) {
       {...passthrough}
       {...buttonProps}
       ref={ref}
-      class={iconButton2(style)}
+      class={iconButton2({
+        ...style,
+        disabled: buttonProps.disabled,
+      })}
       // @codegen directives props=rest include=floating
     >
       <Show when={!buttonProps.disabled}>
@@ -131,6 +134,15 @@ const iconButton2 = cva({
       default: {},
       wide: {},
     },
+    /**
+     * Whether the button is disabled
+     */
+    disabled: {
+      true: {
+        cursor: "not-allowed",
+      },
+      false: {},
+    },
     _fullHeight: {
       true: {
         aspectRatio: "unset",
@@ -143,9 +155,34 @@ const iconButton2 = cva({
     width: "default",
     shape: "round",
     size: "sm",
+    disabled: false,
     _fullHeight: false,
   },
   compoundVariants: [
+    // disabled styles
+    {
+      variant: ["filled", "tonal", "outlined"],
+      disabled: true,
+      css: {
+        // todo: check these are correct
+        "--color":
+          "color-mix(in srgb, 38% var(--md-sys-color-on-surface), transparent)",
+        background:
+          "color-mix(in srgb, 10% var(--md-sys-color-on-surface), transparent)",
+      },
+    },
+    {
+      variant: "standard",
+      disabled: true,
+      css: {
+        // todo: check these are correct
+        "--color":
+          "color-mix(in srgb, 38% var(--md-sys-color-on-surface), transparent)",
+        background:
+          "color-mix(in srgb, 10% var(--md-sys-color-on-surface), transparent)",
+      },
+    },
+
     {
       size: ["xs", "sm"],
       width: "narrow",

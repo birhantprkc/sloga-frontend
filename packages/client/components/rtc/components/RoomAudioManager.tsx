@@ -5,7 +5,11 @@ import { getTrackReferenceId, isLocal } from "@livekit/components-core";
 import { Key } from "@solid-primitives/keyed";
 import { RemoteTrackPublication, Track } from "livekit-client";
 
+import { useVoice } from "../state";
+
 export function RoomAudioManager() {
+  const voice = useVoice();
+
   const tracks = useTracks(
     [
       Track.Source.Microphone,
@@ -34,6 +38,8 @@ export function RoomAudioManager() {
     }
   });
 
+  createEffect(() => console.info("muted?", voice.deafen()));
+
   return (
     <div style={{ display: "none" }}>
       <Key each={filteredTracks()} by={(item) => getTrackReferenceId(item)}>
@@ -43,7 +49,7 @@ export function RoomAudioManager() {
             // todo: manage volume
             volume={1}
             // todo: manage muted
-            muted={false}
+            muted={voice.deafen()}
           />
         )}
       </Key>

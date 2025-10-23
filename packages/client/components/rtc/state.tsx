@@ -43,6 +43,9 @@ class Voice {
   state: Accessor<State>;
   #setState: Setter<State>;
 
+  deafen: Accessor<boolean>;
+  #setDeafen: Setter<boolean>;
+
   microphone: Accessor<boolean>;
   #setMicrophone: Setter<boolean>;
 
@@ -66,6 +69,10 @@ class Voice {
     const [state, setState] = createSignal<State>("READY");
     this.state = state;
     this.#setState = setState;
+
+    const [deafen, setDeafen] = createSignal<boolean>(false);
+    this.deafen = deafen;
+    this.#setDeafen = setDeafen;
 
     const [microphone, setMicrophone] = createSignal(false);
     this.microphone = microphone;
@@ -98,9 +105,20 @@ class Voice {
       this.#setRoom(room);
       this.#setChannel(channel);
       this.#setState("CONNECTING");
+
+      this.#setMicrophone(false);
+      this.#setDeafen(false);
+      this.#setVideo(false);
+      this.#setScreenshare(false);
+
+      if (this.speakingPermission)
+        room.localParticipant
+          .setMicrophoneEnabled(true)
+          .then((track) => this.#setMicrophone(typeof track !== "undefined"));
     });
 
     room.addListener("connected", () => this.#setState("CONNECTED"));
+
     room.addListener("disconnected", () => this.#setState("DISCONNECTED"));
 
     if (!auth) {
@@ -124,6 +142,10 @@ class Voice {
       this.#setRoom(undefined);
       this.#setChannel(undefined);
     });
+  }
+
+  async toggleDeafen() {
+    this.#setDeafen((s) => !s);
   }
 
   async toggleMute() {
@@ -155,6 +177,14 @@ class Voice {
 
     this.#setScreenshare(room.localParticipant.isScreenShareEnabled);
   }
+
+  get listenPermission() {
+    return !!this.channel()?.havePermission("Listen");
+  }
+
+  get speakingPermission() {
+    return !!this.channel()?.havePermission("Speak");
+  }
 }
 
 const voiceContext = createContext<Voice>(null as unknown as Voice);
@@ -179,12 +209,3 @@ export function VoiceContext(props: { children: JSX.Element }) {
 }
 
 export const useVoice = () => useContext(voiceContext);
-
-/**
- * Whether channel is currently in a call
- * @param channel Channel
- */
-export function useChannelInCall(channel: Channel) {
-  const voice = useVoice();
-  return createMemo(() => voice.channel()?.id === channel.id);
-}
