@@ -2,10 +2,8 @@ import {
   Accessor,
   JSX,
   Setter,
-  Show,
   batch,
   createContext,
-  createEffect,
   createMemo,
   createSignal,
   useContext,
@@ -17,11 +15,14 @@ import {
   useTracks,
 } from "solid-livekit-components";
 
-import { getTrackReferenceId, isLocal } from "@livekit/components-core";
-import { Key } from "@solid-primitives/keyed";
-import type { RemoteTrackPublication } from "livekit-client";
-import { Room, Track } from "livekit-client";
+import { Room } from "livekit-client";
 import { Channel } from "stoat.js";
+
+import { useState } from "@revolt/state";
+import { Voice as VoiceSettings } from "@revolt/state/stores/Voice";
+
+import { InRoom } from "./components/InRoom";
+import { RoomAudioManager } from "./components/RoomAudioManager";
 
 type State =
   | "READY"
@@ -31,6 +32,8 @@ type State =
   | "RECONNECTING";
 
 class Voice {
+  #settings: VoiceSettings;
+
   channel: Accessor<Channel | undefined>;
   #setChannel: Setter<Channel | undefined>;
 
@@ -49,7 +52,9 @@ class Voice {
   screenshare: Accessor<boolean>;
   #setScreenshare: Setter<boolean>;
 
-  constructor() {
+  constructor(voiceSettings: VoiceSettings) {
+    this.#settings = voiceSettings;
+
     const [channel, setChannel] = createSignal<Channel>();
     this.channel = channel;
     this.#setChannel = setChannel;
@@ -78,7 +83,17 @@ class Voice {
   async connect(channel: Channel, auth?: { url: string; token: string }) {
     this.disconnect();
 
-    const room = new Room();
+    const room = new Room({
+      audioCaptureDefaults: {
+        deviceId: this.#settings.preferredAudioInputDevice,
+        echoCancellation: this.#settings.echoCancellation,
+        noiseSuppression: this.#settings.noiseSupression,
+      },
+      audioOutput: {
+        deviceId: this.#settings.preferredAudioOutputDevice,
+      },
+    });
+
     batch(() => {
       this.#setRoom(room);
       this.#setChannel(channel);
@@ -144,46 +159,12 @@ class Voice {
 
 const voiceContext = createContext<Voice>(null as unknown as Voice);
 
-export function RoomAudioManager() {
-  const tracks = useTracks(
-    [
-      Track.Source.Microphone,
-      Track.Source.ScreenShareAudio,
-      Track.Source.Unknown,
-    ],
-    {
-      updateOnlyOn: [],
-      onlySubscribed: false,
-    },
-  );
-
-  const filteredTracks = createMemo(() =>
-    tracks().filter(
-      (track) =>
-        !isLocal(track.participant) &&
-        track.publication.kind === Track.Kind.Audio,
-    ),
-  );
-
-  createEffect(() => {
-    const tracks = filteredTracks();
-    console.info("[rtc] filtered tracks", filteredTracks());
-    for (const track of tracks) {
-      (track.publication as RemoteTrackPublication).setSubscribed(true);
-    }
-  });
-
-  return (
-    <div style={{ display: "none" }}>
-      <Key each={filteredTracks()} by={(item) => getTrackReferenceId(item)}>
-        {(track) => <AudioTrack trackRef={track()} volume={1} muted={false} />}
-      </Key>
-    </div>
-  );
-}
-
+/**
+ * Mount global voice context and room audio manager
+ */
 export function VoiceContext(props: { children: JSX.Element }) {
-  const voice = new Voice();
+  const state = useState();
+  const voice = new Voice(state.voice);
 
   return (
     <voiceContext.Provider value={voice}>
@@ -197,15 +178,13 @@ export function VoiceContext(props: { children: JSX.Element }) {
   );
 }
 
-export function InRoom(props: { children: JSX.Element }) {
-  const room = useMaybeRoomContext();
-  const voice = useVoice();
-
-  return (
-    <Show when={room?.() && voice.state() === "CONNECTED"}>
-      {props.children}
-    </Show>
-  );
-}
-
 export const useVoice = () => useContext(voiceContext);
+
+/**
+ * Whether channel is currently in a call
+ * @param channel Channel
+ */
+export function useChannelInCall(channel: Channel) {
+  const voice = useVoice();
+  return createMemo(() => voice.channel()?.id === channel.id);
+}

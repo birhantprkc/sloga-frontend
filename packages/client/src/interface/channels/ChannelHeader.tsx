@@ -145,9 +145,7 @@ export function ChannelHeader(props: Props) {
 
       <Spacer />
 
-      <Show
-        when={props.channel.type !== "SavedMessages" && props.channel.isVoice}
-      >
+      <Show when={props.channel.isVoice}>
         <IconButton
           variant="standard"
           onPress={joinCall}
