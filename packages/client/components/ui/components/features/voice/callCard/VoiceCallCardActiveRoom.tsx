@@ -27,6 +27,9 @@ import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
 import { VoiceStatefulUserIcons } from "../VoiceStatefulUserIcons";
 
+import { VoiceCallCardActions } from "./VoiceCallCardActions";
+import { VoiceCallCardStatus } from "./VoiceCallCardStatus";
+
 /**
  * Call card (active)
  */
@@ -41,90 +44,9 @@ export function VoiceCallCardActiveRoom() {
           <Participants />
         </InRoom>
       </Call>
-      <Status status={voice.state()}>
-        <Switch>
-          <Match when={voice.state() === "CONNECTED"}>
-            <Symbol>wifi_tethering</Symbol> <Trans>Connected</Trans>
-          </Match>
-          <Match when={voice.state() === "CONNECTING"}>
-            <Symbol>wifi_tethering</Symbol> <Trans>Connecting</Trans>
-          </Match>
-          <Match when={voice.state() === "DISCONNECTED"}>
-            <Symbol>wifi_tethering_error</Symbol> <Trans>Disconnected</Trans>
-          </Match>
-          <Match when={voice.state() === "RECONNECTING"}>
-            <Symbol>wifi_tethering</Symbol> <Trans>Reconnecting</Trans>
-          </Match>
-        </Switch>
-      </Status>
-      <Actions>
-        <IconButton
-          variant={voice.microphone() ? "filled" : "tonal"}
-          onPress={() => voice.toggleMute()}
-          use:floating={{
-            tooltip: voice.speakingPermission
-              ? undefined
-              : {
-                  placement: "top",
-                  content: t`Missing permission`,
-                },
-          }}
-          isDisabled={!voice.speakingPermission}
-        >
-          <Show when={voice.microphone()} fallback={<Symbol>mic_off</Symbol>}>
-            <Symbol>mic</Symbol>
-          </Show>
-        </IconButton>
-        <IconButton
-          variant={
-            voice.deafen() || !voice.listenPermission ? "tonal" : "filled"
-          }
-          onPress={() => voice.toggleDeafen()}
-          use:floating={{
-            tooltip: voice.listenPermission
-              ? undefined
-              : {
-                  placement: "top",
-                  content: t`Missing permission`,
-                },
-          }}
-          isDisabled={!voice.listenPermission}
-        >
-          <Show
-            when={voice.deafen() || !voice.listenPermission}
-            fallback={<Symbol>headset</Symbol>}
-          >
-            <Symbol>headset_off</Symbol>
-          </Show>
-        </IconButton>
-        <IconButton
-          variant={"tonal"}
-          use:floating={{
-            tooltip: {
-              placement: "top",
-              content: "Coming soon! 👀",
-            },
-          }}
-          isDisabled
-        >
-          <Symbol>camera_video</Symbol>
-        </IconButton>
-        <IconButton
-          variant={"tonal"}
-          use:floating={{
-            tooltip: {
-              placement: "top",
-              content: "Coming soon! 👀",
-            },
-          }}
-          isDisabled
-        >
-          <Symbol>screen_share</Symbol>
-        </IconButton>
-        <Button variant="_error" onPress={() => voice.disconnect()}>
-          <Symbol>call_end</Symbol>
-        </Button>
-      </Actions>
+
+      <VoiceCallCardStatus />
+      <VoiceCallCardActions />
     </View>
   );
 }
@@ -137,50 +59,6 @@ const View = styled("div", {
 
     display: "flex",
     flexDirection: "column",
-  },
-});
-
-const Status = styled("div", {
-  base: {
-    flexShrink: 0,
-    gap: "var(--gap-md)",
-
-    display: "flex",
-    justifyContent: "center",
-  },
-  variants: {
-    status: {
-      READY: {},
-      CONNECTED: {
-        color: "var(--md-sys-color-primary)",
-      },
-      CONNECTING: {
-        color: "var(--md-sys-color-outline)",
-      },
-      DISCONNECTED: {
-        color: "var(--md-sys-color-outline)",
-      },
-      RECONNECTING: {
-        color: "var(--md-sys-color-outline)",
-      },
-    },
-  },
-});
-
-const Actions = styled("div", {
-  base: {
-    flexShrink: 0,
-    gap: "var(--gap-md)",
-    margin: "var(--gap-md)",
-    padding: "var(--gap-md)",
-
-    display: "flex",
-    width: "fit-content",
-    justifyContent: "center",
-    alignSelf: "center",
-
-    borderRadius: "var(--borderRadius-full)",
-    background: "var(--md-sys-color-surface-container)",
   },
 });
 
