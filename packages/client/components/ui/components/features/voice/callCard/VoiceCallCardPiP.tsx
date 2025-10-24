@@ -14,6 +14,8 @@ export function VoiceCallCardPiP() {
 
 const MiniCard = styled("div", {
   base: {
+    userSelect: "none",
+
     pointerEvents: "all",
     width: "100%",
     height: "100%",

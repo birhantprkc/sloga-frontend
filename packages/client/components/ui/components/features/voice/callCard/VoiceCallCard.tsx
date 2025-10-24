@@ -3,9 +3,11 @@ import {
   Match,
   Show,
   Switch,
+  batch,
   createContext,
   createEffect,
   createSignal,
+  on,
   onCleanup,
   useContext,
 } from "solid-js";
@@ -50,6 +52,9 @@ export function VoiceCallCardContext(props: { children: JSX.Element }) {
     corner: "bottom-right",
   });
 
+  const [moving, setMoving] = createSignal<boolean>();
+  const [offset, setOffset] = createSignal({ x: 0, y: 0 });
+
   function position() {
     const position = state();
 
@@ -66,22 +71,71 @@ export function VoiceCallCardContext(props: { children: JSX.Element }) {
         return {
           "--width": "280px",
           "--height": "158px",
-          "--offset-x": "32px",
-          "--offset-y": "96px",
+          "--padding-x": "32px",
+          "--padding-y": "96px",
           transform: `translate(${
             position.corner === "top-left" || position.corner === "bottom-left"
-              ? "var(--offset-x)"
-              : "calc(100vw - var(--offset-x) - var(--width))"
+              ? "calc(var(--padding-x) + var(--offset-x))"
+              : "calc(100vw - var(--padding-x) - var(--width) + var(--offset-x))"
           }, ${
             position.corner === "top-left" || position.corner === "top-right"
-              ? "var(--offset-y)"
-              : "calc(100vh - var(--offset-y) - var(--height))"
+              ? "calc(var(--padding-y) + var(--offset-y))"
+              : "calc(100vh - var(--padding-y) - var(--height) + var(--offset-y))"
           })`,
           width: "var(--width)",
           height: "var(--height)",
         };
     }
   }
+
+  createEffect(
+    on(moving, (moving) => {
+      if (moving) {
+        const controller = new AbortController();
+
+        document.addEventListener(
+          "mousemove",
+          (event) => {
+            const position = state();
+
+            if (position.type !== "floating") return controller.abort();
+
+            setOffset((pos) => ({
+              x: pos.x + event.movementX,
+              y: pos.y + event.movementY,
+            }));
+          },
+          { signal: controller.signal },
+        );
+
+        document.addEventListener(
+          "mouseup",
+          (event) => {
+            batch(() => {
+              setMoving(false);
+
+              const left = event.clientX < window.outerWidth / 2;
+              const top = event.clientY < window.outerHeight / 2;
+
+              setState({
+                type: "floating",
+                corner: left
+                  ? top
+                    ? "top-left"
+                    : "bottom-left"
+                  : top
+                    ? "top-right"
+                    : "bottom-right",
+              });
+            });
+          },
+          { signal: controller.signal },
+        );
+
+        onCleanup(controller.abort);
+      }
+    }),
+  );
 
   return (
     <callCardContext.Provider
@@ -109,11 +163,25 @@ export function VoiceCallCardContext(props: { children: JSX.Element }) {
           style={{
             position: "fixed",
             "z-index": 10,
-            transition: voice.room() && "var(--transitions-medium) all",
-            "transition-timing-function": "ease-in-out",
+            transition: voice.room() && ".3s all",
+            "transition-timing-function": "cubic-bezier(0, 1.67, 0.85, 0.8)",
             ...position(),
             "pointer-events": "none",
+            cursor: moving() ? "grabbing" : "grab",
+            "--offset-x": `${moving() ? offset().x : 0}px`,
+            "--offset-y": `${moving() ? offset().y : 0}px`,
           }}
+          // dragging logic for mice
+          onMouseDown={() => {
+            if (state().type === "floating") {
+              batch(() => {
+                setMoving(true);
+                setOffset({ x: 0, y: 0 });
+              });
+            }
+          }}
+          // dragging logic for touch input
+          // todo
         >
           <Switch>
             <Match when={state().type === "fixed"}>
