@@ -178,6 +178,10 @@ class Voice {
     this.#setScreenshare(room.localParticipant.isScreenShareEnabled);
   }
 
+  getConnectedUser(userId: string) {
+    return this.room()?.getParticipantByIdentity(userId);
+  }
+
   get listenPermission() {
     return !!this.channel()?.havePermission("Listen");
   }

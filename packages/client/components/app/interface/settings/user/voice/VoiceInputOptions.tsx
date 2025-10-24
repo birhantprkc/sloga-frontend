@@ -4,7 +4,7 @@ import { useMediaDeviceSelect } from "solid-livekit-components";
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
 
 import { useState } from "@revolt/state";
-import { Checkbox } from "@revolt/ui";
+import { Checkbox, Column, Row, Slider, Text } from "@revolt/ui";
 import {
   CategoryButton,
   CategoryCollapse,
@@ -16,10 +16,13 @@ import { Symbol } from "@revolt/ui/components/utils/Symbol";
  */
 export function VoiceInputOptions() {
   return (
-    <CategoryButton.Group>
-      <SelectMicrophone />
-      <SelectSpeaker />
-    </CategoryButton.Group>
+    <Column>
+      <CategoryButton.Group>
+        <SelectMicrophone />
+        <SelectSpeaker />
+      </CategoryButton.Group>
+      <VolumeSliders />
+    </Column>
   );
 }
 
@@ -110,5 +113,30 @@ function SelectSpeaker() {
         )}
       </For>
     </CategoryCollapse>
+  );
+}
+
+/**
+ * Select volume
+ */
+function VolumeSliders() {
+  const state = useState();
+
+  return (
+    <Column>
+      <Text class="label">
+        <Trans>Output Volume</Trans>
+      </Text>
+      <Slider
+        min={0}
+        max={3}
+        step={0.1}
+        value={state.voice.outputVolume}
+        onInput={(event) =>
+          (state.voice.outputVolume = event.currentTarget.value)
+        }
+        labelFormatter={(label) => (label * 100).toFixed(0) + "%"}
+      />
+    </Column>
   );
 }

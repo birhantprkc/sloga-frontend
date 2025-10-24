@@ -1,4 +1,4 @@
-import { For, Show } from "solid-js";
+import { For, Show, splitProps } from "solid-js";
 import {
   TrackLoop,
   useEnsureParticipant,
@@ -7,6 +7,7 @@ import {
   useTracks,
 } from "solid-livekit-components";
 
+import { useLingui } from "@lingui-solid/solid/macro";
 import { Track } from "livekit-client";
 import { Channel, VoiceParticipant } from "stoat.js";
 import { cva } from "styled-system/css";
@@ -15,10 +16,13 @@ import { styled } from "styled-system/jsx";
 import { UserContextMenu } from "@revolt/app";
 import { useUser } from "@revolt/markdown/users";
 import { InRoom } from "@revolt/rtc";
+import { useState } from "@revolt/state";
 
 import { Avatar, Ripple, typography } from "../../design";
 import { Row } from "../../layout";
 import { Symbol } from "../../utils/Symbol";
+
+import { VoiceStatefulUserIcons } from "./VoiceStatefulUserIcons";
 
 /**
  * Render a preview of users (or the active participants) for a given channel
@@ -71,6 +75,8 @@ function VariantPreview(props: { channel: Channel }) {
  * Live variant of participant
  */
 function ParticipantLive() {
+  const state = useState();
+
   const participant = useEnsureParticipant();
 
   const isMuted = useIsMuted({
@@ -88,6 +94,7 @@ function ParticipantLive() {
       deafened={false}
       camera={false}
       screenshare={false}
+      isLive
     />
   );
 }
@@ -118,19 +125,30 @@ function CommonUser(props: {
   deafened: boolean;
   camera: boolean;
   screenshare: boolean;
+  isLive?: boolean;
 }) {
+  const [iconProps, rest] = splitProps(props, [
+    "muted",
+    "deafened",
+    "camera",
+    "screenshare",
+  ]);
   const user = useUser(props.userId);
 
   return (
     <div
-      class={previewUser({ speaking: props.speaking })}
+      class={previewUser({ speaking: rest.speaking })}
       use:floating={{
         userCard: {
           user: user().user!,
           member: user().member,
         },
         contextMenu: () => (
-          <UserContextMenu user={user().user!} member={user().member} />
+          <UserContextMenu
+            user={user().user!}
+            member={user().member}
+            inVoice={rest.isLive}
+          />
         ),
       }}
     >
@@ -138,18 +156,7 @@ function CommonUser(props: {
       <Avatar size={24} src={user().avatar} fallback={user().username} />{" "}
       <PreviewUsername>{user().username}</PreviewUsername>
       <Row gap="sm">
-        <Show when={props.muted}>
-          <Symbol size={16}>mic_off</Symbol>
-        </Show>
-        <Show when={props.deafened}>
-          <Symbol size={16}>headset_off</Symbol>
-        </Show>
-        <Show when={props.camera}>
-          <Symbol size={16}>camera_video</Symbol>
-        </Show>
-        <Show when={props.screenshare}>
-          <Symbol size={16}>screen_share</Symbol>
-        </Show>
+        <VoiceStatefulUserIcons {...iconProps} userId={rest.userId} />
       </Row>
     </div>
   );

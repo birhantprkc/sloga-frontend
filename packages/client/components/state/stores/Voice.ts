@@ -8,6 +8,12 @@ export interface TypeVoice {
 
   echoCancellation: boolean;
   noiseSupression: boolean;
+
+  inputVolume: number;
+  outputVolume: number;
+
+  userVolumes: Record<string, number>;
+  userMutes: Record<string, boolean>;
 }
 
 /**
@@ -35,7 +41,11 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
   default(): TypeVoice {
     return {
       echoCancellation: true,
-      noiseSupression: true
+      noiseSupression: true,
+      inputVolume: 1.0,
+      outputVolume: 1.0,
+      userVolumes: {},
+      userMutes: {}
     };
   }
 
@@ -45,51 +55,127 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
   clean(input: Partial<TypeVoice>): TypeVoice {
     const data = this.default();
 
-    if (typeof input.preferredAudioInputDevice === 'string') {
+    if (typeof input.preferredAudioInputDevice === "string") {
       data.preferredAudioInputDevice = input.preferredAudioInputDevice;
     }
 
-    if (typeof input.preferredAudioOutputDevice === 'string') {
+    if (typeof input.preferredAudioOutputDevice === "string") {
       data.preferredAudioOutputDevice = input.preferredAudioOutputDevice;
     }
 
-    if (typeof input.echoCancellation === 'boolean') {
+    if (typeof input.echoCancellation === "boolean") {
       data.echoCancellation = input.echoCancellation;
     }
 
-    if (typeof input.noiseSupression === 'boolean') {
+    if (typeof input.noiseSupression === "boolean") {
       data.noiseSupression = input.noiseSupression;
+    }
+
+    if (typeof input.inputVolume === "number") {
+      data.inputVolume = input.inputVolume;
+    }
+
+    if (typeof input.outputVolume === "number") {
+      data.outputVolume = input.outputVolume;
+    }
+
+    if (typeof input.userVolumes === "object") {
+      Object.entries(input.userVolumes)
+        .filter(
+          ([userId, volume]) =>
+            typeof userId === "string" && typeof volume === "number",
+        )
+        .forEach(([k, v]) => (data.userVolumes[k] = v));
+    }
+
+    if (typeof input.userMutes === "object") {
+      Object.entries(input.userMutes)
+        .filter(
+          ([userId, muted]) =>
+            typeof userId === "string" && muted === true,
+        )
+        .forEach(([k, v]) => (data.userMutes[k] = v));
     }
 
     return data;
   }
 
   /**
+   * Set a user's volume
+   * @param userId User ID
+   * @param volume Volume
+   */
+  setUserVolume(userId: string, volume: number) {
+    this.set('userVolumes', userId, volume);
+  }
+
+  /**
+   * Get a user's volume
+   * @param userId User ID
+   * @returns Volume or default
+   */
+  getUserVolume(userId: string): number {
+    return this.get().userVolumes[userId] || 1.0;
+  }
+
+  /**
+   * Set whether a user is muted
+   * @param userId User ID
+   * @param muted Whether they should be muted
+   */
+  setUserMuted(userId: string, muted: boolean) {
+    this.set('userMutes', userId, muted);
+  }
+
+  /**
+   * Get whether a user is muted
+   * @param userId User ID
+   * @returns Whether muted
+   */
+  getUserMuted(userId: string): boolean {
+    return this.get().userMutes[userId] || false;
+  }
+
+  /**
    * Set the preferred audio input device
    */
   set preferredAudioInputDevice(value: string) {
-    this.set('preferredAudioInputDevice', value);
+    this.set("preferredAudioInputDevice", value);
   }
 
   /**
    * Set the preferred audio output device
    */
   set preferredAudioOutputDevice(value: string) {
-    this.set('preferredAudioOutputDevice', value);
+    this.set("preferredAudioOutputDevice", value);
   }
 
   /**
    * Set echo cancellation
    */
   set echoCancellation(value: boolean) {
-    this.set('echoCancellation', value);
+    this.set("echoCancellation", value);
   }
 
   /**
    * Set noise cancellation
    */
   set noiseSupression(value: boolean) {
-    this.set('noiseSupression', value);
+    this.set("noiseSupression", value);
+  }
+
+  /**
+   * Set input volume
+   */
+  set inputVolume(value: number) {
+    this.set("inputVolume", value);
+  }
+
+  /**
+   * Set output volume
+   */
+  set outputVolume(value: number) {
+    this.set("outputVolume", value);
   }
 
   /**
@@ -118,5 +204,19 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
    */
   get noiseSupression(): boolean | undefined {
     return this.get().noiseSupression;
+  }
+
+  /**
+   * Get input volume
+   */
+  get inputVolume(): number {
+    return this.get().inputVolume;
+  }
+
+  /**
+   * Get noise supression
+   */
+  get outputVolume(): number {
+    return this.get().outputVolume;
   }
 }

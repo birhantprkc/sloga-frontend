@@ -5,10 +5,13 @@ import { getTrackReferenceId, isLocal } from "@livekit/components-core";
 import { Key } from "@solid-primitives/keyed";
 import { RemoteTrackPublication, Track } from "livekit-client";
 
+import { useState } from "@revolt/state";
+
 import { useVoice } from "../state";
 
 export function RoomAudioManager() {
   const voice = useVoice();
+  const state = useState();
 
   const tracks = useTracks(
     [
@@ -35,10 +38,9 @@ export function RoomAudioManager() {
     console.info("[rtc] filtered tracks", filteredTracks());
     for (const track of tracks) {
       (track.publication as RemoteTrackPublication).setSubscribed(true);
+      console.info(track.publication);
     }
   });
-
-  createEffect(() => console.info("muted?", voice.deafen()));
 
   return (
     <div style={{ display: "none" }}>
@@ -46,10 +48,15 @@ export function RoomAudioManager() {
         {(track) => (
           <AudioTrack
             trackRef={track()}
-            // todo: manage volume
-            volume={1}
-            // todo: manage muted
-            muted={voice.deafen()}
+            volume={
+              state.voice.outputVolume *
+              state.voice.getUserVolume(track().participant.identity)
+            }
+            muted={
+              state.voice.getUserMuted(track().participant.identity) ||
+              voice.deafen()
+            }
+            enableBoosting
           />
         )}
       </Key>
