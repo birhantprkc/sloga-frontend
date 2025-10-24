@@ -7,13 +7,21 @@ import { useVoice } from "@revolt/rtc";
 import { Button, IconButton } from "@revolt/ui/components/design";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
-export function VoiceCallCardActions() {
+export function VoiceCallCardActions(props: { size: "xs" | "sm" }) {
   const voice = useVoice();
   const { t } = useLingui();
 
   return (
     <Actions>
+      <Show when={props.size === "xs"}>
+        <a href={voice.channel()?.path}>
+          <IconButton variant="standard" size={props.size}>
+            <Symbol>arrow_top_left</Symbol>
+          </IconButton>
+        </a>
+      </Show>
       <IconButton
+        size={props.size}
         variant={voice.microphone() ? "filled" : "tonal"}
         onPress={() => voice.toggleMute()}
         use:floating={{
@@ -31,6 +39,7 @@ export function VoiceCallCardActions() {
         </Show>
       </IconButton>
       <IconButton
+        size={props.size}
         variant={voice.deafen() || !voice.listenPermission ? "tonal" : "filled"}
         onPress={() => voice.toggleDeafen()}
         use:floating={{
@@ -51,6 +60,7 @@ export function VoiceCallCardActions() {
         </Show>
       </IconButton>
       <IconButton
+        size={props.size}
         variant={"tonal"}
         use:floating={{
           tooltip: {
@@ -63,6 +73,7 @@ export function VoiceCallCardActions() {
         <Symbol>camera_video</Symbol>
       </IconButton>
       <IconButton
+        size={props.size}
         variant={"tonal"}
         use:floating={{
           tooltip: {
@@ -74,7 +85,11 @@ export function VoiceCallCardActions() {
       >
         <Symbol>screen_share</Symbol>
       </IconButton>
-      <Button variant="_error" onPress={() => voice.disconnect()}>
+      <Button
+        size={props.size}
+        variant="_error"
+        onPress={() => voice.disconnect()}
+      >
         <Symbol>call_end</Symbol>
       </Button>
     </Actions>
@@ -85,7 +100,6 @@ const Actions = styled("div", {
   base: {
     flexShrink: 0,
     gap: "var(--gap-md)",
-    margin: "var(--gap-md)",
     padding: "var(--gap-md)",
 
     display: "flex",

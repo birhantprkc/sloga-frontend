@@ -46,7 +46,7 @@ export function VoiceCallCardActiveRoom() {
       </Call>
 
       <VoiceCallCardStatus />
-      <VoiceCallCardActions />
+      <VoiceCallCardActions size="sm" />
     </View>
   );
 }
@@ -56,6 +56,9 @@ const View = styled("div", {
     minHeight: 0,
     height: "100%",
     width: "100%",
+
+    gap: "var(--gap-md)",
+    padding: "var(--gap-md)",
 
     display: "flex",
     flexDirection: "column",

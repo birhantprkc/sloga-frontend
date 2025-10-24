@@ -37,9 +37,9 @@ type State =
       channel: Channel;
     };
 
-const callCardContext = createContext<
-  (channel?: Channel, state?: { x: number; y: number; width: number }) => void
->(null!);
+type NewState = { channel: Channel; x: number; y: number; width: number };
+
+const callCardContext = createContext<(state?: NewState) => void>(null!);
 
 /**
  * Voice call card context
@@ -97,7 +97,6 @@ export function VoiceCallCardContext(props: { children: JSX.Element }) {
           "mousemove",
           (event) => {
             const position = state();
-
             if (position.type !== "floating") return controller.abort();
 
             setOffset((pos) => ({
@@ -132,30 +131,41 @@ export function VoiceCallCardContext(props: { children: JSX.Element }) {
           { signal: controller.signal },
         );
 
-        onCleanup(controller.abort);
+        onCleanup(() => controller.abort());
       }
     }),
   );
 
+  function updateState(state?: NewState) {
+    if (state) {
+      setState({
+        type: "fixed",
+        width: state.width,
+        x: state.x,
+        y: state.y,
+        channel: state.channel,
+      });
+    } else {
+      setState({
+        type: "floating",
+        corner: "bottom-right",
+      });
+    }
+  }
+
+  function updateStateWithTransition(state?: NewState) {
+    // no clue if this works
+
+    if (!document.startViewTransition) {
+      updateState(state);
+      return;
+    }
+
+    document.startViewTransition(() => updateState(state));
+  }
+
   return (
-    <callCardContext.Provider
-      value={(channel, state) => {
-        if (channel && state) {
-          setState({
-            type: "fixed",
-            width: state.width,
-            x: state.x,
-            y: state.y,
-            channel,
-          });
-        } else {
-          setState({
-            type: "floating",
-            corner: "bottom-right",
-          });
-        }
-      }}
-    >
+    <callCardContext.Provider value={updateStateWithTransition}>
       {props.children}
 
       <Portal ref={document.getElementById("floating")! as HTMLDivElement}>
@@ -163,8 +173,11 @@ export function VoiceCallCardContext(props: { children: JSX.Element }) {
           style={{
             position: "fixed",
             "z-index": 10,
-            transition: voice.room() && ".3s all",
-            "transition-timing-function": "cubic-bezier(0, 1.67, 0.85, 0.8)",
+            "transition-duration": moving() ? ".2s" : voice.room() && ".3s",
+            "transition-property": "all",
+            "transition-timing-function": moving()
+              ? "cubic-bezier(0, 1.67, 0.85, 0.8)"
+              : "cubic-bezier(1, 0, 0, 1)",
             ...position(),
             "pointer-events": "none",
             cursor: moving() ? "grabbing" : "grab",
@@ -223,10 +236,11 @@ export function VoiceChannelCallCardMount(props: { channel: Channel }) {
 
     if (rect?.left && w) {
       if (canUpdate) {
-        updateSize(props.channel, {
+        updateSize({
           x: rect.left,
           y: rect.top,
           width: w,
+          channel: props.channel,
         });
       } else {
         updateSize();
