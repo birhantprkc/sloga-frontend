@@ -532,8 +532,16 @@ export class Draft extends AbstractStore<"draft", TypeDraft> {
       this.getDraft(message.channelId).replies?.find(
         (reply) => reply.id === message.id,
       )
-    )
+    ) {
       return;
+    }
+
+    if (
+      (this.getDraft(message.channelId).replies?.length ?? 0) >=
+      CONFIGURATION.MAX_REPLIES
+    ) {
+      return;
+    }
 
     // We should not mention ourselves, otherwise use previous mention state
     const shouldMention =
