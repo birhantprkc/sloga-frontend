@@ -33,10 +33,9 @@ jobs:
       - run: pnpm install
       - run: pnpm build:deps
 
-      - name: Extract and compile catalogs
+      - name: Extract catalogs
         run: |
           pnpm --filter client lingui:extract
-          pnpm --filter client lingui:compile
       
       - name: Commit changes
         uses: EndBug/add-and-commit@v4
