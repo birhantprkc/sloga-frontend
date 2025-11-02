@@ -26,6 +26,7 @@ import { useState } from "@revolt/state";
 import {
   BlockedMessage,
   ConversationStart,
+  Deferred,
   JumpToBottom,
   ListView,
   MessageDivider,
@@ -896,35 +897,37 @@ export function Messages(props: Props) {
         fetchTop={caseFetchUpwards}
         fetchBottom={caseFetchDownwards}
       >
-        <div>
-          <div ref={listRef}>
-            <Show when={atStart()}>
-              <ConversationStart channel={props.channel} />
-            </Show>
-            {/* TODO: else show (loading icon) OR (load more) */}
-            <For each={messagesWithTail()}>
-              {(entry) => (
-                <Entry
-                  {...entry}
-                  highlightedMessageId={props.highlightedMessageId}
-                  editingMessageId={
-                    typeof state.draft.editingMessageId === "string"
-                      ? state.draft.editingMessageId
-                      : undefined
-                  }
-                />
-              )}
-            </For>
-            {/* TODO: show (loading icon) OR (load more) */}
-            <Show when={atEnd()}>
-              {props.pendingMessages?.({
-                tail: pendingMessageIsTrailing(),
-                ids: sentMessageIdempotency(),
-              })}
-              {props.typingIndicator ?? <Padding />}
-            </Show>
+        <Deferred>
+          <div>
+            <div ref={listRef}>
+              <Show when={atStart()}>
+                <ConversationStart channel={props.channel} />
+              </Show>
+              {/* TODO: else show (loading icon) OR (load more) */}
+              <For each={messagesWithTail()}>
+                {(entry) => (
+                  <Entry
+                    {...entry}
+                    highlightedMessageId={props.highlightedMessageId}
+                    editingMessageId={
+                      typeof state.draft.editingMessageId === "string"
+                        ? state.draft.editingMessageId
+                        : undefined
+                    }
+                  />
+                )}
+              </For>
+              {/* TODO: show (loading icon) OR (load more) */}
+              <Show when={atEnd()}>
+                {props.pendingMessages?.({
+                  tail: pendingMessageIsTrailing(),
+                  ids: sentMessageIdempotency(),
+                })}
+                {props.typingIndicator ?? <Padding />}
+              </Show>
+            </div>
           </div>
-        </div>
+        </Deferred>
       </ListView>
       <Show when={!atEnd()}>
         <AnchorToEnd>

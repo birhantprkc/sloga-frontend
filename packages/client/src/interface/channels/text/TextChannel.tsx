@@ -20,7 +20,6 @@ import { useState } from "@revolt/state";
 import { LAYOUT_SECTIONS } from "@revolt/state/stores/Layout";
 import {
   BelowFloatingHeader,
-  Deferred,
   Header,
   NewMessages,
   Text,
@@ -182,30 +181,28 @@ export function TextChannel(props: ChannelPageProps) {
             <VoiceChannelCallCardMount channel={props.channel} />
           </Show>
 
-          <Deferred>
-            <Messages
-              channel={props.channel}
-              limit={150}
-              lastReadId={lastId}
-              pendingMessages={(pendingProps) => (
-                <DraftMessages
-                  channel={props.channel}
-                  tail={pendingProps.tail}
-                  sentIds={pendingProps.ids}
-                />
-              )}
-              typingIndicator={
-                <TypingIndicator
-                  users={props.channel.typing}
-                  ownId={client().user!.id}
-                />
-              }
-              highlightedMessageId={highlightMessageId}
-              clearHighlightedMessage={() => navigate(".")}
-              atEndRef={(ref) => (atEndRef = ref)}
-              jumpToBottomRef={(ref) => (jumpToBottomRef = ref)}
-            />
-          </Deferred>
+          <Messages
+            channel={props.channel}
+            limit={150}
+            lastReadId={lastId}
+            pendingMessages={(pendingProps) => (
+              <DraftMessages
+                channel={props.channel}
+                tail={pendingProps.tail}
+                sentIds={pendingProps.ids}
+              />
+            )}
+            typingIndicator={
+              <TypingIndicator
+                users={props.channel.typing}
+                ownId={client().user!.id}
+              />
+            }
+            highlightedMessageId={highlightMessageId}
+            clearHighlightedMessage={() => navigate(".")}
+            atEndRef={(ref) => (atEndRef = ref)}
+            jumpToBottomRef={(ref) => (jumpToBottomRef = ref)}
+          />
 
           <MessageComposition
             channel={props.channel}
