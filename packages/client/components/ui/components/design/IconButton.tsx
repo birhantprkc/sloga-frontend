@@ -35,7 +35,7 @@ export function IconButton(props: Props) {
     "shape",
     "width",
     "variant",
-    "_fullHeight",
+    "_compositionSendMessage",
   ]);
   let ref: HTMLButtonElement | undefined;
 
@@ -143,10 +143,12 @@ const iconButton2 = cva({
       },
       false: {},
     },
-    _fullHeight: {
+    _compositionSendMessage: {
       true: {
+        width: "48px",
         aspectRatio: "unset",
         height: "100% !important",
+        borderEndRadius: "var(--borderRadius-xl)",
       },
     },
   },
@@ -156,7 +158,7 @@ const iconButton2 = cva({
     shape: "round",
     size: "sm",
     disabled: false,
-    _fullHeight: false,
+    _compositionSendMessage: false,
   },
   compoundVariants: [
     // disabled styles
