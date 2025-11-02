@@ -169,44 +169,31 @@ export function Message(props: Props) {
               content={t`Message was sent on another platform`}
               placement="top"
             >
-              <Symbol css={{ fontSize: "1rem !important", paddingTop: "5px" }}>
-                link
-              </Symbol>
+              <Symbol size={16}>link</Symbol>
             </Tooltip>
           </Match>
           <Match when={props.message.author?.privileged}>
             <Tooltip content={t`Official Communication`} placement="top">
-              <Symbol css={{ fontSize: "1rem !important", paddingTop: "5px" }}>
-                brightness_alert
-              </Symbol>
+              <Symbol size={16}>brightness_alert</Symbol>
             </Tooltip>
           </Match>
           <Match when={props.message.author?.bot}>
             <Tooltip content={t`Bot`} placement="top">
-              <Symbol
-                css={{ fontSize: "1rem !important", paddingTop: "5px" }}
-                fill
-              >
+              <Symbol size={16} fill>
                 smart_toy
               </Symbol>
             </Tooltip>
           </Match>
           <Match when={props.message.webhook}>
             <Tooltip content={t`Webhook`} placement="top">
-              <Symbol
-                css={{ fontSize: "1rem !important", paddingTop: "5px" }}
-                fill
-              >
+              <Symbol size={16} fill>
                 cloud
               </Symbol>
             </Tooltip>
           </Match>
           <Match when={props.message.isSuppressed}>
             <Tooltip content={t`Silent`} placement="top">
-              <Symbol
-                css={{ fontSize: "1rem !important", paddingTop: "5px" }}
-                fill
-              >
+              <Symbol size={16} fill>
                 notifications_off
               </Symbol>
             </Tooltip>
@@ -219,10 +206,7 @@ export function Message(props: Props) {
           >
             <NewUser>
               <Tooltip content={t`New to Stoat`} placement="top">
-                <Symbol
-                  css={{ fontSize: "1rem !important", paddingTop: "5px" }}
-                  fill
-                >
+                <Symbol size={16} fill>
                   spa
                 </Symbol>
               </Tooltip>
@@ -236,11 +220,7 @@ export function Message(props: Props) {
           >
             <NewUser>
               <Tooltip content={t`New to the server`} placement="top">
-                <Symbol
-                  css={{ fontSize: "1rem !important", paddingTop: "5px" }}
-                >
-                  spa
-                </Symbol>
+                <Symbol size={16}>spa</Symbol>
               </Tooltip>
             </NewUser>
           </Match>

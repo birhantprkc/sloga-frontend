@@ -5,9 +5,9 @@ import type { Message } from "stoat.js";
 import { styled } from "styled-system/jsx";
 
 import { Row } from "@revolt/ui/components/layout";
+import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
 import { MessageReply } from "../elements";
-import { Symbol } from "@revolt/ui/components/utils/Symbol"
 
 interface Props {
   /**
@@ -112,7 +112,7 @@ export function MessageReplyPreview(props: Props) {
       <Row gap="lg" align>
         <Show when={!props.self}>
           <MentionToggle mention={props.mention} onClick={props.toggle}>
-            <Symbol fontSize="1.25em !important">alternate_email</Symbol>
+            <Symbol size={16}>alternate_email</Symbol>
             <Switch fallback={<Trans>Off</Trans>}>
               <Match when={props.mention}>
                 <Trans>On</Trans>
@@ -121,7 +121,9 @@ export function MessageReplyPreview(props: Props) {
           </MentionToggle>
         </Show>
         <Dismiss onClick={props.dismiss}>
-          <Symbol fontSize="1.25em !important" fill>cancel</Symbol>
+          <Symbol size={16} fill>
+            cancel
+          </Symbol>
         </Dismiss>
       </Row>
     </Base>

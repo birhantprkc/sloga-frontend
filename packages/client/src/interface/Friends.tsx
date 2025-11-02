@@ -142,19 +142,16 @@ export function Friends() {
             </div>
 
             <NavigationRailItem
-              icon={<Symbol css={{ marginTop: "10px" }}>waving_hand</Symbol>}
+              icon={<Symbol>waving_hand</Symbol>}
               value="online"
             >
               <Trans>Online</Trans>
             </NavigationRailItem>
-            <NavigationRailItem
-              icon={<Symbol css={{ marginTop: "10px" }}>all_inbox</Symbol>}
-              value="all"
-            >
+            <NavigationRailItem icon={<Symbol>all_inbox</Symbol>} value="all">
               <Trans>All</Trans>
             </NavigationRailItem>
             <NavigationRailItem
-              icon={<Symbol css={{ marginTop: "10px" }}>notifications</Symbol>}
+              icon={<Symbol>notifications</Symbol>}
               value="pending"
             >
               <Trans>Pending</Trans>
@@ -164,10 +161,7 @@ export function Friends() {
                 </Badge>
               </Show>
             </NavigationRailItem>
-            <NavigationRailItem
-              icon={<Symbol css={{ marginTop: "10px" }}>block</Symbol>}
-              value="blocked"
-            >
+            <NavigationRailItem icon={<Symbol>block</Symbol>} value="blocked">
               <Trans>Blocked</Trans>
             </NavigationRailItem>
           </NavigationRail>

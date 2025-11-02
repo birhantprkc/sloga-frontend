@@ -260,7 +260,7 @@ const Config: SettingsConfiguration<{ server: Server }> = {
             {
               id: "native",
               hidden: !window.native,
-              icon: <Symbol fontSize="20px">desktop_windows</Symbol>,
+              icon: <Symbol size={20}>desktop_windows</Symbol>,
               title: <Trans>Desktop</Trans>,
             },
             // {

@@ -474,12 +474,9 @@ function Entry(
           attention={attentionState()}
           icon={
             <>
-              <Switch
-                fallback={<Symbol fontSize="1.5em !important">grid_3x3</Symbol>}
-              >
+              <Switch fallback={<Symbol>grid_3x3</Symbol>}>
                 <Match when={props.channel.isVoice}>
                   <Symbol
-                    fontSize="1.5em !important"
                     color={inCall() ? "var(--md-sys-color-primary)" : undefined}
                   >
                     headset_mic
@@ -509,14 +506,7 @@ function Entry(
                     });
                   }}
                 >
-                  <Symbol
-                    css={{
-                      fontSize: "1.2em !important",
-                      alignSelf: "center",
-                      marginTop: "7px",
-                    }}
-                    fill
-                  >
+                  <Symbol size={16} fill>
                     person_add
                   </Symbol>
                 </a>
@@ -536,14 +526,7 @@ function Entry(
                     });
                   }}
                 >
-                  <Symbol
-                    css={{
-                      fontSize: "1.1em !important",
-                      alignSelf: "center",
-                      marginTop: "7px",
-                    }}
-                    fill
-                  >
+                  <Symbol size={16} fill>
                     settings
                   </Symbol>
                 </a>
