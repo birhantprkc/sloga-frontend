@@ -43,8 +43,8 @@ const FormTextField = (
         value={local.control.value}
         oninput={(e) => {
           local.control.setValue(e.currentTarget.value);
+          local.control.markDirty(true);
         }}
-        onchange={() => local.control.markDirty(true)}
         required={local.control.isRequired}
         disabled={local.control.isDisabled}
       />
@@ -342,7 +342,7 @@ const FormSubmitButton = (props: {
     <Button
       type="submit"
       isDisabled={
-        !canSubmit(props.group) || !props.requireDirty || !props.group.isDirty
+        !canSubmit(props.group) || (!props.group.isDirty && props.requireDirty)
       }
     >
       {props.children}

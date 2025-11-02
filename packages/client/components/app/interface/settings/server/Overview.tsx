@@ -156,7 +156,7 @@ export default function ServerOverview(props: ServerSettingsProps) {
           />
           <Row>
             <Form2.Reset group={editGroup} onReset={onReset} />
-            <Form2.Submit group={editGroup}>
+            <Form2.Submit group={editGroup} requireDirty>
               <Trans>Save</Trans>
             </Form2.Submit>
             <Show when={editGroup.isPending}>
