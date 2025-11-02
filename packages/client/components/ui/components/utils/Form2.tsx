@@ -66,7 +66,7 @@ const FormTextField = (
 const FormTextEditor = (
   props: {
     control: IFormControl<string>;
-  } & Omit<ComponentProps<typeof TextEditor>, "onChange">,
+  } & Omit<ComponentProps<typeof TextEditor2>, "onChange">,
 ) => {
   const [local, remote] = splitProps(props, ["control"]);
 
