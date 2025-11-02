@@ -198,7 +198,7 @@ export function TextEditor2(props: Props) {
       () => props.nodeReplacement,
       (value) => {
         if (value) {
-          view.dom.focus();
+          view.focus();
 
           const text = value[0];
           if (text !== "_focus") {
@@ -220,6 +220,7 @@ export function TextEditor2(props: Props) {
       props.autoFocus &&
       setTimeout(() => {
         view.focus();
+
         view.dispatch(
           view.state.update({
             selection: {
