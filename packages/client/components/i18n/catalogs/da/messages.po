@@ -78,7 +78,7 @@ msgid "{0} emoji slots remaining"
 msgstr ""
 
 #. placeholder {0}: rejectedFiles.length
-#: src/interface/channels/text/Composition.tsx:226
+#: src/interface/channels/text/Composition.tsx:229
 msgid "{0} files exceed the maximum size limit of {maxSizeFormatted} and were not uploaded."
 msgstr ""
 
@@ -152,15 +152,15 @@ msgstr ""
 msgid "{0}'s roles"
 msgstr ""
 
-#: components/ui/components/features/messaging/elements/Reactions.tsx:192
+#: components/ui/components/features/messaging/elements/Reactions.tsx:190
 msgid "{unknown} reacted"
 msgstr ""
 
-#: components/ui/components/features/messaging/elements/Reactions.tsx:188
+#: components/ui/components/features/messaging/elements/Reactions.tsx:186
 msgid "{usernames} and {unknown} others reacted"
 msgstr ""
 
-#: components/ui/components/features/messaging/elements/Reactions.tsx:195
+#: components/ui/components/features/messaging/elements/Reactions.tsx:193
 msgid "{usernames} reacted"
 msgstr ""
 
@@ -229,7 +229,7 @@ msgstr ""
 msgid "<0>Be careful!</0><1/>This is not the same as the link that was displayed:"
 msgstr ""
 
-#: components/ui/components/features/messaging/elements/Reactions.tsx:190
+#: components/ui/components/features/messaging/elements/Reactions.tsx:188
 msgid "1 person reacted"
 msgstr "1 person reagerede"
 
@@ -303,7 +303,7 @@ msgstr ""
 
 #: components/app/menus/UserContextMenu.tsx:400
 #: components/app/menus/ServerContextMenu.tsx:321
-#: components/app/menus/MessageContextMenu.tsx:214
+#: components/app/menus/MessageContextMenu.tsx:255
 #: components/app/menus/ChannelContextMenu.tsx:166
 msgid "Admin Panel"
 msgstr ""
@@ -317,7 +317,7 @@ msgstr "Avanceret"
 msgid "Affects all roles and users"
 msgstr ""
 
-#: src/interface/Friends.tsx:154
+#: src/interface/Friends.tsx:151
 msgid "All"
 msgstr ""
 
@@ -449,7 +449,7 @@ msgstr "Udelukkelser"
 msgid "Block user"
 msgstr "Bloker bruger"
 
-#: src/interface/Friends.tsx:171
+#: src/interface/Friends.tsx:165
 msgid "Blocked"
 msgstr "Blokeret"
 
@@ -457,7 +457,7 @@ msgstr "Blokeret"
 msgid "Blocked User"
 msgstr "Blokeret bruger"
 
-#: components/app/interface/channels/text/Message.tsx:185
+#: components/app/interface/channels/text/Message.tsx:181
 msgid "Bot"
 msgstr "Bot"
 
@@ -473,7 +473,7 @@ msgstr ""
 msgid "Bug Tracker"
 msgstr "Fejlsporing"
 
-#: src/interface/navigation/channels/HomeSidebar.tsx:281
+#: src/interface/navigation/channels/HomeSidebar.tsx:283
 #: src/interface/channels/text/MemberSidebar.tsx:391
 #: components/ui/components/features/profiles/ProfileStatus.tsx:25
 msgid "Busy"
@@ -741,7 +741,8 @@ msgstr "Kopiér ID"
 msgid "Copy Invite URL"
 msgstr ""
 
-#: components/app/menus/MessageContextMenu.tsx:218
+#: components/app/menus/MessageContextMenu.tsx:139
+#: components/app/menus/MessageContextMenu.tsx:259
 #: components/app/menus/ChannelContextMenu.tsx:170
 msgid "Copy link"
 msgstr "Kopiér link"
@@ -750,7 +751,7 @@ msgstr "Kopiér link"
 msgid "Copy Link"
 msgstr ""
 
-#: components/app/menus/MessageContextMenu.tsx:222
+#: components/app/menus/MessageContextMenu.tsx:263
 msgid "Copy message ID"
 msgstr "Kopiér besked-ID"
 
@@ -762,7 +763,7 @@ msgstr ""
 msgid "Copy server ID"
 msgstr "Kopiér server-ID"
 
-#: components/app/menus/MessageContextMenu.tsx:126
+#: components/app/menus/MessageContextMenu.tsx:163
 msgid "Copy text"
 msgstr "Kopiér tekst"
 
@@ -981,7 +982,7 @@ msgid "Delete Invite"
 msgstr ""
 
 #: components/modal/modals/DeleteMessage.tsx:26
-#: components/app/menus/MessageContextMenu.tsx:203
+#: components/app/menus/MessageContextMenu.tsx:244
 #: components/app/menus/DraftMessageContextMenu.tsx:63
 msgid "Delete message"
 msgstr "Slet besked"
@@ -1100,7 +1101,7 @@ msgstr "Rediger identitet"
 msgid "Edit Identity"
 msgstr ""
 
-#: components/app/menus/MessageContextMenu.tsx:139
+#: components/app/menus/MessageContextMenu.tsx:176
 msgid "Edit message"
 msgstr "Rediger besked"
 
@@ -1229,7 +1230,7 @@ msgid "Find your com<0/>munity,<1/>connect with the world."
 msgstr ""
 
 #: src/interface/navigation/servers/UserMenu.tsx:157
-#: src/interface/navigation/channels/HomeSidebar.tsx:283
+#: src/interface/navigation/channels/HomeSidebar.tsx:285
 #: src/interface/channels/text/MemberSidebar.tsx:393
 #: components/ui/components/features/profiles/ProfileStatus.tsx:27
 msgid "Focus"
@@ -1380,7 +1381,7 @@ msgid "I understand the consequences"
 msgstr ""
 
 #: src/interface/navigation/servers/UserMenu.tsx:146
-#: src/interface/navigation/channels/HomeSidebar.tsx:285
+#: src/interface/navigation/channels/HomeSidebar.tsx:287
 #: src/interface/channels/text/MemberSidebar.tsx:395
 #: components/ui/components/features/profiles/ProfileStatus.tsx:29
 msgid "Idle"
@@ -1643,7 +1644,7 @@ msgstr ""
 msgid "Mark as read"
 msgstr "Markér som læst"
 
-#: components/app/menus/MessageContextMenu.tsx:123
+#: components/app/menus/MessageContextMenu.tsx:160
 msgid "Mark as unread"
 msgstr "Markér som ulæst"
 
@@ -1696,8 +1697,8 @@ msgstr "Besked"
 
 #. placeholder {0}: props.channel.recipient?.username
 #. placeholder {0}: props.channel.name
-#: src/interface/channels/text/Composition.tsx:365
-#: src/interface/channels/text/Composition.tsx:366
+#: src/interface/channels/text/Composition.tsx:371
+#: src/interface/channels/text/Composition.tsx:372
 msgid "Message {0}"
 msgstr ""
 
@@ -1733,8 +1734,8 @@ msgstr "Beskeder"
 msgid "Minimise to Tray"
 msgstr ""
 
-#: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx:24
-#: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx:41
+#: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx:32
+#: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx:50
 msgid "Missing permission"
 msgstr ""
 
@@ -1829,11 +1830,11 @@ msgstr ""
 msgid "New Password"
 msgstr "Ny adgangskode"
 
-#: components/app/interface/channels/text/Message.tsx:221
+#: components/app/interface/channels/text/Message.tsx:208
 msgid "New to Stoat"
 msgstr ""
 
-#: components/app/interface/channels/text/Message.tsx:238
+#: components/app/interface/channels/text/Message.tsx:222
 msgid "New to the server"
 msgstr ""
 
@@ -1845,7 +1846,7 @@ msgstr "Kaldenavn"
 msgid "No permissions set yet"
 msgstr ""
 
-#: src/interface/Friends.tsx:237
+#: src/interface/Friends.tsx:231
 msgid "Nobody here right now!"
 msgstr ""
 
@@ -1872,7 +1873,7 @@ msgstr "Notifikationer"
 msgid "Off"
 msgstr "Fra"
 
-#: components/app/interface/channels/text/Message.tsx:178
+#: components/app/interface/channels/text/Message.tsx:176
 msgid "Official Communication"
 msgstr "Officiel kommunikation"
 
@@ -1880,7 +1881,7 @@ msgstr "Officiel kommunikation"
 msgid "Official Server"
 msgstr "Officiel server"
 
-#: src/interface/navigation/channels/HomeSidebar.tsx:286
+#: src/interface/navigation/channels/HomeSidebar.tsx:288
 #: src/interface/channels/text/MemberSidebar.tsx:396
 #: components/ui/components/features/profiles/ProfileStatus.tsx:30
 msgid "Offline"
@@ -1915,7 +1916,7 @@ msgstr ""
 
 #: src/interface/Friends.tsx:148
 #: src/interface/navigation/servers/UserMenu.tsx:136
-#: src/interface/navigation/channels/HomeSidebar.tsx:279
+#: src/interface/navigation/channels/HomeSidebar.tsx:281
 #: src/interface/channels/text/MemberSidebar.tsx:389
 #: components/ui/components/features/profiles/ProfileStatus.tsx:23
 msgid "Online"
@@ -1936,6 +1937,10 @@ msgstr ""
 
 #: components/app/menus/ChannelContextMenu.tsx:140
 msgid "Open channel settings"
+msgstr ""
+
+#: components/app/menus/MessageContextMenu.tsx:136
+msgid "Open file"
 msgstr ""
 
 #: components/app/menus/ServerContextMenu.tsx:288
@@ -1970,7 +1975,7 @@ msgstr ""
 msgid "Password"
 msgstr "Adgangskode"
 
-#: src/interface/Friends.tsx:160
+#: src/interface/Friends.tsx:157
 msgid "Pending"
 msgstr ""
 
@@ -1982,7 +1987,7 @@ msgstr "Rettigheder"
 msgid "Pick a username that you want people to be able to find you by. This can be changed later in your user settings."
 msgstr "Vælg et brugernavn, som folk kan finde dig på. Dette kan ændres senere i dine brugerindstillinger."
 
-#: components/app/menus/MessageContextMenu.tsx:153
+#: components/app/menus/MessageContextMenu.tsx:190
 msgid "Pin message"
 msgstr ""
 
@@ -2022,7 +2027,7 @@ msgstr ""
 msgid "Privacy Policy"
 msgstr "Privatlivspolitik"
 
-#: components/markdown/plugins/anchors.tsx:101
+#: components/markdown/plugins/anchors.tsx:106
 msgid "Private Channel"
 msgstr ""
 
@@ -2109,7 +2114,7 @@ msgstr "Afvis venneanmodning"
 msgid "Relevance"
 msgstr "Relevans"
 
-#: components/app/menus/MessageContextMenu.tsx:193
+#: components/app/menus/MessageContextMenu.tsx:230
 msgid "Remove all reactions"
 msgstr ""
 
@@ -2129,7 +2134,7 @@ msgstr "Fjern ven"
 msgid "Remove other members' avatars"
 msgstr ""
 
-#: components/app/menus/MessageContextMenu.tsx:170
+#: components/app/menus/MessageContextMenu.tsx:207
 msgid "Remove reaction"
 msgstr ""
 
@@ -2147,7 +2152,7 @@ msgstr ""
 msgid "Rep Stoat using Discord rich presence."
 msgstr ""
 
-#: components/app/menus/MessageContextMenu.tsx:119
+#: components/app/menus/MessageContextMenu.tsx:156
 msgid "Reply"
 msgstr "Svar"
 
@@ -2160,7 +2165,7 @@ msgstr "Svarer på"
 msgid "Report"
 msgstr "Rapportér"
 
-#: components/app/menus/MessageContextMenu.tsx:208
+#: components/app/menus/MessageContextMenu.tsx:249
 msgid "Report message"
 msgstr "Rapportér besked"
 
@@ -2181,7 +2186,7 @@ msgstr ""
 msgid "Resend verification"
 msgstr "Send bekræftelse igen"
 
-#: components/ui/components/utils/Form2.tsx:327
+#: components/ui/components/utils/Form2.tsx:328
 #: components/modal/modals/MFARecovery.tsx:64
 #: components/auth/src/flows/FlowReset.tsx:44
 #: components/auth/src/flows/FlowConfirmReset.tsx:43
@@ -2242,7 +2247,11 @@ msgstr "Roller"
 msgid "Save"
 msgstr "Gem"
 
-#: src/interface/channels/text/Composition.tsx:363
+#: components/app/menus/MessageContextMenu.tsx:147
+msgid "Save file"
+msgstr ""
+
+#: src/interface/channels/text/Composition.tsx:369
 msgid "Save to your notes"
 msgstr "Gem i dine noter"
 
@@ -2419,7 +2428,7 @@ msgstr ""
 msgid "Sign Up"
 msgstr ""
 
-#: components/app/interface/channels/text/Message.tsx:205
+#: components/app/interface/channels/text/Message.tsx:195
 msgid "Silent"
 msgstr ""
 
@@ -2565,7 +2574,7 @@ msgid "That action had no effect."
 msgstr ""
 
 #. placeholder {0}: file.name
-#: src/interface/channels/text/Composition.tsx:219
+#: src/interface/channels/text/Composition.tsx:220
 msgid "The file \"{0}\" ({fileSize}) exceeds the maximum size limit of {maxSizeFormatted}."
 msgstr ""
 
@@ -2670,7 +2679,7 @@ msgstr ""
 msgid "Unblock user"
 msgstr "Fjern blokering af bruger"
 
-#: components/markdown/plugins/anchors.tsx:129
+#: components/markdown/plugins/anchors.tsx:138
 msgid "Unknown Server"
 msgstr ""
 
@@ -2694,7 +2703,7 @@ msgstr ""
 msgid "Unmute Server"
 msgstr ""
 
-#: components/app/menus/MessageContextMenu.tsx:155
+#: components/app/menus/MessageContextMenu.tsx:192
 msgid "Unpin message"
 msgstr ""
 
@@ -2855,7 +2864,7 @@ msgstr ""
 msgid "We've sent you a verification email. Please allow up to 10 minutes for it to arrive."
 msgstr "Vi har sendt dig en bekræftelses-e-mail. Der kan gå op til 10 minutter, før den ankommer."
 
-#: components/app/interface/channels/text/Message.tsx:195
+#: components/app/interface/channels/text/Message.tsx:188
 msgid "Webhook"
 msgstr ""
 
@@ -2969,7 +2978,7 @@ msgstr ""
 msgid "You do not have permission to do this."
 msgstr ""
 
-#: components/ui/components/features/messaging/composition/MessageBox.tsx:201
+#: components/ui/components/features/messaging/composition/MessageBox.tsx:217
 msgid "You don't have permission to send messages in this channel."
 msgstr "Du har ikke tilladelse til at sende beskeder i denne kanal."
 
