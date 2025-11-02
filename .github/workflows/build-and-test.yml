@@ -119,7 +119,9 @@ jobs:
           submodules: recursive
       - run: |
           git fetch origin stable:stable
-          git push origin main:stable
+          git checkout stable
+          git rebase main
+          git push origin stable
 
   # deploy:
   #   name: Deploy
