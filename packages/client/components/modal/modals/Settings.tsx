@@ -19,6 +19,7 @@ export function SettingsModal(
     <Portal mount={document.getElementById("floating")!}>
       <div
         style={{
+          "z-index": 100,
           position: "fixed",
           width: "100%",
           height: "100vh",
