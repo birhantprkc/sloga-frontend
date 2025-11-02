@@ -31,6 +31,7 @@ jobs:
         with:
           node-version: lts/*
       - run: pnpm install
+      - run: pnpm build:deps
 
       - name: Extract and compile catalogs
         run: |
