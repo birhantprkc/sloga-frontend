@@ -88,6 +88,11 @@ function Participants() {
   return (
     <Grid>
       <TrackLoop tracks={tracks}>{() => <ParticipantTile />}</TrackLoop>
+      {/* <div class={tile()} />
+      <div class={tile()} />
+      <div class={tile()} />
+      <div class={tile()} />
+      <div class={tile()} /> */}
     </Grid>
   );
 }
@@ -97,7 +102,7 @@ const Grid = styled("div", {
     display: "grid",
     gap: "var(--gap-md)",
     padding: "var(--gap-md)",
-    gridTemplateColumns: "repeat(2, 1fr)",
+    gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
   },
 });
 
