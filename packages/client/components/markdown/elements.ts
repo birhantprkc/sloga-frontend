@@ -7,8 +7,8 @@ const inlineCodeStyles: SystemStyleObject = {
   padding: "1px 4px",
   borderRadius: "var(--borderRadius-md)",
 
-  color: "var(--md-sys-color-on-primary-container)",
-  background: "var(--md-sys-color-primary-container)",
+  color: "#c9d1d9",
+  background: "#0d1117",
 };
 
 export const paragraph = styled("p", {

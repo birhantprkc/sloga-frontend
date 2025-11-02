@@ -25,7 +25,7 @@ export const baseTheme = EditorView.theme({
   },
   ".cm-scroller": {
     fontFamily: "inherit",
-  },
+  }
 });
 
 export const markdownHighlightStyle = HighlightStyle.define([

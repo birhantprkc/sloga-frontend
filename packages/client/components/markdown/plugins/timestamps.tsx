@@ -60,7 +60,7 @@ export function RenderTimestamp(props: { format: string; date: Dayjs }) {
 /**
  * Regex for matching timestamps
  */
-const RE_TIMESTAMP = /<t:([0-9]+)(?::(\w))?>/g;
+export const RE_TIMESTAMP = /<t:([0-9]+)(?::(\w))?>/g;
 
 export const remarkTimestamps: Plugin = () => (tree) => {
   visit(

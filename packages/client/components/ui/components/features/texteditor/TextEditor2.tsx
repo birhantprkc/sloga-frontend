@@ -11,6 +11,7 @@ import { AutoCompleteSearchSpace } from "../../utils/autoComplete";
 import { codeMirrorAutoComplete } from "./codeMirrorAutoComplete";
 import { isInFencedCodeBlock } from "./codeMirrorCommon";
 import { smartLineWrapping } from "./codeMirrorLineWrap";
+import { markPlugins } from "./codeMirrorMarks";
 import { markdownTheme } from "./codeMirrorTheme";
 import { codeMirrorWidgets } from "./codeMirrorWidgets";
 
@@ -139,6 +140,7 @@ export function TextEditor2(props: Props) {
 
         /* Custom items */
         codeMirrorWidgets(),
+        markPlugins,
 
         /* Widgets */
         markdownTheme,
@@ -309,6 +311,11 @@ const editor = css({
 
   "& .md-code": {
     fontFamily: "var(--fonts-monospace)",
+
+    padding: "0.5px 4px",
+
+    color: "#c9d1d9",
+    background: "#0d1117",
   },
 
   // adapted from elements.ts

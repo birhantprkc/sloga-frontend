@@ -25,7 +25,7 @@ export function codeMirrorWidgets() {
     regexp: new RegExp(
       RE_UNICODE_EMOJI.source +
       "|" +
-      /:([0-7][0-9A-HJKMNP-TV-Z]{25}):|<@([0-7][0-9A-HJKMNP-TV-Z]{25})>|<#([0-7][0-9A-HJKMNP-TV-Z]{25})>|<%([0-7][0-9A-HJKMNP-TV-Z]{25})>/
+      /:([0-7][0-9A-HJKMNP-TV-Z]{25}):|<@([0-7][0-9A-HJKMNP-TV-Z]{25})>|<#([0-7][0-9A-HJKMNP-TV-Z]{25})>|<%([0-7][0-9A-HJKMNP-TV-Z]{25})/
         .source,
       "g",
     ),
@@ -141,7 +141,7 @@ const widgetsTheme = EditorView.theme({
     height: "16px",
     objectFit: "cover",
     borderRadius: "var(--borderRadius-full)",
-  }
+  },
 });
 
 class EmojiWidget extends WidgetType {
