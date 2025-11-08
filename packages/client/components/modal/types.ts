@@ -22,8 +22,6 @@ import { ProtocolV1 } from "stoat.js/lib/events/v1";
 
 import type { SettingsConfigurations } from "@revolt/app";
 
-import { ChangelogPost } from "./modals/Changelog";
-
 export type Modals =
   | {
       type: "add_bot";
@@ -50,7 +48,6 @@ export type Modals =
   | {
       type: "changelog";
       initial?: number;
-      posts: ChangelogPost[];
     }
   | {
       type: "channel_info";

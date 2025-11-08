@@ -13,6 +13,9 @@ import type { Client, User } from "stoat.js";
 import { useModals } from "@revolt/modal";
 import { State } from "@revolt/state";
 
+import { State as LifecycleState } from "./Controller";
+
+import { CHANGELOG_MODAL_CONST } from "@revolt/modal/modals/Changelog";
 import ClientController from "./Controller";
 
 export type { default as ClientController } from "./Controller";
@@ -28,6 +31,26 @@ export function ClientContext(props: { state: State; children: JSXElement }) {
   // eslint-disable-next-line solid/reactivity
   const controller = new ClientController(props.state);
   onCleanup(() => controller.dispose());
+
+  createEffect(() => {
+    const lastIndex = props.state.settings.getValue("changelog:last_index");
+    if (controller.lifecycle.state() === LifecycleState.Ready) return;
+
+    if (
+      lastIndex !== CHANGELOG_MODAL_CONST.index &&
+      new Date() < CHANGELOG_MODAL_CONST.until
+    ) {
+      openModal({
+        type: "changelog",
+        initial: CHANGELOG_MODAL_CONST.index,
+      });
+
+      props.state.settings.setValue(
+        "changelog:last_index",
+        CHANGELOG_MODAL_CONST.index,
+      );
+    }
+  });
 
   createEffect(
     on(

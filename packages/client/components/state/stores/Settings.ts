@@ -63,6 +63,11 @@ interface SettingsDefinition {
    * Whether to include admin panel links in context menus
    */
   "advanced:admin_panel": boolean;
+
+  /**
+   * Last read changelog index
+   */
+  "changelog:last_index": number;
 }
 
 /**
@@ -71,11 +76,13 @@ interface SettingsDefinition {
 type ValueType<T extends keyof SettingsDefinition> =
   SettingsDefinition[T] extends boolean
     ? "boolean"
-    : SettingsDefinition[T] extends string
-      ? "string"
-      : (
-          v: Partial<SettingsDefinition[T]>,
-        ) => SettingsDefinition[T] | undefined;
+    : SettingsDefinition[T] extends number
+      ? "number"
+      : SettingsDefinition[T] extends string
+        ? "string"
+        : (
+            v: Partial<SettingsDefinition[T]>,
+          ) => SettingsDefinition[T] | undefined;
 
 /**
  * Expected types of settings keys, enforce some sort of validation is present for all keys.
@@ -87,6 +94,7 @@ const EXPECTED_TYPES: { [K in keyof SettingsDefinition]: ValueType<K> } = {
   "appearance:compact_mode": "boolean",
   "advanced:copy_id": "boolean",
   "advanced:admin_panel": "boolean",
+  "changelog:last_index": "number",
 };
 
 /**
@@ -152,7 +160,7 @@ export class Settings extends AbstractStore<"settings", TypeSettings> {
           settings[key] = input[key];
         }
       } else if (typeof input[key] === expectedType) {
-        settings[key] = input[key];
+        settings[key] = input[key] as never;
       }
     }
 
