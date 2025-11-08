@@ -573,7 +573,7 @@ msgstr "Change username"
 msgid "Change your profile per-server"
 msgstr "Change your profile per-server"
 
-#: components/modal/modals/Changelog.tsx:66
+#: components/modal/modals/Changelog.tsx:129
 msgid "Changelog"
 msgstr "Changelog"
 
@@ -651,7 +651,7 @@ msgstr "Client Settings"
 #: components/modal/modals/CreateCategory.tsx:51
 #: components/modal/modals/CreateBot.tsx:44
 #: components/modal/modals/ChannelInfo.tsx:16
-#: components/modal/modals/Changelog.tsx:46
+#: components/modal/modals/Changelog.tsx:108
 #: components/modal/modals/AddMembersToGroup.tsx:70
 #: components/modal/modals/AddFriend.tsx:43
 msgid "Close"
@@ -2063,6 +2063,10 @@ msgstr "React to messages with emoji"
 msgid "Read Message History"
 msgstr "Read Message History"
 
+#: components/modal/modals/Changelog.tsx:103
+msgid "Read More"
+msgstr "Read More"
+
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx:253
 msgid "Read past messages sent in channel"
 msgstr "Read past messages sent in channel"
@@ -2824,8 +2828,8 @@ msgid "View members"
 msgstr "View members"
 
 #: components/modal/modals/Changelog.tsx:50
-msgid "View older updates"
-msgstr "View older updates"
+#~ msgid "View older updates"
+#~ msgstr "View older updates"
 
 #: src/interface/channels/ChannelHeader.tsx:189
 msgid "View pinned messages"

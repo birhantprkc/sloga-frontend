@@ -573,7 +573,7 @@ msgstr ""
 msgid "Change your profile per-server"
 msgstr ""
 
-#: components/modal/modals/Changelog.tsx:66
+#: components/modal/modals/Changelog.tsx:129
 msgid "Changelog"
 msgstr ""
 
@@ -651,7 +651,7 @@ msgstr "ᓵꖎ╎ᒷリℸ ᓭᒷℸℸ╎リ⊣ᓭ"
 #: components/modal/modals/CreateCategory.tsx:51
 #: components/modal/modals/CreateBot.tsx:44
 #: components/modal/modals/ChannelInfo.tsx:16
-#: components/modal/modals/Changelog.tsx:46
+#: components/modal/modals/Changelog.tsx:108
 #: components/modal/modals/AddMembersToGroup.tsx:70
 #: components/modal/modals/AddFriend.tsx:43
 msgid "Close"
@@ -2063,6 +2063,10 @@ msgstr ""
 msgid "Read Message History"
 msgstr "∷ᒷᔑ↸ ᒲᒷᓭᓭᔑ⊣ᒷ ⍑╎ᓭℸ𝙹∷||"
 
+#: components/modal/modals/Changelog.tsx:103
+msgid "Read More"
+msgstr ""
+
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx:253
 msgid "Read past messages sent in channel"
 msgstr ""
@@ -2824,8 +2828,8 @@ msgid "View members"
 msgstr ""
 
 #: components/modal/modals/Changelog.tsx:50
-msgid "View older updates"
-msgstr "⍊╎ᒷ∴ 𝙹ꖎ↸ᒷ∷ ⚍!¡↸ᔑℸᒷᓭ"
+#~ msgid "View older updates"
+#~ msgstr "⍊╎ᒷ∴ 𝙹ꖎ↸ᒷ∷ ⚍!¡↸ᔑℸᒷᓭ"
 
 #: src/interface/channels/ChannelHeader.tsx:189
 msgid "View pinned messages"
