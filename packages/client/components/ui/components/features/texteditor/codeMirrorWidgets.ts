@@ -10,12 +10,15 @@ import {
 import { Channel, ServerMember, ServerRole, User } from "stoat.js";
 
 import { useClient } from "@revolt/client";
-import { RE_UNICODE_EMOJI, unicodeEmojiUrl } from "@revolt/markdown/emoji/UnicodeEmoji";
+import {
+  RE_UNICODE_EMOJI,
+  unicodeEmojiUrl,
+} from "@revolt/markdown/emoji/UnicodeEmoji";
 import { userInformation } from "@revolt/markdown/users";
 import { useSmartParams } from "@revolt/routing";
 
-import { isInCodeBlock } from "./codeMirrorCommon";
 import { parseUnicodeEmoji } from "@revolt/markdown/plugins/unicodeEmoji";
+import { isInCodeBlock } from "./codeMirrorCommon";
 
 export function codeMirrorWidgets() {
   const getClient = useClient();
@@ -24,12 +27,16 @@ export function codeMirrorWidgets() {
   const widgetMatcher = new MatchDecorator({
     regexp: new RegExp(
       RE_UNICODE_EMOJI.source +
-      "|" +
-      /:([0-7][0-9A-HJKMNP-TV-Z]{25}):|<@([0-7][0-9A-HJKMNP-TV-Z]{25})>|<#([0-7][0-9A-HJKMNP-TV-Z]{25})>|<%([0-7][0-9A-HJKMNP-TV-Z]{25})/
-        .source,
+        "|" +
+        /:([0-7][0-9A-HJKMNP-TV-Z]{25}):|<@([0-7][0-9A-HJKMNP-TV-Z]{25})>|<#([0-7][0-9A-HJKMNP-TV-Z]{25})>|<%([0-7][0-9A-HJKMNP-TV-Z]{25})/
+          .source,
       "g",
     ),
-    decoration: ([str, unicodeEmoji, emojiId, userId, channelId, roleId], view, pos) => {
+    decoration: (
+      [str, unicodeEmoji, emojiId, userId, channelId, roleId],
+      view,
+      pos,
+    ) => {
       if (isInCodeBlock(view.state, pos, pos + str[0].length)) {
         return null;
       }
@@ -42,9 +49,7 @@ export function codeMirrorWidgets() {
       if (unicodeEmoji) {
         const { str, pack } = parseUnicodeEmoji(unicodeEmoji);
 
-        widget = new EmojiWidget(
-          unicodeEmojiUrl(pack, str),
-        );
+        widget = new EmojiWidget(unicodeEmojiUrl(pack, str));
       } else if (emojiId) {
         widget = new EmojiWidget(
           `${client?.configuration?.features.autumn.url}/emojis/${emojiId}`,
@@ -52,9 +57,9 @@ export function codeMirrorWidgets() {
       } else if (userId) {
         const member = serverId
           ? getClient().serverMembers.getByKey({
-            server: serverId,
-            user: userId,
-          })
+              server: serverId,
+              user: userId,
+            })
           : undefined;
 
         const user = getClient().users.get(userId);
@@ -121,13 +126,13 @@ const widgetsTheme = EditorView.theme({
   ".cm-mention-widget": {
     "vertical-align": "bottom",
 
-    "gap": "4px",
+    gap: "4px",
     "padding-left": "2px",
     "padding-right": "6px",
     "align-items": "center",
-    "display": "inline-flex",
+    display: "inline-flex",
 
-    height: '1.4em', // same as line-height
+    height: "1.4em", // same as line-height
 
     "font-weight": 600,
     "border-radius": "var(--borderRadius-lg)",
@@ -190,17 +195,17 @@ class UserMentionWidget extends WidgetType {
     const { username, avatar } = userInformation(this.user, this.member);
 
     if (avatar) {
-      const image = document.createElement('img');
+      const image = document.createElement("img");
       image.src = avatar;
       mention.appendChild(image);
     } else {
-      const icon = document.createElement('span');
+      const icon = document.createElement("span");
       icon.innerText = "at";
-      icon.classList.add('material-symbols-outlined');
+      icon.classList.add("material-symbols-outlined");
       mention.appendChild(icon);
     }
 
-    const name = document.createElement('span');
+    const name = document.createElement("span");
     name.textContent = username;
     mention.appendChild(name);
 
@@ -225,12 +230,12 @@ class ChannelMentionWidget extends WidgetType {
     mention.classList.add("cm-mention-widget");
     mention.contentEditable = "false";
 
-    const icon = document.createElement('span');
+    const icon = document.createElement("span");
     icon.innerText = "tag";
-    icon.classList.add('material-symbols-outlined');
+    icon.classList.add("material-symbols-outlined");
     mention.appendChild(icon);
 
-    const name = document.createElement('span');
+    const name = document.createElement("span");
     name.textContent = this.channel.name;
     mention.appendChild(name);
 

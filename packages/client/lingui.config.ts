@@ -5,8 +5,9 @@ import { LinguiConfig } from "@lingui/conf";
 import { Languages } from "./components/i18n/Languages";
 
 /* eslint-disable */
-const supressWarningIfWereNotInLinguiExtract = !
-(process as any)?.argv[1]?.includes("lingui-extract.js");
+const supressWarningIfWereNotInLinguiExtract = !(
+  process as any
+)?.argv[1]?.includes("lingui-extract.js");
 /* eslint-enable */
 
 export default defineConfig({

@@ -39,11 +39,13 @@ export function ServerRoleEditor(props: { context: Server; roleId: string }) {
       ) as ServerRole,
   );
 
+  /* eslint-disable solid/reactivity */
   const editGroup = createFormGroup({
     name: createFormControl(role()?.name || ""),
     colour: createFormControl(role()?.colour || null),
     hoist: createFormControl(role()?.hoist == true),
   });
+  /* eslint-enable solid/reactivity */
 
   const [pickerRef, setPickerRef] = createSignal<HTMLDivElement>();
 
@@ -71,9 +73,11 @@ export function ServerRoleEditor(props: { context: Server; roleId: string }) {
     editGroup.controls.colour.setValue(role()?.colour || null);
   }
 
+  const submit = Form2.useSubmitHandler(editGroup, onSubmit, onReset);
+
   return (
     <Column>
-      <form onSubmit={Form2.submitHandler(editGroup, onSubmit, onReset)}>
+      <form onSubmit={submit}>
         <Column gap="lg">
           <Column>
             <Form2.TextField

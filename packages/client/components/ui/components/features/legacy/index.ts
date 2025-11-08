@@ -1,5 +1,5 @@
 import { CategoryButton, Checkbox, List, Switch } from "../../design";
-import { Dialog, type DialogProps } from "../../design/Dialog";
+import { type DialogProps, Dialog } from "../../design/Dialog";
 import { TextField } from "../../design/TextField";
 import { NavigationRail } from "../../navigation";
 

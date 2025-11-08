@@ -72,8 +72,11 @@ export abstract class AbstractStore<T extends keyof Store, D> {
   /**
    * Set some value in this store
    */
-  protected set: SetStoreFunction<Store[T]> = (...args: any[]) => {
-    (this.state.set as any)(this.key, ...args);
+  protected set: SetStoreFunction<Store[T]> = (...args: unknown[]) => {
+    (this.state.set as unknown as (...args: unknown[]) => void)(
+      this.key,
+      ...args,
+    );
   };
 
   /**

@@ -19,13 +19,14 @@ export const baseTheme = EditorView.theme({
   ".cm-cursor, .cm-dropCursor": {
     borderLeftColor: "var(--md-sys-color-on-surface)",
   },
-  "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
-    color: "var(--md-sys-color-on-primary-container)",
-    backgroundColor: "var(--md-sys-color-primary-container)",
-  },
+  "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection":
+    {
+      color: "var(--md-sys-color-on-primary-container)",
+      backgroundColor: "var(--md-sys-color-primary-container)",
+    },
   ".cm-scroller": {
     fontFamily: "inherit",
-  }
+  },
 });
 
 export const markdownHighlightStyle = HighlightStyle.define([

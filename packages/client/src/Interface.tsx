@@ -1,4 +1,4 @@
-import { JSX, Match, Show, Switch, createEffect } from "solid-js";
+import { JSX, Match, Switch, createEffect } from "solid-js";
 
 import { Server } from "stoat.js";
 import { styled } from "styled-system/jsx";
@@ -7,16 +7,15 @@ import { ChannelContextMenu, ServerContextMenu } from "@revolt/app";
 import { MessageCache } from "@revolt/app/interface/channels/text/MessageCache";
 import { Titlebar } from "@revolt/app/interface/desktop/Titlebar";
 import { useClient, useClientLifecycle } from "@revolt/client";
-import { State, TransitionType } from "@revolt/client/Controller";
+import { State } from "@revolt/client/Controller";
 import { NotificationsWorker } from "@revolt/client/NotificationsWorker";
 import { useModals } from "@revolt/modal";
 import { Navigate, useBeforeLeave } from "@revolt/routing";
 import { useState } from "@revolt/state";
 import { LAYOUT_SECTIONS } from "@revolt/state/stores/Layout";
-import { Button, CircularProgress } from "@revolt/ui";
+import { CircularProgress } from "@revolt/ui";
 
 import { Sidebar } from "./interface/Sidebar";
-import { pendingUpdate } from "./serviceWorkerInterface";
 
 /**
  * Application layout
@@ -111,27 +110,6 @@ const Interface = (props: { children: JSX.Element }) => {
     </MessageCache>
   );
 };
-
-const Notice = styled("div", {
-  base: {
-    textAlign: "center",
-    fontSize: "0.8em",
-    padding: "8px",
-    // borderRadius: "var(--borderRadius-md)",
-  },
-  variants: {
-    disconnected: {
-      true: {
-        color: "var(--md-sys-color-on-primary-container)",
-        background: "var(--md-sys-color-primary-container)",
-      },
-      false: {
-        color: "var(--md-sys-color-outline)",
-        background: "var(--md-sys-color-surface-container-high)",
-      },
-    },
-  },
-});
 
 /**
  * Parent container

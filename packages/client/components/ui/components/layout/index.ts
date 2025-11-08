@@ -1,4 +1,4 @@
 export { Column } from "./Column";
-export { Header, BelowFloatingHeader } from "./Header";
-export { Row } from "./Row";
+export { BelowFloatingHeader, Header } from "./Header";
 export { main } from "./Main";
+export { Row } from "./Row";

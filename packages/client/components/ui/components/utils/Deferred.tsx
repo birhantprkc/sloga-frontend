@@ -1,5 +1,4 @@
-import { Match } from "solid-js";
-import { JSX, Switch, createSignal, onMount } from "solid-js";
+import { JSX, Match, Switch, createSignal, onMount } from "solid-js";
 
 import { CircularProgress } from "../design";
 

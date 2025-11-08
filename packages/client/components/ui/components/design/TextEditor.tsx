@@ -9,9 +9,9 @@ import {
   createMemo,
   createSignal,
   on,
+  onCleanup,
   onMount,
 } from "solid-js";
-import { onCleanup } from "solid-js";
 import { Portal } from "solid-js/web";
 
 import { AutoSizer } from "@dschz/solid-auto-sizer";

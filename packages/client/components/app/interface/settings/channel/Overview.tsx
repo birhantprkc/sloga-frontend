@@ -81,9 +81,11 @@ export default function ChannelOverview(props: ChannelSettingsProps) {
     await props.channel.edit(changes);
   }
 
+  const submit = Form2.useSubmitHandler(editGroup, onSubmit, onReset);
+
   return (
     <Column gap="xl">
-      <form onSubmit={Form2.submitHandler(editGroup, onSubmit, onReset)}>
+      <form onSubmit={submit}>
         <Column>
           <Text class="label">
             <Trans>Channel Info</Trans>

@@ -1,8 +1,12 @@
 import { For, Match, Show, Switch, createSignal } from "solid-js";
 
 import { useLingui } from "@lingui-solid/solid/macro";
-import { API, Channel, Server } from "stoat.js";
-import { DEFAULT_PERMISSION_DIRECT_MESSAGE } from "stoat.js";
+import {
+  API,
+  Channel,
+  DEFAULT_PERMISSION_DIRECT_MESSAGE,
+  Server,
+} from "stoat.js";
 import { css } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 
@@ -24,6 +28,7 @@ export function ChannelPermissionsEditor(props: Props) {
   const { t } = useLingui();
 
   const context: Context =
+    // eslint-disable-next-line solid/reactivity
     props.context instanceof Server ? "Server" : props.context.type;
 
   /**

@@ -4,16 +4,10 @@ import {
   Setter,
   batch,
   createContext,
-  createMemo,
   createSignal,
   useContext,
 } from "solid-js";
-import {
-  AudioTrack,
-  RoomContext,
-  useMaybeRoomContext,
-  useTracks,
-} from "solid-livekit-components";
+import { RoomContext } from "solid-livekit-components";
 
 import { Room } from "livekit-client";
 import { Channel } from "stoat.js";

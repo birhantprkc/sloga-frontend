@@ -1,12 +1,4 @@
-import {
-  Match,
-  Show,
-  Switch,
-  createEffect,
-  createMemo,
-  on,
-  onMount,
-} from "solid-js";
+import { Match, Show, Switch, createEffect, createMemo, on } from "solid-js";
 
 import { useLingui } from "@lingui-solid/solid/macro";
 import { VirtualContainer } from "@minht11/solid-virtual-container";
@@ -378,7 +370,7 @@ function Member(props: { user?: User; member?: ServerMember }) {
    * Create user information
    */
   const user = () =>
-    userInformation(props.user ?? props.member?.user!, props.member);
+    userInformation((props.user ?? props.member?.user)!, props.member);
 
   /**
    * Get user status
@@ -399,7 +391,7 @@ function Member(props: { user?: User; member?: ServerMember }) {
   return (
     <div
       use:floating={floatingUserMenus(
-        props.user ?? props.member?.user!,
+        (props.user ?? props.member?.user)!,
         props.member,
       )}
     >

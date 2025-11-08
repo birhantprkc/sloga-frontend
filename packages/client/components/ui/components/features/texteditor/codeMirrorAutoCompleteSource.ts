@@ -27,10 +27,10 @@ const MAPPED_EMOJI_KEYS = EMOJI_KEYS.map(
 );
 
 const RE_match = /(?<!\w)[:@%#]\w*/;
-let RE_emojiValidFor = /(?<!\w):\w*/;
-let RE_mentionValidFor = /(?<!\w)@\w*/;
-let RE_roleValidFor = /(?<!\w)@\w*/;
-let RE_channelValidFor = /(?<!\w)#\w*/;
+const RE_emojiValidFor = /(?<!\w):\w*/;
+const RE_mentionValidFor = /(?<!\w)@\w*/;
+const RE_roleValidFor = /(?<!\w)@\w*/;
+const RE_channelValidFor = /(?<!\w)#\w*/;
 
 export function codeMirrorAutoCompleteSource(
   searchSpace: Accessor<AutoCompleteSearchSpace>,
@@ -105,6 +105,7 @@ export function codeMirrorAutoCompleteSource(
     ),
   );
 
+  // eslint-disable-next-line solid/reactivity
   return (context: CompletionContext) => {
     if (isInCodeBlock(context.state, context.pos, context.pos)) {
       return null;

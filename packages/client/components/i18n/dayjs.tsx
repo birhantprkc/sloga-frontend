@@ -9,7 +9,7 @@ import localizedFormat from "dayjs/plugin/localizedFormat";
 import relativeTime from "dayjs/plugin/relativeTime";
 import updateLocale from "dayjs/plugin/updateLocale";
 
-import { LanguageEntry, Languages, type LocaleOptions } from "./Languages";
+import { type LocaleOptions, LanguageEntry, Languages } from "./Languages";
 
 dayjs.extend(calendar);
 dayjs.extend(localizedFormat);
@@ -99,5 +99,6 @@ export function initTime() {
  * @returns Dayjs creator
  */
 export function useTime() {
+  // eslint-disable-next-line solid/reactivity
   return (date?: dayjs.ConfigType) => dayjs(date).locale(...timeLocale());
 }

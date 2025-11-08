@@ -1,3 +1,4 @@
+/* eslint-disable solid/reactivity */
 import { useFloating } from "solid-floating-ui";
 import {
   For,

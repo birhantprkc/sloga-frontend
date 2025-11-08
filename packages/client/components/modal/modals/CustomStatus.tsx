@@ -16,9 +16,11 @@ export function CustomStatusModal(
   const { t } = useLingui();
   const { showError } = useModals();
 
+  /* eslint-disable solid/reactivity */
   const group = createFormGroup({
     text: createFormControl(props.client.user?.status?.text ?? ""),
   });
+  /* eslint-enable solid/reactivity */
 
   async function onSubmit() {
     try {
@@ -34,6 +36,8 @@ export function CustomStatusModal(
       showError(error);
     }
   }
+
+  const submit = Form2.useSubmitHandler(group, onSubmit);
 
   return (
     <Dialog
@@ -53,7 +57,7 @@ export function CustomStatusModal(
       ]}
       isDisabled={group.isPending}
     >
-      <form onSubmit={Form2.submitHandler(group, onSubmit)}>
+      <form onSubmit={submit}>
         <Column>
           <Form2.TextField
             name="text"

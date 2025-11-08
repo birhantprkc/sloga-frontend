@@ -14,7 +14,8 @@ export function DeleteCategoryModal(
   const { showError } = useModals();
 
   const deleteCategory = useMutation(() => ({
-    mutationFn: () => props.server.edit({
+    mutationFn: () =>
+      props.server.edit({
         categories: (props.server.categories ?? []).filter(
           (c) => c.id !== props.categoryId,
         ),

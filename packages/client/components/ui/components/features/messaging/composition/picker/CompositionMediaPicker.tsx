@@ -1,20 +1,21 @@
 import { useFloating } from "solid-floating-ui";
 import {
   Accessor,
+  JSX,
   Match,
+  Ref,
   Setter,
+  Show,
   Switch,
   createContext,
   createSignal,
   onCleanup,
   onMount,
 } from "solid-js";
-import { JSX, Ref, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import { Motion, Presence } from "solid-motionone";
 
 import { flip, offset, shift } from "@floating-ui/dom";
-import { Node } from "prosemirror-model";
 import { cva } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 

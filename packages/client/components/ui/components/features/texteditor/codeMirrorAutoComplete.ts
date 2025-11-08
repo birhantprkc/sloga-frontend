@@ -1,27 +1,27 @@
-import { EditorView, keymap } from "@codemirror/view";
 import {
   autocompletion,
   closeCompletion,
   currentCompletions,
 } from "@codemirror/autocomplete";
+import { EditorView, keymap } from "@codemirror/view";
+import { Accessor } from "solid-js";
 import { AutoCompleteSearchSpace } from "../../utils/autoComplete";
 import { codeMirrorAutoCompleteSource } from "./codeMirrorAutoCompleteSource";
-import { Accessor } from "solid-js";
 
 const completionTheme = EditorView.theme({
   ".cm-scroller": {
     "font-family": "inherit",
   },
   ".cm-tooltip.cm-tooltip-autocomplete": {
-    "border": "none",
-    "display": "flex",
+    border: "none",
+    display: "flex",
     "flex-direction": "column",
-    "padding": "var(--gap-md) 0",
-    "overflow": "hidden",
+    padding: "var(--gap-md) 0",
+    overflow: "hidden",
     "border-radius": "var(--borderRadius-xs)",
-    "background": "var(--md-sys-color-surface-container)",
-    "color": "var(--md-sys-color-on-surface)",
-    "fill": "var(--md-sys-color-on-surface)",
+    background: "var(--md-sys-color-surface-container)",
+    color: "var(--md-sys-color-on-surface)",
+    fill: "var(--md-sys-color-on-surface)",
     "box-shadow": "0 0 3px var(--md-sys-color-shadow)",
   },
   ".cm-tooltip.cm-tooltip-autocomplete > ul": {
@@ -30,15 +30,15 @@ const completionTheme = EditorView.theme({
     "font-family": "inherit",
   },
   ".cm-tooltip.cm-tooltip-autocomplete > ul > li": {
-    "display": "flex",
+    display: "flex",
     "align-items": "center",
 
-    "cursor": "pointer",
-    "gap": "var(--gap-md)",
-    "background": "transparent",
-    "padding": "var(--gap-sm) var(--gap-md)",
+    cursor: "pointer",
+    gap: "var(--gap-md)",
+    background: "transparent",
+    padding: "var(--gap-sm) var(--gap-md)",
   },
-  ".cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected=\"true\"]": {
+  '.cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected="true"]': {
     background:
       "color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent)",
   },
@@ -46,36 +46,38 @@ const completionTheme = EditorView.theme({
     "text-decoration": "inherit",
   },
   ".cm-user-preview": {
-    "display": "inline-block",
-    "width": "24px",
-    "height": "24px",
+    display: "inline-block",
+    width: "24px",
+    height: "24px",
     "vertical-align": "baseline",
     // "margin-bottom": "-0.2em",
     "object-fit": "cover",
-    "padding": "var(--gap-xxs)",
-    "border-radius": "var(--borderRadius-circle)"
+    padding: "var(--gap-xxs)",
+    "border-radius": "var(--borderRadius-circle)",
   },
   ".cm-emoji-preview": {
-    "display": "inline-block",
-    "width": "24px",
-    "height": "24px",
+    display: "inline-block",
+    width: "24px",
+    height: "24px",
     "vertical-align": "baseline",
     // "margin-bottom": "-0.2em",
     "object-fit": "contain",
-    "padding": "var(--gap-xxs)",
+    padding: "var(--gap-xxs)",
   },
   ".cm-role-preview": {
-    "display": "inline-block",
-    "width": "12px",
-    "height": "12px",
+    display: "inline-block",
+    width: "12px",
+    height: "12px",
     "vertical-align": "baseline",
     // "margin-bottom": "-0.2em",
-    "margin": "6px",
+    margin: "6px",
     "border-radius": "var(--borderRadius-circle)",
-  }
+  },
 });
 
-export function codeMirrorAutoComplete(searchSpace?: Accessor<AutoCompleteSearchSpace>) {
+export function codeMirrorAutoComplete(
+  searchSpace?: Accessor<AutoCompleteSearchSpace>,
+) {
   const extension = autocompletion({
     activateOnTyping: true,
     aboveCursor: true,
@@ -97,10 +99,10 @@ export function codeMirrorAutoComplete(searchSpace?: Accessor<AutoCompleteSearch
         return "autocomplete-tooltip autocomplete-tooltip-unknown";
       }
     },
-    optionClass: (completion) => "example-option-class",
+    // optionClass: (completion) => "example-option-class",
     addToOptions: [
       {
-        render: (completion, state, view) => {
+        render: (completion, _state, _view) => {
           const blankSvg =
             'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg"/>';
           if (completion.type == "emoji") {
@@ -118,7 +120,9 @@ export function codeMirrorAutoComplete(searchSpace?: Accessor<AutoCompleteSearch
           } else if (completion.type == "role") {
             const span = document.createElement("span");
             span.classList.add("cm-role-preview");
-            span.style.background = (completion as never as { colour: string }).colour || 'var(--md-sys-color-surface-container-highest)';
+            span.style.background =
+              (completion as never as { colour: string }).colour ||
+              "var(--md-sys-color-surface-container-highest)";
             return span;
           } else if (completion.type == "channel") {
             const span = document.createElement("span");

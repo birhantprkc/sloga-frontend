@@ -47,26 +47,34 @@ export function RenderMention(props: {
 }
 
 export function UserMention(props: { userId: string; disabled?: boolean }) {
-  const user = useUser(props.userId);
-  const floatingProps = props.disabled
-    ? undefined
-    : {
-        userCard: user().user
-          ? {
-              user: user().user!,
-              member: user().member,
-            }
-          : undefined,
-        contextMenu: () => (
-          <UserContextMenu user={user().user!} member={user().member} />
-        ),
-      };
+  const user = useUser(() => props.userId);
+
   return (
     <Switch
       fallback={<span class={mention({ valid: false })}>Unknown User</span>}
     >
       <Match when={user().user}>
-        <div class={mention({ isLink: true })} use:floating={floatingProps}>
+        <div
+          class={mention({ isLink: true })}
+          use:floating={
+            props.disabled
+              ? undefined
+              : {
+                  userCard: user().user
+                    ? {
+                        user: user().user!,
+                        member: user().member,
+                      }
+                    : undefined,
+                  contextMenu: () => (
+                    <UserContextMenu
+                      user={user().user!}
+                      member={user().member}
+                    />
+                  ),
+                }
+          }
+        >
           <Avatar size={16} src={user().avatar} fallback={user().username} />
           <ColouredText colour={user().colour!}>{user().username}</ColouredText>
         </div>
@@ -121,7 +129,7 @@ export const remarkMentions: Plugin = () => (tree) => {
     (
       node: { type: "text"; value: string },
       idx,
-      parent: { children: any[] },
+      parent: { children: unknown[] },
     ) => {
       const elements = node.value.split(RE_MENTION);
       if (elements.length === 1) return; // no matches

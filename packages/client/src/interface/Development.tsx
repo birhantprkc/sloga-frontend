@@ -18,7 +18,6 @@ import {
   DataTable,
   Form2,
   IconButton,
-  OverrideSwitch,
   Row,
   Text,
   TextField,
@@ -55,8 +54,10 @@ function FormTest() {
     console.info(group.data);
   };
 
+  const submit = Form2.useSubmitHandler(group, onSubmit);
+
   return (
-    <form onSubmit={Form2.submitHandler(group, onSubmit)}>
+    <form onSubmit={submit}>
       <label for="name">Your name</label>
       <Form2.TextField name="name" control={group.controls.name} />
 

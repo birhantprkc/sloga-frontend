@@ -1,6 +1,5 @@
 import { resolve } from "node:path";
 import { defineConfig, mergeConfig } from "vite";
-import solidPlugin from "vite-plugin-solid";
 
 import viteConfig from "./vite.config";
 

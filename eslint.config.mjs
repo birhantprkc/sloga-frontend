@@ -20,6 +20,7 @@ export default defineConfig([
   eslint.configs.recommended,
   tseslint.configs.recommended,
   solid,
+  prettier,
   {
     rules: {
       "@typescript-eslint/no-unused-vars": [
@@ -27,9 +28,11 @@ export default defineConfig([
         {
           caughtErrors: "all",
           varsIgnorePattern: "^_",
+          argsIgnorePattern: "^_",
         },
       ],
+      "solid/jsx-no-undef": ["off"],
+      "prettier/prettier": ["warn"],
     },
   },
-  prettier,
 ]);

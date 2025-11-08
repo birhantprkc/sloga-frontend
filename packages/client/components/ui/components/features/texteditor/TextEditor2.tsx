@@ -132,10 +132,12 @@ export function TextEditor2(props: Props) {
 
         /* Placeholder */
         placeholderCompartment.of(
+          // eslint-disable-next-line solid/reactivity
           props.placeholder ? placeholder(props.placeholder) : [],
         ),
 
         /* Autocomplete */
+        // eslint-disable-next-line solid/reactivity
         codeMirrorAutoComplete(props.autoCompleteSearchSpace),
 
         /* Custom items */
@@ -146,6 +148,7 @@ export function TextEditor2(props: Props) {
         markdownTheme,
 
         /* Handle change event */
+        // eslint-disable-next-line solid/reactivity
         EditorView.updateListener.of((view) => {
           if (view.docChanged) {
             const text = view.state.doc.toString().trim();

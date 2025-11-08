@@ -35,6 +35,8 @@ export function CreateServerModal(
     }
   }
 
+  const submit = Form2.useSubmitHandler(group, onSubmit);
+
   return (
     <Dialog
       show={props.show}
@@ -53,7 +55,7 @@ export function CreateServerModal(
       ]}
       isDisabled={group.isPending}
     >
-      <form onSubmit={Form2.submitHandler(group, onSubmit)}>
+      <form onSubmit={submit}>
         <Column>
           <Text>
             <Trans>

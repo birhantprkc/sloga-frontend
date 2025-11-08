@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import { createSignal, onCleanup } from "solid-js";
 
 import { PublicBot, PublicChannelInvite } from "stoat.js";
 import { styled } from "styled-system/jsx";

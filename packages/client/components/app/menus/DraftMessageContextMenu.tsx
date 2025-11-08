@@ -28,14 +28,14 @@ export function DraftMessageContextMenu(props: Props) {
   /**
    * Retry sending the draft message
    */
-  function retrySend(ev: MouseEvent) {
+  function retrySend() {
     state.draft.retrySend(client(), props.channel, props.draft.idempotencyKey);
   }
 
   /**
    * Delete the draft message
    */
-  function deleteMessage(ev: MouseEvent) {
+  function deleteMessage() {
     state.draft.cancelSend(props.channel, props.draft.idempotencyKey);
   }
 

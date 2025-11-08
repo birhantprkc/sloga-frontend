@@ -126,7 +126,7 @@ export function MessageContextMenu(props: { message?: Message; file?: File }) {
    * Copies the link to the original url of the file
    */
   function CopyLink() {
-    navigator.clipboard.writeText(props.file?.originalUrl!);
+    navigator.clipboard.writeText(props.file?.originalUrl ?? "");
   }
 
   return (

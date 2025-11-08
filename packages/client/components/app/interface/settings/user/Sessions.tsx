@@ -31,7 +31,6 @@ import {
   iconSize,
 } from "@revolt/ui";
 
-import _MdAutoMode from "@material-design-icons/svg/outlined/auto_mode.svg?component-solid";
 import MdLogout from "@material-design-icons/svg/outlined/logout.svg?component-solid";
 
 /**

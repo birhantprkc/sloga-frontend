@@ -20,12 +20,14 @@ export function ServerIdentityModal(
   const client = useClient();
   const { showError } = useModals();
 
+  /* eslint-disable solid/reactivity */
   const group = createFormGroup({
     avatar: createFormControl<string | File[] | null>(
       props.member.animatedAvatarURL,
     ),
     nickname: createFormControl(props.member.nickname ?? ""),
   });
+  /* eslint-enable solid/reactivity */
 
   async function onSubmit() {
     try {
@@ -62,6 +64,8 @@ export function ServerIdentityModal(
     }
   }
 
+  const submit = Form2.useSubmitHandler(group, onSubmit);
+
   return (
     <Dialog
       show={props.show}
@@ -80,7 +84,7 @@ export function ServerIdentityModal(
       ]}
       isDisabled={group.isPending}
     >
-      <form onSubmit={Form2.submitHandler(group, onSubmit)}>
+      <form onSubmit={submit}>
         <Column>
           <Form2.FileInput
             control={group.controls.avatar}

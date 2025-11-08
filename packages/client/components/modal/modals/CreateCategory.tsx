@@ -40,6 +40,8 @@ export function CreateCategoryModal(
     }
   }
 
+  const submit = Form2.useSubmitHandler(group, onSubmit);
+
   return (
     <Dialog
       show={props.show}
@@ -58,7 +60,7 @@ export function CreateCategoryModal(
       ]}
       isDisabled={group.isPending}
     >
-      <form onSubmit={Form2.submitHandler(group, onSubmit)}>
+      <form onSubmit={submit}>
         <Form2.TextField
           name="name"
           control={group.controls.name}

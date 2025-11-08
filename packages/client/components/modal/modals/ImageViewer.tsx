@@ -14,13 +14,7 @@ import Panzoom, { PanzoomObject } from "@panzoom/panzoom";
 import { css } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 
-import {
-  Column,
-  Dialog,
-  DialogProps,
-  IconButton,
-  Text,
-} from "@revolt/ui";
+import { Column, Dialog, DialogProps, IconButton, Text } from "@revolt/ui";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
 import { Modals } from "../types";
@@ -37,7 +31,7 @@ export function ImageViewerModal(
       () => ref(),
       (ref) => {
         if (ref) {
-          ref.addEventListener('mousedown', e => {
+          ref.addEventListener("mousedown", (e) => {
             // prevent panzoom from panning when
             // context menu is triggered (or other
             // non-dragging buttons are used!)

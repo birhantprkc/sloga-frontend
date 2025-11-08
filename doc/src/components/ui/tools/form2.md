@@ -28,12 +28,14 @@ async function yourSubmitHandler() {
 function onReset() {
   // group.controls.<control>.setValue(/* whatever it should be / now is */)
 }
+
+const submit = Form2.useSubmitHandler(editGroup, onSubmit, onReset);
 ```
 
 Then create the form itself in the JSX code:
 
 ```ts
-<form onSubmit={Form2.submitHandler(group, yourSubmitHandler, onReset)}>
+<form onSubmit={submit}>
   // use a wrapper for TextField that implements control:
   <Form2.TextField
     name="name"

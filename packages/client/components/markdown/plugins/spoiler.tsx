@@ -36,10 +36,12 @@ export function RenderSpoiler(props: {
   disabled?: boolean;
 }) {
   const [shown, setShown] = createSignal(false);
-  const action = props.disabled ? undefined : () => setShown(true);
 
   return (
-    <Spoiler shown={shown()} onClick={action}>
+    <Spoiler
+      shown={shown()}
+      onClick={props.disabled ? undefined : () => setShown(true)}
+    >
       {props.children}
     </Spoiler>
   );
@@ -53,12 +55,12 @@ export const remarkSpoiler: Plugin = () => (tree) => {
       node: {
         children: (
           | { type: "text"; value: string }
-          | { type: "paragraph"; children: any[] }
-          | { type: "spoiler"; children: any[] }
+          | { type: "paragraph"; children: unknown[] }
+          | { type: "spoiler"; children: unknown[] }
         )[];
       },
-      idx,
-      parent,
+      _idx,
+      _parent,
     ) => {
       // Visitor state
       let searchingForEnd = -1;

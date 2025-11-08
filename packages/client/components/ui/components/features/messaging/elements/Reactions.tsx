@@ -5,7 +5,6 @@ import { API } from "stoat.js";
 import { styled } from "styled-system/jsx";
 
 import { Emoji } from "@revolt/markdown";
-import { schema } from "@revolt/markdown/prosemirror";
 import { useUsers } from "@revolt/markdown/users";
 import { Ripple, Text } from "@revolt/ui/components/design";
 import { Tooltip } from "@revolt/ui/components/floating";
@@ -154,7 +153,7 @@ function Reaction(props: {
   removeReaction(id: string): void;
 }) {
   const { t } = useLingui();
-  const users = useUsers([...(props.users?.values() ?? [])]);
+  const users = useUsers(() => [...(props.users?.values() ?? [])]);
 
   /**
    * Handle toggling reaction

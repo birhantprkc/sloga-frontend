@@ -50,7 +50,7 @@ export const remarkUnicodeEmoji: Plugin = () => (tree) => {
     (
       node: { type: "text"; value: string },
       idx,
-      parent: { children: any[] },
+      parent: { children: unknown[] },
     ) => {
       const elements = node.value.split(RE_UNICODE_EMOJI);
       if (elements.length === 1) return; // no matches

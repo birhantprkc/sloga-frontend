@@ -21,11 +21,8 @@ import {
   SystemMessageIcon,
   Tooltip,
   Username,
-  iconSize,
 } from "@revolt/ui";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
-
-import MdLink from "@material-design-icons/svg/filled/link.svg?component-solid";
 
 import { MessageContextMenu } from "../../../menus/MessageContextMenu";
 import {

@@ -45,7 +45,7 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
       inputVolume: 1.0,
       outputVolume: 1.0,
       userVolumes: {},
-      userMutes: {}
+      userMutes: {},
     };
   }
 
@@ -91,8 +91,7 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
     if (typeof input.userMutes === "object") {
       Object.entries(input.userMutes)
         .filter(
-          ([userId, muted]) =>
-            typeof userId === "string" && muted === true,
+          ([userId, muted]) => typeof userId === "string" && muted === true,
         )
         .forEach(([k, v]) => (data.userMutes[k] = v));
     }
@@ -106,7 +105,7 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
    * @param volume Volume
    */
   setUserVolume(userId: string, volume: number) {
-    this.set('userVolumes', userId, volume);
+    this.set("userVolumes", userId, volume);
   }
 
   /**
@@ -124,7 +123,7 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
    * @param muted Whether they should be muted
    */
   setUserMuted(userId: string, muted: boolean) {
-    this.set('userMutes', userId, muted);
+    this.set("userMutes", userId, muted);
   }
 
   /**

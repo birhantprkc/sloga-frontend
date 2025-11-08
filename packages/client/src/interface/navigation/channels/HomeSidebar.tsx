@@ -1,6 +1,6 @@
 import { Match, Show, Switch, createMemo, splitProps } from "solid-js";
 
-import { Plural, Trans, useLingui } from "@lingui-solid/solid/macro";
+import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import { VirtualContainer } from "@minht11/solid-virtual-container";
 import { Channel } from "stoat.js";
 import { css } from "styled-system/css";
@@ -11,7 +11,6 @@ import { useClient } from "@revolt/client";
 import { TextWithEmoji } from "@revolt/markdown";
 import { useModals } from "@revolt/modal";
 import { useLocation, useNavigate } from "@revolt/routing";
-import { iconSize } from "@revolt/ui";
 import {
   Avatar,
   Deferred,
@@ -19,11 +18,11 @@ import {
   OverflowingText,
   Tooltip,
   UserStatus,
+  iconSize,
   typography,
 } from "@revolt/ui";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
-import MdPlus from "@material-design-icons/svg/outlined/add.svg?component-solid";
 import MdClose from "@material-design-icons/svg/outlined/close.svg?component-solid";
 
 import { SidebarBase } from "./common";

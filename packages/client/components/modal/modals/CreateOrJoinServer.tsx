@@ -1,10 +1,6 @@
 import { Trans } from "@lingui-solid/solid/macro";
-import { styled } from "styled-system/jsx";
 
-import { Dialog, DialogProps, iconSize } from "@revolt/ui";
-
-import MdAdd from "@material-design-icons/svg/outlined/add.svg?component-solid";
-import MdLink from "@material-design-icons/svg/outlined/link.svg?component-solid";
+import { Dialog, DialogProps } from "@revolt/ui";
 
 import { useModals } from "..";
 import { Modals } from "../types";

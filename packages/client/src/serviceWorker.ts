@@ -34,7 +34,7 @@ precacheAndRoute(
       }
 
       return true;
-    } catch (err) {
+    } catch {
       return false;
     }
   }),

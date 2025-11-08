@@ -29,16 +29,16 @@ export function ListServerBans(props: { server: Server }) {
     queryFn: () => props.server.fetchBans() as Promise<ServerBan[]>,
   }));
 
-  function pardon(ban: ServerBan) {
-    ban
-      .pardon()
-      .then(() =>
-        client.setQueryData(
-          ["bans", props.server.id],
-          query.data!.filter((entry) => entry.id.user !== ban.id.user),
-        ),
-      )
-      .catch(showError);
+  async function pardon(ban: ServerBan) {
+    try {
+      await ban.pardon();
+      client.setQueryData(
+        ["bans", props.server.id],
+        query.data!.filter((entry) => entry.id.user !== ban.id.user),
+      );
+    } catch (error) {
+      showError(error);
+    }
   }
 
   const [filterName, setFilterName] = createSignal("");

@@ -77,7 +77,7 @@ export default defineConfig({
     rollupOptions: {
       external: ["hast"],
     },
-    sourcemap: true
+    sourcemap: true,
   },
   optimizeDeps: {
     exclude: ["hast"],

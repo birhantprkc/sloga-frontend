@@ -2,6 +2,7 @@ import {
   BiRegularAlignLeft,
   BiRegularLeftArrowAlt,
   BiRegularMinus,
+  BiRegularPhone,
   BiRegularPin,
   BiRegularPlus,
   BiRegularRightArrowAlt,
@@ -12,7 +13,6 @@ import {
   BiSolidPurchaseTag,
   BiSolidShieldX,
   BiSolidXCircle,
-  BiRegularPhone,
 } from "solid-icons/bi";
 import { Match, Switch } from "solid-js";
 
@@ -95,9 +95,7 @@ export function SystemMessageIcon(props: {
           >
             <BiRegularPin size={16} />
           </Match>
-          <Match
-            when={props.systemMessage.type === "call_started"}
-          >
+          <Match when={props.systemMessage.type === "call_started"}>
             <BiRegularPhone size={16} />
           </Match>
         </Switch>
@@ -105,16 +103,6 @@ export function SystemMessageIcon(props: {
     </Base>
   );
 }
-
-const success = new Set<SystemMessage["type"]>(["user_added", "user_joined"]);
-
-const warning = new Set<SystemMessage["type"]>(["channel_ownership_changed"]);
-
-const danger = new Set<SystemMessage["type"]>([
-  "user_left",
-  "user_kicked",
-  "user_banned",
-]);
 
 const Base = styled("div", {
   base: {

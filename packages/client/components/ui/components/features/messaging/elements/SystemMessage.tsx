@@ -2,27 +2,25 @@ import { JSX, Match, Show, Switch } from "solid-js";
 
 import { Trans } from "@lingui-solid/solid/macro";
 import {
+  CallStartedSystemMessage,
   ChannelEditSystemMessage,
   ChannelOwnershipChangeSystemMessage,
   ChannelRenamedSystemMessage,
   MessagePinnedSystemMessage,
-  CallStartedSystemMessage,
   SystemMessage as SystemMessageClass,
   TextSystemMessage,
   User,
   UserModeratedSystemMessage,
   UserSystemMessage,
 } from "stoat.js";
-import { cva } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 
+import { useTime } from "@revolt/i18n";
+import { time } from "@revolt/markdown/elements";
 import { RenderAnchor } from "@revolt/markdown/plugins/anchors";
 import { UserMention } from "@revolt/markdown/plugins/mentions";
 import { useSmartParams } from "@revolt/routing";
 import { formatTime, Time } from "@revolt/ui/components/utils";
-import { Tooltip } from "@revolt/ui/components/floating";
-import { useTime } from "@revolt/i18n";
-import { time } from "@revolt/markdown/elements";
 
 interface Props {
   /**
@@ -198,34 +196,58 @@ export function SystemMessage(props: Props) {
           </Trans>
         </Match>
         <Match when={props.systemMessage.type === "call_started"}>
-          <Show when={(props.systemMessage as CallStartedSystemMessage).finishedAt != null} fallback={
-            <Trans>
-              <UserMention
-                userId={(props.systemMessage as CallStartedSystemMessage).byId}
-              />{" "}
-              started a call
-            </Trans>
-          }>
+          <Show
+            when={
+              (props.systemMessage as CallStartedSystemMessage).finishedAt !=
+              null
+            }
+            fallback={
+              <Trans>
+                <UserMention
+                  userId={
+                    (props.systemMessage as CallStartedSystemMessage).byId
+                  }
+                />{" "}
+                started a call
+              </Trans>
+            }
+          >
             <Trans>
               <UserMention
                 userId={(props.systemMessage as CallStartedSystemMessage).byId}
               />{" "}
               started a call that lasted{" "}
             </Trans>
-            <span class={time()} use:floating={{ tooltip: {
-              placement: "top",
-              content: () => <Time format="datetime" value={(props.systemMessage as CallStartedSystemMessage).finishedAt} />,
-              aria:
-                formatTime(dayjs, {
-                  format: "datetime",
-                  value: (props.systemMessage as CallStartedSystemMessage).finishedAt,
-                }) as string
-              }
-            }}>
+            <span
+              class={time()}
+              use:floating={{
+                tooltip: {
+                  placement: "top",
+                  content: () => (
+                    <Time
+                      format="datetime"
+                      value={
+                        (props.systemMessage as CallStartedSystemMessage)
+                          .finishedAt
+                      }
+                    />
+                  ),
+                  aria: formatTime(dayjs, {
+                    format: "datetime",
+                    value: (props.systemMessage as CallStartedSystemMessage)
+                      .finishedAt,
+                  }) as string,
+                },
+              }}
+            >
               <Time
-                value={(props.systemMessage as CallStartedSystemMessage).finishedAt}
-                referenceTime={(props.systemMessage as CallStartedSystemMessage).startedAt}
-                hideSuffix={ true }
+                value={
+                  (props.systemMessage as CallStartedSystemMessage).finishedAt
+                }
+                referenceTime={
+                  (props.systemMessage as CallStartedSystemMessage).startedAt
+                }
+                hideSuffix={true}
                 format="relative"
               />
             </span>

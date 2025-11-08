@@ -16,7 +16,6 @@ import MdChevronRight from "@material-design-icons/svg/outlined/chevron_right.sv
 import MdPeople from "@material-design-icons/svg/outlined/people.svg?component-solid";
 // import { determineLink } from "../../../lib/links";
 // import { modalController } from "../../../controllers/modals/ModalController";
-import MdTag from "@material-design-icons/svg/outlined/tag.svg?component-solid";
 
 const link = cva({
   base: {

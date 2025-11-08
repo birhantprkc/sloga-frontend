@@ -12,16 +12,14 @@ import {
   useTracks,
 } from "solid-livekit-components";
 
-import { Trans } from "@lingui-solid/solid/macro";
-import { useLingui } from "@lingui-solid/solid/macro";
 import { Track } from "livekit-client";
 import { cva } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 
 import { UserContextMenu } from "@revolt/app";
 import { useUser } from "@revolt/markdown/users";
-import { InRoom, useVoice } from "@revolt/rtc";
-import { Avatar, Button, IconButton } from "@revolt/ui/components/design";
+import { InRoom } from "@revolt/rtc";
+import { Avatar } from "@revolt/ui/components/design";
 import { OverflowingText } from "@revolt/ui/components/utils";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
@@ -34,9 +32,6 @@ import { VoiceCallCardStatus } from "./VoiceCallCardStatus";
  * Call card (active)
  */
 export function VoiceCallCardActiveRoom() {
-  const voice = useVoice();
-  const { t } = useLingui();
-
   return (
     <View>
       <Call>

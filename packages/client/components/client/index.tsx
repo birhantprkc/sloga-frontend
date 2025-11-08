@@ -1,6 +1,6 @@
 import {
-  Accessor,
   type JSXElement,
+  Accessor,
   createContext,
   createEffect,
   on,
@@ -25,6 +25,7 @@ const clientContext = createContext(null! as ClientController);
 export function ClientContext(props: { state: State; children: JSXElement }) {
   const { openModal } = useModals();
 
+  // eslint-disable-next-line solid/reactivity
   const controller = new ClientController(props.state);
   onCleanup(() => controller.dispose());
 

@@ -34,7 +34,7 @@ export { Button } from "./Button";
 export { CategoryButton } from "./CategoryButton";
 export { Checkbox } from "./Checkbox";
 export { DataTable } from "./DataTable";
-export { Dialog, type DialogProps } from "./Dialog";
+export { type DialogProps, Dialog } from "./Dialog";
 export { IconButton } from "./IconButton";
 export { List } from "./List";
 export { CircularProgress } from "./LoadingProgress";

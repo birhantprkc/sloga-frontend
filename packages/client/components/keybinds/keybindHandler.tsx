@@ -175,6 +175,6 @@ export function Keybind(props: {
   keybind: KeybindAction;
   onPressed: () => void;
 }) {
-  createKeybind(props.keybind, props.onPressed);
+  createEffect(() => createKeybind(props.keybind, props.onPressed));
   return null;
 }

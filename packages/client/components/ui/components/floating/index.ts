@@ -1,6 +1,6 @@
-export { UserCard } from "./UserCard";
 export { FloatingManager } from "./FloatingManager";
 export { Tooltip } from "./Tooltip";
+export { UserCard } from "./UserCard";
 
 /**
  * Trigger a global mousedown running the floating close logic

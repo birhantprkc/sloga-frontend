@@ -31,6 +31,8 @@ export function OnboardingModal(
     }
   }
 
+  const submit = Form2.useSubmitHandler(group, onSubmit);
+
   return (
     <Dialog
       show={props.show}
@@ -49,7 +51,7 @@ export function OnboardingModal(
       ]}
       isDisabled={group.isPending}
     >
-      <form onSubmit={Form2.submitHandler(group, onSubmit)}>
+      <form onSubmit={submit}>
         <Column>
           <Form2.TextField
             name="username"

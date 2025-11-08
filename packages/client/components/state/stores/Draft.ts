@@ -1,6 +1,5 @@
 import { Accessor, Setter, batch, createSignal } from "solid-js";
 
-import { Node } from "prosemirror-model";
 import { API, Channel, Client, Message } from "stoat.js";
 import { ulid } from "ulid";
 
@@ -395,16 +394,16 @@ export class Draft extends AbstractStore<"draft", TypeDraft> {
           (entry) => entry.idempotencyKey !== idempotencyKey,
         ),
       );
-    } catch (err) {
+    } catch {
       this.set(
         "outbox",
         channel.id,
         this.getPendingMessages(channel.id).map((entry) =>
           entry.idempotencyKey === idempotencyKey
             ? {
-              ...entry,
-              status: "failed",
-            }
+                ...entry,
+                status: "failed",
+              }
             : entry,
         ),
       );
@@ -626,7 +625,7 @@ export class Draft extends AbstractStore<"draft", TypeDraft> {
         image.src = this.fileCache[id].dataUri!;
       })
         // ignore errors
-        .catch(() => { });
+        .catch(() => {});
     }
 
     this.setDraft(channelId, (data) => ({

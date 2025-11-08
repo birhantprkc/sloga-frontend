@@ -20,7 +20,6 @@ import { useModals } from "@revolt/modal";
 import {
   Avatar,
   Badge,
-  Button,
   Deferred,
   Header,
   IconButton,
@@ -309,16 +308,3 @@ function Entry(
     </a>
   );
 }
-
-/**
- * Overlapping avatars
- */
-const Avatars = styled("div", {
-  base: {
-    flexShrink: 0,
-    "& svg:not(:first-child)": {
-      position: "relative",
-      marginInlineStart: "-32px",
-    },
-  },
-});

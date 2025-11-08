@@ -11,12 +11,10 @@ import {
 } from "solid-js";
 
 import { useLingui } from "@lingui-solid/solid/macro";
-import { Node } from "prosemirror-model";
 import { Channel } from "stoat.js";
 
 import { useClient } from "@revolt/client";
-import { debounce } from "@revolt/common";
-import { CONFIGURATION } from "@revolt/common";
+import { CONFIGURATION, debounce } from "@revolt/common";
 import { Keybind, KeybindAction, createKeybind } from "@revolt/keybinds";
 import { useModals } from "@revolt/modal";
 import { useState } from "@revolt/state";
@@ -28,7 +26,6 @@ import {
   IconButton,
   MessageBox,
   MessageReplyPreview,
-  Row,
   humanFileSize,
 } from "@revolt/ui";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";

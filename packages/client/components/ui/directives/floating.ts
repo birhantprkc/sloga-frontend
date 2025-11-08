@@ -1,4 +1,11 @@
-import { type Accessor, type JSX, createEffect, createSignal, on, onCleanup } from "solid-js";
+import {
+  type Accessor,
+  type JSX,
+  createEffect,
+  createSignal,
+  on,
+  onCleanup,
+} from "solid-js";
 
 type Props = JSX.Directives["floating"] & object;
 
@@ -132,52 +139,65 @@ export function floating(element: HTMLElement, accessor: Accessor<Props>) {
     trigger("tooltip", false);
   }
 
-  createEffect(on(() => accessor().userCard, userCard => {
-    if (userCard) {
-      element.style.cursor = "pointer";
-      element.style.userSelect = "none";
-      element.addEventListener("click", onClick);
+  createEffect(
+    on(
+      () => accessor().userCard,
+      (userCard) => {
+        if (userCard) {
+          element.style.cursor = "pointer";
+          element.style.userSelect = "none";
+          element.addEventListener("click", onClick);
 
-      onCleanup(() =>
-        element.removeEventListener("click", onClick))
-    }
-  }));
+          onCleanup(() => element.removeEventListener("click", onClick));
+        }
+      },
+    ),
+  );
 
-  createEffect(on(() => accessor().tooltip, tooltip => {
-    if (tooltip) {
-      element.ariaLabel =
-        typeof tooltip.content === "string"
-          ? tooltip.content
-          : tooltip!.aria!;
+  createEffect(
+    on(
+      () => accessor().tooltip,
+      (tooltip) => {
+        if (tooltip) {
+          element.ariaLabel =
+            typeof tooltip.content === "string"
+              ? tooltip.content
+              : tooltip!.aria!;
 
-      element.addEventListener("mouseenter", onMouseEnter);
-      element.addEventListener("mouseleave", onMouseLeave);
+          element.addEventListener("mouseenter", onMouseEnter);
+          element.addEventListener("mouseleave", onMouseLeave);
 
-      onCleanup(() => {
-        element.removeEventListener("mouseenter", onMouseEnter);
-        element.removeEventListener("mouseleave", onMouseLeave);
+          onCleanup(() => {
+            element.removeEventListener("mouseenter", onMouseEnter);
+            element.removeEventListener("mouseleave", onMouseLeave);
+          });
+        }
+      },
+    ),
+  );
 
-      })
-    }
-  }));
+  createEffect(
+    on(
+      () => accessor().contextMenu,
+      (contextMenu) => {
+        if (contextMenu) {
+          element.addEventListener(
+            accessor().contextMenuHandler ?? "contextmenu",
+            onContextMenu,
+          );
 
-  createEffect(on(() => accessor().contextMenu, contextMenu => {
-    if (contextMenu) {
-      element.addEventListener(
-        accessor().contextMenuHandler ?? "contextmenu",
-        onContextMenu,
-      );
+          // TODO: iOS events for touch
 
-      // TODO: iOS events for touch
-
-      onCleanup(() => {
-        element.removeEventListener(
-          config.contextMenuHandler ?? "contextmenu",
-          onContextMenu,
-        );
-      })
-    }
-  }));
+          onCleanup(() => {
+            element.removeEventListener(
+              config.contextMenuHandler ?? "contextmenu",
+              onContextMenu,
+            );
+          });
+        }
+      },
+    ),
+  );
 
   onCleanup(() => unregisterFloatingElement(element));
 }

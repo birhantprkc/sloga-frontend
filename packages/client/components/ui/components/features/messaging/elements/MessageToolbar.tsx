@@ -6,7 +6,6 @@ import { styled } from "styled-system/jsx";
 
 import { MessageContextMenu } from "@revolt/app";
 import { useUser } from "@revolt/client";
-import { schema } from "@revolt/markdown/prosemirror";
 import { useModals } from "@revolt/modal";
 import { useState } from "@revolt/state";
 import { Ripple } from "@revolt/ui/components/design";
@@ -93,7 +92,7 @@ export function MessageToolbar(props: { message?: Message }) {
           props.message?.channel?.havePermission("ManageMessages")
         }
       >
-        <div class={tool()} onclick={deleteMessage}>
+        <div class={tool()} onClick={deleteMessage}>
           <Ripple />
           <MdDelete {...iconSize(20)} />
         </div>
@@ -135,14 +134,5 @@ const tool = cva({
     cursor: "pointer",
     position: "relative",
     padding: "var(--gap-sm)",
-  },
-});
-
-const Divider = styled("div", {
-  base: {
-    width: "1px",
-    height: "20px",
-    background:
-      "color-mix(in srgb, 80% transparent, var(--md-sys-color-on-secondary-container))",
   },
 });

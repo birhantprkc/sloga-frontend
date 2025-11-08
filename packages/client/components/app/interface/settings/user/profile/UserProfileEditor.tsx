@@ -137,8 +137,10 @@ export function UserProfileEditor(props: Props) {
     await props.user.edit(changes);
   }
 
+  const submit = Form2.useSubmitHandler(editGroup, onSubmit, onReset);
+
   return (
-    <form onSubmit={Form2.submitHandler(editGroup, onSubmit, onReset)}>
+    <form onSubmit={submit}>
       <Column>
         <Form2.FileInput
           control={editGroup.controls.avatar}

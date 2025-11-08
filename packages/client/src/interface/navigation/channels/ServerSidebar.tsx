@@ -1,6 +1,13 @@
 import { BiRegularCheckCircle, BiSolidCheckCircle } from "solid-icons/bi";
-import { Accessor, JSX, Match, Show, Switch, createMemo } from "solid-js";
-import { Setter } from "solid-js";
+import {
+  Accessor,
+  JSX,
+  Match,
+  Setter,
+  Show,
+  Switch,
+  createMemo,
+} from "solid-js";
 
 import { useLingui } from "@lingui-solid/solid/macro";
 import type { API, Channel, Server, ServerFlags } from "stoat.js";
@@ -13,16 +20,13 @@ import { useNavigate } from "@revolt/routing";
 import { useVoice } from "@revolt/rtc";
 import { useState } from "@revolt/state";
 import {
-  Avatar,
   Column,
   Draggable,
   Header,
   IconButton,
   MenuButton,
   OverflowingText,
-  Ripple,
   Row,
-  Text,
   Tooltip,
   iconSize,
   symbolSize,
@@ -33,7 +37,6 @@ import { createDragHandle } from "@revolt/ui/components/utils/Draggable";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
 import MdChevronRight from "@material-design-icons/svg/filled/chevron_right.svg?component-solid";
-import MdPersonAdd from "@material-design-icons/svg/filled/person_add.svg?component-solid";
 
 import MdSettings from "@material-symbols/svg-400/outlined/settings-fill.svg?component-solid";
 
@@ -99,7 +102,7 @@ export const ServerSidebar = (props: Props) => {
   // TODO: issue warning if nothing is found somehow? warnings can be nicer than flat out not working
   // TODO: we want it to feel smooth when navigating through channels, so we'll want to select channels immediately but not actually navigate until we're done moving through them
   /** Navigates to the channel offset from the current one, wrapping around if needed */
-  const navigateChannel = (byOffset: number) => {
+  const _navigateChannel = (byOffset: number) => {
     if (props.channelId == null) {
       return;
     }
@@ -329,10 +332,10 @@ function Category(
   return (
     <CategorySection>
       <Show when={props.category.id !== "default"}>
-        <div use:floating={props.menuGenerator(props.category as any)}>
+        <div use:floating={props.menuGenerator(props.category as never)}>
           <CategoryBase
             open={isOpen()}
-            onClick={(e) => {
+            onClick={() => {
               state.layout.toggleSectionState(props.category.id, true);
             }}
             {...createDragHandle(props.dragDisabled, props.setDragDisabled)}
@@ -553,15 +556,5 @@ const ChannelIcon = styled("img", {
     width: "16px",
     height: "16px",
     objectFit: "contain",
-  },
-});
-
-/**
- * Inner scrollable list
- * We fix the width in order to prevent scrollbar from moving stuff around
- */
-const List = styled(Column, {
-  base: {
-    width: "var(--layout-width-channel-sidebar)",
   },
 });

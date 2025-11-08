@@ -1,4 +1,4 @@
-import { createEffect, createSignal, on } from "solid-js";
+import { ComponentProps, JSX, createEffect, createSignal, on } from "solid-js";
 
 import "katex/dist/katex.min.css";
 import { html } from "property-information";
@@ -55,8 +55,8 @@ const Null = () => null;
 
 function RenderOrderedList(props: {
   start?: string;
-  style?: any;
-  [key: string]: any;
+  style?: Record<string, unknown>;
+  [key: string]: unknown;
 }) {
   return (
     <elements.orderedList
@@ -118,15 +118,18 @@ const components = () => ({
 const replyComponents = () => ({
   unicodeEmoji: RenderUnicodeEmoji,
   customEmoji: RenderCustomEmoji,
-  mention: (props: any) => {
+  mention: (props: ComponentProps<typeof RenderMention>) => {
+    // eslint-disable-next-line solid/reactivity
     props.disabled = true;
     return RenderMention(props);
   },
-  spoiler: (props: any) => {
+  spoiler: (props: ComponentProps<typeof RenderSpoiler>) => {
+    // eslint-disable-next-line solid/reactivity
     props.disabled = true;
     return RenderSpoiler(props);
   },
-  a: (props: any) => {
+  a: (props: ComponentProps<typeof RenderAnchor>) => {
+    // eslint-disable-next-line solid/reactivity
     props.disabled = true;
     return RenderAnchor(props);
   },
@@ -136,19 +139,19 @@ const replyComponents = () => ({
   code: elements.code,
   del: elements.strikethrough,
 
-  p: (props: any) => <>{props.children}</>,
-  h1: (props: any) => <>{props.children}</>,
-  h2: (props: any) => <>{props.children}</>,
-  h3: (props: any) => <>{props.children}</>,
-  h4: (props: any) => <>{props.children}</>,
-  h5: (props: any) => <>{props.children}</>,
-  h6: (props: any) => <>{props.children}</>,
-  li: (props: any) => <>{props.children}</>,
-  ul: (props: any) => <>{props.children}</>,
-  ol: (props: any) => <>{props.children}</>,
-  blockquote: (props: any) => <>{props.children}</>,
-  td: (props: any) => <>{props.children}</>,
-  th: (props: any) => <>{props.children}</>,
+  p: (props: { children: JSX.Element }) => <>{props.children}</>,
+  h1: (props: { children: JSX.Element }) => <>{props.children}</>,
+  h2: (props: { children: JSX.Element }) => <>{props.children}</>,
+  h3: (props: { children: JSX.Element }) => <>{props.children}</>,
+  h4: (props: { children: JSX.Element }) => <>{props.children}</>,
+  h5: (props: { children: JSX.Element }) => <>{props.children}</>,
+  h6: (props: { children: JSX.Element }) => <>{props.children}</>,
+  li: (props: { children: JSX.Element }) => <>{props.children}</>,
+  ul: (props: { children: JSX.Element }) => <>{props.children}</>,
+  ol: (props: { children: JSX.Element }) => <>{props.children}</>,
+  blockquote: (props: { children: JSX.Element }) => <>{props.children}</>,
+  td: (props: { children: JSX.Element }) => <>{props.children}</>,
+  th: (props: { children: JSX.Element }) => <>{props.children}</>,
   time: RenderTimestamp,
   timestamp: RenderTimestamp,
   pre: Null,
@@ -256,8 +259,8 @@ export interface MarkdownProps {
   disallowBigEmoji?: boolean;
 }
 
-export { TextWithEmoji } from "./emoji/TextWithEmoji";
 export { Emoji } from "./emoji/Emoji";
+export { TextWithEmoji } from "./emoji/TextWithEmoji";
 
 export function renderSimpleMarkdown(content: string) {
   const file = new VFile();
@@ -301,7 +304,7 @@ export function Markdown(props: MarkdownProps) {
       throw new TypeError("Expected a `root` node");
     }
 
-    injectEmojiSize(props, hastNode as any);
+    injectEmojiSize(props, hastNode as never);
 
     return childrenToSolid(
       {
@@ -318,6 +321,7 @@ export function Markdown(props: MarkdownProps) {
   }
 
   // Render once immediately
+  // eslint-disable-next-line solid/reactivity
   const [children, setChildren] = createSignal(render(props.content));
 
   // If it ever updates, re-render the whole tree:

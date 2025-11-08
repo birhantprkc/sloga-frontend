@@ -3,7 +3,7 @@ import type { JSX } from "solid-js";
 import { I18nProvider as LinguiProvider } from "@lingui-solid/solid";
 import { i18n } from "@lingui/core";
 
-import { Language, Languages, type LocaleOptions } from "./Languages";
+import { type LocaleOptions, Language, Languages } from "./Languages";
 import { messages as en } from "./catalogs/en/messages";
 import { initTime, loadTimeLocale } from "./dayjs";
 
@@ -11,8 +11,8 @@ export function I18nProvider(props: { children: JSX.Element }) {
   return <LinguiProvider i18n={i18n}>{props.children}</LinguiProvider>;
 }
 
-export { Languages, Language } from "./Languages";
-export { useTime, timeLocale } from "./dayjs";
+export { Language, Languages } from "./Languages";
+export { timeLocale, useTime } from "./dayjs";
 export { useError } from "./errors";
 
 export async function loadAndSwitchLocale(

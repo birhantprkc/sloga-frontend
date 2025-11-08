@@ -3,18 +3,7 @@
   "useTabs": false,
   "plugins": [
     "@pandabox/prettier-plugin",
-    "@trivago/prettier-plugin-sort-imports"
+    "prettier-plugin-organize-imports"
   ],
-  "importOrder": [
-    "./sentry",
-    "^solid",
-    "<THIRD_PARTY_MODULES>",
-    "^@revolt",
-    "^@material-design-icons|^solid-icons",
-    "^@material-symbols",
-    "^\\.\\.",
-    "^[./]"
-  ],
-  "importOrderSeparation": true,
-  "importOrderSortSpecifiers": true
+  "organizeImportsTypeOrder": "first"
 }

@@ -66,6 +66,30 @@ jobs:
       - name: Run typecheck
         run: pnpm test:typecheck
 
+  lint-format:
+    name: Lint & Format
+    runs-on: ubuntu-latest
+
+    if: always()
+    needs:
+      - i18n
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - run: pnpm install
+      - run: pnpm build:deps
+
+      - name: Run linter
+        run: pnpm test:lint
+      - name: Run formatter
+        run: pnpm test:fmt
+
   e2e:
     name: e2e Integration Test
     runs-on: ubuntu-latest
@@ -112,6 +136,7 @@ jobs:
     needs:
       - typecheck
       - e2e
+      - lint-format
     
     steps:
       - uses: actions/checkout@v4

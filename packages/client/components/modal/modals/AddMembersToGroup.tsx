@@ -58,6 +58,8 @@ export function AddMembersToGroupModal(
       .map((user) => ({ item: user, value: user.id })),
   );
 
+  const submit = Form2.useSubmitHandler(group, onSubmit);
+
   return (
     <Dialog
       minWidth={420}
@@ -77,7 +79,7 @@ export function AddMembersToGroupModal(
       ]}
       isDisabled={group.isPending}
     >
-      <form onSubmit={Form2.submitHandler(group, onSubmit)}>
+      <form onSubmit={submit}>
         <Column>
           <TextField
             value={filter()}

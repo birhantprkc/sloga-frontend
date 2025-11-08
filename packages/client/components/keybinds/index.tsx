@@ -1,2 +1,2 @@
 export { KeybindAction } from "./keybindActions";
-export { KeybindContext, Keybind, createKeybind } from "./keybindHandler";
+export { Keybind, KeybindContext, createKeybind } from "./keybindHandler";

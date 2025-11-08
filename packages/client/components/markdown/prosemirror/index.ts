@@ -1,3 +1,3 @@
 export * from "./from-model";
-export * from "./to-model";
 export * from "./schema";
+export * from "./to-model";

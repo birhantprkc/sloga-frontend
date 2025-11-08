@@ -1,6 +1,6 @@
 import {
-  Accessor,
   type JSX,
+  Accessor,
   createContext,
   createMemo,
   createSignal,
@@ -44,7 +44,10 @@ const SettingsNavigationContext = createContext<{
  * Generic Settings component
  */
 export function Settings(props: SettingsProps & SettingsConfiguration<never>) {
-  const [page, setPage] = createSignal<undefined | string>((props.context as any)?.page);
+  const [page, setPage] = createSignal<undefined | string>(
+    // eslint-disable-next-line
+    (props.context as any)?.page,
+  );
   const [transition, setTransition] =
     createSignal<SettingsTransition>("normal");
 

@@ -11,10 +11,6 @@ interface Props {
   onSelect?: (state: boolean) => void;
 }
 
-interface BaseProps {
-  selected: boolean;
-}
-
 const Base = styled("label", {
   base: {
     border: "2px solid var(--foreground)",

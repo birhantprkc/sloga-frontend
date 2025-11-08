@@ -29,16 +29,16 @@ export function ListServerInvites(props: { server: Server }) {
     queryFn: () => props.server.fetchInvites() as Promise<ServerInvite[]>,
   }));
 
-  function deleteInvite(invite: ServerInvite) {
-    invite
-      .delete()
-      .then(() =>
-        client.setQueryData(
-          ["invites", props.server.id],
-          query.data!.filter((entry) => entry.id !== entry.id),
-        ),
-      )
-      .catch(showError);
+  async function deleteInvite(invite: ServerInvite) {
+    try {
+      await invite.delete();
+      client.setQueryData(
+        ["invites", props.server.id],
+        query.data!.filter((entry) => entry.id !== entry.id),
+      );
+    } catch (error) {
+      showError(error);
+    }
   }
 
   return (

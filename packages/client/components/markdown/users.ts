@@ -3,7 +3,7 @@ import { Accessor, createMemo } from "solid-js";
 import { ServerMember, User } from "stoat.js";
 
 import { useClient } from "@revolt/client";
-import { useParams, useSmartParams } from "@revolt/routing";
+import { useSmartParams } from "@revolt/routing";
 
 // TODO: move to @revolt/common?
 
@@ -96,7 +96,9 @@ export function useUsers(
  * @param id ID
  * @returns User information
  */
-export function useUser(id: string): Accessor<UserInformation> {
-  const users = useUsers([id]);
+export function useUser(
+  id: string | Accessor<string>,
+): Accessor<UserInformation> {
+  const users = useUsers(typeof id === "function" ? () => [id()] : [id]);
   return () => users()[0] ?? { username: "Unknown User" };
 }

@@ -123,9 +123,11 @@ export default function ServerOverview(props: ServerSettingsProps) {
     await props.server.edit(changes);
   }
 
+  const submit = Form2.useSubmitHandler(editGroup, onSubmit, onReset);
+
   return (
     <Column gap="xl">
-      <form onSubmit={Form2.submitHandler(editGroup, onSubmit, onReset)}>
+      <form onSubmit={submit}>
         <Column>
           <Form2.FileInput
             control={editGroup.controls.icon}

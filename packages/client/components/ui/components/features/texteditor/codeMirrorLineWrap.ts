@@ -1,13 +1,14 @@
 import { Facet, StateEffect, StateField } from "@codemirror/state";
-import { EditorView, Decoration } from "@codemirror/view";
+import { Decoration, EditorView } from "@codemirror/view";
 
 // Use a canvas element to measure the width of a string in the given font.
 // Used to calculate the correct monospace character width for indentation.
 function measureTextWidth(text: string, font: string): number {
   // Cache the canvas element
   const canvas: HTMLCanvasElement =
-    (measureTextWidth as any).canvas ??
-    ((measureTextWidth as any).canvas = document.createElement("canvas"));
+    (measureTextWidth as unknown as { canvas: HTMLCanvasElement }).canvas ??
+    ((measureTextWidth as unknown as { canvas: HTMLCanvasElement }).canvas =
+      document.createElement("canvas"));
   const context = canvas.getContext("2d");
   if (context === null) return 0;
   context.font = font;
@@ -16,7 +17,7 @@ function measureTextWidth(text: string, font: string): number {
 }
 
 function getCanvasFont(elem: HTMLElement): string {
-  let style = window.getComputedStyle(elem, null);
+  const style = window.getComputedStyle(elem, null);
   const fontWeight = style.getPropertyValue("font-weight") || "normal";
   const fontSize = style.getPropertyValue("font-size") || "16px";
   const fontFamily = style.getPropertyValue("font-family") || "sans-serif";
@@ -35,7 +36,7 @@ const CharacterWidthField = StateField.define<CharacterWidth | null>({
     return null;
   },
   update(value, tr) {
-    for (let effect of tr.effects) {
+    for (const effect of tr.effects) {
       if (effect.is(CharacterWidthEffect)) return effect.value;
     }
     return value;
@@ -45,23 +46,23 @@ const CharacterWidthField = StateField.define<CharacterWidth | null>({
 // Manually track an calculate character widths; defaultCharacterWidth
 // isn't reliable in non-monospace or mixed-font environments.
 const characterWidthListener = EditorView.updateListener.of((viewupdate) => {
-  let prev = viewupdate.view.state.field(CharacterWidthField, false);
+  const prev = viewupdate.view.state.field(CharacterWidthField, false);
 
   // Check for font size changes
-  let mainFont = getCanvasFont(viewupdate.view.dom);
+  const mainFont = getCanvasFont(viewupdate.view.dom);
   if (mainFont !== prev?.mainFont) {
     // Determine the font and font size used for the indentation decorations
-    let dummy_elem = document.createElement("span");
+    const dummy_elem = document.createElement("span");
     dummy_elem.classList.add("linewrap-whitespace");
     dummy_elem.style.display = "none";
     viewupdate.view.contentDOM.appendChild(dummy_elem);
-    let monoFont = getCanvasFont(dummy_elem);
+    const monoFont = getCanvasFont(dummy_elem);
     dummy_elem.remove();
 
     if (monoFont !== prev?.monoFont) {
       // Measure the width of a single space character (averaging
       // across 16 for precision reasons).
-      let width = measureTextWidth(" ".repeat(16), monoFont) / 16.0;
+      const width = measureTextWidth(" ".repeat(16), monoFont) / 16.0;
       viewupdate.view.dispatch({
         effects: [
           CharacterWidthEffect.of({
@@ -91,16 +92,16 @@ const lineWrapDecorations = StateField.define({
     return Decoration.none;
   },
   update(deco, tr) {
-    let oldCharWidth = tr.startState.field(CharacterWidthField, false)?.width;
-    let charWidth = tr.state.field(CharacterWidthField, false)?.width;
+    const oldCharWidth = tr.startState.field(CharacterWidthField, false)?.width;
+    const charWidth = tr.state.field(CharacterWidthField, false)?.width;
 
     if (charWidth == null) return Decoration.none;
     if (!tr.docChanged && charWidth === oldCharWidth) {
       if (deco !== Decoration.none) return deco;
     }
 
-    let maxIndent = tr.state.facet(MaxIndentation);
-    let tabSize = tr.state.tabSize;
+    const maxIndent = tr.state.facet(MaxIndentation);
+    const tabSize = tr.state.tabSize;
 
     function monospaceWidth(str: string): number {
       return Array.from(str).reduce((n, c) => {
@@ -116,19 +117,19 @@ const lineWrapDecorations = StateField.define({
     }
 
     // TODO: more efficient decoration rebuilding? (Only on changed lines?)
-    let decorations = [];
+    const decorations = [];
 
     for (let i = 0; i < tr.state.doc.lines; i++) {
-      let line = tr.state.doc.line(i + 1);
+      const line = tr.state.doc.line(i + 1);
       if (line.length === 0) continue;
 
       // Match leading whitespace, markdown lists, GFM task lists, and blockquotes
-      let matched_chars =
+      const matched_chars =
         /^(\s*)(?:(?:(?:[-*+]\s|\d+\.\s)\s*(?:\[[\sxX]\]\s+)?|>\s+))*/;
-      let groups = matched_chars.exec(line.text) ?? [""];
+      const groups = matched_chars.exec(line.text) ?? [""];
 
       // let offset = Math.min(getTextWidth(groups[0], monoFont), maxIndent * charWidth);
-      let offset = Math.min(monospaceWidth(groups[0]), maxIndent) * charWidth;
+      const offset = Math.min(monospaceWidth(groups[0]), maxIndent) * charWidth;
       if (groups[0].length === 0 || offset === 0) continue;
 
       const lineDecoration = Decoration.line({

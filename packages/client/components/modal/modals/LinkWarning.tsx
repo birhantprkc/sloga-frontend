@@ -18,10 +18,10 @@ export function LinkWarningModal(
   const [value, setValue] = createSignal(false);
 
   const scrutiny = createMemo(() => {
-    let destUrlString = props.url.toString();
+    const destUrlString = props.url.toString();
     if (destUrlString !== props.display) {
       try {
-        let displayUrl = new URL(props.display);
+        const displayUrl = new URL(props.display);
         if (destUrlString !== displayUrl.toString()) {
           return 2;
         } else {
@@ -60,8 +60,7 @@ export function LinkWarningModal(
       <Column>
         <span>
           <Trans>Are you sure you want to go to </Trans>
-          <Link>{props.url.toString()}</Link>
-          ?
+          <Link>{props.url.toString()}</Link>?
         </span>
         <Switch
           fallback={

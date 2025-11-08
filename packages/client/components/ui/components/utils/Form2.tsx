@@ -1,8 +1,8 @@
 import { type IFormControl, IFormGroup } from "solid-forms";
 import {
+  type JSX,
   ComponentProps,
   For,
-  type JSX,
   Match,
   Show,
   Switch,
@@ -14,14 +14,7 @@ import { VirtualContainer } from "@minht11/solid-virtual-container";
 import { css } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 
-import {
-  Button,
-  Checkbox,
-  Radio2,
-  Text,
-  TextEditor,
-  TextField,
-} from "../design";
+import { Button, Checkbox, Radio2, Text, TextField } from "../design";
 import { TextEditor2 } from "../features/texteditor/TextEditor2";
 
 import { FileInput } from "./files";
@@ -398,7 +391,7 @@ function resetGeneric(group: IFormGroup, includingFields: boolean) {
  * @param onReset Handler to reset form state
  * @returns Function for onSubmit handler of form
  */
-function submitHandler(
+function useSubmitHandler(
   group: IFormGroup,
   handler: () => Promise<void> | void,
   onReset?: () => void,
@@ -440,5 +433,5 @@ export const Form2 = {
   Reset: FormResetButton,
   Submit: FormSubmitButton,
   canSubmit,
-  submitHandler,
+  useSubmitHandler,
 };

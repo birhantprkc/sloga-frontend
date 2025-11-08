@@ -4,7 +4,7 @@ import { useMediaDeviceSelect } from "solid-livekit-components";
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
 
 import { useState } from "@revolt/state";
-import { Checkbox, Column, Row, Slider, Text } from "@revolt/ui";
+import { Checkbox, Column, Slider, Text } from "@revolt/ui";
 import {
   CategoryButton,
   CategoryCollapse,

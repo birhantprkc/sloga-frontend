@@ -296,7 +296,7 @@ export function Messages(props: Props) {
           }),
         );
       }
-    } catch (err) {
+    } catch {
       // Keep track of any failures (and allow retry / other actions)
       setFailure(true);
     }
@@ -368,7 +368,7 @@ export function Messages(props: Props) {
         // Mark as fetching has ended
         setFetching();
       }
-    } catch (err) {
+    } catch {
       // Keep track of any failures (and allow retry / other actions)
       setFailure(true);
     }
@@ -440,7 +440,7 @@ export function Messages(props: Props) {
         // Mark as fetching has ended
         setFetching();
       }
-    } catch (err) {
+    } catch {
       // Keep track of any failures (and allow retry / other actions)
       setFailure(true);
     }
@@ -535,7 +535,7 @@ export function Messages(props: Props) {
             setFetching();
           });
         });
-      } catch (err) {
+      } catch {
         // Keep track of any failures (and allow retry / other actions)
         setFailure(true);
       }
@@ -598,7 +598,7 @@ export function Messages(props: Props) {
         // Mark as fetching has ended
         setFetching();
       });
-    } catch (err) {
+    } catch {
       // Keep track of any failures (and allow retry / other actions)
       setFailure(true);
     }

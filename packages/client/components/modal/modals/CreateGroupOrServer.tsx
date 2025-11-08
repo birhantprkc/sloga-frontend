@@ -39,9 +39,7 @@ export function CreateGroupOrServer(
         },
       ]}
     >
-      <Trans>
-        Would you like to create a new group or server?
-      </Trans>
+      <Trans>Would you like to create a new group or server?</Trans>
     </Dialog>
   );
 }

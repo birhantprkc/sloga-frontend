@@ -17,9 +17,7 @@ import { css } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 
 import { UserContextMenu } from "@revolt/app";
-import { useClient } from "@revolt/client";
 import { useUser } from "@revolt/markdown/users";
-import { useSmartParams } from "@revolt/routing";
 import {
   Avatar,
   Button,
@@ -30,7 +28,6 @@ import {
   iconSize,
 } from "@revolt/ui";
 
-import MdHeadset from "@material-design-icons/svg/outlined/headset.svg?component-solid";
 import MdHeadsetOff from "@material-design-icons/svg/outlined/headset_off.svg?component-solid";
 import MdMicOn from "@material-design-icons/svg/outlined/mic.svg?component-solid";
 import MdMicOff from "@material-design-icons/svg/outlined/mic_off.svg?component-solid";
@@ -234,7 +231,6 @@ export function DemoWrapper(props: { channel: Channel }) {
 }
 
 export function Demo(props: { channel: Channel }) {
-  const client = useClient();
   const voice = useVoice()!;
 
   /**

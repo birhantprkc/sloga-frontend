@@ -13,6 +13,7 @@ import { Modals } from "../types";
 export function SettingsModal(
   props: DialogProps & Modals & { type: "settings" },
 ) {
+  // eslint-disable-next-line solid/reactivity
   const config = SettingsConfigurations[props.config];
 
   return (

@@ -1,17 +1,5 @@
 import { styled } from "styled-system/jsx";
 
-interface Props {
-  /**
-   * Colour scheme
-   */
-  readonly palette?: "primary" | "secondary";
-
-  /**
-   * Whether a submission has been tried and errors should display on the input
-   */
-  readonly submissionTried?: boolean;
-}
-
 /**
  * Input element
  *

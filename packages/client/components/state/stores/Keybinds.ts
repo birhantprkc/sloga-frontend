@@ -47,7 +47,9 @@ import { AbstractStore } from ".";
 //   [KeybindAction.DeveloperToggleAllExperiments]: [],
 // });
 
-export type TypeKeybinds = {};
+export type TypeKeybinds = {
+  _phantom?: never;
+};
 
 export class Keybinds extends AbstractStore<"keybinds", TypeKeybinds> {
   /**
@@ -75,7 +77,7 @@ export class Keybinds extends AbstractStore<"keybinds", TypeKeybinds> {
   /**
    * Validate the given data to see if it is compliant and return a compliant object
    */
-  clean(input: Partial<TypeKeybinds>): TypeKeybinds {
+  clean(_input: Partial<TypeKeybinds>): TypeKeybinds {
     return {};
   }
 }

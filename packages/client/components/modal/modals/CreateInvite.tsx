@@ -1,5 +1,4 @@
-import { Match, Switch, createSignal, onMount } from "solid-js";
-import { Show } from "solid-js";
+import { Show, createSignal, onMount } from "solid-js";
 
 import { Trans } from "@lingui-solid/solid/macro";
 import { useMutation } from "@tanstack/solid-query";

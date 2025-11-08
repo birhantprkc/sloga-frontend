@@ -32,6 +32,8 @@ export function AddFriendModal(
     }
   }
 
+  const submit = Form2.useSubmitHandler(group, onSubmit);
+
   return (
     <Dialog
       show={props.show}
@@ -50,7 +52,7 @@ export function AddFriendModal(
       ]}
       isDisabled={group.isPending}
     >
-      <form onSubmit={Form2.submitHandler(group, onSubmit)}>
+      <form onSubmit={submit}>
         <Form2.TextField
           name="username"
           control={group.controls.username}

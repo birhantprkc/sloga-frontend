@@ -1,17 +1,12 @@
-import { Component, Match, Show, Switch, createMemo } from "solid-js";
+import { Component, Match, Switch, createMemo } from "solid-js";
 
 import { Channel } from "stoat.js";
 import { styled } from "styled-system/jsx";
 
 import { useClient } from "@revolt/client";
-import { TextWithEmoji } from "@revolt/markdown";
 import { Navigate, useParams } from "@revolt/routing";
-import { Demo } from "@revolt/rtc/Demo";
-import { useState } from "@revolt/state";
-import { Header, Text } from "@revolt/ui";
 
 import { AgeGate } from "./AgeGate";
-import { ChannelHeader } from "./ChannelHeader";
 import { TextChannel } from "./text/TextChannel";
 
 /**

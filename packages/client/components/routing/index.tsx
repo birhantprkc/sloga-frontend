@@ -11,12 +11,12 @@ import { useLocation } from "@solidjs/router";
  */
 export {
   Navigate,
-  Router,
   Route,
+  Router,
+  useBeforeLeave,
+  useLocation,
   useNavigate,
   useParams,
-  useLocation,
-  useBeforeLeave,
 } from "@solidjs/router";
 
 const RE_SERVER = /\/server\/([A-Z0-9]{26})/;

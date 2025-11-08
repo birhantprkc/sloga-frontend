@@ -17,6 +17,7 @@ export function RenameSessionModal(
   const { showError } = useModals();
 
   const group = createFormGroup({
+    // eslint-disable-next-line solid/reactivity
     name: createFormControl(props.session.name, { required: true }),
   });
 
@@ -28,6 +29,8 @@ export function RenameSessionModal(
       showError(error);
     }
   }
+
+  const submit = Form2.useSubmitHandler(group, onSubmit);
 
   return (
     <Dialog
@@ -47,7 +50,7 @@ export function RenameSessionModal(
       ]}
       isDisabled={group.isPending}
     >
-      <form onSubmit={Form2.submitHandler(group, onSubmit)}>
+      <form onSubmit={submit}>
         <Column>
           <Form2.TextField
             name="name"

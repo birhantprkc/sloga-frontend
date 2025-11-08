@@ -7,7 +7,6 @@ import {
   useTracks,
 } from "solid-livekit-components";
 
-import { useLingui } from "@lingui-solid/solid/macro";
 import { Track } from "livekit-client";
 import { Channel, VoiceParticipant } from "stoat.js";
 import { cva } from "styled-system/css";
@@ -16,11 +15,9 @@ import { styled } from "styled-system/jsx";
 import { UserContextMenu } from "@revolt/app";
 import { useUser } from "@revolt/markdown/users";
 import { InRoom } from "@revolt/rtc";
-import { useState } from "@revolt/state";
 
 import { Avatar, Ripple, typography } from "../../design";
 import { Row } from "../../layout";
-import { Symbol } from "../../utils/Symbol";
 
 import { VoiceStatefulUserIcons } from "./VoiceStatefulUserIcons";
 
@@ -75,8 +72,6 @@ function VariantPreview(props: { channel: Channel }) {
  * Live variant of participant
  */
 function ParticipantLive() {
-  const state = useState();
-
   const participant = useEnsureParticipant();
 
   const isMuted = useIsMuted({
@@ -133,7 +128,8 @@ function CommonUser(props: {
     "camera",
     "screenshare",
   ]);
-  const user = useUser(props.userId);
+
+  const user = useUser(() => rest.userId);
 
   return (
     <div

@@ -1,10 +1,4 @@
-import type {
-  ColorGroup,
-  CustomColorGroup,
-  Scheme,
-  Theme,
-  TonalPalette,
-} from "@material/material-color-utilities";
+import type { ColorGroup, Theme } from "@material/material-color-utilities";
 
 export interface DefaultTheme {
   /* colour(base: keyof Scheme, tone?: number): string;
@@ -127,7 +121,7 @@ export interface DefaultTheme {
   fonts: {
     [key in "primary" | "monospace"]: string;
   };
-  typography: {};
+  typography: object;
   typography_depr: {
     [key in
       | "label"

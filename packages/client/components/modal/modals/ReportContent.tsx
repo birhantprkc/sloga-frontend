@@ -86,6 +86,7 @@ export function ReportContentModal(
   });
 
   const reasons =
+    // eslint-disable-next-line solid/reactivity
     props.target instanceof User ? USER_REPORT_REASONS : CONTENT_REPORT_REASONS;
 
   async function onSubmit() {
@@ -125,6 +126,8 @@ export function ReportContentModal(
     }
   }
 
+  const submit = Form2.useSubmitHandler(group, onSubmit);
+
   return (
     <Dialog
       show={props.show}
@@ -155,7 +158,7 @@ export function ReportContentModal(
       ]}
       isDisabled={group.isPending}
     >
-      <form onSubmit={Form2.submitHandler(group, onSubmit)}>
+      <form onSubmit={submit}>
         <Column>
           <div class={contentContainer()}>
             {props.target instanceof User ? (

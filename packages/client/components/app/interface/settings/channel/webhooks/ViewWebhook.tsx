@@ -30,10 +30,12 @@ export function ViewWebhook(props: { webhook: ChannelWebhook }) {
   const { showError } = useModals();
   const { navigate } = useSettingsNavigation();
 
+  /* eslint-disable solid/reactivity */
   const editGroup = createFormGroup({
     name: createFormControl(props.webhook.name),
     avatar: createFormControl<string | File[] | null>(props.webhook.avatarURL),
   });
+  /* eslint-enable solid/reactivity */
 
   const deleteWebhook = useMutation(() => ({
     mutationFn: () => props.webhook.delete(),
@@ -83,9 +85,11 @@ export function ViewWebhook(props: { webhook: ChannelWebhook }) {
     editGroup.controls.avatar.setValue(props.webhook.avatarURL ?? null);
   }
 
+  const submit = Form2.useSubmitHandler(editGroup, onSubmit, onReset);
+
   return (
     <Column gap="xl">
-      <form onSubmit={Form2.submitHandler(editGroup, onSubmit, onReset)}>
+      <form onSubmit={submit}>
         <Column>
           <Form2.FileInput
             control={editGroup.controls.avatar}

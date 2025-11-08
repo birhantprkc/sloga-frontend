@@ -31,6 +31,7 @@ export function SingleSelectSegmentedButtonGroup(props: {
     <mdui-segmented-button-group
       selects="single"
       value={props.value}
+      // eslint-disable-next-line solid/reactivity
       onChange={props.onSelect}
       required={props.required}
     >

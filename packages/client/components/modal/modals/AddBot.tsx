@@ -77,6 +77,8 @@ export function AddBotModal(props: DialogProps & Modals & { type: "add_bot" }) {
     }
   }
 
+  const submit = Form2.useSubmitHandler(group, onSubmit);
+
   return (
     <Dialog
       show={props.show}
@@ -95,7 +97,7 @@ export function AddBotModal(props: DialogProps & Modals & { type: "add_bot" }) {
       ]}
       isDisabled={group.isPending}
     >
-      <form onSubmit={Form2.submitHandler(group, onSubmit)}>
+      <form onSubmit={submit}>
         <Column>
           <Column align>
             <Avatar

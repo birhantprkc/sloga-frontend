@@ -33,6 +33,8 @@ export function CreateWebhookModal(
     }
   }
 
+  const submit = Form2.useSubmitHandler(group, onSubmit);
+
   return (
     <Dialog
       minWidth={420}
@@ -52,7 +54,7 @@ export function CreateWebhookModal(
       ]}
       isDisabled={group.isPending}
     >
-      <form onSubmit={Form2.submitHandler(group, onSubmit)}>
+      <form onSubmit={submit}>
         <Form2.TextField
           name="name"
           control={group.controls.name}

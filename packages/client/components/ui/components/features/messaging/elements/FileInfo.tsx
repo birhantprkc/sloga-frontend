@@ -1,7 +1,5 @@
 import {
-  BiRegularDownload,
   BiRegularHeadphone,
-  BiRegularLinkExternal,
   BiSolidFile,
   BiSolidFileTxt,
   BiSolidImage,
@@ -12,7 +10,6 @@ import { Match, Show, Switch } from "solid-js";
 import { File, MessageEmbed } from "stoat.js";
 import { styled } from "styled-system/jsx";
 
-import { RenderAnchor } from "@revolt/markdown/plugins/anchors";
 import { IconButton, Text } from "@revolt/ui/components/design";
 import { Column, Row } from "@revolt/ui/components/layout";
 import { humanFileSize } from "@revolt/ui/components/utils";
@@ -23,16 +20,6 @@ import { Symbol } from "@revolt/ui/components/utils/Symbol";
  */
 const Base = styled(Row, {
   base: {},
-});
-
-/**
- * Link action
- */
-const Action = styled("a", {
-  base: {
-    display: "grid",
-    placeItems: "center",
-  },
 });
 
 interface Props {
