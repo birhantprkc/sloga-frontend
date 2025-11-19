@@ -2,7 +2,7 @@ import { createFormControl, createFormGroup } from "solid-forms";
 import { Show, createEffect, createSignal, on } from "solid-js";
 
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
-import { useQuery } from "@tanstack/solid-query";
+import { useQuery, useQueryClient } from "@tanstack/solid-query";
 import { API, User } from "stoat.js";
 
 import { useClient } from "@revolt/client";
@@ -27,6 +27,7 @@ interface Props {
 export function UserProfileEditor(props: Props) {
   const { t } = useLingui();
   const client = useClient();
+  const queryClient = useQueryClient();
 
   const profile = useQuery(() => ({
     queryKey: ["profile", props.user.id],
@@ -74,14 +75,12 @@ export function UserProfileEditor(props: Props) {
 
   function onReset() {
     editGroup.controls.displayName.setValue(props.user.displayName);
-    // editGroup.controls.username.setValue(props.user.username);
     editGroup.controls.avatar.setValue(props.user.animatedAvatarURL);
 
     if (profile.data) {
       editGroup.controls.banner.setValue(
         profile.data.animatedBannerURL || null,
       );
-
       editGroup.controls.bio.setValue(profile.data.content || "");
       setInitialBio([profile.data.content || ""]);
     }
@@ -91,10 +90,6 @@ export function UserProfileEditor(props: Props) {
     const changes: API.DataEditUser = {
       remove: [],
     };
-
-    // if (editGroup.controls.username.isDirty) {
-    //   changes.
-    // }
 
     if (editGroup.controls.displayName.isDirty) {
       changes.display_name = editGroup.controls.displayName.value.trim();
@@ -121,6 +116,8 @@ export function UserProfileEditor(props: Props) {
       }
     }
 
+    let newBannerUrl: string | null = null;
+
     if (editGroup.controls.banner.isDirty) {
       if (!editGroup.controls.banner.value) {
         changes.remove!.push("ProfileBackground");
@@ -131,10 +128,22 @@ export function UserProfileEditor(props: Props) {
           editGroup.controls.banner.value[0],
           CONFIGURATION.DEFAULT_MEDIA_URL,
         );
+
+        newBannerUrl = `${CONFIGURATION.DEFAULT_MEDIA_URL}/backgrounds/${changes.profile.background}`;
+      } else {
+        newBannerUrl = editGroup.controls.banner.value;
       }
     }
 
     await props.user.edit(changes);
+
+    if (editGroup.controls.banner.isDirty && profile.data) {
+      queryClient.setQueryData(["profile", props.user.id], {
+        ...profile.data,
+        animatedBannerURL: newBannerUrl,
+        bannerURL: newBannerUrl,
+      });
+    }
   }
 
   const submit = Form2.useSubmitHandler(editGroup, onSubmit, onReset);
