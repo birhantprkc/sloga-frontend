@@ -269,7 +269,7 @@ const infoText = cva({
   variants: {
     prefix: {
       true: {
-        width: "calc(36px + 2 * var(--gap-sm))",
+        width: "calc(7ch * var(--gap-sm))",
         fontSize: "0.7em",
 
         display: "block",
