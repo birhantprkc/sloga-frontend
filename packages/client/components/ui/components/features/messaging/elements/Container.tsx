@@ -93,6 +93,11 @@ type Props = CommonProps & {
   sendStatus?: "sending" | "failed";
 
   /**
+   * Whether we are hovering this message
+   */
+  onHover?: (hovering: boolean) => void;
+
+  /**
    * Component to render message context menu
    */
   contextMenu?: () => JSX.Element;
@@ -305,6 +310,8 @@ export function MessageContainer(props: Props) {
 
   return (
     <div
+      onMouseEnter={() => props.onHover && props.onHover(true)}
+      onMouseLeave={() => props.onHover && props.onHover(false)}
       class={
         "group " +
         base({
