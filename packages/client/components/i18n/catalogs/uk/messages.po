@@ -465,12 +465,17 @@ msgid "Bot"
 msgstr "Бот"
 
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Browser"
+msgstr ""
+
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "Browser Echo Cancellation"
 msgstr ""
 
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
-msgid "Browser Noise Supression"
-msgstr ""
+#~ msgid "Browser Noise Supression"
+#~ msgstr ""
 
 #: components/app/interface/settings/user/Feedback.tsx
 msgid "Bug Tracker"
@@ -627,6 +632,10 @@ msgstr "Очистити статус"
 msgid "Click on the items below to learn more about different changes!"
 msgstr ""
 
+#: components/ui/components/features/profiles/ProfileBanner.tsx
+msgid "Click to copy username"
+msgstr ""
+
 #: src/interface/channels/ChannelHeader.tsx
 msgid "Click to show full description"
 msgstr ""
@@ -733,6 +742,10 @@ msgstr ""
 #: src/interface/navigation/channels/HomeSidebar.tsx
 msgid "Conversations"
 msgstr "Розмови"
+
+#: components/ui/components/features/profiles/ProfileBanner.tsx
+msgid "Copied!"
+msgstr ""
 
 #: components/app/menus/CategoryContextMenu.tsx
 msgid "Copy category ID"
@@ -1038,6 +1051,8 @@ msgstr "Відключити акаунт"
 msgid "Disable one-time password authenticator"
 msgstr ""
 
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 #: components/app/interface/settings/server/Overview.tsx
 #: components/app/interface/settings/server/Overview.tsx
 #: components/app/interface/settings/server/Overview.tsx
@@ -1194,6 +1209,14 @@ msgstr "Увімкнути сповіщення на робочому столі
 msgid "Enable transparency glass/blur effects (slow on older machines)"
 msgstr ""
 
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Enhanced"
+msgstr ""
+
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Enhanced (RNNoise)"
+msgstr ""
+
 #: components/modal/modals/RenameSession.tsx
 msgid "Enter a new name for this session"
 msgstr ""
@@ -1219,6 +1242,10 @@ msgstr "Введіть свій поточний пароль."
 #: components/modal/modals/EditPassword.tsx
 #: components/modal/modals/EditEmail.tsx
 msgid "Enter your current password..."
+msgstr ""
+
+#: components/auth/src/flows/Form.tsx
+msgid "Enter your invite code."
 msgstr ""
 
 #: components/auth/src/flows/Form.tsx
@@ -1453,6 +1480,7 @@ msgstr "Запросіть всіх своїх друзів, декілька к
 msgid "Invite Bot"
 msgstr ""
 
+#: components/auth/src/flows/Form.tsx
 #: components/app/interface/settings/server/invites/ListServerInvites.tsx
 msgid "Invite Code"
 msgstr "Код запрошення"
@@ -2062,6 +2090,10 @@ msgstr "Будь ласка, виберіть спосіб аутентифік�
 msgid "Please select a reason"
 msgstr ""
 
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Powered by RNNoise"
+msgstr ""
+
 #: components/auth/src/AuthPage.tsx
 msgid "Privacy Policy"
 msgstr "Політика конфіденційності"
@@ -2347,6 +2379,10 @@ msgstr ""
 
 #: components/modal/modals/CreateGroup.tsx
 msgid "Select members to add"
+msgstr ""
+
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Select noise suppression"
 msgstr ""
 
 #: components/app/interface/settings/user/Language.tsx
