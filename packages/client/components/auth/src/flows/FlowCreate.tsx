@@ -73,11 +73,7 @@ export default function FlowCreate() {
       <Form onSubmit={create} captcha={CONFIGURATION.HCAPTCHA_SITEKEY}>
         <Fields fields={["email", "password"]} />
         <Show when={isInviteOnly()}>
-          <Fields
-            fields={[
-              { field: "invite", value: code, disabled: code?.length > 0 },
-            ]}
-          />
+          <Fields fields={[{ field: "invite", value: code }]} />
         </Show>
         <Row justify>
           <a href="..">
