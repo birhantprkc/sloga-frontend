@@ -68,12 +68,29 @@ export function MessageComposition(props: Props) {
     return state.draft.getDraft(props.channel.id);
   }
 
+  const messageLength = () => draft().content?.length ?? 0;
+
+  const maxMessageLength = () => {
+    const cl = client();
+    return cl.configured()
+      ? (cl.configuration?.features.limits.default.message_length ?? 2000)
+      : 2000;
+  };
+
+  const isAlmostTooLong = () => messageLength() > maxMessageLength() - 200;
+
+  const wayTooLong = () => messageLength() > maxMessageLength() + 9999;
+
   // Whether the send button should be active/clickable
   const canSend = createMemo(() => {
     const draftContent = draft()?.content ?? "";
     const draftFiles = draft()?.files ?? [];
 
-    return draftContent.trim().length > 0 || draftFiles.length > 0;
+    const tooLong = messageLength() > maxMessageLength();
+
+    return (
+      !tooLong && (draftContent.trim().length > 0 || draftFiles.length > 0)
+    );
   });
 
   // TEMP
@@ -160,6 +177,9 @@ export function MessageComposition(props: Props) {
    * @param useContent Content to send
    */
   async function sendMessage(useContent?: unknown) {
+    if (!canSend()) {
+      return;
+    }
     stopTyping();
     props.onMessageSend?.();
 
@@ -344,27 +364,41 @@ export function MessageComposition(props: Props) {
           </Switch>
         }
         actionsEnd={
-          <CompositionMediaPicker
-            onMessage={sendMessage}
-            onTextReplacement={(text) => setNodeReplacement([text])}
-          >
-            {(triggerProps) => (
-              <>
-                <MessageBox.InlineIcon size="normal">
-                  <IconButton onPress={triggerProps.onClickGif}>
-                    <Symbol>gif</Symbol>
-                  </IconButton>
-                </MessageBox.InlineIcon>
-                <MessageBox.InlineIcon size="normal">
-                  <IconButton onPress={triggerProps.onClickEmoji}>
-                    <Symbol>emoticon</Symbol>
-                  </IconButton>
-                </MessageBox.InlineIcon>
+          <MessageBox.ActionContainer column>
+            <Show when={isAlmostTooLong()}>
+              <MessageBox.FloatingAction
+                size="normal"
+                error={messageLength() > maxMessageLength()}
+              >
+                {wayTooLong()
+                  ? "Too Long"
+                  : maxMessageLength() - messageLength()}
+              </MessageBox.FloatingAction>
+            </Show>
+            <MessageBox.ActionContainer>
+              <CompositionMediaPicker
+                onMessage={sendMessage}
+                onTextReplacement={(text) => setNodeReplacement([text])}
+              >
+                {(triggerProps) => (
+                  <>
+                    <MessageBox.InlineIcon size="normal">
+                      <IconButton onPress={triggerProps.onClickGif}>
+                        <Symbol>gif</Symbol>
+                      </IconButton>
+                    </MessageBox.InlineIcon>
+                    <MessageBox.InlineIcon size="normal">
+                      <IconButton onPress={triggerProps.onClickEmoji}>
+                        <Symbol>emoticon</Symbol>
+                      </IconButton>
+                    </MessageBox.InlineIcon>
 
-                <div ref={triggerProps.ref} />
-              </>
-            )}
-          </CompositionMediaPicker>
+                    <div ref={triggerProps.ref} />
+                  </>
+                )}
+              </CompositionMediaPicker>
+            </MessageBox.ActionContainer>
+          </MessageBox.ActionContainer>
         }
         placeholder={
           props.channel.type === "SavedMessages"
