@@ -44,6 +44,19 @@ const internalLink = cva({
   },
 });
 
+function inAppScope(link: URL): boolean {
+  return (
+    [
+      location.origin,
+      "https://old.stoat.chat",
+      "https://revolt.chat",
+      "https://app.revolt.chat",
+      "https://stoat.chat",
+    ].includes(link.origin) &&
+    /\/(app|home|pwa|dev|invite|bot|friends|server)\/?/.test(link.pathname)
+  );
+}
+
 export function RenderAnchor(
   props: { disabled?: boolean } & JSX.AnchorHTMLAttributes<HTMLAnchorElement>,
 ) {
@@ -73,16 +86,7 @@ export function RenderAnchor(
     }
 
     // Determine whether it's in our scope
-    if (
-      [
-        location.origin,
-        // legacy
-        "https://app.revolt.chat",
-        "https://revolt.chat",
-        // new
-        "https://stoat.chat",
-      ].includes(url.origin)
-    ) {
+    if (inAppScope(url)) {
       const client = useClient();
       const params = paramsFromPathname(url.pathname);
 
