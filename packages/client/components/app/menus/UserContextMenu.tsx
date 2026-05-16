@@ -215,6 +215,17 @@ export function UserContextMenu(props: {
   }
 
   /**
+   * Remove user from group
+   */
+  function removeMember() {
+    openModal({
+      type: "remove_member",
+      user: props.user,
+      group: props.channel!,
+    });
+  }
+
+  /**
    * Whether the user can edit identity on this server
    */
   function canEditIdentity() {
@@ -272,6 +283,18 @@ export function UserContextMenu(props: {
       props.member?.server?.havePermission("BanMembers") &&
       params().serverId &&
       !props.member
+    );
+  }
+
+  /**
+   * Whether the user can remove a member from the current group
+   */
+  function canRemoveMemberFromGroup() {
+    return (
+      props.channel?.type === "Group" &&
+      !props.user.self &&
+      props.channel.havePermission("ManageChannel") &&
+      !props.channel.owner?.self
     );
   }
 
@@ -413,6 +436,15 @@ export function UserContextMenu(props: {
           </ContextMenuButton>
         </Show>
       </Show>
+      <Show when={canRemoveMemberFromGroup()}>
+        <ContextMenuButton
+          icon={MdPersonRemove}
+          onClick={removeMember}
+          destructive
+        >
+          <Trans>Remove Member</Trans>
+        </ContextMenuButton>
+      </Show>
       <Show when={canBanNonMember()}>
         <ContextMenuDivider />
         <ContextMenuButton
@@ -425,6 +457,8 @@ export function UserContextMenu(props: {
       </Show>
 
       {/* Safety: remove friend, block, report */}
+      <ContextMenuDivider />
+
       <Show when={!props.user.self}>
         <ContextMenuDivider />
         <Show when={props.user.relationship === "Friend"}>
@@ -478,11 +512,14 @@ export function UserContextMenu(props: {
  * Provide floating user menus on this element
  * @param user User
  * @param member Server Member
+ * @param contextMessage Message
+ * @param contextGroup Group
  */
 export function floatingUserMenus(
   user: User,
   member?: ServerMember,
   contextMessage?: Message,
+  contextGroup?: Channel,
 ): JSX.Directives["floating"] & object {
   return {
     userCard: {
@@ -499,7 +536,7 @@ export function floatingUserMenus(
           user={user}
           member={member}
           contextMessage={contextMessage}
-          channel={contextMessage?.channel}
+          channel={contextMessage?.channel ?? contextGroup}
         />
       );
     },
