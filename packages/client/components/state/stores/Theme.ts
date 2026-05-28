@@ -1,6 +1,11 @@
 import { Accessor, createSignal } from "solid-js";
 
-import { Fonts, MonospaceFonts } from "@revolt/ui/themes/fonts";
+import {
+  FONT_KEYS,
+  Fonts,
+  MONOSPACE_FONT_KEYS,
+  MonospaceFonts,
+} from "@revolt/ui/themes/fonts";
 
 import { State } from "..";
 
@@ -193,6 +198,20 @@ export class Theme extends AbstractStore<"theme", TypeTheme> {
 
     if (typeof input.messageGroupSpacing === "number") {
       data.messageGroupSpacing = input.messageGroupSpacing;
+    }
+
+    if (
+      typeof input.monospaceFont === "string" &&
+      MONOSPACE_FONT_KEYS.includes(input.monospaceFont)
+    ) {
+      data.monospaceFont = input.monospaceFont;
+    }
+
+    if (
+      typeof input.interfaceFont === "string" &&
+      FONT_KEYS.includes(input.interfaceFont)
+    ) {
+      data.interfaceFont = input.interfaceFont;
     }
 
     return data;
