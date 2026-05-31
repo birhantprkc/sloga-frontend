@@ -25,3 +25,4 @@ jobs:
           token: '${{ steps.app-token.outputs.token }}'
         env:
           RENOVATE_PLATFORM_COMMIT: 'enabled'
+          RENOVATE_REPOSITORIES: '${{ github.repository }}'
