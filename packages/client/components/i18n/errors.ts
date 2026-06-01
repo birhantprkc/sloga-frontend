@@ -1,6 +1,8 @@
 import { useLingui } from "@lingui-solid/solid/macro";
 import { API } from "stoat.js";
 
+const RE_BREAK = /\s*\n\s*/g;
+
 /**
  * Translate any error
  */
@@ -170,6 +172,13 @@ export function useError() {
     ) {
       const message = (error as { message: string }).message.trim();
       if (message) return message;
+    } else if (typeof error === "string") {
+      //Strip HTML from string
+      const p = document.createElement("html");
+      p.innerHTML = error;
+      p.querySelector("head")?.remove();
+      p.querySelector("[role=contentinfo]")?.remove();
+      error = p.textContent.trim().replace(RE_BREAK, ". ");
     }
 
     return t`Something went wrong! ${error}`;
