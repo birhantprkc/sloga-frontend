@@ -89,7 +89,7 @@ export function ProfileMutuals(props: { user: User; member?: ServerMember }) {
           </Grid>
         </ProfileCard>
       </Show>
-      <Show when={query.data?.users.length}>
+      <Show when={query.data?.groups.length}>
         <ProfileCard isLink onClick={openGroups}>
           <Ripple />
 
