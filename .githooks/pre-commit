@@ -9,7 +9,22 @@
 # This is a safety net, not a guarantee. Never commit real credentials; keep them
 # in gitignored files (Revolt.overrides.toml, .env, google-services.json, ...).
 
-added=$(git diff --cached --no-color --unified=0 --diff-filter=ACM 2>/dev/null \
+# Paths that are PUBLIC BY DESIGN and would otherwise trip a rule below.
+# Keep this list SHORT and justify every entry — each one is a blind spot.
+#
+#   google-services.json — Firebase CLIENT config. Its "current_key" values match
+#   the AIza rule, but Google ships them inside every APK, so they are extractable
+#   from any published build and from the (public) frontend repo already. Secrecy
+#   was never the control; API-key restriction is — lock each key to the Android
+#   package name + signing certificate SHA-1 in Google Cloud Console. Note that
+#   Play App Signing re-signs the app, so the SHA-1 to register is Play's, not the
+#   upload keystore's.
+#
+# This is NOT a general exemption for config: Revolt.overrides.toml, .env and the
+# FCM service-account json hold real secrets and must stay gitignored.
+ALLOWLIST=':(exclude)packages/client/android/app/google-services.json'
+
+added=$(git diff --cached --no-color --unified=0 --diff-filter=ACM -- . "$ALLOWLIST" 2>/dev/null \
         | grep '^+' | grep -v '^+++')
 [ -z "$added" ] && exit 0
 
