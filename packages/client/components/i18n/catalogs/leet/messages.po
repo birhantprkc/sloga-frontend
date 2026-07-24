@@ -42,9 +42,19 @@ msgstr ""
 msgid "(changes are being saved…)"
 msgstr ""
 
+#. placeholder {0}: attachmentCount()
+#: src/interface/ServerEvents.tsx
+msgid "{0, plural, one {# / 10 file attached} other {# / 10 files attached}}"
+msgstr ""
+
 #. placeholder {0}: props.count
 #: components/ui/components/features/messaging/elements/BlockedMessage.tsx
 msgid "{0, plural, one {# blocked message} other {# blocked messages}}"
+msgstr ""
+
+#. placeholder {0}: props.server.memberCount
+#: components/modal/modals/DiscoverJoin.tsx
+msgid "{0, plural, one {# member} other {# members}}"
 msgstr ""
 
 #. placeholder {0}: items().length
@@ -92,6 +102,17 @@ msgstr ""
 msgid "{0} files exceed the maximum size limit of {maxSizeFormatted} and were not uploaded."
 msgstr ""
 
+#. placeholder {0}: user.displayName ?? user.username
+#. placeholder {1}: nowLive.platform
+#: components/client/NotificationsWorker.tsx
+msgid "{0} is live on {1}"
+msgstr ""
+
+#. placeholder {0}: names().join(", ")
+#: components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
+msgid "{0} is not using encrypted calls. Your audio and video stay paused until you turn off encryption."
+msgstr ""
+
 #. placeholder {0}: users()[0]!.username
 #: components/ui/components/features/messaging/composition/TypingIndicator.tsx
 msgid "{0} is typing…"
@@ -129,6 +150,11 @@ msgstr ""
 msgid "{0} reported ({1})"
 msgstr ""
 
+#. placeholder {0}: rows().length
+#: components/app/interface/channels/text/ScheduledMessagesBar.tsx
+msgid "{0} scheduled"
+msgstr ""
+
 #. placeholder {0}: user.displayName ?? user.username
 #: components/client/NotificationsWorker.tsx
 msgid "{0} sent you a friend request"
@@ -137,6 +163,11 @@ msgstr ""
 #. placeholder {0}: (message.systemMessage as MessagePinnedSystemMessage).by?.username
 #: components/client/NotificationsWorker.tsx
 msgid "{0} unpinned a message"
+msgstr ""
+
+#. placeholder {0}: state()?.totalVotes ?? 0
+#: components/app/interface/channels/text/PollMessage.tsx
+msgid "{0} votes"
 msgstr ""
 
 #. placeholder {0}: (message.systemMessage as UserModeratedSystemMessage).user?.username
@@ -173,6 +204,12 @@ msgstr ""
 msgid "{0}'s roles"
 msgstr ""
 
+#. placeholder {0}: Math.ceil(hours / 24)
+#: components/app/interface/channels/text/PollMessage.tsx
+msgid "{0}d left"
+msgstr ""
+
+#: components/ui/components/features/voice/IncomingCallOverlay.tsx
 #: components/client/NotificationsWorker.tsx
 msgid "{callerName} is calling in {channelName}"
 msgstr ""
@@ -182,9 +219,17 @@ msgstr ""
 msgid "{h} hours"
 msgstr ""
 
+#: components/app/interface/channels/text/PollMessage.tsx
+msgid "{hours}h left"
+msgstr ""
+
 #: src/interface/channels/text/Composition.tsx
 #: src/interface/channels/text/Composition.tsx
 msgid "{m} minutes"
+msgstr ""
+
+#: components/app/interface/channels/text/PollMessage.tsx
+msgid "{minutes}m left"
 msgstr ""
 
 #: src/interface/channels/text/Composition.tsx
@@ -248,6 +293,10 @@ msgid "<0/> started a call that lasted "
 msgstr ""
 
 #: components/ui/components/features/messaging/elements/SystemMessage.tsx
+msgid "<0/> started a thread: <1/>"
+msgstr ""
+
+#: components/ui/components/features/messaging/elements/SystemMessage.tsx
 msgid "<0/> transferred group ownership to <1/>"
 msgstr ""
 
@@ -268,6 +317,12 @@ msgstr ""
 msgid "<0/> updated the group name to <1>{0}</1>"
 msgstr ""
 
+#. placeholder {0}: invoker()?.displayName ?? context()!.user_id
+#. placeholder {1}: context()!.command_name
+#: components/app/interface/channels/text/InteractionContext.tsx
+msgid "<0>{0}</0> used <1>/{1}</1>"
+msgstr ""
+
 #: components/modal/modals/LinkWarning.tsx
 msgid "<0>Be careful!</0><1/>This is not the same as the link that was displayed:"
 msgstr ""
@@ -279,6 +334,8 @@ msgstr ""
 
 #: src/interface/channels/text/Composition.tsx
 #: src/interface/channels/text/Composition.tsx
+#: components/modal/modals/CreateThread.tsx
+#: components/modal/modals/CreatePoll.tsx
 #: components/modal/modals/BanMember.tsx
 #: components/app/interface/settings/channel/Overview.tsx
 msgid "1 hour"
@@ -298,6 +355,10 @@ msgstr "1 P3250N 234C73D"
 msgid "1 second"
 msgstr ""
 
+#: components/modal/modals/CreatePoll.tsx
+msgid "1 week"
+msgstr ""
+
 #: components/app/interface/settings/channel/Overview.tsx
 msgid "10 minutes"
 msgstr ""
@@ -314,11 +375,19 @@ msgstr ""
 msgid "2 hours"
 msgstr ""
 
+#: components/modal/modals/CreatePoll.tsx
+msgid "2 weeks"
+msgstr ""
+
+#: components/modal/modals/CreateThread.tsx
+#: components/modal/modals/CreatePoll.tsx
 #: components/app/interface/settings/user/Language.tsx
 msgid "24 hours"
 msgstr ""
 
 #: components/modal/modals/SuspendUser.tsx
+#: components/modal/modals/CreateThread.tsx
+#: components/modal/modals/CreatePoll.tsx
 #: components/modal/modals/BanMember.tsx
 msgid "3 days"
 msgstr ""
@@ -335,9 +404,21 @@ msgstr ""
 msgid "30 seconds"
 msgstr ""
 
-#: components/auth/src/flows/FlowHome.tsx
-msgid "4k streaming"
+#: components/modal/modals/CreatePoll.tsx
+msgid "32 days"
 msgstr ""
+
+#: components/modal/modals/CreatePoll.tsx
+msgid "4 hours"
+msgstr ""
+
+#: components/auth/src/flows/FlowHome.tsx
+msgid "4k screen share"
+msgstr ""
+
+#: components/auth/src/flows/FlowHome.tsx
+#~ msgid "4k streaming"
+#~ msgstr ""
 
 #: components/app/interface/settings/channel/Overview.tsx
 msgid "5 minutes"
@@ -353,8 +434,21 @@ msgid "6 hours"
 msgstr ""
 
 #: components/modal/modals/SuspendUser.tsx
+#: components/modal/modals/CreateThread.tsx
 #: components/modal/modals/BanMember.tsx
 msgid "7 days"
+msgstr ""
+
+#: components/modal/modals/CreatePoll.tsx
+msgid "8 hours"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
+msgid "A participant turned off encryption for this call. Resume to be heard — the server will be able to read this call."
+msgstr ""
+
+#: components/client/index.tsx
+msgid "A scheduled message could not be sent: {reason}"
 msgstr ""
 
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
@@ -371,6 +465,7 @@ msgid "Able to speak in voice call"
 msgstr ""
 
 #: src/interface/ServerEvents.tsx
+#: components/ui/components/features/voice/IncomingCallOverlay.tsx
 #: components/modal/modals/SignOutSessions.tsx
 msgid "Accept"
 msgstr ""
@@ -387,12 +482,17 @@ msgstr ""
 msgid "Acknowledge"
 msgstr ""
 
+#: src/interface/channels/text/ThreadsListSidebar.tsx
+msgid "Active"
+msgstr ""
+
 #: components/ui/components/features/profiles/ProfileStatus.tsx
 msgid "Activity"
 msgstr ""
 
 #: components/modal/modals/AddMembersToGroup.tsx
 #: components/modal/modals/AddBot.tsx
+#: components/app/interface/settings/server/apps/AppsList.tsx
 msgid "Add"
 msgstr ""
 
@@ -403,6 +503,14 @@ msgstr ""
 #: src/interface/Friends.tsx
 #: components/modal/modals/AddFriend.tsx
 msgid "Add a new friend"
+msgstr ""
+
+#: components/modal/modals/CreatePoll.tsx
+msgid "Add answer"
+msgstr ""
+
+#: src/interface/ServerEvents.tsx
+msgid "Add files"
 msgstr ""
 
 #: components/app/menus/UserContextMenu.tsx
@@ -420,6 +528,14 @@ msgstr ""
 
 #: src/interface/navigation/servers/UserMenu.tsx
 msgid "Add status text"
+msgstr ""
+
+#: components/app/interface/settings/channel/ForumSettings.tsx
+msgid "Add tag"
+msgstr ""
+
+#: components/app/interface/settings/server/apps/AppsList.tsx
+msgid "Added ✓"
 msgstr ""
 
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
@@ -447,8 +563,8 @@ msgid "Affects all roles and users"
 msgstr ""
 
 #: src/interface/Friends.tsx
-msgid "All"
-msgstr ""
+#~ msgid "All"
+#~ msgstr ""
 
 #: src/interface/ServerEvents.tsx
 #: src/interface/ServerEvents.tsx
@@ -467,6 +583,10 @@ msgstr "4LL M3554635"
 msgid "Allow members to change name and avatar per-message"
 msgstr ""
 
+#: components/modal/modals/CreatePoll.tsx
+msgid "Allow multiple answers"
+msgstr ""
+
 #: components/app/interface/settings/user/bots/ViewBot.tsx
 msgid "Allow others to add your bot to their servers from Discover"
 msgstr ""
@@ -477,6 +597,10 @@ msgstr "4L234DY F213ND5 W17H 7H15 U532."
 
 #: components/modal/modals/E2EEEnable.tsx
 msgid "Already have a recovery code from another device? Choose \"Restore from a recovery code\" to bring back your history. Otherwise, encrypted history lives on THIS device only and cannot be recovered if the device is lost. You will confirm your identity to continue."
+msgstr ""
+
+#: components/app/interface/settings/user/Language.tsx
+msgid "Also read translated captions aloud using your device's voice. Runs on the receiving side and never reads your own captions back to you."
 msgstr ""
 
 #: components/app/interface/settings/user/voice/CameraOptions.tsx
@@ -496,10 +620,45 @@ msgstr ""
 msgid "An internal error occurred. ({0})"
 msgstr ""
 
+#: components/modal/modals/CreateChannel.tsx
+msgid "Announcement channel"
+msgstr ""
+
+#: components/app/interface/settings/channel/Overview.tsx
+msgid "Announcement Channel"
+msgstr ""
+
+#: components/app/interface/settings/channel/Overview.tsx
+msgid "Announcement channels can be followed by other servers, and their messages published into those servers' channels."
+msgstr ""
+
+#: components/app/interface/settings/channel/Overview.tsx
+msgid "Another server"
+msgstr ""
+
+#. placeholder {0}: index + 1
+#: components/modal/modals/CreatePoll.tsx
+msgid "Answer {0}"
+msgstr ""
+
+#: components/modal/modals/CreatePoll.tsx
+msgid "Answers"
+msgstr ""
+
 #: components/app/interface/settings/UserSettings.tsx
 #: components/app/interface/settings/user/Sync.tsx
 msgid "Appearance"
 msgstr "4PP3424NC3"
+
+#: components/app/interface/settings/ServerSettings.tsx
+#: components/app/interface/settings/ServerSettings.tsx
+msgid "Apps"
+msgstr ""
+
+#: src/interface/channels/text/ThreadsListSidebar.tsx
+#: src/interface/channels/forum/ForumChannel.tsx
+msgid "Archived"
+msgstr ""
 
 #: components/modal/modals/SignOutSessions.tsx
 msgid "Are you sure you want to clear your sessions?"
@@ -519,6 +678,10 @@ msgstr ""
 msgid "Are you sure you want to remove {0} from {1}?"
 msgstr ""
 
+#: components/app/interface/settings/server/Overview.tsx
+msgid "Ask for this server to be shown in the public directory. Its name, icon, description and member count become publicly visible once approved."
+msgstr ""
+
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Assign lower-ranked roles to lower-ranking members"
 msgstr ""
@@ -527,8 +690,26 @@ msgstr ""
 msgid "Assign Roles"
 msgstr "45516N 20L35"
 
+#: components/ui/components/features/messaging/composition/CameraMessageButton.tsx
+msgid "Attach video message"
+msgstr ""
+
+#: components/ui/components/features/messaging/composition/VoiceMessageButton.tsx
+msgid "Attach voice message"
+msgstr ""
+
+#: src/interface/ServerEvents.tsx
+#: src/interface/ServerEvents.tsx
+#: components/modal/modals/ForwardMessage.tsx
+msgid "Attachments"
+msgstr ""
+
 #: components/modal/modals/ScreenShareSettings.tsx
 msgid "Audio disabled by browser"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceDeviceSelector.tsx
+msgid "Audio output"
 msgstr ""
 
 #: components/modal/modals/MFAFlow.tsx
@@ -542,12 +723,25 @@ msgstr "4U7H3N71C4702 4PP"
 msgid "Auto"
 msgstr ""
 
+#: components/modal/modals/CreateThread.tsx
+msgid "Auto-archive after inactivity"
+msgstr ""
+
+#: components/app/interface/settings/user/Language.tsx
+#: components/app/interface/settings/user/Language.tsx
+msgid "Automatic"
+msgstr ""
+
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "Automatic Gain Control"
 msgstr ""
 
 #: components/app/interface/settings/user/Language.tsx
 msgid "Automatically detect and translate messages sent by other people. Message text is sent to Google Translate; encrypted messages are never translated."
+msgstr ""
+
+#: components/app/interface/settings/user/StreamerMode.tsx
+msgid "Automatically enable"
 msgstr ""
 
 #: components/app/interface/settings/user/profile/UserProfileEditor.tsx
@@ -564,6 +758,11 @@ msgstr "4V4742"
 #: components/auth/src/flows/FlowCheck.tsx
 #: components/app/interface/settings/user/_AccountCard.tsx
 msgid "Back"
+msgstr ""
+
+#. placeholder {0}: props.channel.parent!.name
+#: src/interface/channels/text/TextChannel.tsx
+msgid "Back to #{0}"
 msgstr ""
 
 #: components/auth/src/flows/FlowOAuthCallback.tsx
@@ -628,10 +827,17 @@ msgstr ""
 msgid "Bans"
 msgstr "84N5"
 
+#. placeholder {0}: voice.cameraBeautify
+#: components/modal/modals/CameraSettings.tsx
+#: components/app/interface/settings/user/voice/CameraOptions.tsx
+msgid "Beautify: {0}%"
+msgstr ""
+
 #: components/app/menus/UserContextMenu.tsx
 msgid "Block user"
 msgstr "8L0CK U532"
 
+#: src/interface/Friends.tsx
 #: src/interface/Friends.tsx
 msgid "Blocked"
 msgstr "8L0CK3D"
@@ -669,6 +875,10 @@ msgstr ""
 msgid "Brightness: {0}%"
 msgstr ""
 
+#: components/app/interface/settings/user/Language.tsx
+msgid "Broadcasting your own captions isn't supported in this app or browser — you'll still see other people's captions."
+msgstr ""
+
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "Browser"
 msgstr ""
@@ -678,8 +888,8 @@ msgid "Browser Echo Cancellation"
 msgstr ""
 
 #: components/app/interface/settings/user/Feedback.tsx
-msgid "Bug Tracker"
-msgstr "8U6 724CK32"
+#~ msgid "Bug Tracker"
+#~ msgstr "8U6 724CK32"
 
 #: src/interface/navigation/channels/HomeSidebar.tsx
 #: src/interface/channels/text/MemberSidebar.tsx
@@ -688,12 +898,12 @@ msgid "Busy"
 msgstr ""
 
 #: components/modal/modals/CreateBot.tsx
-msgid "By creating this bot, you agree to the <0>Acceptable Use Policy</0>."
-msgstr ""
+#~ msgid "By creating this bot, you agree to the <0>Acceptable Use Policy</0>."
+#~ msgstr ""
 
 #: components/modal/modals/CreateServer.tsx
-msgid "By creating this server, you agree to the <0>Acceptable Use Policy</0>."
-msgstr ""
+#~ msgid "By creating this server, you agree to the <0>Acceptable Use Policy</0>."
+#~ msgstr ""
 
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Bypass Slowmode"
@@ -708,12 +918,25 @@ msgstr ""
 msgid "Call"
 msgstr ""
 
+#: components/ui/components/features/voice/callCard/VoiceCallRosterPanel.tsx
+msgid "Call encryption"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceCallCardPreview.tsx
+msgid "Call full for encryption (100)"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceDeviceSelector.tsx
 #: components/modal/modals/CameraSettings.tsx
 msgid "Camera"
 msgstr ""
 
 #: components/app/interface/settings/user/voice/CameraOptions.tsx
 msgid "Camera Brightness"
+msgstr ""
+
+#: components/ui/components/features/messaging/composition/CameraMessageButton.tsx
+msgid "Camera or microphone access was denied. Check your device permissions and try again."
 msgstr ""
 
 #: components/app/interface/settings/user/voice/CameraPreview.tsx
@@ -747,6 +970,7 @@ msgstr ""
 #: components/modal/modals/ServerIdentity.tsx
 #: components/modal/modals/ScreenShareSettings.tsx
 #: components/modal/modals/ScreenSharePicker.tsx
+#: components/modal/modals/ScheduleMessage.tsx
 #: components/modal/modals/ResetBotToken.tsx
 #: components/modal/modals/ReportContent.tsx
 #: components/modal/modals/RenameSession.tsx
@@ -759,10 +983,13 @@ msgstr ""
 #: components/modal/modals/KickMember.tsx
 #: components/modal/modals/InviteToServer.tsx
 #: components/modal/modals/Invite.tsx
+#: components/modal/modals/ForwardMessage.tsx
+#: components/modal/modals/FollowChannel.tsx
 #: components/modal/modals/EditCategory.tsx
 #: components/modal/modals/E2EEEnableGroup.tsx
 #: components/modal/modals/E2EEEnable.tsx
 #: components/modal/modals/E2EEDisable.tsx
+#: components/modal/modals/DiscoverJoin.tsx
 #: components/modal/modals/DeleteServer.tsx
 #: components/modal/modals/DeleteRole.tsx
 #: components/modal/modals/DeleteMessage.tsx
@@ -791,6 +1018,10 @@ msgstr "C4NC3L F213ND 23QU357"
 
 #: components/app/menus/DraftMessageContextMenu.tsx
 msgid "Cancel message"
+msgstr ""
+
+#: components/app/interface/channels/text/ScheduledMessagesBar.tsx
+msgid "Cancel scheduled message"
 msgstr ""
 
 #: src/interface/ServerEvents.tsx
@@ -868,6 +1099,14 @@ msgstr "CH4NN3L D35C21P710N"
 msgid "Channel Info"
 msgstr ""
 
+#: src/index.tsx
+msgid "Channel linking failed or was cancelled."
+msgstr ""
+
+#: components/app/interface/settings/user/Connections.tsx
+msgid "Channel linking is not enabled on this server yet."
+msgstr ""
+
 #: components/modal/modals/CreateChannel.tsx
 #: components/app/interface/settings/channel/Overview.tsx
 msgid "Channel Name"
@@ -885,9 +1124,18 @@ msgstr ""
 msgid "Channel Slowmode"
 msgstr ""
 
+#: components/app/interface/settings/user/Connections.tsx
+msgid "Channel unlinked."
+msgstr ""
+
+#: components/ui/components/features/profiles/ProfileConnections.tsx
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Channels"
 msgstr "CH4NN3L5"
+
+#: components/app/interface/settings/channel/Overview.tsx
+msgid "Channels in other servers that receive this channel's published messages."
+msgstr ""
 
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
 msgid "Chat Input"
@@ -931,6 +1179,7 @@ msgid "Click to copy username"
 msgstr ""
 
 #: src/interface/channels/ChannelHeader.tsx
+#: src/interface/channels/ChannelHeader.tsx
 msgid "Click to show full description"
 msgstr ""
 
@@ -956,6 +1205,7 @@ msgstr "CL13N7 53771N65"
 #: components/modal/modals/UserProfileMutualFriends.tsx
 #: components/modal/modals/ServerInfo.tsx
 #: components/modal/modals/ReportQueue.tsx
+#: components/modal/modals/PollVoters.tsx
 #: components/modal/modals/PolicyChange.tsx
 #: components/modal/modals/LinkWarning.tsx
 #: components/modal/modals/JoinServer.tsx
@@ -965,16 +1215,21 @@ msgstr "CL13N7 53771N65"
 #: components/modal/modals/EditEmail.tsx
 #: components/modal/modals/E2EEVerify.tsx
 #: components/modal/modals/E2EEIdentityChange.tsx
+#: components/modal/modals/E2EEDisable.tsx
 #: components/modal/modals/DeleteChannel.tsx
 #: components/modal/modals/CustomStatus.tsx
 #: components/modal/modals/CreateWebhook.tsx
+#: components/modal/modals/CreateThread.tsx
 #: components/modal/modals/CreateServer.tsx
 #: components/modal/modals/CreateRole.tsx
+#: components/modal/modals/CreatePoll.tsx
 #: components/modal/modals/CreateGroup.tsx
+#: components/modal/modals/CreateForumPost.tsx
 #: components/modal/modals/CreateChannel.tsx
 #: components/modal/modals/CreateCategory.tsx
 #: components/modal/modals/CreateBot.tsx
 #: components/modal/modals/ChannelInfo.tsx
+#: components/modal/modals/Changelog.tsx
 #: components/modal/modals/Changelog.tsx
 #: components/modal/modals/AddMembersToGroup.tsx
 #: components/modal/modals/AddFriend.tsx
@@ -990,8 +1245,17 @@ msgstr ""
 msgid "Close conversation with {0}?"
 msgstr ""
 
+#: components/app/interface/channels/text/PollMessage.tsx
+msgid "Closing…"
+msgstr ""
+
 #: components/modal/modals/JoinServer.tsx
 msgid "Code"
+msgstr ""
+
+#: components/modal/modals/CameraSettings.tsx
+#: components/app/interface/settings/user/voice/CameraOptions.tsx
+msgid "Color filter"
 msgstr ""
 
 #: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx
@@ -1026,6 +1290,7 @@ msgstr "C0NF12M 4C710N"
 msgid "Confirm identity"
 msgstr ""
 
+#: components/app/interface/settings/user/Connections.tsx
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Connect"
 msgstr "C0NN3C7"
@@ -1047,6 +1312,10 @@ msgstr ""
 msgid "Connecting"
 msgstr ""
 
+#: components/app/interface/settings/UserSettings.tsx
+msgid "Connections"
+msgstr ""
+
 #: components/modal/modals/ReportContent.tsx
 msgid "Content breaks one or more laws"
 msgstr "C0N73N7 8234K5 0N3 02 M023 L4W5"
@@ -1064,13 +1333,17 @@ msgstr ""
 msgid "Continue to app"
 msgstr ""
 
+#: components/modal/modals/E2EEPeerDowngrade.tsx
+msgid "Continue unencrypted — new messages will be readable by the server — or keep the conversation encrypted on your side. Your encrypted history is unaffected either way."
+msgstr ""
+
 #: components/auth/src/flows/FlowLogin.tsx
 msgid "Continue with Google"
 msgstr ""
 
 #: components/app/interface/settings/user/Language.tsx
-msgid "Contribute a language"
-msgstr ""
+#~ msgid "Contribute a language"
+#~ msgstr ""
 
 #: components/ui/components/features/profiles/ProfileBanner.tsx
 msgid "Copied!"
@@ -1143,15 +1416,34 @@ msgstr ""
 msgid "Could not find what you requested."
 msgstr ""
 
+#: components/modal/modals/PollVoters.tsx
+msgid "Could not load voters."
+msgstr ""
+
+#: components/app/interface/settings/user/Connections.tsx
+msgid "Could not start linking, try again later."
+msgstr ""
+
+#: components/app/interface/settings/user/Connections.tsx
+msgid "Could not unlink the channel, try again."
+msgstr ""
+
+#: components/app/interface/settings/server/apps/AppsList.tsx
+msgid "Couldn't add the app — try again."
+msgstr ""
+
 #: src/interface/ServerEvents.tsx
 msgid "Couldn't load events"
 msgstr ""
 
 #: src/interface/ServerEvents.tsx
 #: components/modal/modals/CreateWebhook.tsx
+#: components/modal/modals/CreateThread.tsx
 #: components/modal/modals/CreateServer.tsx
 #: components/modal/modals/CreateRole.tsx
+#: components/modal/modals/CreatePoll.tsx
 #: components/modal/modals/CreateGroup.tsx
+#: components/modal/modals/CreateForumPost.tsx
 #: components/modal/modals/CreateChannel.tsx
 #: components/modal/modals/CreateCategory.tsx
 #: components/modal/modals/CreateBot.tsx
@@ -1185,8 +1477,12 @@ msgid "Create a recovery code"
 msgstr ""
 
 #: components/modal/modals/E2EEEnable.tsx
-msgid "Create a recovery code so you can restore your identity and message history if you lose this device. Without one, encrypted history is gone for good if the device is lost. You can also do this later from Security & Privacy settings."
+msgid "Create a recovery code so you can restore your identity and message history if you lose this device. Without one, encrypted history is gone for good if the device is lost. You can also do this later from E2E Encryption settings."
 msgstr ""
+
+#: components/modal/modals/E2EEEnable.tsx
+#~ msgid "Create a recovery code so you can restore your identity and message history if you lose this device. Without one, encrypted history is gone for good if the device is lost. You can also do this later from Security & Privacy settings."
+#~ msgstr ""
 
 #: src/interface/ServerEvents.tsx
 #~ msgid "Create a text channel named <0>events</0> in this server to enable the calendar."
@@ -1243,6 +1539,11 @@ msgstr ""
 msgid "Create invites for others to use"
 msgstr ""
 
+#: src/interface/channels/text/Composition.tsx
+#: components/modal/modals/CreatePoll.tsx
+msgid "Create poll"
+msgstr ""
+
 #: components/modal/modals/E2EEEnable.tsx
 msgid "Create recovery code"
 msgstr ""
@@ -1260,12 +1561,26 @@ msgstr ""
 msgid "Create server emoji"
 msgstr ""
 
+#: components/modal/modals/CreateThread.tsx
+#: components/app/menus/MessageContextMenu.tsx
+msgid "Create thread"
+msgstr ""
+
+#: src/interface/channels/text/ThreadsListSidebar.tsx
+msgid "Create Thread"
+msgstr ""
+
 #: components/app/interface/settings/channel/webhooks/WebhooksList.tsx
 msgid "Create Webhook"
 msgstr ""
 
 #: components/app/interface/settings/user/Sessions.tsx
 msgid "Created <0/>"
+msgstr ""
+
+#: src/interface/channels/forum/ForumChannel.tsx
+#: components/app/interface/settings/channel/ForumSettings.tsx
+msgid "Creation date"
 msgstr ""
 
 #: components/modal/modals/EditUsername.tsx
@@ -1322,6 +1637,7 @@ msgid "Deafen Members"
 msgstr "D34F3N M3M8325"
 
 #: src/interface/ServerEvents.tsx
+#: components/ui/components/features/voice/IncomingCallOverlay.tsx
 msgid "Decline"
 msgstr ""
 
@@ -1334,6 +1650,10 @@ msgstr "D3F4UL7"
 #: components/app/interface/settings/server/roles/ServerRoleOverview.tsx
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsOverview.tsx
 msgid "Default Permissions"
+msgstr ""
+
+#: components/app/interface/settings/channel/ForumSettings.tsx
+msgid "Default sort order"
 msgstr ""
 
 #: components/modal/modals/EmojiPreview.tsx
@@ -1424,8 +1744,8 @@ msgid "Desktop"
 msgstr ""
 
 #: components/app/interface/settings/user/bots/MyBots.tsx
-msgid "Developer Documentation"
-msgstr ""
+#~ msgid "Developer Documentation"
+#~ msgstr ""
 
 #: src/interface/channels/text/Composition.tsx
 msgid "Dice"
@@ -1448,8 +1768,16 @@ msgstr ""
 msgid "Disable Account"
 msgstr "D1548L3 4CC0UN7"
 
+#: components/app/interface/settings/user/StreamerMode.tsx
+msgid "Disable notifications"
+msgstr ""
+
 #: components/app/interface/settings/user/Account.tsx
 msgid "Disable one-time password authenticator"
+msgstr ""
+
+#: components/app/interface/settings/user/StreamerMode.tsx
+msgid "Disable sounds"
 msgstr ""
 
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
@@ -1468,6 +1796,17 @@ msgstr ""
 msgid "Disappearing messages: Off"
 msgstr ""
 
+#: components/ui/components/features/messaging/composition/VoiceMessageButton.tsx
+#: components/ui/components/features/messaging/composition/VoiceMessageButton.tsx
+#: components/ui/components/features/messaging/composition/CameraMessageButton.tsx
+#: components/ui/components/features/messaging/composition/CameraMessageButton.tsx
+msgid "Discard recording"
+msgstr ""
+
+#: components/app/interface/settings/user/Connections.tsx
+msgid "Disconnect"
+msgstr ""
+
 #: components/app/interface/settings/user/notifications/Sounds.tsx
 msgid "Disconnect Sound Style"
 msgstr ""
@@ -1482,6 +1821,10 @@ msgstr ""
 
 #: src/interface/Home.tsx
 msgid "Discover Sloga"
+msgstr ""
+
+#: components/app/interface/channels/text/Message.tsx
+msgid "Dismiss"
 msgstr ""
 
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
@@ -1521,6 +1864,7 @@ msgid "Don't show this again until the next update"
 msgstr ""
 
 #: src/interface/Home.tsx
+#: components/app/interface/settings/UserSettings.tsx
 msgid "Donate to Sloga"
 msgstr ""
 
@@ -1540,6 +1884,10 @@ msgstr ""
 
 #: components/modal/modals/SuspendUser.tsx
 msgid "Duration"
+msgstr ""
+
+#: components/app/interface/settings/UserSettings.tsx
+msgid "E2E Encryption"
 msgstr ""
 
 #. placeholder {0}: props.member.displayName
@@ -1615,6 +1963,10 @@ msgstr ""
 msgid "Email"
 msgstr "3M41L"
 
+#: components/app/interface/settings/server/soundboard/SoundboardList.tsx
+msgid "Emoji (optional)"
+msgstr ""
+
 #: components/app/interface/settings/server/emojis/EmojiList.tsx
 msgid "Emoji Name"
 msgstr ""
@@ -1647,12 +1999,32 @@ msgstr ""
 msgid "Enable Push to Talk"
 msgstr ""
 
+#: components/app/interface/settings/user/StreamerMode.tsx
+msgid "Enable Streamer Mode"
+msgstr ""
+
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
 msgid "Enable transparency glass/blur effects (slow on older machines)"
 msgstr ""
 
+#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+msgid "Encrypt my calls"
+msgstr ""
+
 #: components/modal/modals/E2EEEnableGroup.tsx
 msgid "Encrypt this group"
+msgstr ""
+
+#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+msgid "Encrypt your voice and video on this device. Everyone in a call must have this on; web participants can't join encrypted, and server features that need the raw audio or video (recording, transcoding) are turned off in encrypted calls."
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceCallCardStatus.tsx
+msgid "Encrypted · unverified"
+msgstr ""
+
+#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+msgid "Encrypted calls aren't available on this device yet."
 msgstr ""
 
 #: components/app/interface/settings/user/SecurityAndPrivacy.tsx
@@ -1676,7 +2048,17 @@ msgid "Encryption is off for this device. New direct messages are no longer end-
 msgstr ""
 
 #: src/interface/channels/text/Composition.tsx
+#: src/interface/channels/text/Composition.tsx
+#: components/app/interface/channels/text/MessageComponents.tsx
 msgid "Encryption status could not be verified. Nothing was sent."
+msgstr ""
+
+#: components/modal/modals/E2EEPeerDowngrade.tsx
+msgid "Encryption turned off"
+msgstr ""
+
+#: src/interface/channels/text/Composition.tsx
+msgid "Encryption was turned off — choose how to continue."
 msgstr ""
 
 #: src/interface/channels/text/Composition.tsx
@@ -1685,6 +2067,18 @@ msgstr ""
 
 #: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx
 msgid "End call"
+msgstr ""
+
+#: components/app/menus/MessageContextMenu.tsx
+msgid "End poll now"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceCallCardStatus.tsx
+msgid "End-to-end encrypted"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceCallCardPreview.tsx
+msgid "End-to-end encrypted call"
 msgstr ""
 
 #: src/interface/ServerEvents.tsx
@@ -1751,12 +2145,20 @@ msgstr ""
 msgid "Every"
 msgstr ""
 
+#: components/app/interface/settings/channel/ForumSettings.tsx
+msgid "Every post must have at least one tag"
+msgstr ""
+
 #: src/interface/ServerEvents.tsx
 msgid "Everyone in that selection was already invited or can't view this event"
 msgstr ""
 
 #: components/modal/modals/E2EEEnableGroup.tsx
 msgid "Everyone must have encryption set up, or this will not turn on. Encrypted history will live only on each person's own devices, and the server will no longer be able to read new messages."
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceCallCardActiveRoom.tsx
+msgid "Exit theater mode"
 msgstr ""
 
 #: components/modal/modals/LinkWarning.tsx
@@ -1771,12 +2173,21 @@ msgstr ""
 msgid "Extreme violence, gore or animal cruelty"
 msgstr ""
 
+#: components/modal/modals/CameraSettings.tsx
+#: components/app/interface/settings/user/voice/CameraOptions.tsx
+msgid "Face tracking failed — stickers and beautify are unavailable."
+msgstr ""
+
 #: components/client/NotificationsController.ts
 msgid "Failed to enable notifications. Sloga does not have notification permission."
 msgstr ""
 
 #: components/client/NotificationsController.ts
 msgid "Failed to enable push notifications. Please try again later."
+msgstr ""
+
+#: src/index.tsx
+msgid "Failed to link your channel, try again."
 msgstr ""
 
 #: components/i18n/errors.ts
@@ -1792,7 +2203,6 @@ msgid "Failed to verify!"
 msgstr "F41L3D 70 V321FY!"
 
 #: components/app/interface/settings/UserSettings.tsx
-#: components/app/interface/settings/user/Feedback.tsx
 msgid "Feedback"
 msgstr "F33D84CK"
 
@@ -1800,9 +2210,33 @@ msgstr "F33D84CK"
 msgid "Fetching encrypted attachment…"
 msgstr ""
 
+#: src/interface/ServerEvents.tsx
+#: src/interface/ServerEvents.tsx
+msgid "file"
+msgstr ""
+
+#: components/modal/modals/CameraSettings.tsx
+#: components/app/interface/settings/user/voice/CameraOptions.tsx
+msgid "Filters"
+msgstr ""
+
+#: components/modal/modals/CameraSettings.tsx
+#: components/app/interface/settings/user/voice/CameraOptions.tsx
+msgid "Filters are paused while background effects are on."
+msgstr ""
+
+#: components/app/interface/channels/text/PollMessage.tsx
+msgid "Final results"
+msgstr ""
+
 #: src/interface/Home.tsx
 msgid "Find a community based on your hobbies or interests."
 msgstr "F1ND 4 C0MMUN17Y 8453D 0N Y0U2 H088135 02 1N7323575."
+
+#: components/ui/components/features/messaging/composition/VoiceMessageButton.tsx
+#: components/ui/components/features/messaging/composition/CameraMessageButton.tsx
+msgid "Finish recording"
+msgstr ""
 
 #: components/modal/modals/E2EEReenroll.tsx
 #: components/app/interface/settings/user/SecurityAndPrivacy.tsx
@@ -1815,6 +2249,26 @@ msgstr ""
 #: components/ui/components/features/profiles/ProfileStatus.tsx
 msgid "Focus"
 msgstr "F0CU5"
+
+#: components/modal/modals/FollowChannel.tsx
+msgid "Follow"
+msgstr ""
+
+#: components/modal/modals/FollowChannel.tsx
+msgid "Follow announcement channel"
+msgstr ""
+
+#: src/interface/channels/ChannelHeader.tsx
+msgid "Follow this announcement channel"
+msgstr ""
+
+#: components/app/interface/settings/channel/Overview.tsx
+msgid "Followers"
+msgstr ""
+
+#: components/modal/modals/FollowChannel.tsx
+msgid "Following creates a webhook in the destination channel. The destination server can stop the follow at any time by deleting that webhook."
+msgstr ""
 
 #: components/app/menus/ServerContextMenu.tsx
 #: components/app/menus/shared/NotificationContextMenu.tsx
@@ -1841,6 +2295,32 @@ msgstr ""
 msgid "For 8 hours"
 msgstr ""
 
+#: components/app/interface/settings/ChannelSettings.tsx
+msgid "Forum"
+msgstr ""
+
+#: components/modal/modals/CreateChannel.tsx
+msgid "Forum Channel"
+msgstr ""
+
+#: components/modal/modals/ForwardMessage.tsx
+#: components/app/menus/MessageContextMenu.tsx
+msgid "Forward"
+msgstr ""
+
+#: components/modal/modals/ForwardMessage.tsx
+msgid "Forward message"
+msgstr ""
+
+#: components/app/interface/channels/text/ForwardedMessage.tsx
+msgid "Forwarded"
+msgstr ""
+
+#: components/ui/components/features/messaging/elements/MessageReply.tsx
+#: components/client/NotificationsWorker.tsx
+msgid "Forwarded a message"
+msgstr ""
+
 #: components/auth/src/flows/FlowHome.tsx
 msgid "Free"
 msgstr ""
@@ -1850,9 +2330,19 @@ msgid "Friend Request"
 msgstr ""
 
 #: src/interface/Friends.tsx
+#: src/interface/Friends.tsx
 #: src/interface/navigation/channels/HomeSidebar.tsx
 msgid "Friends"
 msgstr "F213ND5"
+
+#. placeholder {0}: server.name
+#: components/app/interface/channels/text/Message.tsx
+msgid "From {0} • #{name}"
+msgstr ""
+
+#: components/app/interface/channels/text/Message.tsx
+msgid "From another server"
+msgstr ""
 
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
 msgid "Fruit Salad"
@@ -1888,7 +2378,11 @@ msgid "Get active recovery codes"
 msgstr ""
 
 #: src/AndroidNag.tsx
-msgid "Get it on Google Play"
+#~ msgid "Get it on Google Play"
+#~ msgstr ""
+
+#: src/AndroidNag.tsx
+msgid "Get the Android app"
 msgstr ""
 
 #: components/modal/modals/ReportContent.tsx
@@ -1954,8 +2448,8 @@ msgid "Hello!"
 msgstr "H3LL0!"
 
 #: components/app/interface/settings/user/Language.tsx
-msgid "Help contribute to an existing or new language"
-msgstr ""
+#~ msgid "Help contribute to an existing or new language"
+#~ msgstr ""
 
 #: components/ui/components/features/profiles/ProfileBadges.tsx
 msgid "Helped translate Sloga"
@@ -1966,8 +2460,28 @@ msgstr ""
 msgid "Here is your new invite code: <0>{0}</0>"
 msgstr ""
 
+#: components/app/interface/settings/user/Account.tsx
+msgid "Hidden by Streamer Mode"
+msgstr ""
+
+#: components/app/interface/settings/user/StreamerMode.tsx
+msgid "Hide invite links"
+msgstr ""
+
+#: components/app/interface/settings/user/StreamerMode.tsx
+msgid "Hide invites in chat and blur newly created invite links so viewers can't join your servers."
+msgstr ""
+
 #: components/ui/components/features/voice/callCard/VoiceCallCardActiveRoom.tsx
 msgid "Hide Others"
+msgstr ""
+
+#: components/app/interface/settings/user/StreamerMode.tsx
+msgid "Hide personal details, invite links, notifications and sounds while you are live."
+msgstr ""
+
+#: components/app/interface/settings/user/StreamerMode.tsx
+msgid "Hide personal information"
 msgstr ""
 
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
@@ -2014,6 +2528,10 @@ msgstr ""
 msgid "Image"
 msgstr ""
 
+#: components/app/interface/settings/server/Overview.tsx
+msgid "Immediately remove this server from the public directory"
+msgstr ""
+
 #: components/modal/modals/ReportContent.tsx
 msgid "Impersonation"
 msgstr ""
@@ -2038,10 +2556,38 @@ msgstr ""
 msgid "Importing…"
 msgstr ""
 
-#: src/AndroidNag.tsx
-msgid "In the meantime, install Sloga from Google Play for a faster, smoother experience designed for Android."
+#: components/modal/modals/ScheduleMessage.tsx
+msgid "In 1 hour"
 msgstr ""
 
+#: components/modal/modals/ScheduleMessage.tsx
+msgid "In 30 minutes"
+msgstr ""
+
+#: components/modal/modals/ScheduleMessage.tsx
+msgid "In 4 hours"
+msgstr ""
+
+#: components/modal/modals/ScheduleMessage.tsx
+msgid "In a week"
+msgstr ""
+
+#: src/AndroidNag.tsx
+msgid "In the meantime, get the app for a faster, smoother experience designed for Android."
+msgstr ""
+
+#: src/AndroidNag.tsx
+#~ msgid "In the meantime, install Sloga from Google Play for a faster, smoother experience designed for Android."
+#~ msgstr ""
+
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "In this build the key only registers while the app is focused — the desktop app supports global push to talk."
+msgstr ""
+
+#: src/interface/navigation/channels/HomeSidebar.tsx
+#: components/ui/components/features/voice/IncomingCallOverlay.tsx
+#: components/ui/components/features/voice/IncomingCallOverlay.tsx
+#: components/ui/components/features/voice/IncomingCallOverlay.tsx
 #: components/client/NotificationsWorker.tsx
 msgid "Incoming Call"
 msgstr ""
@@ -2068,6 +2614,10 @@ msgstr ""
 
 #: components/app/interface/settings/user/Native.tsx
 msgid "Instead of closing, Sloga will hide in your tray."
+msgstr ""
+
+#: components/app/interface/channels/text/MessageComponents.tsx
+msgid "Interactions are unavailable in encrypted conversations."
 msgstr ""
 
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
@@ -2098,6 +2648,10 @@ msgstr "1NV173 C0D3"
 #. placeholder {0}: props.server.name
 #: components/modal/modals/InviteToServer.tsx
 msgid "Invite Friends to {0}"
+msgstr ""
+
+#: components/markdown/plugins/anchors.tsx
+msgid "Invite hidden by Streamer Mode"
 msgstr ""
 
 #: src/interface/ServerEvents.tsx
@@ -2143,6 +2697,7 @@ msgstr ""
 
 #: components/modal/modals/JoinServer.tsx
 #: components/modal/modals/Invite.tsx
+#: components/modal/modals/DiscoverJoin.tsx
 msgid "Join"
 msgstr ""
 
@@ -2151,13 +2706,16 @@ msgid "Join a server"
 msgstr ""
 
 #: src/interface/Home.tsx
-#: components/app/interface/settings/user/Feedback.tsx
 msgid "Join the Sloga Lounge"
 msgstr ""
 
 #: src/interface/channels/ChannelHeader.tsx
 #: components/ui/components/features/voice/callCard/VoiceCallCardPreview.tsx
 msgid "Join the voice channel"
+msgstr ""
+
+#: src/interface/channels/text/TextChannel.tsx
+msgid "Join Thread"
 msgstr ""
 
 #: components/ui/components/features/profiles/ProfileJoined.tsx
@@ -2177,8 +2735,16 @@ msgstr "JUMP 70 7H3 8361NN1N6"
 msgid "Keep as is"
 msgstr ""
 
+#: components/modal/modals/E2EEPeerDowngrade.tsx
+msgid "Keep encrypted"
+msgstr ""
+
 #: components/auth/src/flows/FlowLogin.tsx
 msgid "Keep me logged in"
+msgstr ""
+
+#: components/app/interface/settings/user/StreamerMode.tsx
+msgid "Keep your email address masked in account settings."
 msgstr ""
 
 #: components/modal/modals/KickMember.tsx
@@ -2214,13 +2780,18 @@ msgstr ""
 msgid "Latest"
 msgstr "L47357"
 
+#: src/interface/channels/forum/ForumChannel.tsx
+#: components/app/interface/settings/channel/ForumSettings.tsx
+msgid "Latest activity"
+msgstr ""
+
 #: components/app/interface/settings/user/Native.tsx
 msgid "Launch Sloga when you log into your computer."
 msgstr ""
 
 #: components/app/interface/settings/user/bots/MyBots.tsx
-msgid "Learn more about how to create bots on Sloga."
-msgstr ""
+#~ msgid "Learn more about how to create bots on Sloga."
+#~ msgstr ""
 
 #: components/modal/modals/LeaveServer.tsx
 #: components/modal/modals/DeleteChannel.tsx
@@ -2234,6 +2805,10 @@ msgstr "L34V3"
 msgid "Leave {0}?"
 msgstr ""
 
+#: components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
+msgid "Leave call"
+msgstr ""
+
 #: components/app/menus/ChannelContextMenu.tsx
 msgid "Leave group"
 msgstr "L34V3 620UP"
@@ -2241,6 +2816,10 @@ msgstr "L34V3 620UP"
 #: components/app/menus/ServerContextMenu.tsx
 msgid "Leave server"
 msgstr "L34V3 532V32"
+
+#: src/interface/channels/text/TextChannel.tsx
+msgid "Leave Thread"
+msgstr ""
 
 #: components/app/interface/settings/user/Native.tsx
 msgid "Let Sloga use its own custom titlebar."
@@ -2254,17 +2833,44 @@ msgstr ""
 msgid "Light"
 msgstr ""
 
+#: components/app/interface/settings/user/Connections.tsx
+msgid "Link your streaming channel to show it on your profile. When you go live, friends get a notification and members of your servers see a LIVE badge next to your name."
+msgstr ""
+
+#. placeholder {0}: connection.display_name
+#: src/index.tsx
+msgid "Linked channel: {0}"
+msgstr ""
+
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Listen"
+msgstr ""
+
+#: components/app/interface/settings/server/Overview.tsx
+msgid "Listing requested — waiting for approval by the Sloga team."
 msgstr ""
 
 #: components/app/interface/settings/user/voice/CameraPreview.tsx
 msgid "Live"
 msgstr ""
 
+#: src/interface/channels/text/MemberSidebar.tsx
+#: components/ui/components/features/profiles/ProfileConnections.tsx
+#: components/app/interface/settings/user/Connections.tsx
+msgid "LIVE"
+msgstr ""
+
+#: components/app/interface/settings/user/Language.tsx
+msgid "Live call captions"
+msgstr ""
+
 #. placeholder {0}: humanFileSize(props.file.size ?? 0)
 #: components/ui/components/features/messaging/elements/TextFile.tsx
 msgid "Load file ({0})"
+msgstr ""
+
+#: src/interface/channels/forum/ForumChannel.tsx
+msgid "Load more"
 msgstr ""
 
 #: src/interface/ServerEvents.tsx
@@ -2284,6 +2890,7 @@ msgid "Loading snapshots…"
 msgstr ""
 
 #: src/interface/ServerEvents.tsx
+#: components/modal/modals/PollVoters.tsx
 msgid "Loading…"
 msgstr ""
 
@@ -2318,6 +2925,14 @@ msgstr ""
 
 #: components/auth/src/flows/FlowHome.tsx
 msgid "Low latency"
+msgstr ""
+
+#: components/app/interface/channels/text/MessageComponents.tsx
+msgid "Make a selection"
+msgstr ""
+
+#: components/app/interface/settings/channel/Overview.tsx
+msgid "Make Announcement Channel"
 msgstr ""
 
 #: components/modal/modals/ReportContent.tsx
@@ -2396,6 +3011,10 @@ msgstr ""
 msgid "Max bitrate: Auto"
 msgstr ""
 
+#: components/ui/components/features/voice/callCard/VoiceCallCardActiveRoom.tsx
+msgid "Maximize & hide participants"
+msgstr ""
+
 #: components/app/interface/settings/ServerSettings.tsx
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Members"
@@ -2436,7 +3055,7 @@ msgstr ""
 msgid "Mentions Only"
 msgstr "M3N710N5 0NLY"
 
-#: components/app/menus/UserContextMenu.tsx
+#: components/modal/modals/CreateForumPost.tsx
 msgid "Message"
 msgstr "M355463"
 
@@ -2481,6 +3100,10 @@ msgstr "M355463 W45 53N7 0N 4N07H32 PL47F02M"
 msgid "Messages disappear after {0}"
 msgstr ""
 
+#: components/app/interface/channels/text/ScheduledMessagesBar.tsx
+msgid "Messages go out around their scheduled time."
+msgstr ""
+
 #: src/interface/channels/text/Composition.tsx
 msgid "Messages to this conversation are end-to-end encrypted."
 msgstr ""
@@ -2493,8 +3116,16 @@ msgstr "M355461N6"
 msgid "Mic only activates when your volume exceeds the threshold below."
 msgstr ""
 
+#: components/ui/components/features/voice/callCard/VoiceDeviceSelector.tsx
+msgid "Microphone"
+msgstr ""
+
 #: components/app/interface/settings/user/voice/MicrophoneLevelMeter.tsx
 msgid "Microphone access denied."
+msgstr ""
+
+#: components/ui/components/features/messaging/composition/VoiceMessageButton.tsx
+msgid "Microphone access was denied. Check your microphone permissions and try again."
 msgstr ""
 
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
@@ -2524,6 +3155,10 @@ msgstr ""
 
 #: src/interface/channels/text/Composition.tsx
 msgid "Mod"
+msgstr ""
+
+#: components/app/interface/settings/channel/ForumSettings.tsx
+msgid "Moderated"
 msgstr ""
 
 #: components/modal/modals/ReportQueue.tsx
@@ -2578,6 +3213,10 @@ msgstr ""
 msgid "Mute Members"
 msgstr "MU73 M3M8325"
 
+#: components/app/interface/settings/user/StreamerMode.tsx
+msgid "Mute message, call and notification sounds."
+msgstr ""
+
 #: components/app/menus/UserContextMenu.tsx
 msgid "Mute Screen Share"
 msgstr ""
@@ -2611,6 +3250,10 @@ msgstr "MY 4CC0UN7"
 #: components/app/interface/settings/UserSettings.tsx
 msgid "My Bots"
 msgstr "MY 8075"
+
+#: components/app/interface/settings/user/Language.tsx
+msgid "My spoken language"
+msgstr ""
 
 #: components/modal/modals/RenameSession.tsx
 #: components/modal/modals/CreateCategory.tsx
@@ -2647,6 +3290,19 @@ msgstr ""
 msgid "New Password"
 msgstr "N3W P455W02D"
 
+#: components/modal/modals/CreateForumPost.tsx
+msgid "New post"
+msgstr ""
+
+#: src/interface/channels/forum/ForumChannel.tsx
+msgid "New Post"
+msgstr ""
+
+#. placeholder {0}: props.channel.name ?? props.channel.id
+#: components/modal/modals/FollowChannel.tsx
+msgid "New posts published in #{0} will appear in the channel you pick below."
+msgstr ""
+
 #: components/client/NotificationsWorker.tsx
 msgid "New report"
 msgstr ""
@@ -2663,8 +3319,36 @@ msgstr ""
 msgid "Nickname"
 msgstr "N1CKN4M3"
 
+#: src/interface/channels/text/ThreadsListSidebar.tsx
+msgid "No active threads"
+msgstr ""
+
+#: components/app/interface/settings/server/apps/AppsList.tsx
+msgid "No apps are available right now."
+msgstr ""
+
+#: src/interface/channels/forum/ForumChannel.tsx
+msgid "No archived posts"
+msgstr ""
+
+#: src/interface/channels/text/ThreadsListSidebar.tsx
+msgid "No archived threads"
+msgstr ""
+
+#: components/app/interface/settings/channel/Overview.tsx
+msgid "No channels are following yet."
+msgstr ""
+
 #: components/modal/modals/InviteToServer.tsx
 msgid "No channels available to create an invite for."
+msgstr ""
+
+#: components/modal/modals/ForwardMessage.tsx
+msgid "No channels found"
+msgstr ""
+
+#: components/modal/modals/FollowChannel.tsx
+msgid "No channels where you can manage webhooks. You need the Manage Webhooks permission on the destination channel."
 msgstr ""
 
 #: src/interface/ServerEvents.tsx
@@ -2673,6 +3357,10 @@ msgstr ""
 
 #: src/interface/ServerEvents.tsx
 msgid "No events on this day."
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceCallRosterPanel.tsx
+msgid "no media — divergent leaf"
 msgstr ""
 
 #: components/modal/modals/ReportQueue.tsx
@@ -2687,8 +3375,20 @@ msgstr ""
 msgid "No permissions set yet"
 msgstr ""
 
+#: src/interface/channels/forum/ForumChannel.tsx
+msgid "No posts yet"
+msgstr ""
+
 #: components/modal/modals/E2EEEnable.tsx
 msgid "No recovery backup was found for your account, or the recovery window was closed. You can start fresh instead."
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceSoundboardButton.tsx
+msgid "No sounds in this server yet"
+msgstr ""
+
+#: components/app/interface/settings/server/soundboard/SoundboardList.tsx
+msgid "No sounds yet. Upload one above!"
 msgstr ""
 
 #: components/app/interface/settings/server/stickers/StickerList.tsx
@@ -2699,15 +3399,23 @@ msgstr ""
 msgid "No verifiable devices yet — send or receive an encrypted message first, then reopen this screen."
 msgstr ""
 
+#: components/modal/modals/PollVoters.tsx
+msgid "No votes for this answer yet"
+msgstr ""
+
 #: src/interface/Friends.tsx
 msgid "Nobody here right now!"
 msgstr ""
 
 #: src/interface/ServerEvents.tsx
 #: components/modal/modals/CameraSettings.tsx
+#: components/modal/modals/CameraSettings.tsx
+#: components/modal/modals/CameraSettings.tsx
 #: components/app/menus/ServerContextMenu.tsx
 #: components/app/menus/shared/NotificationContextMenu.tsx
 #: components/app/menus/shared/NotificationContextMenu.tsx
+#: components/app/interface/settings/user/voice/CameraOptions.tsx
+#: components/app/interface/settings/user/voice/CameraOptions.tsx
 #: components/app/interface/settings/user/voice/CameraOptions.tsx
 msgid "None"
 msgstr "N0N3"
@@ -2715,6 +3423,14 @@ msgstr "N0N3"
 #: src/interface/channels/text/Composition.tsx
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
 msgid "Normal"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceCallRosterPanel.tsx
+msgid "not encrypted"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceCallCardStatus.tsx
+msgid "Not encrypted"
 msgstr ""
 
 #: src/interface/channels/text/Composition.tsx
@@ -2748,6 +3464,14 @@ msgstr ""
 msgid "Off"
 msgstr "0FF"
 
+#: components/app/interface/settings/server/apps/AppsList.tsx
+msgid "Official"
+msgstr ""
+
+#: components/app/interface/settings/server/apps/AppsList.tsx
+msgid "Official apps hosted by Sloga. Adding one gives this server its slash commands — type / in any channel to use them."
+msgstr ""
+
 #: components/app/interface/channels/text/Message.tsx
 msgid "Official Communication"
 msgstr "0FF1C14L C0MMUN1C4710N"
@@ -2756,6 +3480,7 @@ msgstr "0FF1C14L C0MMUN1C4710N"
 msgid "Official Server"
 msgstr "0FF1C14L 532V32"
 
+#: src/interface/Friends.tsx
 #: src/interface/navigation/channels/HomeSidebar.tsx
 #: src/interface/channels/text/MemberSidebar.tsx
 #: components/ui/components/features/profiles/ProfileStatus.tsx
@@ -2801,7 +3526,12 @@ msgstr "0NL1N3"
 msgid "Only mentions will notify you"
 msgstr ""
 
+#: components/app/interface/channels/text/Message.tsx
+msgid "Only you can see this — it disappears when you reload."
+msgstr ""
+
 #: components/modal/modals/Invite.tsx
+#: components/modal/modals/DiscoverJoin.tsx
 msgid "Open"
 msgstr ""
 
@@ -2833,6 +3563,10 @@ msgstr ""
 #: src/interface/Home.tsx
 msgid "Open settings"
 msgstr "0P3N 53771N65"
+
+#: components/modal/modals/ScheduleMessage.tsx
+msgid "Or pick a time"
+msgstr ""
 
 #: components/modal/modals/E2EEEnable.tsx
 msgid "Or start fresh to set this up as a new device. You keep sending and receiving encrypted messages, but earlier history that lived only on your old device stays there."
@@ -2879,6 +3613,7 @@ msgid "Password set!"
 msgstr ""
 
 #: components/modal/modals/Changelog.tsx
+#: components/modal/modals/Changelog.tsx
 #: components/app/interface/settings/UserSettings.tsx
 msgid "Patch Notes"
 msgstr ""
@@ -2895,6 +3630,10 @@ msgstr "P32M15510N5"
 msgid "Pick a Screen to Share"
 msgstr ""
 
+#: components/modal/modals/ScheduleMessage.tsx
+msgid "Pick a time between 30 seconds and 30 days from now."
+msgstr ""
+
 #: components/auth/src/flows/FlowOAuthCallback.tsx
 #: components/auth/src/flows/FlowLogin.tsx
 msgid "Pick a username that you want people to be able to find you by. This can be changed later in your user settings."
@@ -2908,12 +3647,19 @@ msgstr ""
 msgid "Platform Moderator"
 msgstr ""
 
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
+msgid "Play server soundboard sounds in a voice call"
+msgstr ""
+
 #: components/app/interface/settings/user/notifications/Sounds.tsx
 msgid "Play sound"
 msgstr ""
 
+#. placeholder {0}: playing.name
 #. placeholder {0}: activity.name
 #. placeholder {0}: props.user.activity!.name
+#: src/interface/Friends.tsx
 #: src/interface/navigation/channels/HomeSidebar.tsx
 #: src/interface/channels/text/MemberSidebar.tsx
 #: components/ui/components/features/profiles/ProfileStatus.tsx
@@ -2959,6 +3705,22 @@ msgstr "PL3453 53L3C7 4 M37H0D 70 4U7H3N71C473 Y0U2 23QU357."
 msgid "Please select a reason"
 msgstr ""
 
+#: components/modal/modals/CreatePoll.tsx
+msgid "Poll duration"
+msgstr ""
+
+#: components/modal/modals/PollVoters.tsx
+msgid "Poll votes"
+msgstr ""
+
+#: components/modal/modals/CreatePoll.tsx
+msgid "Polls are counted by the server and are never end-to-end encrypted — the question, answers and votes are visible to it."
+msgstr ""
+
+#: components/app/interface/channels/text/PollMessage.tsx
+msgid "Polls are not available in encrypted conversations — votes are counted by the server."
+msgstr ""
+
 #: src/interface/Friends.tsx
 msgid "Pop out friends list"
 msgstr ""
@@ -2998,6 +3760,18 @@ msgstr ""
 msgid "Provided email or password is wrong."
 msgstr ""
 
+#: components/app/interface/settings/server/Overview.tsx
+msgid "Public discovery"
+msgstr ""
+
+#: components/app/menus/MessageContextMenu.tsx
+msgid "Publish"
+msgstr ""
+
+#: components/app/interface/channels/text/Message.tsx
+msgid "Published"
+msgstr ""
+
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "Push to Talk"
 msgstr ""
@@ -3010,8 +3784,16 @@ msgstr ""
 msgid "Quality and bitrate changes apply the next time you turn on your camera."
 msgstr ""
 
+#: components/modal/modals/CreatePoll.tsx
+msgid "Question"
+msgstr ""
+
 #: components/modal/modals/ReportContent.tsx
 msgid "Raid or spam attack"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceCallCardStatus.tsx
+msgid "Re-securing…"
 msgstr ""
 
 #: components/app/menus/MessageContextMenu.tsx
@@ -3036,6 +3818,7 @@ msgid "Read past messages sent in channels"
 msgstr ""
 
 #: components/app/interface/settings/server/stickers/StickerList.tsx
+#: components/app/interface/settings/server/soundboard/SoundboardList.tsx
 msgid "Ready to upload"
 msgstr ""
 
@@ -3069,6 +3852,22 @@ msgstr ""
 
 #: components/app/interface/settings/user/voice/MicrophoneTest.tsx
 msgid "Record"
+msgstr ""
+
+#: components/ui/components/features/messaging/composition/CameraMessageButton.tsx
+msgid "Record a video message"
+msgstr ""
+
+#: components/ui/components/features/messaging/composition/VoiceMessageButton.tsx
+msgid "Record a voice message"
+msgstr ""
+
+#: components/ui/components/features/messaging/composition/CameraMessageButton.tsx
+msgid "Recording a video message"
+msgstr ""
+
+#: components/ui/components/features/messaging/composition/VoiceMessageButton.tsx
+msgid "Recording a voice message"
 msgstr ""
 
 #: components/app/interface/settings/user/voice/MicrophoneTest.tsx
@@ -3110,6 +3909,7 @@ msgstr "23L3V4NC3"
 
 #: components/modal/modals/RemoveMember.tsx
 #: components/app/interface/settings/user/voice/CameraOptions.tsx
+#: components/app/interface/settings/channel/Overview.tsx
 msgid "Remove"
 msgstr ""
 
@@ -3128,6 +3928,10 @@ msgstr "23M0V3 4V47425"
 #: components/app/menus/UserContextMenu.tsx
 msgid "Remove friend"
 msgstr "23M0V3 F213ND"
+
+#: components/app/interface/settings/server/Overview.tsx
+msgid "Remove from public directory"
+msgstr ""
 
 #: components/modal/modals/RemoveMember.tsx
 #: components/app/menus/UserContextMenu.tsx
@@ -3148,6 +3952,10 @@ msgstr ""
 
 #: components/app/interface/settings/user/SecurityAndPrivacy.tsx
 msgid "Remove the backup stored on the server. Your encrypted history on this device is unaffected."
+msgstr ""
+
+#: components/app/interface/channels/text/PollMessage.tsx
+msgid "Remove vote"
 msgstr ""
 
 #: components/modal/modals/RenameSession.tsx
@@ -3217,6 +4025,14 @@ msgstr ""
 msgid "Reported content (server copy)"
 msgstr ""
 
+#: components/app/interface/settings/server/Overview.tsx
+msgid "Request public listing"
+msgstr ""
+
+#: components/app/interface/settings/channel/ForumSettings.tsx
+msgid "Require tags"
+msgstr ""
+
 #: components/auth/src/flows/FlowResend.tsx
 msgid "Resend"
 msgstr ""
@@ -3269,7 +4085,13 @@ msgstr ""
 msgid "Restore your encrypted messages"
 msgstr ""
 
+#: components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
+msgid "Resume unencrypted"
+msgstr ""
+
 #: src/interface/ServerEvents.tsx
+#: components/modal/modals/E2EEDisable.tsx
+#: components/app/interface/settings/server/apps/AppsList.tsx
 msgid "Retry"
 msgstr ""
 
@@ -3332,7 +4154,10 @@ msgstr ""
 #: components/app/interface/settings/server/Overview.tsx
 #: components/app/interface/settings/server/roles/ServerRoleEditor.tsx
 #: components/app/interface/settings/channel/Overview.tsx
+#: components/app/interface/settings/channel/ForumSettings.tsx
 #: components/app/interface/settings/channel/webhooks/ViewWebhook.tsx
+#: components/app/interface/channels/text/EncryptedAttachment.tsx
+#: components/app/interface/channels/text/EncryptedAttachment.tsx
 msgid "Save"
 msgstr "54V3"
 
@@ -3347,6 +4172,7 @@ msgstr "54V3 70 Y0U2 N0735"
 #: src/interface/navigation/channels/HomeSidebar.tsx
 #: src/interface/navigation/channels/HomeSidebar.tsx
 #: src/interface/channels/ChannelHeader.tsx
+#: components/modal/modals/ForwardMessage.tsx
 msgid "Saved Notes"
 msgstr "54V3D N0735"
 
@@ -3366,6 +4192,18 @@ msgstr ""
 msgid "Scans a channel for old tagged event messages and turns them into real calendar events. Already-imported messages are skipped, so running this again is safe."
 msgstr ""
 
+#: components/modal/modals/ScheduleMessage.tsx
+msgid "Schedule"
+msgstr ""
+
+#: src/interface/channels/text/Composition.tsx
+msgid "Scheduling does not support attachments yet"
+msgstr ""
+
+#: components/app/menus/UserContextMenu.tsx
+msgid "Screen Share"
+msgstr ""
+
 #: components/modal/modals/ScreenShareSettings.tsx
 #: components/app/interface/settings/user/voice/CameraOptions.tsx
 msgid "Screen Share Settings"
@@ -3375,8 +4213,20 @@ msgstr ""
 msgid "Screen Share Volume"
 msgstr ""
 
+#: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx
+msgid "Screen sharing isn't supported on this device"
+msgstr ""
+
 #: src/interface/channels/ChannelHeader.tsx
 msgid "Search"
+msgstr ""
+
+#: components/modal/modals/ForwardMessage.tsx
+msgid "Search for a channel or conversation…"
+msgstr ""
+
+#: components/modal/modals/FollowChannel.tsx
+msgid "Search for a channel to deliver into…"
 msgstr ""
 
 #: components/modal/modals/AddBot.tsx
@@ -3398,8 +4248,8 @@ msgid "Search members or roles…"
 msgstr ""
 
 #: components/app/interface/settings/UserSettings.tsx
-msgid "Security & Privacy"
-msgstr ""
+#~ msgid "Security & Privacy"
+#~ msgstr ""
 
 #: components/modal/modals/E2EEIdentityChange.tsx
 msgid "Security identity changed"
@@ -3423,6 +4273,10 @@ msgstr ""
 
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "Select noise suppression"
+msgstr ""
+
+#: components/app/interface/channels/text/PollMessage.tsx
+msgid "Select one or more answers"
 msgstr ""
 
 #: components/app/interface/settings/user/voice/CameraOptions.tsx
@@ -3457,6 +4311,15 @@ msgstr "53ND 3M83D5"
 msgid "Send Invites"
 msgstr ""
 
+#: src/interface/channels/text/Composition.tsx
+#: components/modal/modals/ScheduleMessage.tsx
+msgid "Send later"
+msgstr ""
+
+#: components/app/menus/UserContextMenu.tsx
+msgid "Send Message"
+msgstr ""
+
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Send Messages"
 msgstr "53ND M3554635"
@@ -3472,6 +4335,10 @@ msgstr ""
 
 #: components/modal/modals/AddFriend.tsx
 msgid "Send Request"
+msgstr ""
+
+#: components/modal/modals/E2EEPeerDowngrade.tsx
+msgid "Send unencrypted"
 msgstr ""
 
 #: components/app/interface/channels/text/DraftMessage.tsx
@@ -3601,6 +4468,14 @@ msgstr ""
 msgid "Show friends what game you are playing (desktop app only)."
 msgstr ""
 
+#: components/app/interface/settings/user/Language.tsx
+msgid "Show live captions during voice and video calls, translated into your chosen language. Your microphone audio is sent to your browser's speech service (Google) to transcribe it, and the text is sent to Google Translate; captions are disabled on end-to-end encrypted calls."
+msgstr ""
+
+#: components/app/interface/settings/user/Language.tsx
+msgid "Show live captions during voice and video calls, translated into your chosen language. Your speech is transcribed on your device, and the text is sent to Google Translate; captions are disabled on end-to-end encrypted calls."
+msgstr ""
+
 #: components/ui/components/features/voice/callCard/VoiceCallCardActiveRoom.tsx
 msgid "Show Others"
 msgstr ""
@@ -3611,6 +4486,10 @@ msgstr ""
 
 #: components/auth/src/flows/FlowOAuthCallback.tsx
 msgid "Sign in failed"
+msgstr ""
+
+#: components/app/interface/settings/user/Connections.tsx
+msgid "Sign in with your account to link your channel."
 msgstr ""
 
 #: components/auth/src/flows/FlowLogin.tsx
@@ -3631,6 +4510,10 @@ msgstr ""
 
 #: components/modal/modals/E2EEEnable.tsx
 msgid "Skip for now"
+msgstr ""
+
+#: src/interface/channels/text/Composition.tsx
+msgid "Slash commands are unavailable in encrypted conversations."
 msgstr ""
 
 #: components/ui/components/features/profiles/ProfileBadges.tsx
@@ -3669,6 +4552,10 @@ msgstr ""
 msgid "Slowmode off"
 msgstr ""
 
+#: components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
+msgid "Someone in this call is not using encrypted calls. Your audio and video stay paused until you turn off encryption."
+msgstr ""
+
 #: components/modal/modals/EditEmail.tsx
 msgid "someone@example.com"
 msgstr ""
@@ -3690,6 +4577,15 @@ msgstr ""
 msgid "Something went wrong! {error}"
 msgstr ""
 
+#: components/app/interface/settings/server/soundboard/SoundboardList.tsx
+msgid "Sound Name"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceSoundboardButton.tsx
+#: components/app/interface/settings/ServerSettings.tsx
+msgid "Soundboard"
+msgstr ""
+
 #: components/app/interface/settings/user/notifications/Sounds.tsx
 msgid "Sounds"
 msgstr "50UND5"
@@ -3701,6 +4597,10 @@ msgstr ""
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Speak"
 msgstr "5P34K"
+
+#: components/app/interface/settings/user/Language.tsx
+msgid "Speak captions aloud"
+msgstr ""
 
 #: components/app/interface/settings/user/Native.tsx
 msgid "Spellchecker"
@@ -3738,6 +4638,10 @@ msgstr ""
 msgid "Status"
 msgstr ""
 
+#: components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
+msgid "Stay unencrypted"
+msgstr ""
+
 #: components/app/interface/settings/server/stickers/StickerList.tsx
 msgid "Sticker Name"
 msgstr ""
@@ -3749,6 +4653,10 @@ msgstr ""
 #: components/app/interface/settings/user/voice/MicrophoneTest.tsx
 #: components/app/interface/settings/user/voice/CameraPreview.tsx
 msgid "Stop"
+msgstr ""
+
+#: components/app/interface/settings/channel/Overview.tsx
+msgid "Stop being an Announcement Channel"
 msgstr ""
 
 #: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx
@@ -3767,13 +4675,46 @@ msgstr ""
 msgid "Stream Start"
 msgstr ""
 
-#: components/app/interface/settings/user/Feedback.tsx
-msgid "Submit feature suggestion"
-msgstr "5U8M17 F347U23 5U6635710N"
+#: components/app/interface/settings/UserSettings.tsx
+msgid "Streamer Mode"
+msgstr ""
+
+#: components/app/interface/settings/user/StreamerMode.tsx
+msgid "Streamer Mode is currently active."
+msgstr ""
+
+#: components/modal/modals/CreateInvite.tsx
+msgid "Streamer Mode is hiding your invite link — hover over it to reveal."
+msgstr ""
+
+#: src/Interface.tsx
+msgid "Streamer Mode is on — personal info, invites and notifications are hidden"
+msgstr ""
+
+#. placeholder {0}: detectedStreamingApp()
+#: components/app/interface/settings/user/StreamerMode.tsx
+msgid "Streaming app detected: {0}"
+msgstr ""
+
+#. placeholder {0}: live.platform
+#: src/interface/Friends.tsx
+#: src/interface/channels/text/MemberSidebar.tsx
+msgid "Streaming on {0}"
+msgstr ""
+
+#. placeholder {0}: live.live_title
+#: src/interface/Friends.tsx
+#: src/interface/channels/text/MemberSidebar.tsx
+msgid "Streaming: {0}"
+msgstr ""
 
 #: components/app/interface/settings/user/Feedback.tsx
-msgid "Submit feedback"
-msgstr "5U8M17 F33D84CK"
+#~ msgid "Submit feature suggestion"
+#~ msgstr "5U8M17 F347U23 5U6635710N"
+
+#: components/app/interface/settings/user/Feedback.tsx
+#~ msgid "Submit feedback"
+#~ msgstr "5U8M17 F33D84CK"
 
 #: components/app/interface/settings/user/bots/ViewBot.tsx
 msgid "Submit to Discover"
@@ -3784,12 +4725,16 @@ msgid "Subscriptions"
 msgstr ""
 
 #: components/app/interface/settings/user/Feedback.tsx
-msgid "Suggest new Sloga features on GitHub discussions."
-msgstr ""
+#~ msgid "Suggest new Sloga features on GitHub discussions."
+#~ msgstr ""
 
 #: src/interface/Home.tsx
 msgid "Support the project by donating - thank you!"
 msgstr "5UPP027 7H3 P20J3C7 8Y D0N471N6 - 7H4NK Y0U!"
+
+#: components/app/interface/settings/user/StreamerMode.tsx
+msgid "Suppress desktop notification popups so messages don't appear on stream."
+msgstr ""
 
 #: components/modal/modals/SuspendUser.tsx
 msgid "Suspend"
@@ -3806,6 +4751,10 @@ msgstr ""
 
 #: components/modal/modals/SuspendUser.tsx
 msgid "Suspend User From Platform"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceDeviceSelector.tsx
+msgid "Switch devices"
 msgstr ""
 
 #: components/ui/components/features/voice/callCard/VoiceCallCardPreview.tsx
@@ -3830,6 +4779,23 @@ msgstr ""
 
 #: components/app/interface/settings/server/Overview.tsx
 msgid "System message channels"
+msgstr ""
+
+#: components/app/interface/settings/channel/ForumSettings.tsx
+msgid "Tag name"
+msgstr ""
+
+#: components/modal/modals/CreateForumPost.tsx
+#: components/app/interface/settings/channel/ForumSettings.tsx
+msgid "Tags"
+msgstr ""
+
+#: components/modal/modals/CreateForumPost.tsx
+msgid "Tags (at least one required)"
+msgstr ""
+
+#: components/app/interface/settings/channel/ForumSettings.tsx
+msgid "Tags let members categorise posts. Moderated tags can only be applied by members who can manage this channel."
 msgstr ""
 
 #: components/modal/modals/ReportContent.tsx
@@ -3864,8 +4830,22 @@ msgstr ""
 msgid "Text Channel"
 msgstr "73X7 CH4NN3L"
 
+#: src/index.tsx
+msgid "That account has no channel to link."
+msgstr ""
+
 #: components/i18n/errors.ts
 msgid "That action had no effect."
+msgstr ""
+
+#: src/interface/channels/text/Composition.tsx
+#: components/app/interface/channels/text/MessageComponents.tsx
+msgid "That bot is currently offline — try again once it reconnects."
+msgstr ""
+
+#: src/interface/channels/text/Composition.tsx
+#: components/app/interface/channels/text/MessageComponents.tsx
+msgid "The bot did not respond in time."
 msgstr ""
 
 #: src/interface/ServerEvents.tsx
@@ -3881,8 +4861,16 @@ msgstr ""
 msgid "The file \"{0}\" ({fileSize}) exceeds the maximum size limit of {maxSizeFormatted}."
 msgstr ""
 
+#: components/modal/modals/ForwardMessage.tsx
+msgid "The forward keeps a copy of the message as it is right now — later edits or deletion of the original won't change it. Encrypted conversations can't receive forwards."
+msgstr ""
+
 #: components/auth/src/flows/FlowOAuthCallback.tsx
 msgid "The Google sign-in was cancelled."
+msgstr ""
+
+#: components/modal/modals/ScheduleMessage.tsx
+msgid "The message is stored on the server and sent around the chosen time. You can cancel it from the channel until it goes out."
 msgstr ""
 
 #: components/i18n/errors.ts
@@ -3919,6 +4907,10 @@ msgstr ""
 msgid "This account is suspended. Time remaining: {0}"
 msgstr ""
 
+#: components/i18n/errors.ts
+msgid "This announcement channel has reached its follower limit ({errMax})."
+msgstr ""
+
 #: components/app/interface/channels/text/EncryptedAttachment.tsx
 msgid "This attachment expired before it reached this device. Ask the sender to send it again."
 msgstr ""
@@ -3929,6 +4921,10 @@ msgstr ""
 
 #: components/i18n/errors.ts
 msgid "This bot is private and can only be added by the creator."
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
+msgid "This call could not be secured. Your audio and video stay paused — leave, or continue without encryption."
 msgstr ""
 
 #: components/app/interface/settings/channel/Overview.tsx
@@ -3953,6 +4949,10 @@ msgstr ""
 
 #: components/modal/modals/E2EEIdentityChange.tsx
 msgid "this contact"
+msgstr ""
+
+#: components/modal/modals/E2EEPeerDowngrade.tsx
+msgid "This contact turned off end-to-end encryption for this conversation."
 msgstr ""
 
 #: src/interface/channels/text/Composition.tsx
@@ -3997,11 +4997,23 @@ msgid "This is the start of your notes."
 msgstr "7H15 15 7H3 57427 0F Y0U2 N0735."
 
 #: components/i18n/errors.ts
+msgid "This isn't an announcement channel."
+msgstr ""
+
+#: components/i18n/errors.ts
+msgid "This message has already been published."
+msgstr ""
+
+#: components/i18n/errors.ts
 msgid "This message is already pinned."
 msgstr ""
 
 #: components/i18n/errors.ts
 msgid "This message is empty and has not been sent."
+msgstr ""
+
+#: components/modal/modals/E2EEVerify.tsx
+msgid "This participant's device is not verified yet. Compare safety numbers in person to verify them."
 msgstr ""
 
 #: components/i18n/errors.ts
@@ -4010,6 +5022,18 @@ msgstr ""
 
 #: components/app/interface/settings/server/Overview.tsx
 msgid "This server is about..."
+msgstr ""
+
+#: components/app/interface/settings/server/Overview.tsx
+msgid "This server is listed in the public directory on the Sloga website."
+msgstr ""
+
+#: components/app/interface/settings/server/Overview.tsx
+msgid "This server is not publicly listed. Request a listing to appear in the public directory once approved by the Sloga team."
+msgstr ""
+
+#: src/interface/channels/text/TextChannel.tsx
+msgid "This thread is archived"
 msgstr ""
 
 #: components/i18n/errors.ts
@@ -4032,6 +5056,14 @@ msgstr ""
 msgid "This will invalidate the current token and stop any existing instances of the bot from running."
 msgstr ""
 
+#: components/modal/modals/CreateThread.tsx
+msgid "Thread Name"
+msgstr ""
+
+#: src/interface/channels/text/TextChannel.tsx
+msgid "Threads"
+msgstr ""
+
 #: components/app/interface/settings/user/Language.tsx
 msgid "Time format"
 msgstr ""
@@ -4039,6 +5071,10 @@ msgstr ""
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Timeout Members"
 msgstr "71M30U7 M3M8325"
+
+#: components/modal/modals/CreateForumPost.tsx
+msgid "Title"
+msgstr ""
 
 #: src/interface/common/CommonHeader.tsx
 msgid "Toggle main sidebar"
@@ -4048,12 +5084,20 @@ msgstr ""
 msgid "Token copied to clipboard"
 msgstr ""
 
+#: components/modal/modals/ScheduleMessage.tsx
+msgid "Tomorrow at 9:00"
+msgstr ""
+
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
 msgid "Tonal Spot"
 msgstr ""
 
 #: components/app/interface/settings/user/Language.tsx
 msgid "Traditional (DD/MM/YYYY)"
+msgstr ""
+
+#: components/app/interface/settings/user/Language.tsx
+msgid "Translate captions to"
 msgstr ""
 
 #: components/app/interface/settings/user/Language.tsx
@@ -4079,6 +5123,10 @@ msgstr ""
 
 #: components/modal/modals/E2EEDisable.tsx
 msgid "Turn off encrypted direct messages"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
+msgid "Turn off encryption"
 msgstr ""
 
 #: components/modal/modals/E2EEVerify.tsx
@@ -4107,6 +5155,18 @@ msgstr ""
 
 #: components/app/interface/settings/user/voice/CameraPreview.tsx
 msgid "Turn on your camera to check it works and preview brightness and background effects."
+msgstr ""
+
+#: components/app/interface/settings/user/StreamerMode.tsx
+msgid "Turn Streamer Mode on while a streaming app (OBS, Streamlabs, XSplit, ...) is running."
+msgstr ""
+
+#: src/interface/channels/text/TextChannel.tsx
+msgid "Unarchive"
+msgstr ""
+
+#: components/app/interface/settings/server/apps/AppsList.tsx
+msgid "Unavailable"
 msgstr ""
 
 #: components/app/menus/UserContextMenu.tsx
@@ -4177,12 +5237,24 @@ msgstr ""
 msgid "Upload Files"
 msgstr "UPL04D F1L35"
 
+#: components/app/interface/settings/server/soundboard/SoundboardList.tsx
+msgid "Upload Sound"
+msgstr ""
+
 #: components/app/interface/settings/server/stickers/StickerList.tsx
 msgid "Upload Sticker"
 msgstr ""
 
+#: src/interface/ServerEvents.tsx
+msgid "Uploading…"
+msgstr ""
+
 #: components/modal/modals/JoinServer.tsx
 msgid "Use a code or invite link"
+msgstr ""
+
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
+msgid "Use Soundboard"
 msgstr ""
 
 #: components/app/interface/settings/user/Native.tsx
@@ -4298,13 +5370,17 @@ msgstr ""
 msgid "Video"
 msgstr "V1D30"
 
+#: components/app/menus/UserContextMenu.tsx
+msgid "Video Call"
+msgstr ""
+
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "View Channel"
 msgstr "V13W CH4NN3L"
 
 #: components/app/interface/settings/user/Feedback.tsx
-msgid "View currently active bug reports here."
-msgstr "V13W CU223N7LY 4C71V3 8U6 23P0275 H323."
+#~ msgid "View currently active bug reports here."
+#~ msgstr "V13W CU223N7LY 4C71V3 8U6 23P0275 H323."
 
 #: src/interface/channels/ChannelHeader.tsx
 msgid "View members"
@@ -4317,6 +5393,18 @@ msgstr ""
 #: components/app/interface/settings/user/Account.tsx
 msgid "View Recovery Codes"
 msgstr "V13W 23C0V32Y C0D35"
+
+#: components/app/interface/channels/text/Message.tsx
+msgid "View Thread"
+msgstr ""
+
+#: src/interface/channels/ChannelHeader.tsx
+msgid "View threads"
+msgstr ""
+
+#: components/app/interface/channels/text/PollMessage.tsx
+msgid "View votes"
+msgstr ""
 
 #: components/ui/components/features/messaging/bars/JumpToBottom.tsx
 msgid "Viewing older messages"
@@ -4349,6 +5437,19 @@ msgstr ""
 
 #: components/app/menus/UserContextMenu.tsx
 msgid "Volume"
+msgstr ""
+
+#: components/app/interface/channels/text/PollMessage.tsx
+msgid "Vote"
+msgstr ""
+
+#: components/app/interface/channels/text/PollMessage.tsx
+msgid "Vote to see results"
+msgstr ""
+
+#. placeholder {0}: pendingInvoke()!.command
+#: src/interface/channels/text/Composition.tsx
+msgid "Waiting for /{0} to respond…"
 msgstr ""
 
 #: components/app/interface/settings/user/profile/UserProfileEditor.tsx
@@ -4400,6 +5501,10 @@ msgstr ""
 msgid "Which would you like to Start?"
 msgstr ""
 
+#: components/ui/components/features/voice/callCard/VoiceCallCardPreview.tsx
+msgid "Will be end-to-end encrypted"
+msgstr ""
+
 #. placeholder {0}: names.join(", ")
 #: components/ui/components/features/voice/callCard/VoiceCallCardPreview.tsx
 msgid "With {0}"
@@ -4409,13 +5514,25 @@ msgstr ""
 msgid "Without a recovery code, your encrypted messages cannot be restored if you lose this device. Create one and store it somewhere safe."
 msgstr ""
 
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Works globally: the key registers even while your game or another app is focused."
+msgstr ""
+
 #: components/modal/modals/CreateOrJoinServer.tsx
 msgid "Would you like to create a new server or join an existing one?"
 msgstr ""
 
-#: components/app/interface/settings/user/bots/MyBots.tsx
-msgid "You agree that your bot is subject to the Acceptable Usage Policy."
+#: components/modal/modals/DiscoverJoin.tsx
+msgid "Would you like to join this server?"
 msgstr ""
+
+#: src/interface/channels/text/Composition.tsx
+msgid "Write a message first, then schedule it"
+msgstr ""
+
+#: components/app/interface/settings/user/bots/MyBots.tsx
+#~ msgid "You agree that your bot is subject to the Acceptable Usage Policy."
+#~ msgstr ""
 
 #. placeholder {0}: props.user?.username
 #. placeholder {0}: props.member.user?.username
@@ -4438,6 +5555,10 @@ msgstr ""
 msgid "You are banned from this server."
 msgstr ""
 
+#: src/interface/channels/text/Composition.tsx
+msgid "You are in slowmode, wait before invoking commands."
+msgstr ""
+
 #. placeholder {0}: members().length
 #: components/modal/modals/E2EEEnableGroup.tsx
 msgid "You are turning on end-to-end encryption for exactly these {0} people. Check this list against who you expect to be in the group — anyone here will be able to read new messages."
@@ -4453,7 +5574,6 @@ msgstr "Y0U C4N 23-0P3N 17 L4732, 8U7 17 W1LL D154PP342 0N 807H 51D35."
 
 #: src/interface/Home.tsx
 #: src/interface/Home.tsx
-#: components/app/interface/settings/user/Feedback.tsx
 #: components/app/interface/settings/user/Feedback.tsx
 msgid "You can report issues and discuss improvements with us directly here."
 msgstr "Y0U C4N 23P027 155U35 4ND D15CU55 1MP20V3M3N75 W17H U5 D123C7LY H323."
@@ -4547,17 +5667,26 @@ msgstr "Y0U W0N'7 83 48L3 70 4CC355 Y0U2 4CC0UN7 UNL355 Y0U C0N74C7 5UPP027 - H0
 msgid "You won't be able to rejoin unless you are re-invited."
 msgstr "Y0U W0N'7 83 48L3 70 23J01N UNL355 Y0U 423 23-1NV173D."
 
+#: components/ui/components/features/voice/callCard/VoiceCallCardPreview.tsx
+msgid "You'll join unencrypted — the call will show a warning"
+msgstr ""
+
 #: components/i18n/errors.ts
 msgid "You're already part of this group."
 msgstr ""
 
 #: components/modal/modals/Invite.tsx
+#: components/modal/modals/DiscoverJoin.tsx
 #: components/i18n/errors.ts
 msgid "You're already part of this server."
 msgstr ""
 
 #: src/interface/ServerEvents.tsx
 msgid "You're going"
+msgstr ""
+
+#: components/i18n/errors.ts
+msgid "You're publishing too fast — up to {errMax} announcements can be published per hour."
 msgstr ""
 
 #: components/i18n/errors.ts
@@ -4589,6 +5718,10 @@ msgstr ""
 msgid "Your account has been verified!"
 msgstr "Y0U2 4CC0UN7 H45 833N V321F13D!"
 
+#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+msgid "Your calls negotiate end-to-end encryption on this device when everyone in the call supports it."
+msgstr ""
+
 #: components/modal/modals/E2EEVerify.tsx
 msgid "your contact"
 msgstr ""
@@ -4599,6 +5732,14 @@ msgstr ""
 
 #: components/i18n/errors.ts
 msgid "Your discriminator change has been ratelimited, please try again later."
+msgstr ""
+
+#: components/modal/modals/ScheduleMessage.tsx
+msgid "Your draft is empty"
+msgstr ""
+
+#: components/modal/modals/E2EEDisable.tsx
+msgid "Your encrypted data on this device was destroyed, but the old device entry could not be removed from the server. Other devices may keep sending messages to it until it is removed. You can retry now, and this entry can also be removed later."
 msgstr ""
 
 #: components/modal/modals/E2EEReenroll.tsx

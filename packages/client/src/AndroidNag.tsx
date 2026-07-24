@@ -1,4 +1,5 @@
 import { Trans } from "@lingui-solid/solid/macro";
+import { distributionChannel } from "@revolt/client";
 import { useState } from "@revolt/state";
 import { Button, Text } from "@revolt/ui";
 import { Show, createSignal } from "solid-js";
@@ -48,6 +49,10 @@ export function AndroidNag() {
     state.layout.getSectionState(ANDROID_NAG_DISMISS_KEY, false);
 
   const show = () =>
+    // Browser only. Capacitor serves the packaged app from
+    // https://localhost, which isEligibleOrigin() accepts, so without this
+    // the banner would nag people inside the app to install the app.
+    distributionChannel() === "web" &&
     isAndroid() &&
     isEligibleOrigin() &&
     !dismissedThisSession() &&
@@ -74,8 +79,8 @@ export function AndroidNag() {
 
             <Text class="body" size="large">
               <Trans>
-                In the meantime, install Sloga from Google Play for a faster,
-                smoother experience designed for Android.
+                In the meantime, get the app for a faster, smoother experience
+                designed for Android.
               </Trans>
             </Text>
           </Copy>
@@ -88,7 +93,7 @@ export function AndroidNag() {
               window.open(ANDROID_DOWNLOAD_URL, "_blank", "noopener,noreferrer");
             }}
           >
-            <Trans>Get it on Google Play</Trans>
+            <Trans>Get the Android app</Trans>
           </Button>
 
           <Button variant="text" onPress={() => setDismissedThisSession(true)}>

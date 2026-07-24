@@ -102,6 +102,12 @@ msgstr "{0} emoji slots remaining"
 msgid "{0} files exceed the maximum size limit of {maxSizeFormatted} and were not uploaded."
 msgstr "{0} files exceed the maximum size limit of {maxSizeFormatted} and were not uploaded."
 
+#. placeholder {0}: user.displayName ?? user.username
+#. placeholder {1}: nowLive.platform
+#: components/client/NotificationsWorker.tsx
+msgid "{0} is live on {1}"
+msgstr "{0} is live on {1}"
+
 #. placeholder {0}: names().join(", ")
 #: components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
 msgid "{0} is not using encrypted calls. Your audio and video stay paused until you turn off encryption."
@@ -557,8 +563,8 @@ msgid "Affects all roles and users"
 msgstr "Affects all roles and users"
 
 #: src/interface/Friends.tsx
-msgid "All"
-msgstr "All"
+#~ msgid "All"
+#~ msgstr "All"
 
 #: src/interface/ServerEvents.tsx
 #: src/interface/ServerEvents.tsx
@@ -821,10 +827,17 @@ msgstr "Banner"
 msgid "Bans"
 msgstr "Bans"
 
+#. placeholder {0}: voice.cameraBeautify
+#: components/modal/modals/CameraSettings.tsx
+#: components/app/interface/settings/user/voice/CameraOptions.tsx
+msgid "Beautify: {0}%"
+msgstr "Beautify: {0}%"
+
 #: components/app/menus/UserContextMenu.tsx
 msgid "Block user"
 msgstr "Block user"
 
+#: src/interface/Friends.tsx
 #: src/interface/Friends.tsx
 msgid "Blocked"
 msgstr "Blocked"
@@ -879,8 +892,8 @@ msgstr "Browser Echo Cancellation"
 #~ msgstr "Browser Noise Suppression"
 
 #: components/app/interface/settings/user/Feedback.tsx
-msgid "Bug Tracker"
-msgstr "Bug Tracker"
+#~ msgid "Bug Tracker"
+#~ msgstr "Bug Tracker"
 
 #: src/interface/navigation/channels/HomeSidebar.tsx
 #: src/interface/channels/text/MemberSidebar.tsx
@@ -889,12 +902,12 @@ msgid "Busy"
 msgstr "Busy"
 
 #: components/modal/modals/CreateBot.tsx
-msgid "By creating this bot, you agree to the <0>Acceptable Use Policy</0>."
-msgstr "By creating this bot, you agree to the <0>Acceptable Use Policy</0>."
+#~ msgid "By creating this bot, you agree to the <0>Acceptable Use Policy</0>."
+#~ msgstr "By creating this bot, you agree to the <0>Acceptable Use Policy</0>."
 
 #: components/modal/modals/CreateServer.tsx
-msgid "By creating this server, you agree to the <0>Acceptable Use Policy</0>."
-msgstr "By creating this server, you agree to the <0>Acceptable Use Policy</0>."
+#~ msgid "By creating this server, you agree to the <0>Acceptable Use Policy</0>."
+#~ msgstr "By creating this server, you agree to the <0>Acceptable Use Policy</0>."
 
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Bypass Slowmode"
@@ -1090,6 +1103,14 @@ msgstr "Channel Description"
 msgid "Channel Info"
 msgstr "Channel Info"
 
+#: src/index.tsx
+msgid "Channel linking failed or was cancelled."
+msgstr "Channel linking failed or was cancelled."
+
+#: components/app/interface/settings/user/Connections.tsx
+msgid "Channel linking is not enabled on this server yet."
+msgstr "Channel linking is not enabled on this server yet."
+
 #: components/modal/modals/CreateChannel.tsx
 #: components/app/interface/settings/channel/Overview.tsx
 msgid "Channel Name"
@@ -1107,6 +1128,11 @@ msgstr "Channel Settings"
 msgid "Channel Slowmode"
 msgstr "Channel Slowmode"
 
+#: components/app/interface/settings/user/Connections.tsx
+msgid "Channel unlinked."
+msgstr "Channel unlinked."
+
+#: components/ui/components/features/profiles/ProfileConnections.tsx
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Channels"
 msgstr "Channels"
@@ -1231,6 +1257,11 @@ msgstr "Closing…"
 msgid "Code"
 msgstr "Code"
 
+#: components/modal/modals/CameraSettings.tsx
+#: components/app/interface/settings/user/voice/CameraOptions.tsx
+msgid "Color filter"
+msgstr "Color filter"
+
 #: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx
 #: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx
 msgid "Coming soon! 👀"
@@ -1263,6 +1294,7 @@ msgstr "Confirm action"
 msgid "Confirm identity"
 msgstr "Confirm identity"
 
+#: components/app/interface/settings/user/Connections.tsx
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Connect"
 msgstr "Connect"
@@ -1284,6 +1316,10 @@ msgstr "Connected"
 msgid "Connecting"
 msgstr "Connecting"
 
+#: components/app/interface/settings/UserSettings.tsx
+msgid "Connections"
+msgstr "Connections"
+
 #: components/modal/modals/ReportContent.tsx
 msgid "Content breaks one or more laws"
 msgstr "Content breaks one or more laws"
@@ -1301,6 +1337,10 @@ msgstr "Continue in browser"
 msgid "Continue to app"
 msgstr "Continue to app"
 
+#: components/modal/modals/E2EEPeerDowngrade.tsx
+msgid "Continue unencrypted — new messages will be readable by the server — or keep the conversation encrypted on your side. Your encrypted history is unaffected either way."
+msgstr "Continue unencrypted — new messages will be readable by the server — or keep the conversation encrypted on your side. Your encrypted history is unaffected either way."
+
 #: components/auth/src/flows/FlowLogin.tsx
 #~ msgid "Continue with Apple"
 #~ msgstr "Continue with Apple"
@@ -1310,8 +1350,8 @@ msgid "Continue with Google"
 msgstr "Continue with Google"
 
 #: components/app/interface/settings/user/Language.tsx
-msgid "Contribute a language"
-msgstr "Contribute a language"
+#~ msgid "Contribute a language"
+#~ msgstr "Contribute a language"
 
 #: components/ui/components/features/profiles/ProfileBanner.tsx
 msgid "Copied!"
@@ -1387,6 +1427,14 @@ msgstr "Could not find what you requested."
 #: components/modal/modals/PollVoters.tsx
 msgid "Could not load voters."
 msgstr "Could not load voters."
+
+#: components/app/interface/settings/user/Connections.tsx
+msgid "Could not start linking, try again later."
+msgstr "Could not start linking, try again later."
+
+#: components/app/interface/settings/user/Connections.tsx
+msgid "Could not unlink the channel, try again."
+msgstr "Could not unlink the channel, try again."
 
 #: components/app/interface/settings/server/apps/AppsList.tsx
 msgid "Couldn't add the app — try again."
@@ -1700,8 +1748,8 @@ msgid "Desktop"
 msgstr "Desktop"
 
 #: components/app/interface/settings/user/bots/MyBots.tsx
-msgid "Developer Documentation"
-msgstr "Developer Documentation"
+#~ msgid "Developer Documentation"
+#~ msgstr "Developer Documentation"
 
 #: src/interface/channels/text/Composition.tsx
 msgid "Dice"
@@ -1758,6 +1806,10 @@ msgstr "Disappearing messages: Off"
 #: components/ui/components/features/messaging/composition/CameraMessageButton.tsx
 msgid "Discard recording"
 msgstr "Discard recording"
+
+#: components/app/interface/settings/user/Connections.tsx
+msgid "Disconnect"
+msgstr "Disconnect"
 
 #: components/app/interface/settings/user/notifications/Sounds.tsx
 msgid "Disconnect Sound Style"
@@ -1816,6 +1868,7 @@ msgid "Don't show this again until the next update"
 msgstr "Don't show this again until the next update"
 
 #: src/interface/Home.tsx
+#: components/app/interface/settings/UserSettings.tsx
 msgid "Donate to Sloga"
 msgstr "Donate to Sloga"
 
@@ -1836,6 +1889,10 @@ msgstr "Drugs or illegal goods"
 #: components/modal/modals/SuspendUser.tsx
 msgid "Duration"
 msgstr "Duration"
+
+#: components/app/interface/settings/UserSettings.tsx
+msgid "E2E Encryption"
+msgstr "E2E Encryption"
 
 #. placeholder {0}: props.member.displayName
 #: components/modal/modals/UserProfileRoles.tsx
@@ -2000,6 +2057,14 @@ msgstr "Encryption is off for this device. New direct messages are no longer end
 msgid "Encryption status could not be verified. Nothing was sent."
 msgstr "Encryption status could not be verified. Nothing was sent."
 
+#: components/modal/modals/E2EEPeerDowngrade.tsx
+msgid "Encryption turned off"
+msgstr "Encryption turned off"
+
+#: src/interface/channels/text/Composition.tsx
+msgid "Encryption was turned off — choose how to continue."
+msgstr "Encryption was turned off — choose how to continue."
+
 #: src/interface/channels/text/Composition.tsx
 msgid "Encryption will start once a message is sent."
 msgstr "Encryption will start once a message is sent."
@@ -2112,6 +2177,11 @@ msgstr "Extortion or blackmail"
 msgid "Extreme violence, gore or animal cruelty"
 msgstr "Extreme violence, gore or animal cruelty"
 
+#: components/modal/modals/CameraSettings.tsx
+#: components/app/interface/settings/user/voice/CameraOptions.tsx
+msgid "Face tracking failed — stickers and beautify are unavailable."
+msgstr "Face tracking failed — stickers and beautify are unavailable."
+
 #: components/client/NotificationsController.ts
 msgid "Failed to enable notifications. Sloga does not have notification permission."
 msgstr "Failed to enable notifications. Sloga does not have notification permission."
@@ -2119,6 +2189,10 @@ msgstr "Failed to enable notifications. Sloga does not have notification permiss
 #: components/client/NotificationsController.ts
 msgid "Failed to enable push notifications. Please try again later."
 msgstr "Failed to enable push notifications. Please try again later."
+
+#: src/index.tsx
+msgid "Failed to link your channel, try again."
+msgstr "Failed to link your channel, try again."
 
 #: components/i18n/errors.ts
 msgid "Failed to process the image you provided."
@@ -2133,7 +2207,6 @@ msgid "Failed to verify!"
 msgstr "Failed to verify!"
 
 #: components/app/interface/settings/UserSettings.tsx
-#: components/app/interface/settings/user/Feedback.tsx
 msgid "Feedback"
 msgstr "Feedback"
 
@@ -2149,6 +2222,16 @@ msgstr "file"
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 #~ msgid "Filter background noise from your microphone with RNNoise, an open source machine-learning noise filter that runs on your device. Applies immediately, even mid-call."
 #~ msgstr "Filter background noise from your microphone with RNNoise, an open source machine-learning noise filter that runs on your device. Applies immediately, even mid-call."
+
+#: components/modal/modals/CameraSettings.tsx
+#: components/app/interface/settings/user/voice/CameraOptions.tsx
+msgid "Filters"
+msgstr "Filters"
+
+#: components/modal/modals/CameraSettings.tsx
+#: components/app/interface/settings/user/voice/CameraOptions.tsx
+msgid "Filters are paused while background effects are on."
+msgstr "Filters are paused while background effects are on."
 
 #: components/app/interface/channels/text/PollMessage.tsx
 msgid "Final results"
@@ -2255,6 +2338,7 @@ msgid "Friend Request"
 msgstr "Friend Request"
 
 #: src/interface/Friends.tsx
+#: src/interface/Friends.tsx
 #: src/interface/navigation/channels/HomeSidebar.tsx
 msgid "Friends"
 msgstr "Friends"
@@ -2302,8 +2386,12 @@ msgid "Get active recovery codes"
 msgstr "Get active recovery codes"
 
 #: src/AndroidNag.tsx
-msgid "Get it on Google Play"
-msgstr "Get it on Google Play"
+#~ msgid "Get it on Google Play"
+#~ msgstr "Get it on Google Play"
+
+#: src/AndroidNag.tsx
+msgid "Get the Android app"
+msgstr "Get the Android app"
 
 #: components/modal/modals/ReportContent.tsx
 msgid "Give us some detail"
@@ -2368,8 +2456,8 @@ msgid "Hello!"
 msgstr "Hello!"
 
 #: components/app/interface/settings/user/Language.tsx
-msgid "Help contribute to an existing or new language"
-msgstr "Help contribute to an existing or new language"
+#~ msgid "Help contribute to an existing or new language"
+#~ msgstr "Help contribute to an existing or new language"
 
 #: components/ui/components/features/profiles/ProfileBadges.tsx
 msgid "Helped translate Sloga"
@@ -2493,8 +2581,12 @@ msgid "In a week"
 msgstr "In a week"
 
 #: src/AndroidNag.tsx
-msgid "In the meantime, install Sloga from Google Play for a faster, smoother experience designed for Android."
-msgstr "In the meantime, install Sloga from Google Play for a faster, smoother experience designed for Android."
+msgid "In the meantime, get the app for a faster, smoother experience designed for Android."
+msgstr "In the meantime, get the app for a faster, smoother experience designed for Android."
+
+#: src/AndroidNag.tsx
+#~ msgid "In the meantime, install Sloga from Google Play for a faster, smoother experience designed for Android."
+#~ msgstr "In the meantime, install Sloga from Google Play for a faster, smoother experience designed for Android."
 
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "In this build the key only registers while the app is focused — the desktop app supports global push to talk."
@@ -2622,7 +2714,6 @@ msgid "Join a server"
 msgstr "Join a server"
 
 #: src/interface/Home.tsx
-#: components/app/interface/settings/user/Feedback.tsx
 msgid "Join the Sloga Lounge"
 msgstr "Join the Sloga Lounge"
 
@@ -2651,6 +2742,10 @@ msgstr "Jump to the beginning"
 #: components/modal/modals/ChannelToggleMature.tsx
 msgid "Keep as is"
 msgstr "Keep as is"
+
+#: components/modal/modals/E2EEPeerDowngrade.tsx
+msgid "Keep encrypted"
+msgstr "Keep encrypted"
 
 #: components/auth/src/flows/FlowLogin.tsx
 msgid "Keep me logged in"
@@ -2703,8 +2798,8 @@ msgid "Launch Sloga when you log into your computer."
 msgstr "Launch Sloga when you log into your computer."
 
 #: components/app/interface/settings/user/bots/MyBots.tsx
-msgid "Learn more about how to create bots on Sloga."
-msgstr "Learn more about how to create bots on Sloga."
+#~ msgid "Learn more about how to create bots on Sloga."
+#~ msgstr "Learn more about how to create bots on Sloga."
 
 #: components/modal/modals/LeaveServer.tsx
 #: components/modal/modals/DeleteChannel.tsx
@@ -2746,6 +2841,15 @@ msgstr "Lift platform suspension"
 msgid "Light"
 msgstr "Light"
 
+#: components/app/interface/settings/user/Connections.tsx
+msgid "Link your streaming channel to show it on your profile. When you go live, friends get a notification and members of your servers see a LIVE badge next to your name."
+msgstr "Link your streaming channel to show it on your profile. When you go live, friends get a notification and members of your servers see a LIVE badge next to your name."
+
+#. placeholder {0}: connection.display_name
+#: src/index.tsx
+msgid "Linked channel: {0}"
+msgstr "Linked channel: {0}"
+
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Listen"
 msgstr "Listen"
@@ -2757,6 +2861,12 @@ msgstr "Listing requested — waiting for approval by the Sloga team."
 #: components/app/interface/settings/user/voice/CameraPreview.tsx
 msgid "Live"
 msgstr "Live"
+
+#: src/interface/channels/text/MemberSidebar.tsx
+#: components/ui/components/features/profiles/ProfileConnections.tsx
+#: components/app/interface/settings/user/Connections.tsx
+msgid "LIVE"
+msgstr "LIVE"
 
 #: components/app/interface/settings/user/Language.tsx
 msgid "Live call captions"
@@ -3315,9 +3425,13 @@ msgstr "Nobody here right now!"
 
 #: src/interface/ServerEvents.tsx
 #: components/modal/modals/CameraSettings.tsx
+#: components/modal/modals/CameraSettings.tsx
+#: components/modal/modals/CameraSettings.tsx
 #: components/app/menus/ServerContextMenu.tsx
 #: components/app/menus/shared/NotificationContextMenu.tsx
 #: components/app/menus/shared/NotificationContextMenu.tsx
+#: components/app/interface/settings/user/voice/CameraOptions.tsx
+#: components/app/interface/settings/user/voice/CameraOptions.tsx
 #: components/app/interface/settings/user/voice/CameraOptions.tsx
 msgid "None"
 msgstr "None"
@@ -3382,6 +3496,7 @@ msgstr "Official Communication"
 msgid "Official Server"
 msgstr "Official Server"
 
+#: src/interface/Friends.tsx
 #: src/interface/navigation/channels/HomeSidebar.tsx
 #: src/interface/channels/text/MemberSidebar.tsx
 #: components/ui/components/features/profiles/ProfileStatus.tsx
@@ -3557,8 +3672,10 @@ msgstr "Play server soundboard sounds in a voice call"
 msgid "Play sound"
 msgstr "Play sound"
 
+#. placeholder {0}: playing.name
 #. placeholder {0}: activity.name
 #. placeholder {0}: props.user.activity!.name
+#: src/interface/Friends.tsx
 #: src/interface/navigation/channels/HomeSidebar.tsx
 #: src/interface/channels/text/MemberSidebar.tsx
 #: components/ui/components/features/profiles/ProfileStatus.tsx
@@ -4150,10 +4267,6 @@ msgstr "Search friends..."
 msgid "Search members or roles…"
 msgstr "Search members or roles…"
 
-#: components/app/interface/settings/UserSettings.tsx
-msgid "E2E Encryption"
-msgstr "E2E Encryption"
-
 #: components/modal/modals/E2EEIdentityChange.tsx
 msgid "Security identity changed"
 msgstr "Security identity changed"
@@ -4239,6 +4352,10 @@ msgstr "Send messages in channels"
 #: components/modal/modals/AddFriend.tsx
 msgid "Send Request"
 msgstr "Send Request"
+
+#: components/modal/modals/E2EEPeerDowngrade.tsx
+msgid "Send unencrypted"
+msgstr "Send unencrypted"
 
 #: components/app/interface/channels/text/DraftMessage.tsx
 msgid "Sending..."
@@ -4386,6 +4503,10 @@ msgstr "Show send message button"
 #: components/auth/src/flows/FlowOAuthCallback.tsx
 msgid "Sign in failed"
 msgstr "Sign in failed"
+
+#: components/app/interface/settings/user/Connections.tsx
+msgid "Sign in with your account to link your channel."
+msgstr "Sign in with your account to link your channel."
 
 #: components/auth/src/flows/FlowLogin.tsx
 msgid "Sign into Sloga"
@@ -4591,13 +4712,25 @@ msgstr "Streamer Mode is on — personal info, invites and notifications are hid
 msgid "Streaming app detected: {0}"
 msgstr "Streaming app detected: {0}"
 
-#: components/app/interface/settings/user/Feedback.tsx
-msgid "Submit feature suggestion"
-msgstr "Submit feature suggestion"
+#. placeholder {0}: live.platform
+#: src/interface/Friends.tsx
+#: src/interface/channels/text/MemberSidebar.tsx
+msgid "Streaming on {0}"
+msgstr "Streaming on {0}"
+
+#. placeholder {0}: live.live_title
+#: src/interface/Friends.tsx
+#: src/interface/channels/text/MemberSidebar.tsx
+msgid "Streaming: {0}"
+msgstr "Streaming: {0}"
 
 #: components/app/interface/settings/user/Feedback.tsx
-msgid "Submit feedback"
-msgstr "Submit feedback"
+#~ msgid "Submit feature suggestion"
+#~ msgstr "Submit feature suggestion"
+
+#: components/app/interface/settings/user/Feedback.tsx
+#~ msgid "Submit feedback"
+#~ msgstr "Submit feedback"
 
 #: components/app/interface/settings/user/bots/ViewBot.tsx
 msgid "Submit to Discover"
@@ -4608,8 +4741,8 @@ msgid "Subscriptions"
 msgstr "Subscriptions"
 
 #: components/app/interface/settings/user/Feedback.tsx
-msgid "Suggest new Sloga features on GitHub discussions."
-msgstr "Suggest new Sloga features on GitHub discussions."
+#~ msgid "Suggest new Sloga features on GitHub discussions."
+#~ msgstr "Suggest new Sloga features on GitHub discussions."
 
 #: src/interface/Home.tsx
 msgid "Support the project by donating - thank you!"
@@ -4716,6 +4849,10 @@ msgstr "Test Microphone"
 #: components/modal/modals/CreateChannel.tsx
 msgid "Text Channel"
 msgstr "Text Channel"
+
+#: src/index.tsx
+msgid "That account has no channel to link."
+msgstr "That account has no channel to link."
 
 #: components/i18n/errors.ts
 msgid "That action had no effect."
@@ -4833,6 +4970,10 @@ msgstr "This channel is password protected."
 #: components/modal/modals/E2EEIdentityChange.tsx
 msgid "this contact"
 msgstr "this contact"
+
+#: components/modal/modals/E2EEPeerDowngrade.tsx
+msgid "This contact turned off end-to-end encryption for this conversation."
+msgstr "This contact turned off end-to-end encryption for this conversation."
 
 #: src/interface/channels/text/Composition.tsx
 msgid "This contact's security identity changed — review before sending."
@@ -5262,8 +5403,8 @@ msgid "View Channel"
 msgstr "View Channel"
 
 #: components/app/interface/settings/user/Feedback.tsx
-msgid "View currently active bug reports here."
-msgstr "View currently active bug reports here."
+#~ msgid "View currently active bug reports here."
+#~ msgstr "View currently active bug reports here."
 
 #: src/interface/channels/ChannelHeader.tsx
 msgid "View members"
@@ -5414,8 +5555,8 @@ msgid "Write a message first, then schedule it"
 msgstr "Write a message first, then schedule it"
 
 #: components/app/interface/settings/user/bots/MyBots.tsx
-msgid "You agree that your bot is subject to the Acceptable Usage Policy."
-msgstr "You agree that your bot is subject to the Acceptable Usage Policy."
+#~ msgid "You agree that your bot is subject to the Acceptable Usage Policy."
+#~ msgstr "You agree that your bot is subject to the Acceptable Usage Policy."
 
 #. placeholder {0}: props.user?.username
 #. placeholder {0}: props.member.user?.username
@@ -5457,7 +5598,6 @@ msgstr "You can re-open it later, but it will disappear on both sides."
 
 #: src/interface/Home.tsx
 #: src/interface/Home.tsx
-#: components/app/interface/settings/user/Feedback.tsx
 #: components/app/interface/settings/user/Feedback.tsx
 msgid "You can report issues and discuss improvements with us directly here."
 msgstr "You can report issues and discuss improvements with us directly here."
@@ -5653,116 +5793,3 @@ msgstr "Your suspension has expired — try logging in again."
 #: components/i18n/errors.ts
 msgid "Your user has already been created? Try logging in again or refreshing the app."
 msgstr "Your user has already been created? Try logging in again or refreshing the app."
-
-#: components/app/interface/settings/user/voice/CameraOptions.tsx
-#: components/modal/modals/CameraSettings.tsx
-msgid "Filters"
-msgstr "Filters"
-
-#: components/app/interface/settings/user/voice/CameraOptions.tsx
-#: components/modal/modals/CameraSettings.tsx
-msgid "Color filter"
-msgstr "Color filter"
-
-#: components/app/interface/settings/user/voice/CameraOptions.tsx
-#: components/modal/modals/CameraSettings.tsx
-msgid "Beautify: {0}%"
-msgstr "Beautify: {0}%"
-
-#: components/app/interface/settings/user/voice/CameraOptions.tsx
-#: components/modal/modals/CameraSettings.tsx
-msgid "Filters are paused while background effects are on."
-msgstr "Filters are paused while background effects are on."
-
-#: components/app/interface/settings/user/voice/CameraOptions.tsx
-#: components/modal/modals/CameraSettings.tsx
-msgid "Face tracking failed — stickers and beautify are unavailable."
-msgstr "Face tracking failed — stickers and beautify are unavailable."
-
-#: src/interface/channels/text/Composition.tsx
-msgid "Encryption was turned off — choose how to continue."
-msgstr "Encryption was turned off — choose how to continue."
-
-#: components/modal/modals/E2EEPeerDowngrade.tsx
-msgid "Encryption turned off"
-msgstr "Encryption turned off"
-
-#: components/modal/modals/E2EEPeerDowngrade.tsx
-msgid "Keep encrypted"
-msgstr "Keep encrypted"
-
-#: components/modal/modals/E2EEPeerDowngrade.tsx
-msgid "Send unencrypted"
-msgstr "Send unencrypted"
-
-#: components/modal/modals/E2EEPeerDowngrade.tsx
-msgid "This contact turned off end-to-end encryption for this conversation."
-msgstr "This contact turned off end-to-end encryption for this conversation."
-
-#: components/modal/modals/E2EEPeerDowngrade.tsx
-msgid "Continue unencrypted — new messages will be readable by the server — or keep the conversation encrypted on your side. Your encrypted history is unaffected either way."
-msgstr "Continue unencrypted — new messages will be readable by the server — or keep the conversation encrypted on your side. Your encrypted history is unaffected either way."
-
-#: src/index.tsx
-msgid "Linked channel: {0}"
-msgstr "Linked channel: {0}"
-
-#: src/index.tsx
-msgid "Failed to link your channel, try again."
-msgstr "Failed to link your channel, try again."
-
-#: src/index.tsx
-msgid "That account has no channel to link."
-msgstr "That account has no channel to link."
-
-#: src/index.tsx
-msgid "Channel linking failed or was cancelled."
-msgstr "Channel linking failed or was cancelled."
-
-#: components/app/interface/settings/user/Connections.tsx
-msgid "Link your streaming channel to show it on your profile. When you go live, friends get a notification and members of your servers see a LIVE badge next to your name."
-msgstr "Link your streaming channel to show it on your profile. When you go live, friends get a notification and members of your servers see a LIVE badge next to your name."
-
-#: components/app/interface/settings/user/Connections.tsx
-msgid "Disconnect"
-msgstr "Disconnect"
-
-#: components/app/interface/settings/user/Connections.tsx
-msgid "LIVE"
-msgstr "LIVE"
-
-#: components/app/interface/settings/user/Connections.tsx
-msgid "Sign in with your account to link your channel."
-msgstr "Sign in with your account to link your channel."
-
-#: components/app/interface/settings/user/Connections.tsx
-msgid "Channel linking is not enabled on this server yet."
-msgstr "Channel linking is not enabled on this server yet."
-
-#: components/app/interface/settings/user/Connections.tsx
-msgid "Could not start linking, try again later."
-msgstr "Could not start linking, try again later."
-
-#: components/app/interface/settings/user/Connections.tsx
-msgid "Channel unlinked."
-msgstr "Channel unlinked."
-
-#: components/app/interface/settings/user/Connections.tsx
-msgid "Could not unlink the channel, try again."
-msgstr "Could not unlink the channel, try again."
-
-#: src/interface/channels/text/MemberSidebar.tsx
-msgid "Streaming: {0}"
-msgstr "Streaming: {0}"
-
-#: src/interface/channels/text/MemberSidebar.tsx
-msgid "Streaming on {0}"
-msgstr "Streaming on {0}"
-
-#: components/client/NotificationsWorker.tsx
-msgid "{0} is live on {1}"
-msgstr "{0} is live on {1}"
-
-#: components/app/interface/settings/UserSettings.tsx
-msgid "Connections"
-msgstr "Connections"
