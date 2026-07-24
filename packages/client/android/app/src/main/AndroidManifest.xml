@@ -26,10 +26,14 @@
 
         </activity>
 
+        <!-- camera as well as microphone: a video call holds both, and from
+             Android 14 every capability a foreground service uses must be
+             declared here. The service claims only the subset it actually has
+             runtime permission for. -->
         <service
             android:name=".VoiceCallService"
             android:exported="false"
-            android:foregroundServiceType="microphone" />
+            android:foregroundServiceType="microphone|camera" />
 
         <service
             android:name=".SlogaMessagingService"
@@ -64,6 +68,7 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
