@@ -1,7 +1,7 @@
 import type { CapacitorConfig } from "@capacitor/cli";
 
 const config: CapacitorConfig = {
-  appId: "com.acutest.app",
+  appId: "gg.sloga.app",
   appName: "Sloga",
   webDir: "dist",
   android: {

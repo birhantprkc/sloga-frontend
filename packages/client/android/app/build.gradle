@@ -17,7 +17,13 @@ android {
         buildConfig = true
     }
     defaultConfig {
-        applicationId "com.acutest.app"
+        // Public identity of the app: this is the Play Store URL and can never
+        // change once published. Reverse-DNS of sloga.gg, the domain we own.
+        // `namespace` above deliberately stays com.acutest.app — it only names
+        // the Java/Kotlin package and the generated BuildConfig/R classes, so
+        // decoupling the two avoids moving 16 source files for a rename that
+        // users never see. Do not "tidy" them into agreement.
+        applicationId "gg.sloga.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 16
