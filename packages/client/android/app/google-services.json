@@ -16,6 +16,31 @@
       "api_key": [
         {
           "current_key": "AIzaSyC7n0D33WzRtcICYCxvinH8zezT_KMllxM"
+        },
+        {
+          "current_key": "AIzaSyBnsE_VciLD3fOzdybnYuuy6BPIs-S6zcM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:739221503521:android:93db620a717254e839ad60",
+        "android_client_info": {
+          "package_name": "gg.sloga.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC7n0D33WzRtcICYCxvinH8zezT_KMllxM"
+        },
+        {
+          "current_key": "AIzaSyBnsE_VciLD3fOzdybnYuuy6BPIs-S6zcM"
         }
       ],
       "services": {
