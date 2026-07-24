@@ -20,12 +20,14 @@ import { Symbol } from "@revolt/ui/components/utils/Symbol";
 import MdAccountCircle from "@material-design-icons/svg/outlined/account_circle.svg?component-solid";
 import MdCampaign from "@material-design-icons/svg/outlined/campaign.svg?component-solid";
 import MdCoffee from "@material-design-icons/svg/outlined/coffee.svg?component-solid";
+import MdGavel from "@material-design-icons/svg/outlined/gavel.svg?component-solid";
 import MdLanguage from "@material-design-icons/svg/outlined/language.svg?component-solid";
 import MdLogout from "@material-design-icons/svg/outlined/logout.svg?component-solid";
 import MdMemory from "@material-design-icons/svg/outlined/memory.svg?component-solid";
 import MdMic from "@material-design-icons/svg/outlined/mic.svg?component-solid";
 import MdNotifications from "@material-design-icons/svg/outlined/notifications.svg?component-solid";
 import MdPalette from "@material-design-icons/svg/outlined/palette.svg?component-solid";
+import MdPolicy from "@material-design-icons/svg/outlined/policy.svg?component-solid";
 import MdRateReview from "@material-design-icons/svg/outlined/rate_review.svg?component-solid";
 import MdScience from "@material-design-icons/svg/outlined/science.svg?component-solid";
 import MdSecurity from "@material-design-icons/svg/outlined/security.svg?component-solid";
@@ -231,6 +233,20 @@ const Config: SettingsConfiguration<{ server: Server }> = {
                 </ColouredText>
               ),
               href: "https://ko-fi.com/slogatech",
+            },
+            // Reachable copies of the policies a user accepted at registration.
+            // Play expects them findable in-app, not only on the website.
+            {
+              id: "terms",
+              icon: <MdGavel {...iconSize(20)} />,
+              title: <Trans>Terms of Service</Trans>,
+              href: "https://sloga.gg/legal/terms.html",
+            },
+            {
+              id: "privacy",
+              icon: <MdPolicy {...iconSize(20)} />,
+              title: <Trans>Privacy Policy</Trans>,
+              href: "https://sloga.gg/legal/privacy.html",
             },
             {
               id: "changelog",

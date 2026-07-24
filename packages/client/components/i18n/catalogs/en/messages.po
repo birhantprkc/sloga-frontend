@@ -416,10 +416,6 @@ msgstr "4 hours"
 msgid "4k screen share"
 msgstr "4k screen share"
 
-#: components/auth/src/flows/FlowHome.tsx
-#~ msgid "4k streaming"
-#~ msgstr "4k streaming"
-
 #: components/app/interface/settings/channel/Overview.tsx
 msgid "5 minutes"
 msgstr "5 minutes"
@@ -562,10 +558,6 @@ msgstr "Advantage"
 msgid "Affects all roles and users"
 msgstr "Affects all roles and users"
 
-#: src/interface/Friends.tsx
-#~ msgid "All"
-#~ msgstr "All"
-
 #: src/interface/ServerEvents.tsx
 #: src/interface/ServerEvents.tsx
 #: src/interface/ServerEvents.tsx
@@ -619,6 +611,10 @@ msgstr "An error occurred."
 #: components/i18n/errors.ts
 msgid "An internal error occurred. ({0})"
 msgstr "An internal error occurred. ({0})"
+
+#: components/auth/src/flows/FlowCreate.tsx
+msgid "and"
+msgstr "and"
 
 #: components/modal/modals/CreateChannel.tsx
 msgid "Announcement channel"
@@ -887,27 +883,15 @@ msgstr "Browser"
 msgid "Browser Echo Cancellation"
 msgstr "Browser Echo Cancellation"
 
-#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
-#~ msgid "Browser Noise Suppression"
-#~ msgstr "Browser Noise Suppression"
-
-#: components/app/interface/settings/user/Feedback.tsx
-#~ msgid "Bug Tracker"
-#~ msgstr "Bug Tracker"
-
 #: src/interface/navigation/channels/HomeSidebar.tsx
 #: src/interface/channels/text/MemberSidebar.tsx
 #: components/ui/components/features/profiles/ProfileStatus.tsx
 msgid "Busy"
 msgstr "Busy"
 
-#: components/modal/modals/CreateBot.tsx
-#~ msgid "By creating this bot, you agree to the <0>Acceptable Use Policy</0>."
-#~ msgstr "By creating this bot, you agree to the <0>Acceptable Use Policy</0>."
-
-#: components/modal/modals/CreateServer.tsx
-#~ msgid "By creating this server, you agree to the <0>Acceptable Use Policy</0>."
-#~ msgstr "By creating this server, you agree to the <0>Acceptable Use Policy</0>."
+#: components/auth/src/flows/FlowCreate.tsx
+msgid "By registering you agree to our"
+msgstr "By registering you agree to our"
 
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Bypass Slowmode"
@@ -1342,16 +1326,8 @@ msgid "Continue unencrypted — new messages will be readable by the server — 
 msgstr "Continue unencrypted — new messages will be readable by the server — or keep the conversation encrypted on your side. Your encrypted history is unaffected either way."
 
 #: components/auth/src/flows/FlowLogin.tsx
-#~ msgid "Continue with Apple"
-#~ msgstr "Continue with Apple"
-
-#: components/auth/src/flows/FlowLogin.tsx
 msgid "Continue with Google"
 msgstr "Continue with Google"
-
-#: components/app/interface/settings/user/Language.tsx
-#~ msgid "Contribute a language"
-#~ msgstr "Contribute a language"
 
 #: components/ui/components/features/profiles/ProfileBanner.tsx
 msgid "Copied!"
@@ -1487,10 +1463,6 @@ msgstr "Create a recovery code"
 #: components/modal/modals/E2EEEnable.tsx
 msgid "Create a recovery code so you can restore your identity and message history if you lose this device. Without one, encrypted history is gone for good if the device is lost. You can also do this later from E2E Encryption settings."
 msgstr "Create a recovery code so you can restore your identity and message history if you lose this device. Without one, encrypted history is gone for good if the device is lost. You can also do this later from E2E Encryption settings."
-
-#: src/interface/ServerEvents.tsx
-#~ msgid "Create a text channel named <0>events</0> in this server to enable the calendar."
-#~ msgstr "Create a text channel named <0>events</0> in this server to enable the calendar."
 
 #: components/modal/modals/CreateWebhook.tsx
 msgid "Create a webhook"
@@ -1746,10 +1718,6 @@ msgstr "Description provided by {0}"
 #: components/app/interface/settings/UserSettings.tsx
 msgid "Desktop"
 msgstr "Desktop"
-
-#: components/app/interface/settings/user/bots/MyBots.tsx
-#~ msgid "Developer Documentation"
-#~ msgstr "Developer Documentation"
 
 #: src/interface/channels/text/Composition.tsx
 msgid "Dice"
@@ -2039,10 +2007,6 @@ msgstr "Encrypted direct messages"
 msgid "Encrypted direct messages are on for this device. Messages you send in an encrypted conversation are stored only on the devices that receive them — not on the server, and not in your web session."
 msgstr "Encrypted direct messages are on for this device. Messages you send in an encrypted conversation are stored only on the devices that receive them — not on the server, and not in your web session."
 
-#: components/modal/modals/E2EEEnable.tsx
-#~ msgid "Encrypted history lives on THIS device only. If you log out and choose to erase it, or lose the device, those messages cannot be recovered. You will confirm your identity to continue."
-#~ msgstr "Encrypted history lives on THIS device only. If you log out and choose to erase it, or lose the device, those messages cannot be recovered. You will confirm your identity to continue."
-
 #: components/app/interface/settings/user/SecurityAndPrivacy.tsx
 msgid "Encrypted messaging is on"
 msgstr "Encrypted messaging is on"
@@ -2219,10 +2183,6 @@ msgstr "Fetching encrypted attachment…"
 msgid "file"
 msgstr "file"
 
-#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
-#~ msgid "Filter background noise from your microphone with RNNoise, an open source machine-learning noise filter that runs on your device. Applies immediately, even mid-call."
-#~ msgstr "Filter background noise from your microphone with RNNoise, an open source machine-learning noise filter that runs on your device. Applies immediately, even mid-call."
-
 #: components/modal/modals/CameraSettings.tsx
 #: components/app/interface/settings/user/voice/CameraOptions.tsx
 msgid "Filters"
@@ -2386,10 +2346,6 @@ msgid "Get active recovery codes"
 msgstr "Get active recovery codes"
 
 #: src/AndroidNag.tsx
-#~ msgid "Get it on Google Play"
-#~ msgstr "Get it on Google Play"
-
-#: src/AndroidNag.tsx
 msgid "Get the Android app"
 msgstr "Get the Android app"
 
@@ -2454,10 +2410,6 @@ msgstr "Hear other people and see their video"
 #: components/auth/src/flows/FlowCreate.tsx
 msgid "Hello!"
 msgstr "Hello!"
-
-#: components/app/interface/settings/user/Language.tsx
-#~ msgid "Help contribute to an existing or new language"
-#~ msgstr "Help contribute to an existing or new language"
 
 #: components/ui/components/features/profiles/ProfileBadges.tsx
 msgid "Helped translate Sloga"
@@ -2583,10 +2535,6 @@ msgstr "In a week"
 #: src/AndroidNag.tsx
 msgid "In the meantime, get the app for a faster, smoother experience designed for Android."
 msgstr "In the meantime, get the app for a faster, smoother experience designed for Android."
-
-#: src/AndroidNag.tsx
-#~ msgid "In the meantime, install Sloga from Google Play for a faster, smoother experience designed for Android."
-#~ msgstr "In the meantime, install Sloga from Google Play for a faster, smoother experience designed for Android."
 
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "In this build the key only registers while the app is focused — the desktop app supports global push to talk."
@@ -2796,10 +2744,6 @@ msgstr "Latest activity"
 #: components/app/interface/settings/user/Native.tsx
 msgid "Launch Sloga when you log into your computer."
 msgstr "Launch Sloga when you log into your computer."
-
-#: components/app/interface/settings/user/bots/MyBots.tsx
-#~ msgid "Learn more about how to create bots on Sloga."
-#~ msgstr "Learn more about how to create bots on Sloga."
 
 #: components/modal/modals/LeaveServer.tsx
 #: components/modal/modals/DeleteChannel.tsx
@@ -3360,10 +3304,6 @@ msgid "No channels where you can manage webhooks. You need the Manage Webhooks p
 msgstr "No channels where you can manage webhooks. You need the Manage Webhooks permission on the destination channel."
 
 #: src/interface/ServerEvents.tsx
-#~ msgid "No Events Channel Found"
-#~ msgstr "No Events Channel Found"
-
-#: src/interface/ServerEvents.tsx
 msgid "No events on this day."
 msgstr "No events on this day."
 
@@ -3414,14 +3354,6 @@ msgstr "No votes for this answer yet"
 #: src/interface/Friends.tsx
 msgid "Nobody here right now!"
 msgstr "Nobody here right now!"
-
-#: components/ui/components/features/voice/callCard/VoiceDeviceSelector.tsx
-#~ msgid "Noise suppression"
-#~ msgstr "Noise suppression"
-
-#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
-#~ msgid "Noise Suppression"
-#~ msgstr "Noise Suppression"
 
 #: src/interface/ServerEvents.tsx
 #: components/modal/modals/CameraSettings.tsx
@@ -3754,6 +3686,11 @@ msgstr "Press any key..."
 #: components/app/interface/settings/user/notifications/Sounds.tsx
 msgid "Preview"
 msgstr "Preview"
+
+#: components/auth/src/flows/FlowCreate.tsx
+#: components/app/interface/settings/UserSettings.tsx
+msgid "Privacy Policy"
+msgstr "Privacy Policy"
 
 #: components/markdown/plugins/anchors.tsx
 msgid "Private Channel"
@@ -4215,10 +4152,6 @@ msgstr "Schedule"
 #: src/interface/channels/text/Composition.tsx
 msgid "Scheduling does not support attachments yet"
 msgstr "Scheduling does not support attachments yet"
-
-#: src/interface/channels/text/Composition.tsx
-#~ msgid "Scheduling doesn't support attachments yet"
-#~ msgstr "Scheduling doesn't support attachments yet"
 
 #: components/app/menus/UserContextMenu.tsx
 msgid "Screen Share"
@@ -4724,14 +4657,6 @@ msgstr "Streaming on {0}"
 msgid "Streaming: {0}"
 msgstr "Streaming: {0}"
 
-#: components/app/interface/settings/user/Feedback.tsx
-#~ msgid "Submit feature suggestion"
-#~ msgstr "Submit feature suggestion"
-
-#: components/app/interface/settings/user/Feedback.tsx
-#~ msgid "Submit feedback"
-#~ msgstr "Submit feedback"
-
 #: components/app/interface/settings/user/bots/ViewBot.tsx
 msgid "Submit to Discover"
 msgstr "Submit to Discover"
@@ -4740,17 +4665,9 @@ msgstr "Submit to Discover"
 msgid "Subscriptions"
 msgstr "Subscriptions"
 
-#: components/app/interface/settings/user/Feedback.tsx
-#~ msgid "Suggest new Sloga features on GitHub discussions."
-#~ msgstr "Suggest new Sloga features on GitHub discussions."
-
 #: src/interface/Home.tsx
 msgid "Support the project by donating - thank you!"
 msgstr "Support the project by donating - thank you!"
-
-#: components/ui/components/features/voice/callCard/VoiceDeviceSelector.tsx
-#~ msgid "Suppress background noise (RNNoise)"
-#~ msgstr "Suppress background noise (RNNoise)"
 
 #: components/app/interface/settings/user/StreamerMode.tsx
 msgid "Suppress desktop notification popups so messages don't appear on stream."
@@ -4833,6 +4750,11 @@ msgstr "Tell us what's wrong with this user"
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Temporarily prevent lower-ranking members from interacting"
 msgstr "Temporarily prevent lower-ranking members from interacting"
+
+#: components/auth/src/flows/FlowCreate.tsx
+#: components/app/interface/settings/UserSettings.tsx
+msgid "Terms of Service"
+msgstr "Terms of Service"
 
 #: components/app/interface/settings/user/voice/CameraPreview.tsx
 msgid "Test camera"
@@ -5281,10 +5203,6 @@ msgstr "Use Soundboard"
 msgid "Use the graphics card to improve performance."
 msgstr "Use the graphics card to improve performance."
 
-#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
-#~ msgid "Use your browser's built-in noise suppression instead. Turn both off to send unprocessed audio (music, instruments)."
-#~ msgstr "Use your browser's built-in noise suppression instead. Turn both off to send unprocessed audio (music, instruments)."
-
 #: components/app/interface/settings/server/bans/ListBans.tsx
 msgid "User"
 msgstr "User"
@@ -5401,10 +5319,6 @@ msgstr "Video Call"
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "View Channel"
 msgstr "View Channel"
-
-#: components/app/interface/settings/user/Feedback.tsx
-#~ msgid "View currently active bug reports here."
-#~ msgstr "View currently active bug reports here."
 
 #: src/interface/channels/ChannelHeader.tsx
 msgid "View members"
@@ -5553,10 +5467,6 @@ msgstr "Would you like to join this server?"
 #: src/interface/channels/text/Composition.tsx
 msgid "Write a message first, then schedule it"
 msgstr "Write a message first, then schedule it"
-
-#: components/app/interface/settings/user/bots/MyBots.tsx
-#~ msgid "You agree that your bot is subject to the Acceptable Usage Policy."
-#~ msgstr "You agree that your bot is subject to the Acceptable Usage Policy."
 
 #. placeholder {0}: props.user?.username
 #. placeholder {0}: props.member.user?.username
@@ -5765,10 +5675,6 @@ msgstr "Your draft is empty"
 #: components/modal/modals/E2EEDisable.tsx
 msgid "Your encrypted data on this device was destroyed, but the old device entry could not be removed from the server. Other devices may keep sending messages to it until it is removed. You can retry now, and this entry can also be removed later."
 msgstr "Your encrypted data on this device was destroyed, but the old device entry could not be removed from the server. Other devices may keep sending messages to it until it is removed. You can retry now, and this entry can also be removed later."
-
-#: components/modal/modals/E2EEReenroll.tsx
-#~ msgid "Your encrypted history was restored, but this device had been logged out remotely, so it needs to be re-registered before it can send and receive again. Confirm your identity to finish."
-#~ msgstr "Your encrypted history was restored, but this device had been logged out remotely, so it needs to be re-registered before it can send and receive again. Confirm your identity to finish."
 
 #: components/auth/src/flows/FlowOAuthCallback.tsx
 msgid "Your Google account's email address is not verified."

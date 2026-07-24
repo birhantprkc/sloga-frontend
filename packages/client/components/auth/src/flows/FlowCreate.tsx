@@ -4,7 +4,7 @@ import { useApi, useClient, useClientLifecycle } from "@revolt/client";
 import { CONFIGURATION } from "@revolt/common";
 import { useModals } from "@revolt/modal";
 import { useNavigate, useParams } from "@revolt/routing";
-import { Button, Row, iconSize } from "@revolt/ui";
+import { Button, Row, Text, iconSize } from "@revolt/ui";
 
 import MdArrowBack from "@material-design-icons/svg/filled/arrow_back.svg?component-solid";
 
@@ -75,6 +75,34 @@ export default function FlowCreate() {
         <Show when={isInviteOnly()}>
           <Fields fields={[{ field: "invite", value: code }]} />
         </Show>
+        {/* Google Play's user-generated-content policy requires that users
+            accept the terms of use BEFORE they can create or upload content,
+            so this sits on the registration step rather than buried in
+            settings. Links open the public pages so they are readable without
+            an account. */}
+        <Text class="label" size="small">
+          {/* Composed of sibling <Trans> fragments on purpose. Nesting the <a>
+              tags INSIDE a single <Trans> renders each link's text three times
+              under @lingui-solid — which is why no such usage exists anywhere
+              else in this codebase. Do not "tidy" this back into one Trans. */}
+          <Trans>By registering you agree to our</Trans>{" "}
+          <a
+            href="https://sloga.gg/legal/terms.html"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <Trans>Terms of Service</Trans>
+          </a>{" "}
+          <Trans>and</Trans>{" "}
+          <a
+            href="https://sloga.gg/legal/privacy.html"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <Trans>Privacy Policy</Trans>
+          </a>
+          .
+        </Text>
         <Row justify>
           <a href="..">
             <Button variant="text">
