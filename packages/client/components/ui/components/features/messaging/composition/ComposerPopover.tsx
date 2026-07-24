@@ -127,6 +127,10 @@ const Backdrop = styled("div", {
 const Panel = styled("div", {
   base: {
     zIndex: 1000,
+    // The floating layer sits outside the themed app subtree, where `body`
+    // sets no colour — anything relying on inherited text colour renders
+    // black on the near-black panel. Re-establish it here.
+    color: "var(--md-sys-color-on-surface)",
     overflowY: "auto",
     scrollbarWidth: "none",
     "&::-webkit-scrollbar": { display: "none" },

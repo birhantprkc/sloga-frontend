@@ -12,7 +12,16 @@ const config: CapacitorConfig = {
     // plaintext E2EE exists to protect. Both are re-enabled for DEBUG
     // builds only, in MainActivity under BuildConfig.DEBUG.
     allowMixedContent: false,
-    captureInput: true,
+    // MUST stay false, and it is NOT one of the E2EE controls above/below.
+    // `captureInput: true` makes Capacitor hand the IME a bare
+    // `BaseInputConnection(webView, false)` instead of the WebView's real one
+    // and never fills in the EditorInfo, so the keyboard sees a TYPE_NULL,
+    // non-editor field. Tap typing survives because it degrades to raw key
+    // events, but anything needing a real editor connection does not —
+    // Gboard/SwiftKey gesture ("swipe") typing committed only the last key
+    // under the finger. Arrived with the initial Capacitor scaffold in
+    // ab91f939, never as a deliberate choice.
+    captureInput: false,
     webContentsDebuggingEnabled: false,
     // Never log plugin call data (would leak attachment plaintext, the
     // session token, AND — since media E2EE 6.7a — the `e2ee_call_frame_keys`
