@@ -2,6 +2,8 @@ import { onMount } from "solid-js";
 
 import { Capacitor, registerPlugin } from "@capacitor/core";
 
+import { allowsSelfUpdate } from "./distribution";
+
 const UPDATE_MANIFEST_URL = "https://app.sloga.gg/updates/android/latest.json";
 
 /** Native bridge for sideloaded APK self-update (Android app only) */
@@ -22,10 +24,12 @@ interface UpdateManifest {
 /**
  * Checks the published Android manifest once on startup and offers to
  * download + install when a newer versionCode is available.
+ *
+ * Sideload builds only — a Play build must never update itself outside Play.
  */
 export function ApkUpdateWorker() {
   onMount(async () => {
-    if (!ApkUpdaterNative) return;
+    if (!ApkUpdaterNative || !allowsSelfUpdate()) return;
 
     try {
       const [{ versionCode }, response] = await Promise.all([

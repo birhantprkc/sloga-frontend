@@ -5,6 +5,7 @@ import { Server } from "stoat.js";
 import { css } from "styled-system/css";
 
 import {
+  allowsDonationLinks,
   nativeE2EEAvailable,
   useClient,
   useClientLifecycle,
@@ -216,6 +217,11 @@ const Config: SettingsConfiguration<{ server: Server }> = {
             },
             {
               id: "donate",
+              // Google Play treats linking out to donations as a payments-policy
+              // grey area and Sloga is not a registered nonprofit, so this is
+              // hidden in Play builds only — web, desktop and the sloga.gg APK
+              // all still show it.
+              hidden: !allowsDonationLinks(),
               // Brand orange, matching the Home screen donate button and the
               // sloga.gg header — this entry is meant to stand out.
               icon: <MdCoffee {...iconSize(20)} fill="#FF8A00" />,

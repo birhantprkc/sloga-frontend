@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Sideload-only permissions. Merged into the main manifest for the `sideload`
+  flavor and absent from `play` builds.
+
+  REQUEST_INSTALL_PACKAGES backs ApkUpdaterPlugin's hand-off to the system
+  package installer. Google Play restricts this permission to apps whose core
+  purpose is installing packages, so it must never appear in a Play build —
+  keeping it here rather than in src/main is what enforces that.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+</manifest>

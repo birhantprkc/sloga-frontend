@@ -10,7 +10,10 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(VoiceCallServicePlugin.class);
         registerPlugin(PushTokenPlugin.class);
-        registerPlugin(ApkUpdaterPlugin.class);
+        registerPlugin(AppFlavorPlugin.class);
+        // Sideload builds add the self-updater here; the Play flavor's twin of
+        // this class registers nothing. See FlavorPlugins in src/{sideload,play}.
+        FlavorPlugins.register(this);
         registerPlugin(SpeechToTextPlugin.class);
         registerPlugin(com.acutest.app.e2ee.E2eePlugin.class);
         super.onCreate(savedInstanceState);

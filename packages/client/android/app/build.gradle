@@ -29,6 +29,24 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    // Distribution channel. `sideload` is the sloga.gg APK and keeps the in-app
+    // updater; `play` strips it, because Google Play's Device and Network Abuse
+    // policy forbids an app updating itself outside Play. ApkUpdaterPlugin and
+    // REQUEST_INSTALL_PACKAGES live in src/sideload/, so they are ABSENT from a
+    // Play build rather than merely disabled at runtime. DISTRIBUTION_CHANNEL is
+    // read back by AppFlavorPlugin so the shared web bundle can gate the rest.
+    flavorDimensions = ["distribution"]
+    productFlavors {
+        sideload {
+            dimension "distribution"
+            buildConfigField "String", "DISTRIBUTION_CHANNEL", '"sideload"'
+        }
+        play {
+            dimension "distribution"
+            buildConfigField "String", "DISTRIBUTION_CHANNEL", '"play"'
+        }
+    }
+
     signingConfigs {
         release {
             if (keystorePropertiesFile.exists()) {

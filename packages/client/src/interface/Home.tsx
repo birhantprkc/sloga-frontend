@@ -5,7 +5,7 @@ import { PublicChannelInvite } from "stoat.js";
 import { css, cva } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 
-import { IS_DEV, useClient } from "@revolt/client";
+import { allowsDonationLinks, IS_DEV, useClient } from "@revolt/client";
 import { CONFIGURATION } from "@revolt/common";
 import { useModals } from "@revolt/modal";
 import { useNavigate } from "@revolt/routing";
@@ -314,6 +314,10 @@ export function HomePage() {
                 </CategoryButton>
               </Match>
             </Switch>
+            {/* Hidden in Play builds: linking out to donations is a Google
+                Play payments-policy grey area and Sloga is not a registered
+                nonprofit. Web, desktop and the sloga.gg APK still show it. */}
+            <Show when={allowsDonationLinks()}>
             <div style={{"--md-sys-color-primary": "#FF8A00", "--md-sys-color-on-primary": "#ffffff"}}>
             <CategoryButton
               variant="filled"
@@ -326,6 +330,7 @@ export function HomePage() {
               <Trans>Donate to Sloga</Trans>
             </CategoryButton>
             </div>
+            </Show>
           </SeparatedColumn>
           <SeparatedColumn>
             <div style={{"--md-sys-color-primary": "#00B2FF", "--md-sys-color-on-primary": "#ffffff"}}>

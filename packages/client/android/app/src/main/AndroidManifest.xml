@@ -72,7 +72,9 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- REQUEST_INSTALL_PACKAGES is declared in src/sideload/AndroidManifest.xml
+         ONLY. Google Play restricts it to apps whose core purpose is installing
+         packages, which a chat app is not — never add it back here. -->
 
     <!-- Package visibility (Android 11+): SpeechToTextPlugin binds the system
          speech recognition service for on-device call captions; without this

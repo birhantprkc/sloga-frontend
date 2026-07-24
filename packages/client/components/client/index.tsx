@@ -23,6 +23,12 @@ export type { default as ClientController } from "./Controller";
 export { useNotifications } from "./NotificationsController";
 export { SoundContext, SoundController, useSound } from "./Sounds";
 export {
+  allowsDonationLinks,
+  allowsSelfUpdate,
+  distributionChannel,
+} from "./distribution";
+export type { DistributionChannel } from "./distribution";
+export {
   classifyEnvelopeError,
   E2EEBridge,
   E2EESendError,
