@@ -48,6 +48,7 @@ import { Error2Modal } from "./modals/Error2";
 import { FollowChannelModal } from "./modals/FollowChannel";
 import { ForwardMessageModal } from "./modals/ForwardMessage";
 import { ImageViewerModal } from "./modals/ImageViewer";
+import { ImportDiscordModal } from "./modals/ImportDiscord";
 import { InviteModal } from "./modals/Invite";
 import { InviteToServerModal } from "./modals/InviteToServer";
 import { JoinServerModal } from "./modals/JoinServer";
@@ -135,6 +136,8 @@ export function RenderModal(props: ActiveModal & { onClose: () => void }) {
       return <CreateRoleModal {...modalProps} />;
     case "create_server":
       return <CreateServerModal {...modalProps} />;
+    case "import_discord":
+      return <ImportDiscordModal {...modalProps} />;
     case "create_thread":
       return <CreateThreadModal {...modalProps} />;
     case "create_forum_post":

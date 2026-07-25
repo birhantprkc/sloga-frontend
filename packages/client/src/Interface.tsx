@@ -20,6 +20,7 @@ import { State } from "@revolt/client/Controller";
 import { IS_POPOUT_WINDOW } from "@revolt/client/popout";
 import { ActivityWorker } from "@revolt/client/ActivityWorker";
 import { ApkUpdateWorker } from "@revolt/client/ApkUpdateWorker";
+import { DiscordImportWorker } from "@revolt/client/DiscordImportWorker";
 import { NotificationsWorker } from "@revolt/client/NotificationsWorker";
 import { StreamerModeWorker } from "@revolt/client/StreamerModeWorker";
 import { useModals } from "@revolt/modal";
@@ -165,6 +166,9 @@ const Interface = (props: { children: JSX.Element }) => {
         <ActivityWorker />
         <StreamerModeWorker />
         <ApkUpdateWorker />
+        {/* Owns the Discord-import job for the session: the modal may be
+            dismissed (or the tab reloaded) while the import runs. */}
+        <DiscordImportWorker />
         <IncomingCallOverlay />
       </AppRoot>
     </MessageCache>

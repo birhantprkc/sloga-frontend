@@ -1,5 +1,6 @@
 import { Trans } from "@lingui-solid/solid/macro";
 
+import { importDiscordEnabled } from "@revolt/client/discordImport";
 import { Dialog, DialogProps } from "@revolt/ui";
 
 import { useModals } from "..";
@@ -37,6 +38,18 @@ export function CreateGroupOrServer(
             });
           },
         },
+        // Kept in sync with the same entry in CreateOrJoinServer — both
+        // fan-outs must offer it or the entry point becomes path-dependent.
+        ...(importDiscordEnabled()
+          ? [
+              {
+                text: <Trans>Import from Discord</Trans>,
+                onClick: () => {
+                  openModal({ type: "import_discord", client: props.client });
+                },
+              },
+            ]
+          : []),
       ]}
     >
       <Trans>Which would you like to Start?</Trans>

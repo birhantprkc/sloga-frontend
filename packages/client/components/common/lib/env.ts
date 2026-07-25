@@ -24,6 +24,15 @@ export default {
     "https://stoat.chat/api",
   ].includes(DEFAULT_API_URL),
   /**
+   * Origin the web app is served from, used to build shareable links (invites)
+   * that must work for the recipient regardless of which shell created them.
+   *
+   * Blank ⇒ derived at call time by `appOrigin()`: the page origin on web, the
+   * API host inside Tauri/Capacitor (whose document origins — `tauri://` and
+   * `https://localhost` — are dead links off-device).
+   */
+  APP_URL: (import.meta.env.VITE_APP_URL as string) ?? "",
+  /**
    * What WS server to connect to by default.
    */
   DEFAULT_WS_URL:

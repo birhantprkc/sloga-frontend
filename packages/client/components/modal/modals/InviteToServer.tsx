@@ -2,7 +2,7 @@ import { createMemo, createSignal } from "solid-js";
 
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
 
-import { CONFIGURATION } from "@revolt/common";
+import { inviteUrl } from "@revolt/common";
 import { useClient } from "@revolt/client";
 import { Avatar, Checkbox, Column, Dialog, DialogProps, Row, TextField } from "@revolt/ui";
 
@@ -61,9 +61,7 @@ export function InviteToServerModal(
 
       // Create one invite code shared across all DMs
       const invite = await channel.createInvite();
-      const link = CONFIGURATION.IS_STOAT
-        ? `https://stt.gg/${invite._id}`
-        : `${window.location.protocol}//${window.location.host}/invite/${invite._id}`;
+      const link = inviteUrl(invite._id);
 
       // DM each selected friend the invite link
       const selectedIds = selected();

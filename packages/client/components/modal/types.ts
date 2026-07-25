@@ -153,6 +153,14 @@ export type Modals =
       client: Client;
     }
   | {
+      /**
+       * Rebuild a Discord server's structure here from a pasted guild-template
+       * link. Flag-gated on `features.import_discord`.
+       */
+      type: "import_discord";
+      client: Client;
+    }
+  | {
       type: "create_webhook";
       channel: Channel;
       callback: (id: string) => void;

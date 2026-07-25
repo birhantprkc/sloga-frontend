@@ -861,6 +861,10 @@ msgstr "Blur strength: {0}"
 msgid "Bot"
 msgstr "Bot"
 
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Bots aren't data — they're separate programs running against Discord, so there's nothing to copy. You'll set them up again here."
+msgstr "Bots aren't data — they're separate programs running against Discord, so there's nothing to copy. You'll set them up again here."
+
 #: components/app/interface/settings/user/voice/CameraOptions.tsx
 msgid "Brightness is unavailable on this camera while a background effect is active."
 msgstr "Brightness is unavailable on this camera while a background effect is active."
@@ -971,6 +975,7 @@ msgstr "Camera unavailable — check permissions and that no other app is using 
 #: components/modal/modals/KickMember.tsx
 #: components/modal/modals/InviteToServer.tsx
 #: components/modal/modals/Invite.tsx
+#: components/modal/modals/ImportDiscord.tsx
 #: components/modal/modals/ForwardMessage.tsx
 #: components/modal/modals/FollowChannel.tsx
 #: components/modal/modals/EditCategory.tsx
@@ -1197,6 +1202,7 @@ msgstr "Client Settings"
 #: components/modal/modals/PolicyChange.tsx
 #: components/modal/modals/LinkWarning.tsx
 #: components/modal/modals/JoinServer.tsx
+#: components/modal/modals/ImportDiscord.tsx
 #: components/modal/modals/EmojiPreview.tsx
 #: components/modal/modals/EditUsername.tsx
 #: components/modal/modals/EditPassword.tsx
@@ -1349,6 +1355,10 @@ msgstr "Copy file link"
 msgid "Copy ID"
 msgstr "Copy ID"
 
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Copy invite"
+msgstr "Copy invite"
+
 #: components/app/interface/settings/user/bots/ViewBot.tsx
 msgid "Copy Invite URL"
 msgstr "Copy Invite URL"
@@ -1407,6 +1417,10 @@ msgstr "Could not load voters."
 #: components/app/interface/settings/user/Connections.tsx
 msgid "Could not start linking, try again later."
 msgstr "Could not start linking, try again later."
+
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Could not start the import. Try again shortly."
+msgstr "Could not start the import. Try again shortly."
 
 #: components/app/interface/settings/user/Connections.tsx
 msgid "Could not unlink the channel, try again."
@@ -1550,9 +1564,19 @@ msgstr "Create Thread"
 msgid "Create Webhook"
 msgstr "Create Webhook"
 
+#. placeholder {0}: view()!.summary!.channels_created
+#. placeholder {1}: view()!.summary!.categories_created
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Created {0} channels and {1} categories."
+msgstr "Created {0} channels and {1} categories."
+
 #: components/app/interface/settings/user/Sessions.tsx
 msgid "Created <0/>"
 msgstr "Created <0/>"
+
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Creating your server…"
+msgstr "Creating your server…"
 
 #: src/interface/channels/forum/ForumChannel.tsx
 #: components/app/interface/settings/channel/ForumSettings.tsx
@@ -1719,6 +1743,10 @@ msgstr "Description provided by {0}"
 msgid "Desktop"
 msgstr "Desktop"
 
+#: components/client/DiscordImportWorker.tsx
+msgid "Details"
+msgstr "Details"
+
 #: src/interface/channels/text/Composition.tsx
 msgid "Dice"
 msgstr "Dice"
@@ -1845,6 +1873,7 @@ msgid "Donated to Sloga"
 msgstr "Donated to Sloga"
 
 #: components/modal/modals/MFARecovery.tsx
+#: components/modal/modals/ImportDiscord.tsx
 #: components/modal/modals/E2EEDisable.tsx
 #: components/modal/modals/CameraSettings.tsx
 msgid "Done"
@@ -2211,6 +2240,10 @@ msgstr "Finish recording"
 msgid "Finish restoring on this device"
 msgstr "Finish restoring on this device"
 
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Finishing up…"
+msgstr "Finishing up…"
+
 #: src/interface/navigation/servers/UserMenu.tsx
 #: src/interface/navigation/channels/HomeSidebar.tsx
 #: src/interface/channels/text/MemberSidebar.tsx
@@ -2333,6 +2366,10 @@ msgstr "Generate a new token if it gets lost or compromised"
 msgid "Generate Recovery Codes"
 msgstr "Generate Recovery Codes"
 
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Generating an invite…"
+msgstr "Generating an invite…"
+
 #: components/modal/modals/CreateInvite.tsx
 msgid "Generating invite…"
 msgstr "Generating invite…"
@@ -2348,6 +2385,10 @@ msgstr "Get active recovery codes"
 #: src/AndroidNag.tsx
 msgid "Get the Android app"
 msgstr "Get the Android app"
+
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Getting a link"
+msgstr "Getting a link"
 
 #: components/modal/modals/ReportContent.tsx
 msgid "Give us some detail"
@@ -2415,14 +2456,21 @@ msgstr "Hello!"
 msgid "Helped translate Sloga"
 msgstr "Helped translate Sloga"
 
-#. placeholder {0}: link()
 #: components/modal/modals/CreateInvite.tsx
-msgid "Here is your new invite code: <0>{0}</0>"
-msgstr "Here is your new invite code: <0>{0}</0>"
+msgid "Here is your new invite code:"
+msgstr "Here is your new invite code:"
+
+#: components/modal/modals/CreateInvite.tsx
+#~ msgid "Here is your new invite code: <0>{0}</0>"
+#~ msgstr "Here is your new invite code: <0>{0}</0>"
 
 #: components/app/interface/settings/user/Account.tsx
 msgid "Hidden by Streamer Mode"
 msgstr "Hidden by Streamer Mode"
+
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Hide"
+msgstr "Hide"
 
 #: components/app/interface/settings/user/StreamerMode.tsx
 msgid "Hide invite links"
@@ -2500,6 +2548,12 @@ msgstr "Impersonation"
 msgid "Import"
 msgstr "Import"
 
+#: components/modal/modals/ImportDiscord.tsx
+#: components/modal/modals/CreateOrJoinServer.tsx
+#: components/modal/modals/CreateGroupOrServer.tsx
+msgid "Import from Discord"
+msgstr "Import from Discord"
+
 #: src/interface/ServerEvents.tsx
 #: src/interface/ServerEvents.tsx
 msgid "Import legacy events"
@@ -2511,6 +2565,10 @@ msgstr "Import legacy events"
 #: src/interface/ServerEvents.tsx
 msgid "Imported: {0} · Duplicates skipped: {1} · Invalid: {2}"
 msgstr "Imported: {0} · Duplicates skipped: {1} · Invalid: {2}"
+
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Importing from Discord is not available right now."
+msgstr "Importing from Discord is not available right now."
 
 #: src/interface/ServerEvents.tsx
 msgid "Importing…"
@@ -2531,6 +2589,10 @@ msgstr "In 4 hours"
 #: components/modal/modals/ScheduleMessage.tsx
 msgid "In a week"
 msgstr "In a week"
+
+#: components/modal/modals/ImportDiscord.tsx
+msgid "In Discord, go to:"
+msgstr "In Discord, go to:"
 
 #: src/AndroidNag.tsx
 msgid "In the meantime, get the app for a faster, smoother experience designed for Android."
@@ -2977,6 +3039,10 @@ msgstr "Members"
 msgid "Members can send one message every {0}."
 msgstr "Members can send one message every {0}."
 
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Members can't be copied either; we'll hand you an invite link at the end to bring them over."
+msgstr "Members can't be copied either; we'll hand you an invite link at the end to bring them over."
+
 #: components/app/menus/UserContextMenu.tsx
 msgid "Mention"
 msgstr "Mention"
@@ -3021,6 +3087,10 @@ msgstr "Message {0}"
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
 msgid "Message Group Spacing"
 msgstr "Message Group Spacing"
+
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Message history stays on Discord."
+msgstr "Message history stays on Discord."
 
 #: components/ui/components/features/messaging/elements/MessageReply.tsx
 msgid "Message not loaded, click to jump"
@@ -3398,6 +3468,10 @@ msgstr "Not now"
 msgid "Not of minimum age to use the platform"
 msgstr "Not of minimum age to use the platform"
 
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Notes"
+msgstr "Notes"
+
 #: components/app/menus/ServerContextMenu.tsx
 #: components/app/menus/shared/NotificationContextMenu.tsx
 #: components/app/interface/settings/UserSettings.tsx
@@ -3559,6 +3633,10 @@ msgstr "Password removed!"
 #: components/app/interface/settings/channel/Overview.tsx
 msgid "Password set!"
 msgstr "Password set!"
+
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Paste a Discord server template link and we'll rebuild that server's layout here."
+msgstr "Paste a Discord server template link and we'll rebuild that server's layout here."
 
 #: components/modal/modals/Changelog.tsx
 #: components/modal/modals/Changelog.tsx
@@ -3770,6 +3848,10 @@ msgstr "Read past messages sent in channel"
 msgid "Read past messages sent in channels"
 msgstr "Read past messages sent in channels"
 
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Reading the Discord template…"
+msgstr "Reading the Discord template…"
+
 #: components/app/interface/settings/server/stickers/StickerList.tsx
 #: components/app/interface/settings/server/soundboard/SoundboardList.tsx
 msgid "Ready to upload"
@@ -3835,6 +3917,10 @@ msgstr "Recovery Code"
 #: components/app/interface/settings/user/Account.tsx
 msgid "Recovery Codes"
 msgstr "Recovery Codes"
+
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Recreating channels…"
+msgstr "Recreating channels…"
 
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
 msgid "Reduced"
@@ -4375,6 +4461,10 @@ msgstr "Set channel password"
 msgid "Set your status"
 msgstr "Set your status"
 
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Setting you up as the owner…"
+msgstr "Setting you up as the owner…"
+
 #: components/modal/modals/ServerInfo.tsx
 msgid "Settings"
 msgstr "Settings"
@@ -4571,6 +4661,10 @@ msgstr "Start camera"
 msgid "Start fresh"
 msgstr "Start fresh"
 
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Start import"
+msgstr "Start import"
+
 #: components/app/interface/settings/user/Native.tsx
 msgid "Start Minimised to Tray"
 msgstr "Start Minimised to Tray"
@@ -4632,6 +4726,7 @@ msgstr "Streamer Mode"
 msgid "Streamer Mode is currently active."
 msgstr "Streamer Mode is currently active."
 
+#: components/modal/modals/ImportDiscord.tsx
 #: components/modal/modals/CreateInvite.tsx
 msgid "Streamer Mode is hiding your invite link — hover over it to reveal."
 msgstr "Streamer Mode is hiding your invite link — hover over it to reveal."
@@ -4747,6 +4842,10 @@ msgstr "Tell us what's wrong with this server"
 msgid "Tell us what's wrong with this user"
 msgstr "Tell us what's wrong with this user"
 
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Template link"
+msgstr "Template link"
+
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Temporarily prevent lower-ranking members from interacting"
 msgstr "Temporarily prevent lower-ranking members from interacting"
@@ -4785,6 +4884,10 @@ msgstr "That action had no effect."
 msgid "That bot is currently offline — try again once it reconnects."
 msgstr "That bot is currently offline — try again once it reconnects."
 
+#: components/modal/modals/ImportDiscord.tsx
+msgid "That doesn't look like a Discord server template link."
+msgstr "That doesn't look like a Discord server template link."
+
 #: src/interface/channels/text/Composition.tsx
 #: components/app/interface/channels/text/MessageComponents.tsx
 msgid "The bot did not respond in time."
@@ -4811,6 +4914,10 @@ msgstr "The forward keeps a copy of the message as it is right now — later edi
 msgid "The Google sign-in was cancelled."
 msgstr "The Google sign-in was cancelled."
 
+#: components/modal/modals/ImportDiscord.tsx
+msgid "The import didn't finish."
+msgstr "The import didn't finish."
+
 #: components/modal/modals/ScheduleMessage.tsx
 msgid "The message is stored on the server and sent around the chosen time. You can cancel it from the channel until it goes out."
 msgstr "The message is stored on the server and sent around the chosen time. You can cancel it from the channel until it goes out."
@@ -4828,9 +4935,17 @@ msgstr "The scan stopped at the message cap — run the import again to continue
 msgid "The security identity for {0} changed. This happens when they reinstall or set up a new device — but it can also mean someone is attempting to intercept your messages."
 msgstr "The security identity for {0} changed. This happens when they reinstall or set up a new device — but it can also mean someone is attempting to intercept your messages."
 
+#: components/modal/modals/ImportDiscord.tsx
+msgid "The server name, its categories and its channels, in order. Roles and permissions are coming in the next update."
+msgstr "The server name, its categories and its channels, in order. Roles and permissions are coming in the next update."
+
 #: components/app/interface/settings/user/Sync.tsx
 msgid "Theme"
 msgstr "Theme"
+
+#: components/modal/modals/ImportDiscord.tsx
+msgid "then copy the link it gives you."
+msgstr "then copy the link it gives you."
 
 #: components/auth/src/flows/FlowOAuthCallback.tsx
 msgid "This account has been disabled."
@@ -5058,6 +5173,10 @@ msgstr "Translated from {0}"
 #: components/ui/components/features/messaging/composition/picker/GifPicker.tsx
 msgid "Trending GIFs"
 msgstr "Trending GIFs"
+
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Try again"
+msgstr "Try again"
 
 #: components/modal/modals/E2EEDisable.tsx
 msgid "Turn off"
@@ -5316,6 +5435,10 @@ msgstr "Video"
 msgid "Video Call"
 msgstr "Video Call"
 
+#: components/client/DiscordImportWorker.tsx
+msgid "View"
+msgstr "View"
+
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "View Channel"
 msgstr "View Channel"
@@ -5390,6 +5513,10 @@ msgstr "Vote to see results"
 msgid "Waiting for /{0} to respond…"
 msgstr "Waiting for /{0} to respond…"
 
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Waiting for a worker…"
+msgstr "Waiting for a worker…"
+
 #: components/app/interface/settings/user/profile/UserProfileEditor.tsx
 msgid "Want to change username?"
 msgstr "Want to change username?"
@@ -5431,6 +5558,14 @@ msgstr "Weekly"
 msgid "Welcome!"
 msgstr "Welcome!"
 
+#: components/modal/modals/ImportDiscord.tsx
+msgid "What comes across"
+msgstr "What comes across"
+
+#: components/modal/modals/ImportDiscord.tsx
+msgid "What doesn't"
+msgstr "What doesn't"
+
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Whether other users can edit these settings"
 msgstr "Whether other users can edit these settings"
@@ -5468,6 +5603,10 @@ msgstr "Would you like to join this server?"
 msgid "Write a message first, then schedule it"
 msgstr "Write a message first, then schedule it"
 
+#: components/modal/modals/ImportDiscord.tsx
+msgid "You already have an import running. Wait for it to finish before starting another."
+msgstr "You already have an import running. Wait for it to finish before starting another."
+
 #. placeholder {0}: props.user?.username
 #. placeholder {0}: props.member.user?.username
 #: components/modal/modals/BanNonMember.tsx
@@ -5501,6 +5640,10 @@ msgstr "You are turning on end-to-end encryption for exactly these {0} people. C
 #: src/interface/Home.tsx
 msgid "You can also click the gear icon in the bottom left."
 msgstr "You can also click the gear icon in the bottom left."
+
+#: components/modal/modals/ImportDiscord.tsx
+msgid "You can close this — the import keeps going and we'll let you know when it's ready."
+msgstr "You can close this — the import keeps going and we'll let you know when it's ready."
 
 #: components/modal/modals/DeleteChannel.tsx
 msgid "You can re-open it later, but it will disappear on both sides."
@@ -5635,6 +5778,10 @@ msgstr "You've been invited to join this server.<0/>Would you like to join?"
 msgid "You've been signed out of Sloga!"
 msgstr "You've been signed out of Sloga!"
 
+#: components/modal/modals/ImportDiscord.tsx
+msgid "You've reached the maximum number of servers you can be in."
+msgstr "You've reached the maximum number of servers you can be in."
+
 #: components/i18n/errors.ts
 msgid "You've reached your personal bot limit."
 msgstr "You've reached your personal bot limit."
@@ -5664,6 +5811,14 @@ msgstr "your contact"
 msgid "Your contacts will see this device come back — with no security warning, because its keys are unchanged."
 msgstr "Your contacts will see this device come back — with no security warning, because its keys are unchanged."
 
+#: components/client/DiscordImportWorker.tsx
+msgid "Your Discord import failed."
+msgstr "Your Discord import failed."
+
+#: components/client/DiscordImportWorker.tsx
+msgid "Your Discord import finished."
+msgstr "Your Discord import finished."
+
 #: components/i18n/errors.ts
 msgid "Your discriminator change has been ratelimited, please try again later."
 msgstr "Your discriminator change has been ratelimited, please try again later."
@@ -5691,6 +5846,10 @@ msgstr "Your recovery codes"
 #: components/i18n/errors.ts
 msgid "Your role ranking is too low to take this action."
 msgstr "Your role ranking is too low to take this action."
+
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Your server is ready. Paste this invite in Discord to bring your members over."
+msgstr "Your server is ready. Paste this invite in Discord to bring your members over."
 
 #: components/auth/src/flows/Form.tsx
 msgid "Your suspension has expired — try logging in again."

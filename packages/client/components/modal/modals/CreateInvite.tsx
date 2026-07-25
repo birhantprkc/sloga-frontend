@@ -4,7 +4,7 @@ import { Trans } from "@lingui-solid/solid/macro";
 import { useMutation } from "@tanstack/solid-query";
 import { styled } from "styled-system/jsx";
 
-import { CONFIGURATION } from "@revolt/common";
+import { inviteUrl } from "@revolt/common";
 import { useState } from "@revolt/state";
 import { streamerModeHides } from "@revolt/state/streamer";
 import { Dialog, DialogProps, Text } from "@revolt/ui";
@@ -58,15 +58,7 @@ export function CreateInviteModal(
 
   const fetchInvite = useMutation(() => ({
     mutationFn: () =>
-      props.channel
-        .createInvite()
-        .then(({ _id }) =>
-          setLink(
-            CONFIGURATION.IS_STOAT
-              ? `https://stt.gg/${_id}`
-              : `${window.location.protocol}//${window.location.host}/invite/${_id}`,
-          ),
-        ),
+      props.channel.createInvite().then(({ _id }) => setLink(inviteUrl(_id))),
     onError: showError,
   }));
 
@@ -93,9 +85,11 @@ export function CreateInviteModal(
         fallback={<Trans>Generating invite…</Trans>}
       >
         <Invite concealed={concealed()}>
-          <Trans>
-            Here is your new invite code: <code>{link()}</code>
-          </Trans>
+          {/* Sibling fragments, never nested JSX: an element inside <Trans>
+              is rendered once per plural/select branch, so the old
+              `... <code>{link()}</code>` form printed the link THREE times. */}
+          <Trans>Here is your new invite code:</Trans>
+          <code>{link()}</code>
           <Show when={concealed()}>
             <Text class="label">
               <Trans>
