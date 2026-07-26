@@ -9,6 +9,21 @@ import type { ChangelogResponse } from "./Changelog";
  */
 export const CHANGELOGS: ChangelogResponse[] = [
   {
+    id: "sloga-2026-07-26",
+    title: "Patch Notes",
+    published_at: "2026-07-26T22:30:00.000Z",
+    markdown_content: `## v0.14.0 — Attachments up to 5 GB
+
+### 💾 Big file sharing
+- **Upload files up to 5 GB** — the old ~95 MB ceiling is gone. Installers, videos, modpacks: if it fits, it ships.
+- **Uploads are chunked and resumable** — a dropped connection picks up where it stopped instead of starting over, and the progress bar now shows real progress instead of jumping to 100% and hanging.
+- **Re-sending a big file is instant** — the server recognizes files it already has.
+- Files over 20 MB are still kept for 24 hours — think transfer, not storage.
+- Encrypted DMs keep their 20 MB attachment limit for now — big encrypted files are coming later.
+
+*Sloga — Hop on.*`,
+  },
+  {
     id: "sloga-2026-07-20",
     title: "Patch Notes",
     published_at: "2026-07-20T20:00:00.000Z",
