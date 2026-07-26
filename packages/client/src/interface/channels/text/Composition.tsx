@@ -771,15 +771,24 @@ export function MessageComposition(props: Props) {
           .attachments ?? CONFIGURATION.MAX_FILE_SIZE)
       : CONFIGURATION.MAX_FILE_SIZE;
 
-    // Clamp to what a single upload request can actually carry. The server may
-    // advertise far more (5 GB today), but the CDN kills any request body over
-    // 100 MB before it reaches the file server, which used to surface as an
-    // upload frozen at ~1% with no error. Reject it here instead, with a size
-    // the user can act on.
-    const maxSize = Math.min(
-      serverLimit,
-      CONFIGURATION.MAX_UPLOAD_REQUEST_SIZE,
-    );
+    // E2EE conversations use the one-shot blob path (server-capped ~20 MiB;
+    // chunked uploads are plaintext-only for now), so they must clamp small.
+    // Fail closed: "pending"/"blocked"/"peer_downgraded" can still resolve
+    // to an encrypted send, so they get the small cap too — only a
+    // definitively-plaintext conversation may admit large files.
+    //
+    // Plaintext conversations clamp to the server limit alone (5 GB today):
+    // files above CHUNKED_UPLOAD_THRESHOLD take the chunked path, whose
+    // sub-100 MB parts clear the CDN wall that used to cap everything at
+    // MAX_UPLOAD_REQUEST_SIZE.
+    const maybeEncrypted =
+      e2eeMode() === "encrypt" ||
+      e2eeMode() === "blocked" ||
+      e2eeMode() === "pending" ||
+      e2eeMode() === "peer_downgraded";
+    const maxSize = maybeEncrypted
+      ? Math.min(serverLimit, CONFIGURATION.E2EE_MAX_ATTACHMENT_SIZE)
+      : serverLimit;
 
     for (const file of files) {
       if (file.size > maxSize) {

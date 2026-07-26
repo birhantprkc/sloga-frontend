@@ -105,12 +105,32 @@ export default {
    * percentage. Anything above this can therefore never succeed, however high
    * `file_upload_size_limits` is set server-side.
    *
-   * Raising this requires chunked/resumable uploads (each chunk its own
-   * sub-100 MB request) — see the stoatchat repo's
-   * `docs/chunked-resumable-uploads-design.md`.
+   * Files above `CHUNKED_UPLOAD_THRESHOLD` avoid this wall entirely by going
+   * through the chunked upload path (each chunk its own sub-100 MB request) —
+   * see the stoatchat repo's `docs/chunked-uploads-implementation-plan.md`.
+   * This constant now only governs the single-POST path.
    */
   MAX_UPLOAD_REQUEST_SIZE:
     (import.meta.env.VITE_CFG_MAX_UPLOAD_REQUEST_SIZE as number) ?? 95_000_000,
+  /**
+   * Files larger than this take the chunked/resumable upload path instead of
+   * a single POST. Must stay above the server's one-chunk floor (32 MiB —
+   * `create` rejects anything smaller, so the scanned/stripped single-POST
+   * pipeline cannot be bypassed) and below `MAX_UPLOAD_REQUEST_SIZE` (so the
+   * single-POST path never hits the CDN's 100 MB wall). In an emergency this
+   * can be floored via env to effectively re-clamp uploads at the old limit.
+   */
+  CHUNKED_UPLOAD_THRESHOLD:
+    (import.meta.env.VITE_CFG_CHUNKED_UPLOAD_THRESHOLD as number) ?? 90_000_000,
+  /**
+   * Client-side cap for attachments in E2EE conversations. The E2EE blob
+   * path is one-shot and server-capped at ~20 MiB plaintext
+   * (`MAX_E2EE_BLOB_SIZE`); chunked uploads do NOT apply to it (that is a
+   * later phase), so encrypted conversations must not admit files the blob
+   * endpoint will reject.
+   */
+  E2EE_MAX_ATTACHMENT_SIZE:
+    (import.meta.env.VITE_CFG_E2EE_MAX_ATTACHMENT_SIZE as number) ?? 20_000_000,
   /**
    * RNNoise worklet asset base. Blank ⇒ the self-hosted copy under
    * `${BASE_URL}rnnoise/` (see the DenoiseTrackProcessor call site in

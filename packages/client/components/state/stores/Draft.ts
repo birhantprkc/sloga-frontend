@@ -9,6 +9,7 @@ import { State } from "..";
 
 import { AbstractStore } from ".";
 import { LAYOUT_SECTIONS } from "./Layout";
+import { uploadFileChunked } from "./chunkedUpload";
 
 /**
  * Attachment upload timeout, in milliseconds. Autumn buffers the whole file,
@@ -374,6 +375,22 @@ export class Draft extends AbstractStore<"draft", TypeDraft> {
           // Use ID if already uploaded
           if (autumnId) {
             attachments.push(autumnId);
+            continue;
+          }
+
+          // Files above the threshold take the chunked path: each part is
+          // its own sub-100 MB request (the CDN kills anything larger), with
+          // real progress, retry and resume. The returned id is a normal
+          // claim-once attachment id.
+          if (file.size > CONFIGURATION.CHUNKED_UPLOAD_THRESHOLD) {
+            const id = await uploadFileChunked(
+              client,
+              file,
+              (fraction) => uploadProgress[1](fraction),
+              (processing) => uploadProcessing[1](processing),
+            );
+            attachments.push(id);
+            this.fileCache[fileId].autumnId = id;
             continue;
           }
 
