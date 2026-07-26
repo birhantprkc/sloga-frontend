@@ -1566,8 +1566,9 @@ msgstr ""
 
 #. placeholder {0}: view()!.summary!.channels_created
 #. placeholder {1}: view()!.summary!.categories_created
+#. placeholder {2}: view()!.summary!.roles_created ?? 0
 #: components/modal/modals/ImportDiscord.tsx
-msgid "Created {0} channels and {1} categories."
+msgid "Created {0} channels, {1} categories and {2} roles."
 msgstr ""
 
 #: components/app/interface/settings/user/Sessions.tsx
@@ -1591,6 +1592,10 @@ msgstr "Parola actuală"
 
 #: components/app/interface/settings/user/Sessions.tsx
 msgid "Current Session"
+msgstr ""
+
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Custom emojis and the server icon aren't in a Discord template, so they can't come across this way."
 msgstr ""
 
 #: components/modal/modals/CustomStatus.tsx
@@ -2459,10 +2464,6 @@ msgstr ""
 #: components/modal/modals/CreateInvite.tsx
 msgid "Here is your new invite code:"
 msgstr ""
-
-#: components/modal/modals/CreateInvite.tsx
-#~ msgid "Here is your new invite code: <0>{0}</0>"
-#~ msgstr ""
 
 #: components/app/interface/settings/user/Account.tsx
 msgid "Hidden by Streamer Mode"
@@ -3922,6 +3923,10 @@ msgstr ""
 msgid "Recreating channels…"
 msgstr ""
 
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Recreating roles and permissions…"
+msgstr ""
+
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
 msgid "Reduced"
 msgstr ""
@@ -4936,7 +4941,7 @@ msgid "The security identity for {0} changed. This happens when they reinstall o
 msgstr ""
 
 #: components/modal/modals/ImportDiscord.tsx
-msgid "The server name, its categories and its channels, in order. Roles and permissions are coming in the next update."
+msgid "The server name, its categories and its channels in order, its roles with their colours and ranking, and who can see and do what in each channel — private channels included."
 msgstr ""
 
 #: components/app/interface/settings/user/Sync.tsx

@@ -1,4 +1,4 @@
-import { Match, Show, Switch, createEffect, createSignal } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createSignal } from "solid-js";
 
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import { styled } from "styled-system/jsx";
@@ -137,6 +137,8 @@ export function ImportDiscordModal(
         return t`Reading the Discord template…`;
       case "Server":
         return t`Creating your server…`;
+      case "Roles":
+        return t`Recreating roles and permissions…`;
       case "Channels":
         return t`Recreating channels…`;
       case "Membership":
@@ -311,13 +313,20 @@ export function ImportDiscordModal(
             </Text>
             <Text>
               <Trans>
-                The server name, its categories and its channels, in order.
-                Roles and permissions are coming in the next update.
+                The server name, its categories and its channels in order, its
+                roles with their colours and ranking, and who can see and do
+                what in each channel — private channels included.
               </Trans>
             </Text>
 
             <Text class="label">
               <Trans>What doesn't</Trans>
+            </Text>
+            <Text>
+              <Trans>
+                Custom emojis and the server icon aren't in a Discord template,
+                so they can't come across this way.
+              </Trans>
             </Text>
             <Text>
               <Trans>
@@ -428,12 +437,12 @@ export function ImportDiscordModal(
                 <Trans>Notes</Trans>
               </Text>
               <Text>
-                {t`Created ${view()!.summary!.channels_created} channels and ${view()!.summary!.categories_created} categories.`}
+                {t`Created ${view()!.summary!.channels_created} channels, ${view()!.summary!.categories_created} categories and ${view()!.summary!.roles_created ?? 0} roles.`}
               </Text>
               {/* Server-generated English; intentionally rendered verbatim. */}
-              {view()!.summary!.notes.map((note) => (
-                <Text class="label">{note}</Text>
-              ))}
+              <For each={view()!.summary!.notes}>
+                {(note) => <Text class="label">{note}</Text>}
+              </For>
             </Show>
           </Column>
         </Match>

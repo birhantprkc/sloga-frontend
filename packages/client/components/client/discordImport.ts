@@ -121,7 +121,7 @@ export function isTerminalStatus(status: DiscordImportStatus): boolean {
  */
 function fromJob(job: DiscordImportJobData): DiscordImportView {
   return {
-    jobId: job._id,
+    jobId: job.job_id,
     status: job.status,
     stage: job.stage,
     done: job.done ?? 0,
@@ -137,6 +137,10 @@ function fromJob(job: DiscordImportJobData): DiscordImportView {
  * Remember a job id across reloads.
  */
 function persistJobId(jobId: string) {
+  // Belt and braces against a wire-shape drift writing the literal string
+  // "undefined", which then 404s on every boot until it self-deletes.
+  if (!jobId) return;
+
   try {
     localStorage.setItem(JOB_ID_KEY, jobId);
   } catch {
@@ -185,8 +189,8 @@ export function trackDiscordImport(jobId: string): void {
  */
 export function applyDiscordImportJob(job: DiscordImportJobData): void {
   const current = view();
-  if (current && current.jobId !== job._id) return;
-  persistJobId(job._id);
+  if (current && current.jobId !== job.job_id) return;
+  persistJobId(job.job_id);
   setView(fromJob(job));
 }
 
@@ -287,7 +291,7 @@ export async function resumeDiscordImport(client: Client): Promise<void> {
     const active = await client.fetchActiveDiscordImportJob();
     if (active) {
       setView(fromJob(active));
-      persistJobId(active._id);
+      persistJobId(active.job_id);
       return;
     }
   } catch {

@@ -1566,9 +1566,10 @@ msgstr "Create Webhook"
 
 #. placeholder {0}: view()!.summary!.channels_created
 #. placeholder {1}: view()!.summary!.categories_created
+#. placeholder {2}: view()!.summary!.roles_created ?? 0
 #: components/modal/modals/ImportDiscord.tsx
-msgid "Created {0} channels and {1} categories."
-msgstr "Created {0} channels and {1} categories."
+msgid "Created {0} channels, {1} categories and {2} roles."
+msgstr "Created {0} channels, {1} categories and {2} roles."
 
 #: components/app/interface/settings/user/Sessions.tsx
 msgid "Created <0/>"
@@ -1592,6 +1593,10 @@ msgstr "Current Password"
 #: components/app/interface/settings/user/Sessions.tsx
 msgid "Current Session"
 msgstr "Current Session"
+
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Custom emojis and the server icon aren't in a Discord template, so they can't come across this way."
+msgstr "Custom emojis and the server icon aren't in a Discord template, so they can't come across this way."
 
 #: components/modal/modals/CustomStatus.tsx
 msgid "Custom status"
@@ -2459,10 +2464,6 @@ msgstr "Helped translate Sloga"
 #: components/modal/modals/CreateInvite.tsx
 msgid "Here is your new invite code:"
 msgstr "Here is your new invite code:"
-
-#: components/modal/modals/CreateInvite.tsx
-#~ msgid "Here is your new invite code: <0>{0}</0>"
-#~ msgstr "Here is your new invite code: <0>{0}</0>"
 
 #: components/app/interface/settings/user/Account.tsx
 msgid "Hidden by Streamer Mode"
@@ -3922,6 +3923,10 @@ msgstr "Recovery Codes"
 msgid "Recreating channels…"
 msgstr "Recreating channels…"
 
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Recreating roles and permissions…"
+msgstr "Recreating roles and permissions…"
+
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
 msgid "Reduced"
 msgstr "Reduced"
@@ -4936,8 +4941,8 @@ msgid "The security identity for {0} changed. This happens when they reinstall o
 msgstr "The security identity for {0} changed. This happens when they reinstall or set up a new device — but it can also mean someone is attempting to intercept your messages."
 
 #: components/modal/modals/ImportDiscord.tsx
-msgid "The server name, its categories and its channels, in order. Roles and permissions are coming in the next update."
-msgstr "The server name, its categories and its channels, in order. Roles and permissions are coming in the next update."
+msgid "The server name, its categories and its channels in order, its roles with their colours and ranking, and who can see and do what in each channel — private channels included."
+msgstr "The server name, its categories and its channels in order, its roles with their colours and ranking, and who can see and do what in each channel — private channels included."
 
 #: components/app/interface/settings/user/Sync.tsx
 msgid "Theme"
