@@ -2,6 +2,7 @@ import { TrackReference } from "solid-livekit-components";
 import {
   API,
   Bot,
+  CalendarEvent,
   Channel,
   Client,
   DiscoverableServer,
@@ -111,6 +112,17 @@ export type Modals =
       type: "poll_voters";
       /** Poll message whose ballots to list (author / moderator only) */
       message: Message;
+    }
+  | {
+      type: "create_softres";
+      /**
+       * Channel the sheet will be posted to. Absent when opened from a
+       * server-wide calendar event (`channel: None`) — the modal offers a
+       * channel picker over the event's server instead.
+       */
+      channel?: Channel;
+      /** Calendar event to link the sheet to, when opened from one */
+      event?: CalendarEvent;
     }
   | {
       type: "forward_message";

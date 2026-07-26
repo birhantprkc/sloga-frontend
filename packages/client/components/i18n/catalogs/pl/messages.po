@@ -583,6 +583,10 @@ msgstr ""
 msgid "Allow others to add your bot to their servers from Discover"
 msgstr ""
 
+#: components/modal/modals/CreateSoftRes.tsx
+msgid "Allow reserving the same item twice"
+msgstr ""
+
 #: components/i18n/errors.ts
 msgid "Already friends with this user."
 msgstr "Ten użytkownik jest już twoim znajomym."
@@ -1214,6 +1218,7 @@ msgstr "Ustawienia Klienta"
 #: components/modal/modals/CustomStatus.tsx
 #: components/modal/modals/CreateWebhook.tsx
 #: components/modal/modals/CreateThread.tsx
+#: components/modal/modals/CreateSoftRes.tsx
 #: components/modal/modals/CreateServer.tsx
 #: components/modal/modals/CreateRole.tsx
 #: components/modal/modals/CreatePoll.tsx
@@ -1410,6 +1415,10 @@ msgstr ""
 msgid "Could not find what you requested."
 msgstr ""
 
+#: components/modal/modals/CreateSoftRes.tsx
+msgid "Could not load the raid catalog."
+msgstr ""
+
 #: components/modal/modals/PollVoters.tsx
 msgid "Could not load voters."
 msgstr ""
@@ -1437,6 +1446,7 @@ msgstr ""
 #: src/interface/ServerEvents.tsx
 #: components/modal/modals/CreateWebhook.tsx
 #: components/modal/modals/CreateThread.tsx
+#: components/modal/modals/CreateSoftRes.tsx
 #: components/modal/modals/CreateServer.tsx
 #: components/modal/modals/CreateRole.tsx
 #: components/modal/modals/CreatePoll.tsx
@@ -1549,6 +1559,10 @@ msgstr ""
 
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Create server emoji"
+msgstr ""
+
+#: components/modal/modals/CreateSoftRes.tsx
+msgid "Create soft-reserve sheet"
 msgstr ""
 
 #: components/modal/modals/CreateThread.tsx
@@ -1748,6 +1762,7 @@ msgstr ""
 msgid "Desktop"
 msgstr ""
 
+#: components/client/DiscordImportWorker.tsx
 #: components/client/DiscordImportWorker.tsx
 msgid "Details"
 msgstr ""
@@ -2331,6 +2346,10 @@ msgstr ""
 msgid "Free"
 msgstr ""
 
+#: components/modal/modals/CreateSoftRes.tsx
+msgid "Friday raid night"
+msgstr ""
+
 #: components/client/NotificationsWorker.tsx
 msgid "Friend Request"
 msgstr ""
@@ -2357,6 +2376,10 @@ msgstr ""
 #. placeholder {0}: voice.microphoneGain
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "Gain: {0}%"
+msgstr ""
+
+#: components/modal/modals/CreateSoftRes.tsx
+msgid "Game edition"
 msgstr ""
 
 #: components/modal/modals/E2EEEnableGroup.tsx
@@ -2444,6 +2467,10 @@ msgstr "Nazwa grupy"
 msgid "Harassment or cyberbullying"
 msgstr ""
 
+#: components/modal/modals/CreateSoftRes.tsx
+msgid "Hard reserves (optional)"
+msgstr ""
+
 #: components/app/interface/settings/user/Native.tsx
 msgid "Hardware Acceleration"
 msgstr ""
@@ -2491,6 +2518,10 @@ msgstr ""
 
 #: components/app/interface/settings/user/StreamerMode.tsx
 msgid "Hide personal information"
+msgstr ""
+
+#: components/modal/modals/CreateSoftRes.tsx
+msgid "Hide reserves until export (leaders still see them)"
 msgstr ""
 
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
@@ -2714,6 +2745,10 @@ msgstr ""
 msgid "ISO Standard (YYYY-MM-DD)"
 msgstr ""
 
+#: components/modal/modals/CreateSoftRes.tsx
+msgid "Items taken off the table before reserves open — raiders cannot soft-reserve them."
+msgstr ""
+
 #: components/modal/modals/JoinServer.tsx
 #: components/modal/modals/Invite.tsx
 #: components/modal/modals/DiscoverJoin.tsx
@@ -2857,6 +2892,11 @@ msgstr ""
 msgid "Linked channel: {0}"
 msgstr ""
 
+#. placeholder {0}: event().title
+#: components/modal/modals/CreateSoftRes.tsx
+msgid "Linked to event: {0}"
+msgstr ""
+
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Listen"
 msgstr ""
@@ -2892,6 +2932,10 @@ msgstr ""
 msgid "Load more attendees"
 msgstr ""
 
+#: components/modal/modals/CreateSoftRes.tsx
+msgid "Loading catalog…"
+msgstr ""
+
 #: src/interface/ServerEvents.tsx
 msgid "Loading events…"
 msgstr ""
@@ -2911,6 +2955,10 @@ msgstr ""
 
 #: src/interface/ServerEvents.tsx
 msgid "Location (optional)"
+msgstr ""
+
+#: components/modal/modals/CreateSoftRes.tsx
+msgid "Lock the sheet when the event starts"
 msgstr ""
 
 #: components/auth/src/flows/FlowHome.tsx
@@ -3358,6 +3406,10 @@ msgstr ""
 msgid "No archived threads"
 msgstr ""
 
+#: components/modal/modals/CreateSoftRes.tsx
+msgid "No cap"
+msgstr ""
+
 #: components/app/interface/settings/channel/Overview.tsx
 msgid "No channels are following yet."
 msgstr ""
@@ -3372,6 +3424,10 @@ msgstr ""
 
 #: components/modal/modals/FollowChannel.tsx
 msgid "No channels where you can manage webhooks. You need the Manage Webhooks permission on the destination channel."
+msgstr ""
+
+#: components/modal/modals/CreateSoftRes.tsx
+msgid "No channels where you can send messages."
 msgstr ""
 
 #: src/interface/ServerEvents.tsx
@@ -3467,6 +3523,14 @@ msgstr ""
 
 #: components/modal/modals/ReportContent.tsx
 msgid "Not of minimum age to use the platform"
+msgstr ""
+
+#: components/modal/modals/CreateSoftRes.tsx
+msgid "Note"
+msgstr ""
+
+#: components/modal/modals/CreateSoftRes.tsx
+msgid "Note (optional)"
 msgstr ""
 
 #: components/modal/modals/ImportDiscord.tsx
@@ -3752,6 +3816,10 @@ msgstr ""
 msgid "Pop out friends list"
 msgstr ""
 
+#: components/modal/modals/CreateSoftRes.tsx
+msgid "Post the sheet to"
+msgstr ""
+
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "Powered by RNNoise"
 msgstr ""
@@ -3822,6 +3890,14 @@ msgstr ""
 
 #: components/modal/modals/ReportContent.tsx
 msgid "Raid or spam attack"
+msgstr ""
+
+#: components/modal/modals/CreateSoftRes.tsx
+msgid "Raiders per item (cap)"
+msgstr ""
+
+#: components/modal/modals/CreateSoftRes.tsx
+msgid "Raids (up to {MAX_RAIDS})"
 msgstr ""
 
 #: components/ui/components/features/voice/callCard/VoiceCallCardStatus.tsx
@@ -4086,6 +4162,14 @@ msgstr ""
 msgid "Resend verification"
 msgstr "Wyślij weryfikację ponownie"
 
+#: components/modal/modals/CreateSoftRes.tsx
+msgid "Reserved for…"
+msgstr ""
+
+#: components/modal/modals/CreateSoftRes.tsx
+msgid "Reserves per raider"
+msgstr ""
+
 #: components/ui/components/utils/Form2.tsx
 #: components/modal/modals/ResetBotToken.tsx
 #: components/modal/modals/MFARecovery.tsx
@@ -4127,6 +4211,10 @@ msgstr ""
 
 #: components/modal/modals/E2EEEnable.tsx
 msgid "Restore your encrypted messages"
+msgstr ""
+
+#: components/modal/modals/CreateSoftRes.tsx
+msgid "Restrict items to classes that can use them"
 msgstr ""
 
 #: components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
@@ -4289,6 +4377,10 @@ msgstr ""
 #: src/interface/ServerEvents.tsx
 #: src/interface/ServerEvents.tsx
 msgid "Search members or roles…"
+msgstr ""
+
+#: components/modal/modals/CreateSoftRes.tsx
+msgid "Search the selected raids' loot…"
 msgstr ""
 
 #: components/modal/modals/E2EEIdentityChange.tsx
@@ -4526,6 +4618,10 @@ msgstr ""
 
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
 msgid "Show send message button"
+msgstr ""
+
+#: components/modal/modals/CreateSoftRes.tsx
+msgid "Shown on the sheet card"
 msgstr ""
 
 #: components/auth/src/flows/FlowOAuthCallback.tsx
@@ -5033,6 +5129,10 @@ msgstr ""
 msgid "This device was logged out remotely, so it needs to be re-registered before it can send and receive encrypted messages again. Confirm your identity to finish."
 msgstr ""
 
+#: components/modal/modals/CreateSoftRes.tsx
+msgid "This event already has a soft-reserve sheet — each event can only have one."
+msgstr ""
+
 #: components/i18n/errors.ts
 msgid "This feature is currently disabled."
 msgstr ""
@@ -5134,6 +5234,7 @@ msgstr ""
 msgid "Timeout Members"
 msgstr "Limit czasu użytkowników"
 
+#: components/modal/modals/CreateSoftRes.tsx
 #: components/modal/modals/CreateForumPost.tsx
 msgid "Title"
 msgstr ""
@@ -5440,6 +5541,7 @@ msgstr "Wideo"
 msgid "Video Call"
 msgstr ""
 
+#: components/client/DiscordImportWorker.tsx
 #: components/client/DiscordImportWorker.tsx
 msgid "View"
 msgstr ""
@@ -5817,9 +5919,11 @@ msgid "Your contacts will see this device come back — with no security warning
 msgstr ""
 
 #: components/client/DiscordImportWorker.tsx
+#: components/client/DiscordImportWorker.tsx
 msgid "Your Discord import failed."
 msgstr ""
 
+#: components/client/DiscordImportWorker.tsx
 #: components/client/DiscordImportWorker.tsx
 msgid "Your Discord import finished."
 msgstr ""

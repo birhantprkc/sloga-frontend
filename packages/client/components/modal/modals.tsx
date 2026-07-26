@@ -22,6 +22,7 @@ import { CreateOrJoinServerModal } from "./modals/CreateOrJoinServer";
 import { DiscoverJoinModal } from "./modals/DiscoverJoin";
 import { CreatePollModal } from "./modals/CreatePoll";
 import { CreateRoleModal } from "./modals/CreateRole";
+import { CreateSoftResModal } from "./modals/CreateSoftRes";
 import { CreateServerModal } from "./modals/CreateServer";
 import { CreateThreadModal } from "./modals/CreateThread";
 import { CreateWebhookModal } from "./modals/CreateWebhook";
@@ -146,6 +147,8 @@ export function RenderModal(props: ActiveModal & { onClose: () => void }) {
       return <CreatePollModal {...modalProps} />;
     case "poll_voters":
       return <PollVotersModal {...modalProps} />;
+    case "create_softres":
+      return <CreateSoftResModal {...modalProps} />;
     case "forward_message":
       return <ForwardMessageModal {...modalProps} />;
     case "schedule_message":
