@@ -278,6 +278,23 @@ export function clearDiscordImport(): void {
 }
 
 /**
+ * Job ids whose terminal outcome has already been surfaced on this device.
+ *
+ * The resume path runs on every login and client swap, so without this a
+ * recovered job would re-notify on every pass.
+ */
+const announcedTerminal = new Set<string>();
+
+/**
+ * Record that a job's outcome has already been shown to the user, so the
+ * resume path does not announce it a second time.
+ * @param jobId Job id
+ */
+export function noteDiscordImportAnnounced(jobId: string): void {
+  announcedTerminal.add(jobId);
+}
+
+/**
  * Recover any import this account has in flight — or one that finished while
  * the modal was dismissed / the tab was closed.
  *
@@ -285,29 +302,51 @@ export function clearDiscordImport(): void {
  * completed job is recovered from the id remembered in local storage. Without
  * this, closing the modal loses the invite code permanently.
  * @param client Client
+ * @returns the recovered job when it had ALREADY finished before this device
+ * started listening — i.e. no `DiscordImportComplete`/`Failed` event reached
+ * us, so nothing has told the user yet and the caller should surface it.
+ * `undefined` when there is nothing to announce (still running, nothing to
+ * recover, or already announced on this device).
  */
-export async function resumeDiscordImport(client: Client): Promise<void> {
+export async function resumeDiscordImport(
+  client: Client,
+): Promise<DiscordImportView | undefined> {
   try {
     const active = await client.fetchActiveDiscordImportJob();
     if (active) {
       setView(fromJob(active));
       persistJobId(active.job_id);
-      return;
+      return undefined;
     }
   } catch {
     /* offline or route missing — fall through to the remembered id */
   }
 
   const remembered = rememberedJobId();
-  if (!remembered) return;
+  if (!remembered) return undefined;
 
   try {
     const job = await client.fetchDiscordImportJob(remembered);
-    setView(fromJob(job));
+    const recovered = fromJob(job);
+    setView(recovered);
+
+    // The job reached its terminal state while this device was not listening,
+    // so no `DiscordImportComplete`/`Failed` event ever arrived and nothing has
+    // told the user their invite is waiting. Hand it back so the caller can
+    // surface it — exactly once per job, per device.
+    if (
+      isTerminalStatus(recovered.status) &&
+      !announcedTerminal.has(recovered.jobId)
+    ) {
+      announcedTerminal.add(recovered.jobId);
+      return recovered;
+    }
   } catch {
     // 404 = not ours / pruned. Stop trying on every boot.
     forgetJobId();
   }
+
+  return undefined;
 }
 
 /* -------------------------------------------------------------------------- */

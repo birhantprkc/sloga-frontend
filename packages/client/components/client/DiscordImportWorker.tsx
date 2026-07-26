@@ -13,6 +13,7 @@ import {
   applyDiscordImportProgress,
   discordImportInFlight,
   discordImportView,
+  noteDiscordImportAnnounced,
   primeImportDiscordFlag,
   resumeDiscordImport,
 } from "./discordImport";
@@ -61,6 +62,7 @@ export function DiscordImportWorker() {
       inviteCode: string;
     }) => {
       applyDiscordImportComplete(result);
+      noteDiscordImportAnnounced(result.jobId);
 
       // The complete event carries no summary; fetch the finished row so the
       // done screen can show the skipped-items notes.
@@ -84,6 +86,7 @@ export function DiscordImportWorker() {
 
     const onFailed = (failure: { jobId: string; error: string }) => {
       applyDiscordImportFailed(failure);
+      noteDiscordImportAnnounced(failure.jobId);
 
       if (!isOpen("import_discord")) {
         snackbar.show({
@@ -106,7 +109,25 @@ export function DiscordImportWorker() {
       currentClient.removeListener("discordImportFailed", onFailed);
     });
 
-    resumeDiscordImport(currentClient);
+    // A job that reached a terminal state while this device was disconnected
+    // never produced a `DiscordImportComplete` event here, so the resume path
+    // is the only chance to tell the user. Reuses the existing msgids so no
+    // catalog resync is needed.
+    resumeDiscordImport(currentClient).then((recovered) => {
+      if (!recovered) return;
+      if (isOpen("import_discord")) return;
+
+      const failed = recovered.status === "Failed";
+      snackbar.show({
+        message: failed
+          ? t`Your Discord import failed.`
+          : t`Your Discord import finished.`,
+        action: failed ? t`Details` : t`View`,
+        closeOnAction: true,
+        onAction: () =>
+          openModal({ type: "import_discord", client: currentClient }),
+      });
+    });
   });
 
   // Poll fallback. This effect reads the whole view, so every progress event
