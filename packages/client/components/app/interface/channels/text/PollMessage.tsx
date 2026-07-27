@@ -58,22 +58,26 @@ function requestPollState(client: Client, message: Message) {
         const batch = queue!;
         hydrationQueues.delete(channelId);
 
+        // The bulk route caps ids at 25 per request — chunk beyond that
+        // (a poll-heavy page can render more than 25 cards at once)
         const ids = [...batch.messages.keys()];
-        client.channels
-          .apiReq("POST", `/channels/${channelId}/polls/fetch`, {
-            body: { ids },
-          })
-          .then((response) => {
-            for (const data of response as PollData[]) {
-              const target = [...batch.messages.values()].find(
-                (candidate) => candidate.poll?.id === data._id,
-              );
-              target?.applyPollState(data);
-            }
-          })
-          .catch(() => {
-            /* cold-render hydration is best-effort; voting still works */
-          });
+        for (let at = 0; at < ids.length; at += 25) {
+          client.channels
+            .apiReq("POST", `/channels/${channelId}/polls/fetch`, {
+              body: { ids: ids.slice(at, at + 25) },
+            })
+            .then((response) => {
+              for (const data of response as PollData[]) {
+                const target = [...batch.messages.values()].find(
+                  (candidate) => candidate.poll?.id === data._id,
+                );
+                target?.applyPollState(data);
+              }
+            })
+            .catch(() => {
+              /* cold-render hydration is best-effort; voting still works */
+            });
+        }
       }, 50),
     };
     hydrationQueues.set(channelId, queue);
