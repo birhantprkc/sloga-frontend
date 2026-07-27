@@ -40,11 +40,12 @@ export const FLAG_SOFTRES = 1 << 9;
 
 /**
  * Master switch for the soft-reserve CREATION affordances (composer
- * button, `/softres` command, event-page create button). Kept off until
- * the per-raid catalog verification pass is done — existing sheet
- * messages still render fully, this only hides the ways to make one.
+ * button, `/softres` command, event-page create button). Flipped on
+ * 2026-07-27 after the per-raid catalog verification pass (all 40 raids
+ * audited against community sources; fixes landed in the backend
+ * catalog generator).
  */
-export const SOFTRES_CREATION_ENABLED = false;
+export const SOFTRES_CREATION_ENABLED = true;
 
 /**
  * Whether a message is a server-authoritative soft-reserve sheet
