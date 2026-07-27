@@ -123,6 +123,23 @@ export type Modals =
       channel?: Channel;
       /** Calendar event to link the sheet to, when opened from one */
       event?: CalendarEvent;
+      /**
+       * When set, the modal edits this sheet message's settings instead
+       * of creating (edition/raids/event become immutable)
+       */
+      editMessage?: Message;
+      /** Called with the sheet message after a successful create */
+      callback?: (message: Message) => void;
+    }
+  | {
+      type: "softres_reserve";
+      /** Sheet message to set (or replace) the caller's reservation on */
+      message: Message;
+    }
+  | {
+      type: "softres_export";
+      /** Sheet message to export (creator / moderator only) */
+      message: Message;
     }
   | {
       type: "forward_message";

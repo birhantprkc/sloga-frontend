@@ -55,6 +55,7 @@ import { ForwardedMessage } from "./ForwardedMessage";
 import { InteractionContext } from "./InteractionContext";
 import { MessageComponents } from "./MessageComponents";
 import { PollMessage, isPollMessage } from "./PollMessage";
+import { SoftResMessage, isSoftResMessage } from "./SoftResMessage";
 import { EncryptedAttachment } from "./EncryptedAttachment";
 import { MessageTranslation } from "./MessageTranslation";
 
@@ -449,6 +450,17 @@ export function Message(props: Props) {
               push notifications which must not double-render here */}
           <Match when={isPollMessage(props.message.flags, props.message.poll)}>
             <PollMessage message={props.message} />
+          </Match>
+          {/* Same rule as polls: sheet messages carry a fallback content
+              string ("🛡️ Soft reserves — title") for legacy clients and
+              push notifications which must not double-render here */}
+          <Match
+            when={isSoftResMessage(
+              props.message.flags,
+              props.message.softres,
+            )}
+          >
+            <SoftResMessage message={props.message} />
           </Match>
           {/* Forwarded messages have no content of their own — the whole
               body is the immutable server-copied snapshot */}

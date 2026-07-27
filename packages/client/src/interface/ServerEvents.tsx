@@ -25,15 +25,18 @@ import {
   Frequency,
   ImportResultData,
   InviteResultData,
+  Message,
   RecurrenceEnd,
   RsvpStatus,
   Server,
   ServerMember,
   ServerRole,
+  SoftResData,
   Weekday,
 } from "stoat.js";
 import { styled } from "styled-system/jsx";
 
+import { SOFTRES_CREATION_ENABLED } from "@revolt/app";
 import { useClient } from "@revolt/client";
 import { useModals } from "@revolt/modal";
 import { useNavigate, useParams } from "@revolt/routing";
@@ -803,6 +806,198 @@ function EventCard(props: { occurrence: Occurrence; onOpen: () => void }) {
   );
 }
 
+/**
+ * "Soft reserves" section of the event detail: the linked sheet's summary
+ * (with jump + reserve affordances) when one exists, else a create button
+ * for event managers. Create is offered only for non-cancelled,
+ * non-recurring events (the server rejects both) and stays hidden while
+ * the feature-wide creation switch is off.
+ */
+function SoftResSection(props: {
+  event: CalendarEvent;
+  canManage: boolean;
+  server: Server;
+}) {
+  const client = useClient();
+  const navigate = useNavigate();
+  const { openModal, showError } = useModals();
+
+  const [sheet, { refetch }] = createResource(
+    () => props.event.id,
+    // `null` = no sheet linked (404), distinct from `undefined` while loading
+    (id) => client().fetchEventSoftRes(id),
+  );
+
+  // Reading an errored resource throws — every consumer goes through this
+  // (a fetch failure renders as "no section", same as no sheet)
+  const current = () => (sheet.state === "ready" ? sheet() : undefined);
+
+  /**
+   * Pull the sheet's carrying message into the client cache and stamp the
+   * fresh state onto it: the SDK only emits softres events for CACHED
+   * messages, so without this a direct visit to the events page would
+   * never see live updates — and the reserve picker would open over an
+   * unhydrated message and could silently replace the user's row.
+   */
+  createEffect(() => {
+    const known = current();
+    if (!known) return;
+    const channel = client().channels.get(known.channel_id);
+    if (!channel) return;
+    const cached = client().messages.get(known.message_id);
+    if (cached) {
+      cached.applySoftresState(known);
+    } else {
+      void channel
+        .fetchMessage(known.message_id)
+        .then((message) => message.applySoftresState(known))
+        .catch(() => undefined);
+    }
+  });
+
+  // The lock affordance must flip client-side when `locks_at` passes —
+  // no WS event fires at event start (lazy lock)
+  const [nowTick, setNowTick] = createSignal(Date.now());
+  const lockTimer = setInterval(() => setNowTick(Date.now()), 30_000);
+  onCleanup(() => clearInterval(lockTimer));
+
+  /**
+   * Live updates — and, at once, the hidden-sheet refetch contract: the
+   * WS events omit gated fields on hidden sheets and the SDK stales them
+   * with no "refetch needed" flag, so this surface refetches its summary
+   * over REST on every softres event for its sheet.
+   */
+  let refetchTimer: ReturnType<typeof setTimeout> | undefined;
+  const onSoftresEvent = (message: Message) => {
+    const known = current();
+    if (!known || message.softres?.id !== known._id) return;
+    if (refetchTimer) return;
+    refetchTimer = setTimeout(() => {
+      refetchTimer = undefined;
+      void refetch();
+    }, 300);
+  };
+  const liveClient = client();
+  onMount(() => {
+    liveClient.on("softresReserveUpdate", onSoftresEvent);
+    liveClient.on("softresSheetUpdate", onSoftresEvent);
+  });
+  onCleanup(() => {
+    liveClient.removeListener("softresReserveUpdate", onSoftresEvent);
+    liveClient.removeListener("softresSheetUpdate", onSoftresEvent);
+    if (refetchTimer) clearTimeout(refetchTimer);
+  });
+
+  const locked = (current: SoftResData) =>
+    (current.locked ?? false) ||
+    (current.locks_at !== undefined && nowTick() >= current.locks_at);
+
+  function jump(current: SoftResData) {
+    navigate(`/server/${props.server.id}/channel/${current.channel_id}`);
+  }
+
+  /**
+   * The picker works on the sheet's carrying Message; fetch it through
+   * the channel cache (the events-side fetch already stamped its state
+   * onto the cached copy when there was one).
+   */
+  async function openPicker(current: SoftResData) {
+    const channel = client().channels.get(current.channel_id);
+    if (!channel) {
+      // Channel not cached (unlikely for own server) — jumping still works
+      jump(current);
+      return;
+    }
+    try {
+      const message = await channel.fetchMessage(current.message_id);
+      // Never open the picker over an unhydrated message: its empty
+      // signals would replace the user's existing row on submit. The
+      // in-hand section data carries `my_reserve` for this caller.
+      message.applySoftresState(current);
+      openModal({ type: "softres_reserve", message });
+    } catch (error) {
+      showError(error);
+    }
+  }
+
+  const offerCreate = () =>
+    SOFTRES_CREATION_ENABLED &&
+    props.canManage &&
+    !props.event.cancelled &&
+    !props.event.recurrence &&
+    sheet.state === "ready" &&
+    current() === null;
+
+  const sendableChannel = () => {
+    const channel = props.event.channel;
+    return channel?.havePermission("SendMessage") ? channel : undefined;
+  };
+
+  return (
+    <>
+      <Show when={current()}>
+        {(current) => (
+          <SoftResCard>
+            <Row gap="sm" align>
+              <Symbol size={18}>shield</Symbol>
+              <Text class="label" size="large">
+                {current().definition.title}
+              </Text>
+              <Show when={locked(current())}>
+                <SoftResLockTag>
+                  <Symbol size={14}>lock</Symbol> <Trans>Locked</Trans>
+                </SoftResLockTag>
+              </Show>
+            </Row>
+            <Text
+              class="body"
+              size="small"
+              style={{ color: "var(--md-sys-color-on-surface-variant)" }}
+            >
+              <Plural
+                value={current().total_reserves}
+                one="# raider reserved"
+                other="# raiders reserved"
+              />
+            </Text>
+            <Row gap="sm">
+              <Button variant="text" onPress={() => jump(current())}>
+                <Trans>View in channel</Trans>
+              </Button>
+              <Show when={!locked(current()) && !props.event.cancelled}>
+                <Button
+                  variant="filled"
+                  onPress={() => void openPicker(current())}
+                >
+                  <Trans>Reserve</Trans>
+                </Button>
+              </Show>
+            </Row>
+          </SoftResCard>
+        )}
+      </Show>
+      <Show when={offerCreate()}>
+        <Row>
+          <Button
+            variant="text"
+            onPress={() =>
+              openModal({
+                type: "create_softres",
+                event: props.event,
+                channel: sendableChannel(),
+                callback: () => void refetch(),
+              })
+            }
+          >
+            <Symbol size={16}>shield</Symbol>{" "}
+            <Trans>Create soft-res sheet</Trans>
+          </Button>
+        </Row>
+      </Show>
+    </>
+  );
+}
+
 function EventDetail(props: {
   event: CalendarEvent;
   attendees: EventRsvpData[];
@@ -950,6 +1145,13 @@ function EventDetail(props: {
           </Show>
         </RsvpBar>
       </Show>
+
+      {/* Soft-reserve sheet linked to this event (raid loot reservations) */}
+      <SoftResSection
+        event={props.event}
+        canManage={props.canManage}
+        server={props.server}
+      />
 
       {/* Attendees grouped by status */}
       <AttendeeSummary>
@@ -2374,6 +2576,29 @@ const GoingTag = styled("span", {
     gap: "4px",
     color: "var(--md-sys-color-primary)",
     fontWeight: "600",
+  },
+});
+
+const SoftResCard = styled("div", {
+  base: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "6px",
+    padding: "10px 12px",
+    borderRadius: "12px",
+    background: "var(--md-sys-color-surface-container-high)",
+    border: "1px solid var(--md-sys-color-outline-variant)",
+  },
+});
+
+const SoftResLockTag = styled("span", {
+  base: {
+    display: "flex",
+    alignItems: "center",
+    gap: "4px",
+    fontSize: "0.75rem",
+    fontWeight: "700",
+    color: "var(--md-sys-color-error)",
   },
 });
 

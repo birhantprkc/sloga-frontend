@@ -57,6 +57,11 @@ msgstr "{0, plural, one {# blocked message} other {# blocked messages}}"
 msgid "{0, plural, one {# member} other {# members}}"
 msgstr "{0, plural, one {# member} other {# members}}"
 
+#. placeholder {0}: current().total_reserves
+#: src/interface/ServerEvents.tsx
+msgid "{0, plural, one {# raider reserved} other {# raiders reserved}}"
+msgstr "{0, plural, one {# raider reserved} other {# raiders reserved}}"
+
 #. placeholder {0}: items().length
 #: components/ui/components/utils/files/FileDropAnywhereCollector.tsx
 msgid "{0, plural, one {Drop a file} other {Drop # files}}"
@@ -134,6 +139,12 @@ msgstr "{0} left"
 msgid "{0} made {1} the new group owner"
 msgstr "{0} made {1} the new group owner"
 
+#. placeholder {0}: items().length
+#. placeholder {1}: maxItems()
+#: components/modal/modals/SoftResReserve.tsx
+msgid "{0} of {1} picked"
+msgstr "{0} of {1} picked"
+
 #. placeholder {0}: (message.systemMessage as MessagePinnedSystemMessage).by?.username
 #: components/client/NotificationsWorker.tsx
 msgid "{0} pinned a message"
@@ -149,6 +160,11 @@ msgstr "{0} renamed the channel"
 #: components/client/NotificationsWorker.tsx
 msgid "{0} reported ({1})"
 msgstr "{0} reported ({1})"
+
+#. placeholder {0}: state()?.totalReserves ?? 0
+#: components/app/interface/channels/text/SoftResMessage.tsx
+msgid "{0} reserved"
+msgstr "{0} reserved"
 
 #. placeholder {0}: rows().length
 #: components/app/interface/channels/text/ScheduledMessagesBar.tsx
@@ -1134,6 +1150,10 @@ msgstr "Channels"
 msgid "Channels in other servers that receive this channel's published messages."
 msgstr "Channels in other servers that receive this channel's published messages."
 
+#: components/modal/modals/SoftResReserve.tsx
+msgid "Character name"
+msgstr "Character name"
+
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
 msgid "Chat Input"
 msgstr "Chat Input"
@@ -1200,6 +1220,8 @@ msgstr "Client Settings"
 #: components/modal/modals/UserProfileRoles.tsx
 #: components/modal/modals/UserProfileMutualGroups.tsx
 #: components/modal/modals/UserProfileMutualFriends.tsx
+#: components/modal/modals/SoftResReserve.tsx
+#: components/modal/modals/SoftResExport.tsx
 #: components/modal/modals/ServerInfo.tsx
 #: components/modal/modals/ReportQueue.tsx
 #: components/modal/modals/PollVoters.tsx
@@ -1319,6 +1341,10 @@ msgstr "Connections"
 msgid "Content breaks one or more laws"
 msgstr "Content breaks one or more laws"
 
+#: components/app/interface/channels/text/SoftResMessage.tsx
+msgid "Contested items"
+msgstr "Contested items"
+
 #: components/modal/modals/MFAEnableTOTP.tsx
 #: components/modal/modals/LinkWarning.tsx
 msgid "Continue"
@@ -1339,6 +1365,10 @@ msgstr "Continue unencrypted — new messages will be readable by the server —
 #: components/auth/src/flows/FlowLogin.tsx
 msgid "Continue with Google"
 msgstr "Continue with Google"
+
+#: components/modal/modals/SoftResExport.tsx
+msgid "Copied"
+msgstr "Copied"
 
 #: components/ui/components/features/profiles/ProfileBanner.tsx
 msgid "Copied!"
@@ -1398,6 +1428,10 @@ msgstr "Copy server ID"
 msgid "Copy text"
 msgstr "Copy text"
 
+#: components/modal/modals/SoftResExport.tsx
+msgid "Copy to clipboard"
+msgstr "Copy to clipboard"
+
 #: components/app/interface/settings/user/bots/ViewBot.tsx
 msgid "Copy Token"
 msgstr "Copy Token"
@@ -1415,6 +1449,10 @@ msgstr "Copy webhook URL"
 msgid "Could not find what you requested."
 msgstr "Could not find what you requested."
 
+#: components/modal/modals/SoftResReserve.tsx
+msgid "Could not load the loot table."
+msgstr "Could not load the loot table."
+
 #: components/modal/modals/CreateSoftRes.tsx
 msgid "Could not load the raid catalog."
 msgstr "Could not load the raid catalog."
@@ -1422,6 +1460,10 @@ msgstr "Could not load the raid catalog."
 #: components/modal/modals/PollVoters.tsx
 msgid "Could not load voters."
 msgstr "Could not load voters."
+
+#: components/modal/modals/SoftResExport.tsx
+msgid "Could not render the export."
+msgstr "Could not render the export."
 
 #: components/app/interface/settings/user/Connections.tsx
 msgid "Could not start linking, try again later."
@@ -1561,6 +1603,11 @@ msgstr "Create server"
 msgid "Create server emoji"
 msgstr "Create server emoji"
 
+#: src/interface/ServerEvents.tsx
+msgid "Create soft-res sheet"
+msgstr "Create soft-res sheet"
+
+#: src/interface/channels/text/Composition.tsx
 #: components/modal/modals/CreateSoftRes.tsx
 msgid "Create soft-reserve sheet"
 msgstr "Create soft-reserve sheet"
@@ -1956,9 +2003,17 @@ msgstr "Edit Identity"
 msgid "Edit message"
 msgstr "Edit message"
 
+#: components/app/interface/channels/text/SoftResMessage.tsx
+msgid "Edit reserve"
+msgstr "Edit reserve"
+
 #: components/app/menus/UserContextMenu.tsx
 msgid "Edit roles"
 msgstr "Edit roles"
+
+#: components/modal/modals/CreateSoftRes.tsx
+msgid "Edit soft-reserve sheet"
+msgstr "Edit soft-reserve sheet"
 
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Edit the server's information and settings"
@@ -2178,6 +2233,14 @@ msgstr "Everyone must have encryption set up, or this will not turn on. Encrypte
 msgid "Exit theater mode"
 msgstr "Exit theater mode"
 
+#: components/app/interface/channels/text/SoftResMessage.tsx
+msgid "Export"
+msgstr "Export"
+
+#: components/modal/modals/SoftResExport.tsx
+msgid "Export soft reserves"
+msgstr "Export soft reserves"
+
 #: components/modal/modals/LinkWarning.tsx
 msgid "External links can be dangerous!"
 msgstr "External links can be dangerous!"
@@ -2315,6 +2378,10 @@ msgstr "For 3 hours"
 #: components/app/menus/shared/NotificationContextMenu.tsx
 msgid "For 8 hours"
 msgstr "For 8 hours"
+
+#: components/modal/modals/SoftResExport.tsx
+msgid "For the RollFor addon on Turtle WoW: open its soft-res import window, paste the string and import."
+msgstr "For the RollFor addon on Turtle WoW: open its soft-res import window, paste the string and import."
 
 #: components/app/interface/settings/ChannelSettings.tsx
 msgid "Forum"
@@ -2466,6 +2533,10 @@ msgstr "Group Name"
 #: components/modal/modals/ReportContent.tsx
 msgid "Harassment or cyberbullying"
 msgstr "Harassment or cyberbullying"
+
+#: components/app/interface/channels/text/SoftResMessage.tsx
+msgid "Hard reserved"
+msgstr "Hard reserved"
 
 #: components/modal/modals/CreateSoftRes.tsx
 msgid "Hard reserves (optional)"
@@ -2633,6 +2704,10 @@ msgstr "In the meantime, get the app for a faster, smoother experience designed 
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "In this build the key only registers while the app is focused — the desktop app supports global push to talk."
 msgstr "In this build the key only registers while the app is focused — the desktop app supports global push to talk."
+
+#: components/modal/modals/SoftResExport.tsx
+msgid "In-game, type"
+msgstr "In-game, type"
 
 #: src/interface/navigation/channels/HomeSidebar.tsx
 #: components/ui/components/features/voice/IncomingCallOverlay.tsx
@@ -2875,6 +2950,10 @@ msgstr "Leave Thread"
 msgid "Let Sloga use its own custom titlebar."
 msgstr "Let Sloga use its own custom titlebar."
 
+#: components/modal/modals/SoftResReserve.tsx
+msgid "Letters only, 2–12 characters (WoW name rules)."
+msgstr "Letters only, 2–12 characters (WoW name rules)."
+
 #: components/app/menus/UserContextMenu.tsx
 msgid "Lift platform suspension"
 msgstr "Lift platform suspension"
@@ -2940,6 +3019,10 @@ msgstr "Loading catalog…"
 msgid "Loading events…"
 msgstr "Loading events…"
 
+#: components/modal/modals/SoftResReserve.tsx
+msgid "Loading loot table…"
+msgstr "Loading loot table…"
+
 #: components/modal/modals/ReportQueue.tsx
 msgid "Loading reports…"
 msgstr "Loading reports…"
@@ -2957,9 +3040,31 @@ msgstr "Loading…"
 msgid "Location (optional)"
 msgstr "Location (optional)"
 
+#: components/app/interface/channels/text/SoftResMessage.tsx
+msgid "Lock"
+msgstr "Lock"
+
 #: components/modal/modals/CreateSoftRes.tsx
 msgid "Lock the sheet when the event starts"
 msgstr "Lock the sheet when the event starts"
+
+#: src/interface/ServerEvents.tsx
+#: components/app/interface/channels/text/SoftResMessage.tsx
+msgid "Locked"
+msgstr "Locked"
+
+#. placeholder {0}: Math.ceil(hours / 24)
+#: components/app/interface/channels/text/SoftResMessage.tsx
+msgid "Locks in {0}d"
+msgstr "Locks in {0}d"
+
+#: components/app/interface/channels/text/SoftResMessage.tsx
+msgid "Locks in {hours}h"
+msgstr "Locks in {hours}h"
+
+#: components/app/interface/channels/text/SoftResMessage.tsx
+msgid "Locks in {minutes}m"
+msgstr "Locks in {minutes}m"
 
 #: components/auth/src/flows/FlowHome.tsx
 msgid "Log In"
@@ -3434,6 +3539,10 @@ msgstr "No channels where you can send messages."
 msgid "No events on this day."
 msgstr "No events on this day."
 
+#: components/modal/modals/SoftResReserve.tsx
+msgid "No items match."
+msgstr "No items match."
+
 #: components/ui/components/features/voice/callCard/VoiceCallRosterPanel.tsx
 msgid "no media — divergent leaf"
 msgstr "no media — divergent leaf"
@@ -3533,6 +3642,10 @@ msgstr "Note"
 msgid "Note (optional)"
 msgstr "Note (optional)"
 
+#: components/modal/modals/SoftResReserve.tsx
+msgid "Note to the loot master (optional)"
+msgstr "Note to the loot master (optional)"
+
 #: components/modal/modals/ImportDiscord.tsx
 msgid "Notes"
 msgstr "Notes"
@@ -3600,6 +3713,10 @@ msgstr "Once it's deleted, there's no going back."
 #: components/ui/components/features/profiles/ProfileBadges.tsx
 msgid "One of the first 1000 users!"
 msgstr "One of the first 1000 users!"
+
+#: components/modal/modals/SoftResExport.tsx
+msgid "One row per reserved item (ItemId, Name, Class, Note, Plus) — for spreadsheets or any addon that accepts CSV."
+msgstr "One row per reserved item (ItemId, Name, Class, Note, Plus) — for spreadsheets or any addon that accepts CSV."
 
 #: src/interface/Friends.tsx
 #: src/interface/navigation/servers/UserMenu.tsx
@@ -3729,6 +3846,10 @@ msgstr "Pick a time between 30 seconds and 30 days from now."
 #: components/auth/src/flows/FlowLogin.tsx
 msgid "Pick a username that you want people to be able to find you by. This can be changed later in your user settings."
 msgstr "Pick a username that you want people to be able to find you by. This can be changed later in your user settings."
+
+#: components/modal/modals/SoftResReserve.tsx
+msgid "Pick items from the list below."
+msgstr "Pick items from the list below."
 
 #: components/app/menus/MessageContextMenu.tsx
 msgid "Pin message"
@@ -3895,6 +4016,10 @@ msgstr "Raid or spam attack"
 #: components/modal/modals/CreateSoftRes.tsx
 msgid "Raiders per item (cap)"
 msgstr "Raiders per item (cap)"
+
+#: components/modal/modals/CreateSoftRes.tsx
+msgid "Raids (fixed after creation)"
+msgstr "Raids (fixed after creation)"
 
 #: components/modal/modals/CreateSoftRes.tsx
 msgid "Raids (up to {MAX_RAIDS})"
@@ -4070,6 +4195,10 @@ msgstr "Remove Password"
 msgid "Remove reaction"
 msgstr "Remove reaction"
 
+#: components/modal/modals/SoftResReserve.tsx
+msgid "Remove reserve"
+msgstr "Remove reserve"
+
 #: components/app/interface/settings/user/SecurityAndPrivacy.tsx
 msgid "Remove the backup stored on the server. Your encrypted history on this device is unaffected."
 msgstr "Remove the backup stored on the server. Your encrypted history on this device is unaffected."
@@ -4093,6 +4222,10 @@ msgstr "Rename category"
 #: components/modal/modals/RenameSession.tsx
 msgid "Rename Session"
 msgstr "Rename Session"
+
+#: components/modal/modals/SoftResExport.tsx
+msgid "Rendering export…"
+msgstr "Rendering export…"
 
 #: components/app/interface/settings/user/Native.tsx
 msgid "Rep Sloga using Discord rich presence."
@@ -4162,9 +4295,23 @@ msgstr "Resend"
 msgid "Resend verification"
 msgstr "Resend verification"
 
+#: src/interface/ServerEvents.tsx
+#: components/modal/modals/SoftResReserve.tsx
+#: components/app/interface/channels/text/SoftResMessage.tsx
+msgid "Reserve"
+msgstr "Reserve"
+
 #: components/modal/modals/CreateSoftRes.tsx
 msgid "Reserved for…"
 msgstr "Reserved for…"
+
+#: components/app/interface/channels/text/SoftResMessage.tsx
+msgid "Reserves"
+msgstr "Reserves"
+
+#: components/app/interface/channels/text/SoftResMessage.tsx
+msgid "Reserves are hidden until the leader exports."
+msgstr "Reserves are hidden until the leader exports."
 
 #: components/modal/modals/CreateSoftRes.tsx
 msgid "Reserves per raider"
@@ -4282,6 +4429,7 @@ msgstr "Roll dice"
 #: src/interface/ServerEvents.tsx
 #: components/modal/modals/ServerIdentity.tsx
 #: components/modal/modals/CustomStatus.tsx
+#: components/modal/modals/CreateSoftRes.tsx
 #: components/app/interface/settings/user/profile/UserProfileEditor.tsx
 #: components/app/interface/settings/server/Overview.tsx
 #: components/app/interface/settings/server/roles/ServerRoleEditor.tsx
@@ -4373,6 +4521,10 @@ msgstr "Search for users..."
 #: components/modal/modals/InviteToServer.tsx
 msgid "Search friends..."
 msgstr "Search friends..."
+
+#: components/modal/modals/SoftResReserve.tsx
+msgid "Search items or bosses…"
+msgstr "Search items or bosses…"
 
 #: src/interface/ServerEvents.tsx
 #: src/interface/ServerEvents.tsx
@@ -4563,6 +4715,7 @@ msgid "Setting you up as the owner…"
 msgstr "Setting you up as the owner…"
 
 #: components/modal/modals/ServerInfo.tsx
+#: components/app/interface/channels/text/SoftResMessage.tsx
 msgid "Settings"
 msgstr "Settings"
 
@@ -4691,6 +4844,14 @@ msgstr "Slowmode is enabled."
 #: components/app/interface/settings/channel/Overview.tsx
 msgid "Slowmode off"
 msgstr "Slowmode off"
+
+#: components/app/interface/channels/text/SoftResMessage.tsx
+msgid "Soft-reserve sheets are not available in encrypted conversations — reserves are stored by the server."
+msgstr "Soft-reserve sheets are not available in encrypted conversations — reserves are stored by the server."
+
+#: components/modal/modals/CreateSoftRes.tsx
+msgid "Some hard reserves are not in the selected raids' loot — remove them (or restore the raid) before saving."
+msgstr "Some hard reserves are not in the selected raids' loot — remove them (or restore the raid) before saving."
 
 #: components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
 msgid "Someone in this call is not using encrypted calls. Your audio and video stay paused until you turn off encryption."
@@ -5239,6 +5400,10 @@ msgstr "Timeout Members"
 msgid "Title"
 msgstr "Title"
 
+#: components/modal/modals/SoftResExport.tsx
+msgid "to open Gargul's soft-reserve window, paste the string and import."
+msgstr "to open Gargul's soft-reserve window, paste the string and import."
+
 #: src/interface/common/CommonHeader.tsx
 msgid "Toggle main sidebar"
 msgstr "Toggle main sidebar"
@@ -5354,6 +5519,10 @@ msgstr "Undeafen"
 msgid "Unknown Server"
 msgstr "Unknown Server"
 
+#: components/app/interface/channels/text/SoftResMessage.tsx
+msgid "Unlock"
+msgstr "Unlock"
+
 #: components/modal/modals/ChannelToggleMature.tsx
 msgid "Unmark as mature"
 msgstr "Unmark as mature"
@@ -5399,6 +5568,10 @@ msgstr "Until I turn it back on"
 #: src/interface/ServerEvents.tsx
 msgid "Upcoming"
 msgstr "Upcoming"
+
+#: components/modal/modals/SoftResReserve.tsx
+msgid "Update reserve"
+msgstr "Update reserve"
 
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Upload Files"
@@ -5549,6 +5722,10 @@ msgstr "View"
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "View Channel"
 msgstr "View Channel"
+
+#: src/interface/ServerEvents.tsx
+msgid "View in channel"
+msgstr "View in channel"
 
 #: src/interface/channels/ChannelHeader.tsx
 msgid "View members"
@@ -5951,6 +6128,10 @@ msgstr "Your message is too long, please remove some characters and try again."
 #: components/modal/modals/MFARecovery.tsx
 msgid "Your recovery codes"
 msgstr "Your recovery codes"
+
+#: components/app/interface/channels/text/SoftResMessage.tsx
+msgid "Your reserve"
+msgstr "Your reserve"
 
 #: components/i18n/errors.ts
 msgid "Your role ranking is too low to take this action."

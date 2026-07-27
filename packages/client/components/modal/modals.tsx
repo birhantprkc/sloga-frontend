@@ -76,6 +76,8 @@ import { ServerInfoModal } from "./modals/ServerInfo";
 import { SettingsModal } from "./modals/Settings";
 import { SignOutSessionsModal } from "./modals/SignOutSessions";
 import { SignedOutModal } from "./modals/SignedOut";
+import { SoftResExportModal } from "./modals/SoftResExport";
+import { SoftResReserveModal } from "./modals/SoftResReserve";
 import { SuspendUserModal } from "./modals/SuspendUser";
 import { UserProfileModal } from "./modals/UserProfile";
 import { UserProfileMutualFriendsModal } from "./modals/UserProfileMutualFriends";
@@ -149,6 +151,10 @@ export function RenderModal(props: ActiveModal & { onClose: () => void }) {
       return <PollVotersModal {...modalProps} />;
     case "create_softres":
       return <CreateSoftResModal {...modalProps} />;
+    case "softres_reserve":
+      return <SoftResReserveModal {...modalProps} />;
+    case "softres_export":
+      return <SoftResExportModal {...modalProps} />;
     case "forward_message":
       return <ForwardMessageModal {...modalProps} />;
     case "schedule_message":

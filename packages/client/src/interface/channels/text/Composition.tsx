@@ -18,6 +18,7 @@ import type { ApplicationCommandData, Message } from "stoat.js";
 
 import { styled } from "styled-system/jsx";
 
+import { SOFTRES_CREATION_ENABLED } from "@revolt/app";
 import { E2EESendError, useClient, useE2EE, useSound } from "@revolt/client";
 import { CONFIGURATION, debounce, useDevice } from "@revolt/common";
 import { Keybind, KeybindAction, createKeybind } from "@revolt/keybinds";
@@ -199,6 +200,16 @@ export function MessageComposition(props: Props) {
       // Slowmode: creating a poll sends a message, so the affordance hides
       // during an active cooldown (server enforces regardless)
       !currentSlowmode(),
+  );
+
+  /**
+   * Soft-reserve sheets are server-authoritative plaintext exactly like
+   * polls, so they share the poll gate (E2EE fail-closed + slowmode) —
+   * plus the feature-wide creation switch, which keeps the affordance
+   * dark until the loot catalog verification pass is done.
+   */
+  const softresAllowed = createMemo(
+    () => SOFTRES_CREATION_ENABLED && pollAllowed(),
   );
 
   /**
@@ -643,6 +654,17 @@ export function MessageComposition(props: Props) {
     if (/^\/roll(\s|$)/i.test(trimmed)) {
       await sendRoll(trimmed.slice(5).trim() || "1d20");
       return;
+    }
+
+    // Intercept /softres — the command opens the create modal, no message
+    // is sent (and the draft is cleared so the command text doesn't linger)
+    if (/^\/softres(\s|$)/i.test(trimmed)) {
+      if (softresAllowed()) {
+        state.draft.setDraft(props.channel.id, { content: "" });
+        openModal({ type: "create_softres", channel: props.channel });
+        return;
+      }
+      // Feature dark (or context disallows): fall through, sends as text
     }
 
     // Intercept registered slash commands (/roll keeps precedence above).
@@ -1312,6 +1334,25 @@ export function MessageComposition(props: Props) {
                       }
                     >
                       <Symbol>ballot</Symbol>
+                    </IconButton>
+                  </Tooltip>
+                </MessageBox.InlineIcon>
+              </Show>
+              <Show when={softresAllowed()}>
+                <MessageBox.InlineIcon>
+                  <Tooltip
+                    content={t`Create soft-reserve sheet`}
+                    placement="top"
+                  >
+                    <IconButton
+                      onPress={() =>
+                        openModal({
+                          type: "create_softres",
+                          channel: props.channel,
+                        })
+                      }
+                    >
+                      <Symbol>shield</Symbol>
                     </IconButton>
                   </Tooltip>
                 </MessageBox.InlineIcon>

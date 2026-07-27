@@ -50,19 +50,52 @@ export function CreateSoftResModal(
 
   const [catalog] = createResource(() => client().fetchSoftResCatalog());
 
+  /**
+   * Edit mode: settings-edit of an existing sheet. Edition, raids and the
+   * event link are immutable post-create (reserves reference them) — only
+   * settings and hard reserves change. The hydrated definition wins over
+   * the embedded creation-time snapshot, which settings edits leave stale.
+   */
+  const editDefinition = props.editMessage
+    ? (props.editMessage.softresState?.definition ?? props.editMessage.softres)
+    : undefined;
+  const editing = editDefinition !== undefined;
+
+  // The card gates Settings behind hydration, but kick a fetch anyway so
+  // the Save guard (hydrated-only) can clear if another path got here
+  if (props.editMessage && !props.editMessage.softresState?.hydrated) {
+    void props.editMessage.fetchSoftRes().catch(() => undefined);
+  }
+
   const group = createFormGroup({
-    title: createFormControl("", { required: true }),
-    note: createFormControl(""),
-    reservesPerUser: createFormControl("1"),
-    perItemCap: createFormControl("off"),
+    title: createFormControl(editDefinition?.title ?? "", { required: true }),
+    note: createFormControl(editDefinition?.note ?? ""),
+    reservesPerUser: createFormControl(
+      String(editDefinition?.reserves_per_user ?? 1),
+    ),
+    perItemCap: createFormControl(
+      editDefinition?.per_item_cap !== undefined
+        ? String(editDefinition.per_item_cap)
+        : "off",
+    ),
   });
 
-  const [edition, setEdition] = createSignal<string>();
-  const [raids, setRaids] = createSignal<string[]>([]);
-  const [allowDuplicates, setAllowDuplicates] = createSignal(false);
-  const [classRestriction, setClassRestriction] = createSignal(false);
-  const [hidden, setHidden] = createSignal(false);
-  const [lockAtEventStart, setLockAtEventStart] = createSignal(false);
+  const [edition, setEdition] = createSignal<string | undefined>(
+    editDefinition?.edition,
+  );
+  const [raids, setRaids] = createSignal<string[]>(
+    editDefinition?.raids ?? [],
+  );
+  const [allowDuplicates, setAllowDuplicates] = createSignal(
+    editDefinition?.allow_duplicates ?? false,
+  );
+  const [classRestriction, setClassRestriction] = createSignal(
+    editDefinition?.class_restriction ?? false,
+  );
+  const [hidden, setHidden] = createSignal(editDefinition?.hidden ?? false);
+  const [lockAtEventStart, setLockAtEventStart] = createSignal(
+    editDefinition?.lock_at_event_start ?? false,
+  );
   const [pending, setPending] = createSignal(false);
 
   // Channel picker fallback for server-wide events (no channel prop).
@@ -108,9 +141,18 @@ export function CreateSoftResModal(
 
   // ----- Hard reserves ------------------------------------------------------
 
+  // Rows are id-keyed (names resolve from the lazily-fetched loot table)
+  // so edit mode can prefill from the wire definition, which only carries
+  // item ids.
   const [hardReserves, setHardReserves] = createSignal<
-    { item: SoftResCatalogItemData; reservedFor: string; note: string }[]
-  >([]);
+    { itemId: number; reservedFor: string; note: string }[]
+  >(
+    editDefinition?.hard_reserves?.map((hard) => ({
+      itemId: hard.item_id,
+      reservedFor: hard.reserved_for,
+      note: hard.note ?? "",
+    })) ?? [],
+  );
   const [hardReserveSearch, setHardReserveSearch] = createSignal("");
 
   /**
@@ -135,10 +177,14 @@ export function CreateSoftResModal(
     },
   );
 
+  const itemLookup = createMemo(
+    () => new Map((selectedItems() ?? []).map((item) => [item.id, item])),
+  );
+
   const hardReserveMatches = createMemo(() => {
     const search = hardReserveSearch().trim().toLowerCase();
     if (!search) return [];
-    const taken = new Set(hardReserves().map((row) => row.item.id));
+    const taken = new Set(hardReserves().map((row) => row.itemId));
     return (selectedItems() ?? [])
       .filter(
         (item) =>
@@ -153,7 +199,7 @@ export function CreateSoftResModal(
     if (hardReserves().length >= MAX_HARD_RESERVES) return;
     setHardReserves((current) => [
       ...current,
-      { item, reservedFor: "", note: "" },
+      { itemId: item.id, reservedFor: "", note: "" },
     ]);
     setHardReserveSearch("");
   }
@@ -171,43 +217,74 @@ export function CreateSoftResModal(
     setHardReserves((current) => current.filter((_, at) => at !== index));
   }
 
-  // Raid deselection may orphan hard reserves; recompute validity against
-  // the still-selected raids' merged table rather than trusting insertion
-  // order (the server rejects out-of-scope ids with SoftResInvalidItems).
-  const validHardReserves = createMemo(() => {
-    const known = new Set((selectedItems() ?? []).map((item) => item.id));
-    return hardReserves().filter((row) => known.has(row.item.id));
+  // Raid deselection (or a catalog data-fix, in edit mode) may orphan
+  // hard-reserve rows. `hard_reserves` is a FULL REPLACEMENT on the wire,
+  // so orphans must never be silently filtered out of a submit — they
+  // block Save and are marked in the list until the user removes them.
+  const orphanedHardReserves = createMemo(() => {
+    if (selectedItems() === undefined) return 0;
+    return hardReserves().filter((row) => !itemLookup().has(row.itemId))
+      .length;
   });
 
   // ----- Submission ---------------------------------------------------------
 
   const canSubmit = () =>
     !pending() &&
-    !!targetChannel() &&
-    !!edition() &&
-    raids().length > 0 &&
+    (editing || (!!targetChannel() && !!edition() && raids().length > 0)) &&
+    // Edit is a full-state PATCH — never save over the stale embedded
+    // snapshot before hydration resolves the current definition
+    (!editing || props.editMessage?.softresState?.hydrated === true) &&
     group.controls.title.value.trim().length > 0 &&
-    validHardReserves().every((row) => row.reservedFor.trim().length > 0);
+    // Never save while the loot table is still loading and rows exist,
+    // and never with orphaned rows — `hard_reserves` is a full
+    // replacement, so a silent drop would delete them server-side
+    (hardReserves().length === 0 || selectedItems() !== undefined) &&
+    orphanedHardReserves() === 0 &&
+    hardReserves().every((row) => row.reservedFor.trim().length > 0);
 
   const [linkConflict, setLinkConflict] = createSignal(false);
 
   async function onSubmit() {
-    const channel = targetChannel();
-    if (!canSubmit() || !channel) return;
+    if (!canSubmit()) return;
     setPending(true);
     setLinkConflict(false);
     try {
       const perItemCap = group.controls.perItemCap.value;
-      const hard_reserves: HardReserveData[] = validHardReserves().map(
-        (row) => ({
-          item_id: row.item.id,
-          reserved_for: row.reservedFor.trim(),
-          note: row.note.trim() || undefined,
-        }),
-      );
+      const title = group.controls.title.value.trim();
+      const note = group.controls.note.value.trim();
+      const hard_reserves: HardReserveData[] = hardReserves().map((row) => ({
+        item_id: row.itemId,
+        reserved_for: row.reservedFor.trim(),
+        note: row.note.trim() || undefined,
+      }));
 
-      await channel.createSoftRes({
-        title: group.controls.title.value.trim(),
+      if (editing) {
+        // Full-state settings edit; absent-able fields go through `remove`
+        const remove: ("PerItemCap" | "Note")[] = [];
+        if (perItemCap === "off") remove.push("PerItemCap");
+        if (!note) remove.push("Note");
+        await props.editMessage!.editSoftRes({
+          title,
+          reserves_per_user: Number(group.controls.reservesPerUser.value),
+          per_item_cap:
+            perItemCap === "off" ? undefined : Number(perItemCap),
+          allow_duplicates: allowDuplicates(),
+          class_restriction: classRestriction(),
+          hidden: hidden(),
+          lock_at_event_start: lockAtEventStart(),
+          note: note || undefined,
+          hard_reserves,
+          remove,
+        });
+        props.onClose();
+        return;
+      }
+
+      const channel = targetChannel();
+      if (!channel) return;
+      const message = await channel.createSoftRes({
+        title,
         edition: edition()!,
         raids: raids(),
         reserves_per_user: Number(group.controls.reservesPerUser.value),
@@ -216,10 +293,11 @@ export function CreateSoftResModal(
         class_restriction: classRestriction(),
         hidden: hidden(),
         lock_at_event_start: props.event ? lockAtEventStart() : false,
-        note: group.controls.note.value.trim() || undefined,
+        note: note || undefined,
         hard_reserves,
         event_id: props.event?.id,
       });
+      props.callback?.(message);
       props.onClose();
     } catch (error) {
       if ((error as { type?: string })?.type === "SoftResEventAlreadyLinked") {
@@ -236,11 +314,17 @@ export function CreateSoftResModal(
     <Dialog
       show={props.show}
       onClose={props.onClose}
-      title={<Trans>Create soft-reserve sheet</Trans>}
+      title={
+        editing ? (
+          <Trans>Edit soft-reserve sheet</Trans>
+        ) : (
+          <Trans>Create soft-reserve sheet</Trans>
+        )
+      }
       actions={[
         { text: <Trans>Close</Trans> },
         {
-          text: <Trans>Create</Trans>,
+          text: editing ? <Trans>Save</Trans> : <Trans>Create</Trans>,
           onClick: () => {
             void onSubmit();
             return false;
@@ -309,61 +393,84 @@ export function CreateSoftResModal(
           placeholder={t`Friday raid night`}
         />
 
-        <Column gap="sm">
-          <FieldLabel>
-            <Trans>Game edition</Trans>
-          </FieldLabel>
-          <ChipRow>
-            <For each={editions()}>
-              {(entry) => (
-                <Chip
-                  type="button"
-                  data-selected={edition() === entry.id || undefined}
-                  onClick={() => pickEdition(entry.id)}
-                >
-                  {entry.name}
-                </Chip>
-              )}
-            </For>
-            <Show when={catalog.loading}>
-              <Empty>
-                <Trans>Loading catalog…</Trans>
-              </Empty>
-            </Show>
-            <Show when={catalog.error}>
-              <Empty>
-                <Trans>Could not load the raid catalog.</Trans>
-              </Empty>
-            </Show>
-          </ChipRow>
-        </Column>
+        <Show when={!editing}>
+          <Column gap="sm">
+            <FieldLabel>
+              <Trans>Game edition</Trans>
+            </FieldLabel>
+            <ChipRow>
+              <For each={editions()}>
+                {(entry) => (
+                  <Chip
+                    type="button"
+                    data-selected={edition() === entry.id || undefined}
+                    onClick={() => pickEdition(entry.id)}
+                  >
+                    {entry.name}
+                  </Chip>
+                )}
+              </For>
+              <Show when={catalog.loading}>
+                <Empty>
+                  <Trans>Loading catalog…</Trans>
+                </Empty>
+              </Show>
+              <Show when={catalog.error}>
+                <Empty>
+                  <Trans>Could not load the raid catalog.</Trans>
+                </Empty>
+              </Show>
+            </ChipRow>
+          </Column>
 
-        <Show when={selectedEdition()}>
-          {(entry) => (
-            <Column gap="sm">
-              <FieldLabel>
-                <Trans>Raids (up to {MAX_RAIDS})</Trans>
-              </FieldLabel>
-              <ChipRow>
-                <For each={entry().raids}>
-                  {(raid) => (
-                    <Chip
-                      type="button"
-                      data-selected={raids().includes(raid.id) || undefined}
-                      data-disabled={
-                        (!raids().includes(raid.id) &&
-                          raids().length >= MAX_RAIDS) ||
-                        undefined
-                      }
-                      onClick={() => toggleRaid(raid.id)}
-                    >
-                      {raid.name}
-                    </Chip>
-                  )}
-                </For>
-              </ChipRow>
-            </Column>
-          )}
+          <Show when={selectedEdition()}>
+            {(entry) => (
+              <Column gap="sm">
+                <FieldLabel>
+                  <Trans>Raids (up to {MAX_RAIDS})</Trans>
+                </FieldLabel>
+                <ChipRow>
+                  <For each={entry().raids}>
+                    {(raid) => (
+                      <Chip
+                        type="button"
+                        data-selected={raids().includes(raid.id) || undefined}
+                        data-disabled={
+                          (!raids().includes(raid.id) &&
+                            raids().length >= MAX_RAIDS) ||
+                          undefined
+                        }
+                        onClick={() => toggleRaid(raid.id)}
+                      >
+                        {raid.name}
+                      </Chip>
+                    )}
+                  </For>
+                </ChipRow>
+              </Column>
+            )}
+          </Show>
+        </Show>
+
+        {/* Edition and raids are immutable post-create — existing
+            reserves reference them */}
+        <Show when={editing}>
+          <Column gap="sm">
+            <FieldLabel>
+              <Trans>Raids (fixed after creation)</Trans>
+            </FieldLabel>
+            <ChipRow>
+              <For each={raids()}>
+                {(raidId) => (
+                  <Chip type="button" disabled data-disabled>
+                    {selectedEdition()?.raids.find(
+                      (raid) => raid.id === raidId,
+                    )?.name ?? raidId}
+                  </Chip>
+                )}
+              </For>
+            </ChipRow>
+          </Column>
         </Show>
 
         <Form2.Select
@@ -418,7 +525,13 @@ export function CreateSoftResModal(
           <Trans>Hide reserves until export (leaders still see them)</Trans>
         </ToggleRow>
 
-        <Show when={props.event && !props.event?.recurrence}>
+        <Show
+          when={
+            editing
+              ? !!props.editMessage?.softresState?.eventId
+              : props.event && !props.event?.recurrence
+          }
+        >
           <ToggleRow onClick={() => setLockAtEventStart((v) => !v)}>
             <ToggleBox data-checked={lockAtEventStart() || undefined}>
               <Show when={lockAtEventStart()}>
@@ -452,8 +565,15 @@ export function CreateSoftResModal(
           <For each={hardReserves()}>
             {(row, index) => (
               <HardReserveRow>
-                <HardReserveItem data-quality={row.item.quality}>
-                  {row.item.name}
+                <HardReserveItem
+                  data-quality={itemLookup().get(row.itemId)?.quality ?? 4}
+                  data-orphan={
+                    (selectedItems() !== undefined &&
+                      !itemLookup().has(row.itemId)) ||
+                    undefined
+                  }
+                >
+                  {itemLookup().get(row.itemId)?.name ?? `#${row.itemId}`}
                 </HardReserveItem>
                 <SmallInput
                   value={row.reservedFor}
@@ -481,6 +601,16 @@ export function CreateSoftResModal(
               </HardReserveRow>
             )}
           </For>
+
+          <Show when={orphanedHardReserves() > 0}>
+            <ErrorNotice>
+              <Symbol size={16}>error</Symbol>
+              <Trans>
+                Some hard reserves are not in the selected raids' loot —
+                remove them (or restore the raid) before saving.
+              </Trans>
+            </ErrorNotice>
+          </Show>
 
           <Show
             when={
@@ -679,6 +809,11 @@ const qualityVariants = {
     '&[data-quality="3"]': { color: "#0070dd" },
     '&[data-quality="4"]': { color: "#a335ee" },
     '&[data-quality="5"]': { color: "#ff8000" },
+    // Unresolvable against the selected raids — blocks Save until removed
+    "&[data-orphan]": {
+      color: "var(--md-sys-color-error)",
+      textDecoration: "line-through",
+    },
   },
 };
 
