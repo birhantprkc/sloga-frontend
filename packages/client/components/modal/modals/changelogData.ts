@@ -9,6 +9,32 @@ import type { ChangelogResponse } from "./Changelog";
  */
 export const CHANGELOGS: ChangelogResponse[] = [
   {
+    id: "sloga-2026-07-27",
+    title: "Patch Notes",
+    published_at: "2026-07-27T18:00:00.000Z",
+    markdown_content: `## v0.15.0 — Import from Discord & raid loot sheets
+
+### 📦 Import from Discord
+- **Recreate your Discord server on Sloga by pasting a server template link** — no bots to add, no logins, no permissions to grant.
+- Brings over the **server name, categories, channels, and roles with their permissions** — private channels stay private.
+- When it finishes you get an **invite link** ready to share with your community.
+- Imports keep running even if you close the app — you'll be notified when it's done.
+- Find it under **Add a server → Import from Discord**.
+
+### 🛡️ Soft-reserve raid loot sheets
+- **Built-in soft-res for World of Warcraft raids** — post a loot sheet in any channel with the shield button in the message bar (or \`/softres\`) and let raiders reserve their items.
+- **Covers 40 raids across Classic, The Burning Crusade and Wrath** with era-accurate loot tables — pick up to four raids per sheet.
+- Per-raider and per-item reserve caps, **hard reserves**, and **hidden sheets** where only the raid leader sees who reserved what.
+- **Lock a sheet** to freeze reserves — manually, or automatically when a linked server event starts.
+- **Attach a sheet to a server event** straight from the Events page.
+- **Export to Gargul, RollFor or CSV** for in-game loot rolls.
+
+### ✨ Polish
+- Polls in busy channels now load their results reliably.
+
+*Sloga — Hop on.*`,
+  },
+  {
     id: "sloga-2026-07-26",
     title: "Patch Notes",
     published_at: "2026-07-26T22:30:00.000Z",
