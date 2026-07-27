@@ -172,8 +172,11 @@ export interface TypeVoice {
   /**
    * "Encrypt my calls" (media E2EE, slice 6.5 §0.2 #9). LOCAL PER-DEVICE —
    * this store is NOT in the synced set (Sync.ts), deliberately: syncing it
-   * would hand the server a write path into the E2EE-attempt gate. Default
-   * off; enabling requires text-E2EE enrollment (shared infrastructure).
+   * would hand the server a write path into the E2EE-attempt gate.
+   *
+   * INERT as of the mandatory-E2EE change: the accessor always reports true
+   * regardless of what is stored here. Kept in the schema so old persisted
+   * profiles still parse. Do NOT reintroduce a read of this raw field.
    */
   e2eeCallsEnabled: boolean;
 
@@ -230,7 +233,8 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
       outputVolume: 1.0,
       deafen: false,
       micOn: true,
-      e2eeCallsEnabled: false,
+      // Inert — the accessor always reports true (media E2EE is mandatory).
+      e2eeCallsEnabled: true,
       userVolumes: {},
       userMutes: {},
       screenShareVolumes: {},
@@ -817,17 +821,30 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
 
   /**
    * Whether "Encrypt my calls" is on for THIS device (slice 6.5 §0.2 #9).
+   *
+   * ALWAYS TRUE — media E2EE is mandatory, matching Discord/DAVE, which made
+   * A/V E2EE the default with no opt-out and is removing its unencrypted
+   * fallback path entirely. Deliberately ignores the persisted value so that
+   * existing installs carrying the old `false` default flip on without needing
+   * a migration, and so no future code path can turn it back off.
+   *
+   * This removes the LOCAL toggle only. It does NOT make every call encrypted:
+   * the real gate (rtc/state.tsx) additionally requires insertable streams, a
+   * native key-push channel, a platform where media E2EE is audited (not the
+   * Electron shell yet), and text-E2EE enrollment. Those still fail closed and
+   * the settings card still reports them honestly — never claim encryption the
+   * gate will not deliver (FE-6).
    */
   get e2eeCallsEnabled(): boolean {
-    return this.get().e2eeCallsEnabled;
+    return true;
   }
 
   /**
-   * Toggle "Encrypt my calls" (local per-device). Enabling is only meaningful
-   * once text-E2EE enrollment exists (the settings card routes through the
-   * enroll flow first); this just persists the intent.
+   * No-op: "Encrypt my calls" can no longer be turned off (see the getter).
+   * Retained so existing callers and the persisted field keep type-checking;
+   * the stored value is inert.
    */
-  set e2eeCallsEnabled(value: boolean) {
-    this.set("e2eeCallsEnabled", value);
+  set e2eeCallsEnabled(_value: boolean) {
+    /* intentionally empty — media E2EE is mandatory */
   }
 }

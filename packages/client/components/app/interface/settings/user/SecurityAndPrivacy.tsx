@@ -6,7 +6,6 @@ import type { BackupStatusView } from "@revolt/client";
 import { useClient, useE2EE } from "@revolt/client";
 import { useModals } from "@revolt/modal";
 import { platformMediaE2EESupported } from "@revolt/rtc";
-import { useState } from "@revolt/state";
 import { CategoryButton, Checkbox, Column, iconSize } from "@revolt/ui";
 
 import MdKey from "@material-design-icons/svg/outlined/key.svg?component-solid";
@@ -42,7 +41,6 @@ export function SecurityAndPrivacy() {
  */
 function CallEncryptionCard() {
   const e2ee = useE2EE();
-  const state = useState();
   const { openModal } = useModals();
 
   if (!e2ee) return null;
@@ -58,31 +56,31 @@ function CallEncryptionCard() {
     const s = e2ee.status.get("state");
     return !!s?.enabled && !!s?.published;
   };
-  const enabled = () => state.voice.e2eeCallsEnabled;
+  // Media E2EE is MANDATORY — there is no off switch (Discord/DAVE parity).
+  // The row is a locked indicator: checked and greyed once this device can
+  // actually encrypt, and never unchecked by a user action.
+  //
+  // "Can actually encrypt" still requires text-E2EE enrollment, so an
+  // unenrolled user must NOT see a checked box — that would claim encryption
+  // the gate will not deliver (FE-6). For them the row stays unchecked and
+  // routes into the enrolment flow, which is the one remaining click here.
+  const enabled = () => mediaCapable() && textEnrolled();
 
   const onClick = () => {
-    if (!mediaCapable()) return; // disabled shell — no-op
-    if (enabled()) {
-      state.voice.e2eeCallsEnabled = false;
-      return;
-    }
-    // Turning ON requires text-E2EE enrollment (shared keys, §0.2 #9). If not
-    // enrolled, route through the enable flow first; the toggle stays off until
-    // the user is enrolled, then they can flip it.
-    if (!textEnrolled()) {
-      openModal({ type: "e2ee_enable" });
-      return;
-    }
-    state.voice.e2eeCallsEnabled = true;
+    if (!mediaCapable()) return; // unsupported shell — no-op
+    if (textEnrolled()) return; // already on and not turn-off-able
+    openModal({ type: "e2ee_enable" });
   };
 
   return (
     <CategoryButton.Group>
       <CategoryButton
-        disabled={!mediaCapable()}
+        // Greyed out whenever there is nothing to click: either this device
+        // cannot encrypt at all, or it already does and cannot be turned off.
+        disabled={!mediaCapable() || enabled()}
         action={
           <span style={{ "pointer-events": "none", display: "flex" }}>
-            <Checkbox checked={enabled() && mediaCapable()} />
+            <Checkbox checked={enabled()} />
           </span>
         }
         icon={<MdVideocam {...iconSize(24)} />}
@@ -99,16 +97,16 @@ function CallEncryptionCard() {
               when={enabled()}
               fallback={
                 <Trans>
-                  Encrypt your voice and video on this device. Everyone in a
-                  call must have this on; web participants can't join encrypted,
-                  and server features that need the raw audio or video
-                  (recording, transcoding) are turned off in encrypted calls.
+                  Set up secure device keys to encrypt your calls. Web
+                  participants can't join encrypted calls, and server features
+                  that need the raw audio or video (recording, transcoding) are
+                  turned off in encrypted calls.
                 </Trans>
               }
             >
               <Trans>
-                Your calls negotiate end-to-end encryption on this device when
-                everyone in the call supports it.
+                Always on. Your voice and video are end-to-end encrypted on this
+                device whenever everyone in the call supports it.
               </Trans>
             </Show>
           </Show>
