@@ -63,9 +63,21 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
     const self = client()?.user?.id;
     if (!room || !self) return [];
     // One named participant, never "anyone who wants it".
-    return [...room.remoteParticipants.values()].filter(
-      (participant) => participantUserId(participant.identity) !== self,
-    );
+    //
+    // DEDUPED BY USER, not by participant: identities are device-qualified
+    // since media E2EE, so someone in the call on both their desktop and
+    // their phone was listed twice with the same name and no way to tell the
+    // rows apart. The offer is addressed to a USER — the server picks the
+    // session — so the second row was never a different choice.
+    const seen = new Set<string>();
+    const users: string[] = [];
+    for (const participant of room.remoteParticipants.values()) {
+      const userId = participantUserId(participant.identity);
+      if (userId === self || seen.has(userId)) continue;
+      seen.add(userId);
+      users.push(userId);
+    }
+    return users;
   };
 
   const canOffer = () =>
@@ -148,12 +160,7 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
             </Label>
             <People>
               <For each={eligible()}>
-                {(participant) => (
-                  <PersonRow
-                    userId={participantUserId(participant.identity)}
-                    onPick={offer}
-                  />
-                )}
+                {(userId) => <PersonRow userId={userId} onPick={offer} />}
               </For>
               <Show when={eligible().length === 0}>
                 <Muted>
@@ -196,14 +203,35 @@ function PersonRow(props: {
 }) {
   const user = useUser(props.userId);
   const name = () => user()?.username ?? props.userId;
+  // §6: ineligible people are shown DISABLED WITH A REASON rather than
+  // hidden, so the sharer understands why someone they can see in the call is
+  // not in this list. Hiding them reads as a bug and invites a retry; the
+  // server rejects a bot offer with a bare "offer rejected (4xx)" that says
+  // nothing about why.
+  // `useUser` resolves to display INFORMATION; the underlying user object is
+  // where `bot` lives.
+  const ineligible = () => (user()?.user?.bot ? "bot" : undefined);
   return (
-    <Button
-      size="sm"
-      variant="tonal"
-      onPress={() => props.onPick(props.userId, name())}
+    <Show
+      when={!ineligible()}
+      fallback={
+        // `Bot` is an EXISTING message id, reused deliberately: `lingui
+        // extract` does not run in this tree (the catalogs are hand-appended
+        // and precompiled with generated hash ids), so a brand-new string
+        // would ship untranslated in every locale to save one word.
+        <Button size="sm" variant="tonal" isDisabled>
+          {name()} (<Trans>Bot</Trans>)
+        </Button>
+      }
     >
-      {name()}
-    </Button>
+      <Button
+        size="sm"
+        variant="tonal"
+        onPress={() => props.onPick(props.userId, name())}
+      >
+        {name()}
+      </Button>
+    </Show>
   );
 }
 

@@ -50,6 +50,52 @@ export function normalizeToContentBox(
   return { x, y };
 }
 
+/** `WHEEL_DELTA` — one wheel notch, as `WM_MOUSEWHEEL` counts them. */
+const WHEEL_DELTA = 120;
+
+/**
+ * Chromium's pixel-mode delta for one physical wheel notch on Windows.
+ * The reference the other `deltaMode`s are expressed against.
+ */
+const PIXELS_PER_NOTCH = 100;
+
+/**
+ * Convert one axis of a DOM wheel delta into `WHEEL_DELTA` multiples, which
+ * is what native injects and what `WM_MOUSEWHEEL` means.
+ *
+ * Forwarding raw DOM deltas is wrong in three separate ways: a Chromium
+ * notch is ~100 px against a `WHEEL_DELTA` of 120 (so scrolling runs ~17%
+ * short), other `deltaMode`s count lines or pages rather than pixels, and a
+ * trackpad emits small fractional deltas that truncate to zero — scrolling
+ * nothing at all in applications that do not accumulate sub-notch deltas.
+ *
+ * `carry` holds the sub-notch remainder BETWEEN events, so a slow trackpad
+ * swipe accumulates into a notch instead of being discarded a fraction at a
+ * time. Thread the returned `carry` back in on the next event, per axis.
+ *
+ * Sign is the CALLER'S problem: DOM `deltaY` is positive downward and
+ * `MOUSEEVENTF_WHEEL` is positive forward (i.e. upward), so the vertical
+ * axis has to be negated on the way in. `deltaX` matches as-is.
+ */
+export function wheelNotches(
+  delta: number,
+  deltaMode: number,
+  carry: number,
+): { whole: number; carry: number } {
+  const notches =
+    deltaMode === 1 // DOM_DELTA_LINE — three lines per notch, by convention
+      ? delta / 3
+      : deltaMode === 2 // DOM_DELTA_PAGE — a page is a screenful; native clamps at 16
+        ? delta * 16
+        : delta / PIXELS_PER_NOTCH;
+  const scaled = carry + notches * WHEEL_DELTA;
+  // Truncate toward zero so the carry never changes sign: rounding here
+  // would let a reversal of direction cancel out a notch the user already
+  // scrolled.
+  const whole = Math.trunc(scaled / WHEEL_DELTA) * WHEEL_DELTA;
+  return { whole, carry: scaled - whole };
+}
+
 /**
  * §3's "two paths" decision for one keyboard event: does it travel as TEXT
  * (`beforeinput` → `KEYEVENTF_UNICODE`) or as a SCAN CODE?

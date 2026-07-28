@@ -14,6 +14,7 @@ export {
   RemoteControl,
   classifyKey,
   normalizeToContentBox,
+  wheelNotches,
 } from "./remoteControl";
 export type {
   RcControllerPhase,

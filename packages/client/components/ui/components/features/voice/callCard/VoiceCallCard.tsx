@@ -172,7 +172,12 @@ export function VoiceCallCardContext(props: { children: JSX.Element }) {
     <callCardContext.Provider value={setInfo}>
       {props.children}
       <Portal ref={document.getElementById("floating")! as HTMLDivElement}>
-        <Float ref={ref} mode={mode()} onPointerDown={mouseDown}>
+        <Float
+          ref={ref}
+          mode={mode()}
+          controlling={!!voice.remoteControl.controlling()}
+          onPointerDown={mouseDown}
+        >
           <Switch>
             {/* PiP is BLOCKED while this user is CONTROLLING someone, and it
                 is a different path rather than a smaller one: `MiniVideo`
@@ -226,13 +231,32 @@ const Float = styled("div", {
         transition: "none",
       },
     },
+    /** Whether this user is currently controlling someone's screen. */
+    controlling: { true: {}, false: {} },
   },
   compoundVariants: [
     {
       mode: ["floating", "moving"],
+      controlling: false,
       css: {
         "--flt-w": "300px",
         "--flt-h": "170px",
+        width: "var(--flt-w)",
+        height: "var(--flt-h)",
+      },
+    },
+    {
+      // A CONTROLLER who navigates away keeps the full card (PiP is blocked
+      // — it crops the shared screen), and the full card inside the 300x170
+      // float would put the capture surface in a postage stamp: the mapping
+      // stays correct, but a whole desktop rendered into ~250x100 of tile is
+      // not something anyone can aim at, and the card's own chrome assumes
+      // roughly the docked height. Matches the docked 40vh with a 16:10 area.
+      mode: ["floating", "moving"],
+      controlling: true,
+      css: {
+        "--flt-w": "640px",
+        "--flt-h": "400px",
         width: "var(--flt-w)",
         height: "var(--flt-h)",
       },

@@ -13,6 +13,7 @@ import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import { styled } from "styled-system/jsx";
 
 import { useClient } from "@revolt/client";
+import { CONFIGURATION } from "@revolt/common";
 import { useUser } from "@revolt/markdown/users";
 import { REMOTE_CONTROL_CLAIM, useVoice } from "@revolt/rtc";
 import { Button } from "@revolt/ui/components/design";
@@ -75,16 +76,24 @@ export function RemoteControlOverlays() {
   // user browsed to another channel and the card flipped to PiP. A live
   // session you can no longer see or stop because you clicked a channel is
   // the worst shape this feature can take.
+  // `ENABLE_VIDEO` for the same reason every other screenshare affordance
+  // carries it: remote control is an attachment to a screen share, so on a
+  // deployment without video none of these surfaces can have anything to
+  // describe. Belt-and-braces rather than load-bearing — an offer cannot
+  // exist without a share to attach to — but the checklist gate is cheap and
+  // its absence is the kind of thing that quietly becomes wrong later.
   return (
-    <Portal ref={document.getElementById("floating")! as HTMLDivElement}>
-      <Stack>
-        <Show when={rc.offer()}>
-          {(offer) => <OfferPrompt offer={offer()} />}
-        </Show>
-        <VoiceGiveControlPanel />
-        <ControllerPanel />
-      </Stack>
-    </Portal>
+    <Show when={CONFIGURATION.ENABLE_VIDEO}>
+      <Portal ref={document.getElementById("floating")! as HTMLDivElement}>
+        <Stack>
+          <Show when={rc.offer()}>
+            {(offer) => <OfferPrompt offer={offer()} />}
+          </Show>
+          <VoiceGiveControlPanel />
+          <ControllerPanel />
+        </Stack>
+      </Portal>
+    </Show>
   );
 
   function OfferPrompt(props: {

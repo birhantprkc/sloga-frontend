@@ -648,13 +648,38 @@ class Voice {
         });
       };
 
+      // Both responses are matched against the OUTSTANDING OFFER, not merely
+      // the channel. A cancelled offer survives server-side to its 90 s TTL,
+      // so "offer A, cancel, offer B" leaves A's response in flight: matched
+      // on channel alone, A declining would tear down the live session with
+      // B, and A accepting would arm the current session against the wrong
+      // peer key — failing inside `armSession`, whose catch then clears the
+      // panel while native stays armed and the indicator stays up. The phase
+      // check is the second half: a response can only act on an offer that
+      // is still outstanding.
+      const respondsToOurOffer = (
+        sharing:
+          | { channelId: string; offerId?: string; phase: string }
+          | undefined,
+        detail: { channelId: string; offerId?: string },
+      ) =>
+        !!sharing &&
+        sharing.phase === "offered" &&
+        sharing.channelId === detail.channelId &&
+        // A server that omits the id gets the old channel-only behaviour
+        // rather than a session that can never be answered.
+        (!sharing.offerId ||
+          !detail.offerId ||
+          sharing.offerId === detail.offerId);
+
       const onAccepted = (detail: {
         channelId: string;
+        offerId?: string;
         grantId: string;
         controllerEphemeralPub: string;
       }) => {
         const sharing = this.remoteControl.sharing();
-        if (!sharing || sharing.channelId !== detail.channelId) return;
+        if (!respondsToOurOffer(sharing, detail)) return;
         void this.remoteControl.armSession({
           grantId: detail.grantId,
           controllerEphemeralPub: detail.controllerEphemeralPub,
@@ -662,11 +687,9 @@ class Voice {
         });
       };
 
-      const onDeclined = (detail: { channelId: string }) => {
-        const sharing = this.remoteControl.sharing();
-        if (sharing?.channelId === detail.channelId) {
-          void this.remoteControl.endSharing("declined");
-        }
+      const onDeclined = (detail: { channelId: string; offerId?: string }) => {
+        if (!respondsToOurOffer(this.remoteControl.sharing(), detail)) return;
+        void this.remoteControl.endSharing("declined");
       };
 
       const onEnded = (detail: {

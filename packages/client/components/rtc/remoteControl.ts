@@ -96,7 +96,11 @@ export const REMOTE_CONTROL_CLAIM =
 // The letterbox-aware coordinate mapping lives in its own dependency-free
 // leaf so Node's test runner can exercise it without Solid, LiveKit or the
 // path aliases — see remoteControlMapping.ts and its spec.
-export { classifyKey, normalizeToContentBox } from "./remoteControlMapping";
+export {
+  classifyKey,
+  normalizeToContentBox,
+  wheelNotches,
+} from "./remoteControlMapping";
 
 type Invoke = (command: string, args?: unknown) => Promise<unknown>;
 
@@ -244,6 +248,14 @@ export class RemoteControl {
           rcSessionId: string;
           controllerId: string;
           controllerName: string;
+          /**
+           * The server's id for the outstanding offer, from the offer
+           * route's response. Both `RemoteControlAccepted` and
+           * `RemoteControlDeclined` carry it, and matching on it is what
+           * stops a stale offer's response acting on the session that
+           * replaced it.
+           */
+          offerId?: string;
           grantId?: string;
           display: string;
           phase: RcSharerPhase;
@@ -299,6 +311,11 @@ export class RemoteControl {
       const identity = (participant as { identity?: string } | undefined)
         ?.identity;
       if (!identity) return;
+      // Never open our own bytes. The SFU does not echo a sender its own
+      // packets, so this only fires if one is looped back to us — which is
+      // the shape of the self-forgery oracle §2 C-A is about, and the
+      // cheapest possible place to refuse it is before the IPC.
+      if (identity === this.#localIdentity) return;
       const sharing = this.sharing();
       if (!sharing) return;
       // `participantUserId`, not a hand-rolled split: SFU identities are
@@ -446,6 +463,14 @@ export class RemoteControl {
     // whose `publishData` promises resolve independently — so they can land
     // out of order, and a gap in the reliable counter is by definition a loud
     // teardown on the sharer.
+    //
+    // Consequence worth naming: if a seal IS in flight, `#drain` returns
+    // without sending and the pump is already cancelled, so this release-all
+    // is DROPPED rather than deferred. That is the fire-and-forget contract
+    // above — the sharer's watchdog releases held input on the ~1 s packet
+    // gap. Do not "fix" it by bypassing the single flight; a reliable-stream
+    // gap tears the session down for everyone, which is strictly worse than
+    // a one-second wait for the same release.
     void this.#drain(STREAM_RELIABLE, true);
     setKeybindSuppression(false);
     this.#sharerIdentity = undefined;
@@ -723,8 +748,18 @@ export class RemoteControl {
         this.#setError(`offer rejected (${response.status})`);
         return false;
       }
+      // KEEP THE OFFER ID. Both response events are matched against it, and
+      // without it they can only be matched on channel — which makes a stale
+      // offer's decline tear down the live session that replaced it, and a
+      // stale ACCEPT arm the current session with the wrong peer key.
+      // Offers survive server-side to their 90 s TTL, so "cancel, offer
+      // someone else" leaves exactly that stale offer outstanding.
+      const offer = (await response.json().catch(() => undefined)) as
+        | { offer_id?: string }
+        | undefined;
       this.#setSharing({
         channelId: args.channelId,
+        offerId: offer?.offer_id,
         rcSessionId: minted.rcSessionId,
         controllerId: args.controllerId,
         controllerName: args.controllerName,
@@ -902,12 +937,18 @@ export class RemoteControl {
     } catch (err) {
       // Declined, timed out, replayed, peer key rejected — all terminal, and
       // the offer is spent either way. Journalled natively; surfaced here.
-      // Stop the pre-arm heartbeat NOW rather than letting its next tick
-      // notice `sharing` is gone — every extra beat extends a grant whose
-      // session will never authenticate.
-      this.#stopHeartbeat();
+      //
+      // Torn down through `endSharing` rather than by clearing the signal:
+      // that stops the pre-arm heartbeat (every extra beat extends a grant
+      // whose session will never authenticate), zeroizes the native pending
+      // record, and RELEASES THE SERVER GRANT — which the server has already
+      // minted by the time this event arrives, and which would otherwise sit
+      // holding `can_publish_data` for the controller until it expired.
       this.#setError(String(err));
-      this.#setSharing(undefined);
+      // The grant id arrives with the accept, so record it before tearing
+      // down or `endSharing` has nothing to release.
+      this.#setSharing({ ...sharing, grantId: args.grantId });
+      await this.endSharing("arm_failed");
       return false;
     }
   }

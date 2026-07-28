@@ -11,7 +11,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { classifyKey, normalizeToContentBox } from "./remoteControlMapping.ts";
+import {
+  classifyKey,
+  normalizeToContentBox,
+  wheelNotches,
+} from "./remoteControlMapping.ts";
 
 const rect = (left: number, top: number, width: number, height: number) => ({
   left,
@@ -152,6 +156,44 @@ test("AltGr is text, not an accelerator", () => {
   // produce characters (AZERTY AltGr+E is €) — both signal shapes count.
   assert.equal(classifyKey(key("€", { ctrlKey: true, altKey: true })), "text");
   assert.equal(classifyKey(key("€", { altGraph: true })), "text");
+});
+
+// -- wheelNotches: DOM deltas → WHEEL_DELTA multiples -----------------------
+
+test("one Chromium wheel notch is exactly one WHEEL_DELTA", () => {
+  // Raw forwarding sent 100 where Windows wanted 120 — every scroll ran ~17%
+  // short.
+  assert.deepEqual(wheelNotches(100, 0, 0), { whole: 120, carry: 0 });
+  assert.deepEqual(wheelNotches(-100, 0, 0), { whole: -120, carry: 0 });
+});
+
+test("trackpad sub-notch deltas accumulate instead of truncating to zero", () => {
+  // Ten 10px increments are one notch. Truncating each on its own sends
+  // nothing at all in applications that do not accumulate.
+  let carry = 0;
+  let total = 0;
+  for (let i = 0; i < 10; i++) {
+    const step = wheelNotches(10, 0, carry);
+    carry = step.carry;
+    total += step.whole;
+  }
+  assert.equal(total, 120, "ten 10px steps should add up to one notch");
+});
+
+test("carry never changes sign on a direction reversal", () => {
+  // Truncation toward zero, not rounding: scrolling back up must not cancel
+  // a notch that already went out.
+  const down = wheelNotches(90, 0, 0);
+  assert.equal(down.whole, 0);
+  const up = wheelNotches(-90, 0, down.carry);
+  assert.equal(up.whole, 0);
+  assert.equal(up.carry, 0);
+});
+
+test("line and page deltaModes convert, not just pixels", () => {
+  // Firefox reports lines; three lines is the conventional notch.
+  assert.deepEqual(wheelNotches(3, 1, 0), { whole: 120, carry: 0 });
+  assert.equal(wheelNotches(1, 2, 0).whole, 120 * 16);
 });
 
 test("named keys travel as scan codes", () => {

@@ -2,7 +2,12 @@ import { onCleanup, onMount } from "solid-js";
 
 import { styled } from "styled-system/jsx";
 
-import { classifyKey, normalizeToContentBox, useVoice } from "@revolt/rtc";
+import {
+  classifyKey,
+  normalizeToContentBox,
+  useVoice,
+  wheelNotches,
+} from "@revolt/rtc";
 import { useState } from "@revolt/state";
 
 /**
@@ -65,6 +70,18 @@ export function RemoteControlCapture(props: {
    * hold on BOTH paths, and `beforeinput` cannot see `event.code`.
    */
   let skipNextInsert = false;
+  /**
+   * Last pointer position INSIDE the content box, normalized. A button-up
+   * delivered outside the picture (pointer capture keeps delivering after
+   * the pointer leaves) is sent here rather than at a made-up coordinate.
+   */
+  let lastAt: { x: number; y: number } | undefined;
+  /**
+   * True only for the instant we release pointer capture ourselves, so the
+   * `lostpointercapture` that follows is not mistaken for the browser taking
+   * capture away — see `onLostPointerCapture`.
+   */
+  let selfReleasingCapture = false;
 
   /**
    * Map a client point to normalized `[0,1]` coordinates of the video's
@@ -133,6 +150,7 @@ export function RemoteControlCapture(props: {
     swallow(event);
     const at = normalize(event);
     if (!at) return;
+    lastAt = at;
     // Focus the TEXT SINK, not the surface: keyboard forwarding is
     // window-level either way, but only a focused editable turns printable
     // keys into the `beforeinput`/composition events the text path rides.
@@ -153,48 +171,101 @@ export function RemoteControlCapture(props: {
   function onPointerUp(event: PointerEvent) {
     swallow(event);
     const at = normalize(event);
+    if (at) lastAt = at;
     const button = MOUSE_BUTTONS[event.button];
     if (button === undefined) return;
     // Every button packet carries its own absolute coordinates, so a click is
     // always positioned by its own packet and never by a stale lossy move.
     // If the release happened outside the content box, still send the "up" —
-    // at the last known position — because a missing "up" is far worse than
-    // one landing a few pixels off.
+    // at the LAST IN-BOX position — because a missing "up" is far worse than
+    // one landing a few pixels off. Pointer capture keeps delivering events
+    // after the pointer leaves the picture, so this is the ordinary end of
+    // any drag that overshoots: falling back to (0.5, 0.5) would release at
+    // the CENTRE OF THE SHARER'S SCREEN and drop whatever was being dragged
+    // onto whatever happens to be there.
+    const release = at ?? lastAt;
     rc.queue({
       kind: "button",
       button,
       down: false,
-      x: at?.x ?? 0.5,
-      y: at?.y ?? 0.5,
+      x: release?.x ?? 0.5,
+      y: release?.y ?? 0.5,
     });
     try {
+      // Our own release fires `lostpointercapture`. Flag it, or every single
+      // click would be followed by a release-all — see `onLostPointerCapture`.
+      selfReleasingCapture = true;
       surface?.releasePointerCapture(event.pointerId);
     } catch {
       /* already released */
+    } finally {
+      selfReleasingCapture = false;
     }
   }
 
   function onPointerMove(event: PointerEvent) {
     const at = normalize(event);
     if (!at) return;
+    lastAt = at;
     rc.queue({ kind: "move", ...at });
   }
+
+  /**
+   * Losing pointer capture to something OTHER than our own release — the
+   * browser revoking it, the element being removed — means the pointer is
+   * gone with buttons possibly still down, so everything held goes up.
+   *
+   * `onPointerUp` releases capture itself on every ordinary click, and that
+   * fires this event too. Without the flag, a Shift+click range selection on
+   * the sharer's machine would raise Shift after the first click and only
+   * re-latch on the controller's OS key-repeat — if their configuration
+   * repeats at all.
+   */
+  function onLostPointerCapture() {
+    if (selfReleasingCapture) return;
+    releaseAll();
+  }
+
+  let wheelRemainderX = 0;
+  let wheelRemainderY = 0;
 
   function onWheel(event: WheelEvent) {
     swallow(event);
     const at = normalize(event);
     if (!at) return;
+    lastAt = at;
+    // `deltaY` is INVERTED on the way out. DOM positive means "content moves
+    // down"; `MOUSEEVENTF_WHEEL` positive means "wheel rotated forward, away
+    // from the user", which scrolls the other way. `deltaX` needs no flip —
+    // DOM positive and `MOUSEEVENTF_HWHEEL` positive are both rightward.
+    const x = wheelNotches(event.deltaX, event.deltaMode, wheelRemainderX);
+    const y = wheelNotches(-event.deltaY, event.deltaMode, wheelRemainderY);
+    wheelRemainderX = x.carry;
+    wheelRemainderY = y.carry;
+    // Nothing whole yet — the carry is holding it. A zero-delta wheel packet
+    // would cost a round trip to move nothing.
+    if (x.whole === 0 && y.whole === 0) return;
     rc.queue({
       kind: "wheel",
       ...at,
-      deltaX: Math.trunc(event.deltaX),
-      deltaY: Math.trunc(event.deltaY),
+      deltaX: x.whole,
+      deltaY: y.whole,
     });
   }
 
   /** Everything held goes up. Bound to every way focus or the pointer can be lost. */
   function releaseAll() {
     rc.queue({ kind: "releaseAll" });
+  }
+
+  /**
+   * Only HIDING is a release condition. `visibilitychange` fires in both
+   * directions, and releasing on becoming visible again would raise
+   * everything the controller is holding the moment they come back to the
+   * tab — including a modifier they are mid-chord on.
+   */
+  function onVisibilityChange() {
+    if (document.hidden) releaseAll();
   }
 
   function onKey(event: KeyboardEvent, down: boolean) {
@@ -334,6 +405,15 @@ export function RemoteControlCapture(props: {
     // call chrome, a Solid remount) and keyboard events then target `body`.
     // The `keybindFilter` suppression covers correctness for Sloga's own
     // keybinds regardless; this is what actually forwards the keystrokes.
+    //
+    // RECORDED DECISION (plan §6): this means the controller's keyboard
+    // belongs to the remote machine for as long as this surface is mounted —
+    // they cannot type into their own composer, and that is intended. The
+    // alternative, forwarding only while the surface has focus, drops
+    // keystrokes on every stray focus change with modifiers left held on
+    // someone else's machine, and gives the user no way to tell which mode
+    // they are in. The panic combo and the controller's own push-to-talk key
+    // are the carve-outs; ending control is always reachable by mouse.
     window.addEventListener("keydown", keydown, true);
     window.addEventListener("keyup", keyup, true);
     window.addEventListener("beforeinput", onBeforeInput as never, true);
@@ -346,9 +426,9 @@ export function RemoteControlCapture(props: {
     // the sharer is left with Alt latched and every subsequent letter is an
     // accelerator on their machine.
     window.addEventListener("blur", releaseAll);
-    document.addEventListener("visibilitychange", releaseAll);
+    document.addEventListener("visibilitychange", onVisibilityChange);
     surface.addEventListener("pointercancel", releaseAll);
-    surface.addEventListener("lostpointercapture", releaseAll);
+    surface.addEventListener("lostpointercapture", onLostPointerCapture);
 
     onCleanup(() => {
       surface?.removeEventListener("pointerdown", onPointerDown as never, true);
@@ -368,9 +448,9 @@ export function RemoteControlCapture(props: {
         true,
       );
       window.removeEventListener("blur", releaseAll);
-      document.removeEventListener("visibilitychange", releaseAll);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       surface?.removeEventListener("pointercancel", releaseAll);
-      surface?.removeEventListener("lostpointercapture", releaseAll);
+      surface?.removeEventListener("lostpointercapture", onLostPointerCapture);
       // THE UNMOUNT IS ITSELF A PAUSE CONDITION, and this covers four
       // separate vectors at once rather than special-casing each: toggling
       // focus swaps the tile between two different `TrackLoop`s, the call
