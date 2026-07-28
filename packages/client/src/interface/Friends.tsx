@@ -30,6 +30,7 @@ import {
   NavigationRailItem,
   UserStatus,
   main,
+  useSnackbar,
 } from "@revolt/ui";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
@@ -491,6 +492,7 @@ function Entry(props: { user: User; tabIndex?: number }) {
   const { openModal } = useModals();
   const navigate = useNavigate();
   const state = useState();
+  const snackbar = useSnackbar();
 
   // Delay single-click so a double-click can cancel it and open the DM instead
   let clickTimer: number | undefined;
@@ -517,7 +519,18 @@ function Entry(props: { user: User; tabIndex?: number }) {
     // single-click is the popout's affordance.
     if (IS_POPOUT_WINDOW) return;
 
-    props.user.openDM().then((channel) => navigate(channel.path)).catch(console.error);
+    props.user
+      .openDM()
+      .then((channel) => {
+        navigate(channel.path);
+        state.appDrawer()?.setShown(true);
+      })
+      .catch((err) => {
+        console.error(err);
+        snackbar.show({
+          message: "Couldn't open a conversation with this user.",
+        });
+      });
   }
 
   const isFriend = () => props.user.relationship === "Friend";

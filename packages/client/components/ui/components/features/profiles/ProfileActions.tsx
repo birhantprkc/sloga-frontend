@@ -8,6 +8,7 @@ import { UserContextMenu } from "@revolt/app";
 import { CONFIGURATION } from "@revolt/common";
 import { useModals } from "@revolt/modal";
 import { useVoice } from "@revolt/rtc";
+import { useState } from "@revolt/state";
 
 import MdCall from "@material-design-icons/svg/filled/call.svg?component-solid";
 import MdCancel from "@material-design-icons/svg/filled/cancel.svg?component-solid";
@@ -15,7 +16,7 @@ import MdEdit from "@material-design-icons/svg/filled/edit.svg?component-solid";
 import MdMoreVert from "@material-design-icons/svg/filled/more_vert.svg?component-solid";
 import MdVideocam from "@material-design-icons/svg/filled/videocam.svg?component-solid";
 
-import { Button, IconButton } from "../../design";
+import { Button, IconButton, useSnackbar } from "../../design";
 import { iconSize } from "../../utils";
 
 /**
@@ -31,12 +32,31 @@ export function ProfileActions(props: {
   const navigate = useNavigate();
   const { openModal } = useModals();
   const voice = useVoice();
+  const state = useState();
+  const snackbar = useSnackbar();
+
+  /**
+   * Surface an openDM failure — otherwise a denied DM reads as a dead button
+   */
+  function dmFailed(err: unknown) {
+    console.error(err);
+    snackbar.show({ message: "Couldn't open a conversation with this user." });
+  }
+
+  /**
+   * Enter the DM channel; on phones the navigation happens in the content
+   * pane, which may be slid off-screen behind the sidebar
+   */
+  function enterDm(channel: { path: string }) {
+    navigate(channel.path);
+    state.appDrawer()?.setShown(true);
+  }
 
   /**
    * Open direct message channel
    */
   function openDm() {
-    props.user.openDM().then((channel) => navigate(channel.path)).catch(console.error);
+    props.user.openDM().then(enterDm).catch(dmFailed);
     props.onClose();
   }
 
@@ -45,9 +65,9 @@ export function ProfileActions(props: {
    */
   function startVoiceCall() {
     props.user.openDM().then((channel) => {
-      navigate(channel.path);
+      enterDm(channel);
       return voice.connect(channel);
-    }).catch(console.error);
+    }).catch(dmFailed);
     props.onClose();
   }
 
@@ -56,10 +76,10 @@ export function ProfileActions(props: {
    */
   function startVideoCall() {
     props.user.openDM().then(async (channel) => {
-      navigate(channel.path);
+      enterDm(channel);
       await voice.connect(channel);
       await voice.toggleCamera();
-    }).catch(console.error);
+    }).catch(dmFailed);
     props.onClose();
   }
 

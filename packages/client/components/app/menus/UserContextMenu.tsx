@@ -9,7 +9,7 @@ import { useModals } from "@revolt/modal";
 import { useSmartParams } from "@revolt/routing";
 import { useVoice } from "@revolt/rtc";
 import { useState } from "@revolt/state";
-import { Slider, Text } from "@revolt/ui";
+import { Slider, Text, useSnackbar } from "@revolt/ui";
 
 import MdAccountCircle from "@material-design-icons/svg/outlined/account_circle.svg?component-solid";
 import MdAddCircleOutline from "@material-design-icons/svg/outlined/add_circle_outline.svg?component-solid";
@@ -59,15 +59,33 @@ export function UserContextMenu(props: {
   const navigate = useNavigate();
   const { openModal, modals } = useModals();
   const voice = useVoice();
+  const snackbar = useSnackbar();
 
   // server context
   const params = useSmartParams();
 
   /**
+   * Surface an openDM failure — otherwise a denied DM reads as a dead button
+   */
+  function dmFailed(err: unknown) {
+    console.error(err);
+    snackbar.show({ message: "Couldn't open a conversation with this user." });
+  }
+
+  /**
+   * Enter the DM channel; on phones the navigation happens in the content
+   * pane, which may be slid off-screen behind the sidebar
+   */
+  function enterDm(channel: { path: string }) {
+    navigate(channel.path);
+    state.appDrawer()?.setShown(true);
+  }
+
+  /**
    * Open direct message channel
    */
   function openDm() {
-    props.user.openDM().then((channel) => navigate(channel.path)).catch(console.error);
+    props.user.openDM().then(enterDm).catch(dmFailed);
     props.onClose?.();
   }
 
@@ -76,9 +94,9 @@ export function UserContextMenu(props: {
    */
   function startVoiceCall() {
     props.user.openDM().then((channel) => {
-      navigate(channel.path);
+      enterDm(channel);
       return voice.connect(channel);
-    }).catch(console.error);
+    }).catch(dmFailed);
     props.onClose?.();
   }
 
@@ -87,10 +105,10 @@ export function UserContextMenu(props: {
    */
   function startVideoCall() {
     props.user.openDM().then(async (channel) => {
-      navigate(channel.path);
+      enterDm(channel);
       await voice.connect(channel);
       await voice.toggleCamera();
-    }).catch(console.error);
+    }).catch(dmFailed);
     props.onClose?.();
   }
 
@@ -99,10 +117,10 @@ export function UserContextMenu(props: {
    */
   function startScreenShareCall() {
     props.user.openDM().then(async (channel) => {
-      navigate(channel.path);
+      enterDm(channel);
       await voice.connect(channel);
       await voice.toggleScreenshare();
-    }).catch(console.error);
+    }).catch(dmFailed);
     props.onClose?.();
   }
 
