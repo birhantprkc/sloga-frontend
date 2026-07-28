@@ -106,6 +106,16 @@ export function ImageViewerModal(
                         </Column>
                       </Card>
                     </Match>
+                    <Match when={props.encrypted}>
+                      <Card onClick={(e) => e.stopPropagation()}>
+                        <Column>
+                          <Text class="title">{props.encrypted!.filename}</Text>
+                          <Text class="label">
+                            {props.encrypted!.humanReadableSize}
+                          </Text>
+                        </Column>
+                      </Card>
+                    </Match>
                   </Switch>
                   <Card onClick={(e) => e.stopPropagation()}>
                     <IconButton onPress={() => panzoom?.zoomOut()}>
@@ -124,6 +134,11 @@ export function ImageViewerModal(
                           <Symbol>download</Symbol>
                         </IconButton>
                       </a>
+                    </Show>
+                    <Show when={props.encrypted}>
+                      <IconButton onPress={() => props.encrypted!.onSave()}>
+                        <Symbol>download</Symbol>
+                      </IconButton>
                     </Show>
                     <Show when={props.embed || props.gif}>
                       <a
@@ -160,6 +175,13 @@ export function ImageViewerModal(
                       "aspect-ratio": `${props.embed!.width}/${props.embed!.height}`,
                     }}
                     src={props.embed!.proxiedURL}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                </Match>
+                <Match when={props.encrypted}>
+                  <Image
+                    ref={setRef}
+                    src={props.encrypted!.url}
                     onClick={(e) => e.stopPropagation()}
                   />
                 </Match>

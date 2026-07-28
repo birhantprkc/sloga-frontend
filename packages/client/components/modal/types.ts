@@ -300,6 +300,17 @@ export type Modals =
       embed?: ImageEmbed;
       gif?: VideoEmbed;
       file?: File;
+      /**
+       * Decrypted E2EE attachment (slice 3.5): served via the shell's
+       * `e2ee-att` protocol, so saving must go through the native bridge
+       * rather than an anchor download.
+       */
+      encrypted?: {
+        url: string;
+        filename: string;
+        humanReadableSize: string;
+        onSave: () => void;
+      };
     }
   | {
       type: "join_server";

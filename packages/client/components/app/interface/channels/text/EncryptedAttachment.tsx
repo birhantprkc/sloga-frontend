@@ -5,6 +5,7 @@ import { css } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 
 import type { E2EEAttachmentMeta, E2EEBridge } from "@revolt/client";
+import { useModals } from "@revolt/modal";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
 /**
@@ -23,9 +24,17 @@ export function EncryptedAttachment(props: {
   e2ee: E2EEBridge;
 }) {
   const { t } = useLingui();
+  const { openModal } = useModals();
 
   const url = () =>
     props.e2ee.attachmentUrl(props.messageId, props.meta.idx ?? 0);
+
+  const save = () =>
+    void props.e2ee
+      .attachmentSave(props.messageId, props.meta.idx ?? 0)
+      .catch((error) =>
+        console.error("[e2ee] attachment save failed", error),
+      );
 
   const kind = () => props.meta.mime.split("/")[0];
 
@@ -50,13 +59,7 @@ export function EncryptedAttachment(props: {
               type="button"
               aria-label={t`Save`}
               title={t`Save`}
-              onClick={() =>
-                void props.e2ee
-                  .attachmentSave(props.messageId, props.meta.idx ?? 0)
-                  .catch((error) =>
-                    console.error("[e2ee] attachment save failed", error),
-                  )
-              }
+              onClick={save}
             >
               <Symbol>download</Symbol>
             </SaveAction>
@@ -97,10 +100,22 @@ export function EncryptedAttachment(props: {
             maxWidth: "min(420px, 100%)",
             maxHeight: "420px",
             borderRadius: "var(--borderRadius-md)",
+            cursor: "pointer",
           })}
           loading="lazy"
           alt={props.meta.name}
           src={url()}
+          onClick={() =>
+            openModal({
+              type: "image_viewer",
+              encrypted: {
+                url: url(),
+                filename: props.meta.name,
+                humanReadableSize: humanSize(),
+                onSave: save,
+              },
+            })
+          }
         />
       </Match>
       <Match when={props.meta.state === "ready" && kind() === "video"}>
