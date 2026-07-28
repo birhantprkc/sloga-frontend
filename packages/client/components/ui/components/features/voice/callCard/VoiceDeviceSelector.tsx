@@ -71,7 +71,7 @@ export function VoiceDeviceSelector(props: { size: "xs" | "sm" }) {
  * logic of the Voice & Video settings page so the choice is applied to the live
  * room and remembered for future calls.
  */
-function DeviceSection(props: { kind: MediaDeviceKind }) {
+export function DeviceSection(props: { kind: MediaDeviceKind }) {
   const state = useState();
   const media = createMemo(() => useMediaDeviceSelect({ kind: props.kind }));
 
@@ -99,14 +99,19 @@ function DeviceSection(props: { kind: MediaDeviceKind }) {
     const d = devs.find((dev) => dev.deviceId === "default");
     opts.push({ id: "default", title: d?.label ?? "Default" });
 
+    // Pre-permission enumerateDevices yields placeholder entries with empty
+    // deviceId/label (reachable now that the sidebar user bar opens this
+    // picker outside a call) — hide them rather than list unselectable rows.
     for (const dev of devs)
-      if (dev.deviceId !== "default")
+      if (dev.deviceId && dev.deviceId !== "default")
         opts.push({ id: dev.deviceId, title: dev.label });
 
     return opts;
   });
 
   function select(id: string) {
+    // Never persist a placeholder device id.
+    if (!id) return;
     const mMedia = media();
     if (id === "default" || mMedia.devices().find((d) => d.deviceId === id)) {
       // Can't setActiveMediaDevice to "default" for video, only audio — but it

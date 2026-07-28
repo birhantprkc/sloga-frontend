@@ -28,6 +28,7 @@ import MdClose from "@material-design-icons/svg/outlined/close.svg?component-sol
 
 import { useDevice } from "@revolt/common";
 import { SlogaWordmark } from "../../Home";
+import { UserFooter } from "../UserFooter";
 import { SidebarBase } from "./common";
 
 interface Props {
@@ -179,6 +180,7 @@ export const HomeSidebar = (props: Props) => {
           </Deferred>
         </List>
       </div>
+      <UserFooter />
     </SidebarBase>
   );
 };

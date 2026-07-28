@@ -47,6 +47,7 @@ import { ServerMemberSidebar } from "../../channels/text/MemberSidebar";
 
 import { parseChannelPassword } from "../../../lib/channelPassword";
 
+import { UserFooter } from "../UserFooter";
 import { SidebarBase } from "./common";
 
 interface Props {
@@ -289,6 +290,7 @@ export const ServerSidebar = (props: Props) => {
           />
         </div>
       </Show>
+      <UserFooter />
     </SidebarBase>
   );
 };

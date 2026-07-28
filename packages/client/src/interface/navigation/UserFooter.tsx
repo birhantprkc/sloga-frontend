@@ -1,0 +1,369 @@
+import { useFloating } from "solid-floating-ui";
+import { Show, createEffect, createSignal, on, onCleanup } from "solid-js";
+import { Portal } from "solid-js/web";
+
+import { autoUpdate, flip, offset, shift } from "@floating-ui/dom";
+import { Trans, useLingui } from "@lingui-solid/solid/macro";
+import { css } from "styled-system/css";
+import { styled } from "styled-system/jsx";
+
+import { useUser } from "@revolt/client";
+import { useModals } from "@revolt/modal";
+import { useVoice } from "@revolt/rtc";
+import { Avatar, UserStatus } from "@revolt/ui";
+import { IconButton } from "@revolt/ui/components/design";
+import { DeviceSection } from "@revolt/ui/components/features/voice/callCard/VoiceDeviceSelector";
+import { Symbol } from "@revolt/ui/components/utils/Symbol";
+
+import { UserMenu } from "./servers/UserMenu";
+
+/**
+ * Persistent quick-access bar pinned to the bottom of the channel sidebar:
+ * the signed-in user (click for the presence menu) plus mute / deafen
+ * toggles that work in and out of calls, per-toggle device pickers, and a
+ * shortcut into voice settings.
+ */
+export function UserFooter() {
+  const { t } = useLingui();
+  const user = useUser();
+  const voice = useVoice();
+  const { openModal } = useModals();
+
+  const [menuAnchor, setMenuAnchor] = createSignal<HTMLDivElement>();
+
+  /**
+   * In a live call the channel's voice permissions apply — mirror the call
+   * card's disabled states. Out of call the toggles are always available
+   * (they only flip the persisted preference).
+   */
+  const inCall = () => !!voice.room();
+
+  return (
+    <Base>
+      <UserArea ref={setMenuAnchor}>
+        <Avatar
+          size={32}
+          src={user()?.avatarURL}
+          fallback={user()?.username}
+          holepunch="bottom-right"
+          overlay={<UserStatus.Graphic status={user()?.presence} />}
+          interactive
+        />
+        <Show when={user()}>
+          <Names>
+            <DisplayName>{user()?.displayName}</DisplayName>
+            <Username>
+              {user()?.username}#{user()?.discriminator}
+            </Username>
+          </Names>
+        </Show>
+      </UserArea>
+      <UserMenu anchor={menuAnchor} placement="top-start" />
+
+      <IconButton
+        size="xs"
+        variant="standard"
+        onPress={() => voice.toggleMuteAnywhere()}
+        isDisabled={inCall() && !voice.speakingPermission}
+        style={
+          voice.microphone()
+            ? undefined
+            : { "--colour": "var(--md-sys-color-error)" }
+        }
+        use:floating={{
+          tooltip: {
+            placement: "top",
+            content:
+              inCall() && !voice.speakingPermission
+                ? t`Missing permission`
+                : voice.microphone()
+                  ? t`Mute`
+                  : t`Unmute`,
+          },
+        }}
+      >
+        <Show when={voice.microphone()} fallback={<Symbol>mic_off</Symbol>}>
+          <Symbol>mic</Symbol>
+        </Show>
+      </IconButton>
+      <DevicePopover
+        kind="audioinput"
+        tooltip={t`Change input device`}
+        openSettings={() =>
+          openModal({
+            type: "settings",
+            config: "user",
+            context: { page: "voice" },
+          })
+        }
+      />
+
+      <IconButton
+        size="xs"
+        variant="standard"
+        onPress={() => voice.toggleDeafenAnywhere()}
+        isDisabled={inCall() && !voice.listenPermission}
+        style={
+          voice.deafen() ? { "--colour": "var(--md-sys-color-error)" } : undefined
+        }
+        use:floating={{
+          tooltip: {
+            placement: "top",
+            content:
+              inCall() && !voice.listenPermission
+                ? t`Missing permission`
+                : voice.deafen()
+                  ? t`Undeafen`
+                  : t`Deafen`,
+          },
+        }}
+      >
+        <Show when={voice.deafen()} fallback={<Symbol>headset</Symbol>}>
+          <Symbol>headset_off</Symbol>
+        </Show>
+      </IconButton>
+      <DevicePopover
+        kind="audiooutput"
+        tooltip={t`Change output device`}
+        openSettings={() =>
+          openModal({
+            type: "settings",
+            config: "user",
+            context: { page: "voice" },
+          })
+        }
+      />
+
+      <IconButton
+        size="xs"
+        variant="standard"
+        onPress={() => openModal({ type: "settings", config: "user" })}
+        use:floating={{
+          tooltip: {
+            placement: "top",
+            content: t`Settings`,
+          },
+        }}
+      >
+        <Symbol>settings</Symbol>
+      </IconButton>
+    </Base>
+  );
+}
+
+/**
+ * Chevron next to a toggle that opens the matching device picker above the
+ * bar. Portalled to #floating so the sidebar's overflow can't clip it.
+ */
+function DevicePopover(props: {
+  kind: "audioinput" | "audiooutput";
+  tooltip: string;
+  openSettings: () => void;
+}) {
+  const [open, setOpen] = createSignal(false);
+  const [anchor, setAnchor] = createSignal<HTMLButtonElement>();
+  const [popover, setPopover] = createSignal<HTMLDivElement>();
+
+  const position = useFloating(anchor, popover, {
+    placement: "top-end",
+    whileElementsMounted: autoUpdate,
+    middleware: [offset(8), flip(), shift({ padding: 8 })],
+  });
+
+  function onPointerDown(event: PointerEvent) {
+    const target = event.target as Node;
+    if (anchor()?.contains(target) || popover()?.contains(target)) return;
+    setOpen(false);
+  }
+
+  // Only listen while the popover is open; cleanup covers close and unmount.
+  createEffect(
+    on(open, (isOpen) => {
+      if (isOpen) {
+        document.addEventListener("pointerdown", onPointerDown);
+        onCleanup(() =>
+          document.removeEventListener("pointerdown", onPointerDown),
+        );
+      }
+    }),
+  );
+
+  return (
+    <>
+      <button
+        class={chevron}
+        ref={setAnchor}
+        onClick={() => setOpen((v) => !v)}
+        use:floating={{
+          tooltip: {
+            placement: "top",
+            content: props.tooltip,
+          },
+        }}
+      >
+        <Symbol size={16}>{open() ? "expand_more" : "expand_less"}</Symbol>
+      </button>
+      <Portal mount={document.getElementById("floating")!}>
+        <Show when={open()}>
+          <PopoverBase
+            ref={setPopover}
+            style={{
+              position: position.strategy,
+              top: `${position.y ?? 0}px`,
+              left: `${position.x ?? 0}px`,
+            }}
+          >
+            <DeviceSection kind={props.kind} />
+            <PopoverDivider />
+            <SettingsRow
+              onClick={() => {
+                setOpen(false);
+                props.openSettings();
+              }}
+            >
+              <Trans>Voice Settings</Trans>
+              <Symbol size={18}>settings</Symbol>
+            </SettingsRow>
+          </PopoverBase>
+        </Show>
+      </Portal>
+    </>
+  );
+}
+
+const Base = styled("div", {
+  base: {
+    flexShrink: 0,
+    marginTop: "auto",
+
+    display: "flex",
+    alignItems: "center",
+    gap: "2px",
+    padding: "var(--gap-sm) var(--gap-md)",
+
+    background: "var(--md-sys-color-surface-container)",
+    borderTop: "1px solid var(--md-sys-color-outline-variant)",
+  },
+});
+
+const UserArea = styled("div", {
+  base: {
+    flexGrow: 1,
+    minWidth: 0,
+
+    display: "flex",
+    alignItems: "center",
+    gap: "var(--gap-md)",
+    padding: "var(--gap-sm)",
+
+    cursor: "pointer",
+    userSelect: "none",
+    borderRadius: "var(--borderRadius-md)",
+    transition: "var(--transitions-fast) background",
+
+    "&:hover": {
+      background: "var(--md-sys-color-surface-container-high)",
+    },
+  },
+});
+
+const Names = styled("div", {
+  base: {
+    minWidth: 0,
+    display: "flex",
+    flexDirection: "column",
+  },
+});
+
+const DisplayName = styled("span", {
+  base: {
+    fontSize: "0.85rem",
+    fontWeight: 600,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+});
+
+const Username = styled("span", {
+  base: {
+    fontSize: "0.7rem",
+    opacity: 0.7,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+});
+
+const chevron = css({
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+
+  width: "16px",
+  height: "32px",
+  flexShrink: 0,
+
+  border: "none",
+  background: "transparent",
+  cursor: "pointer",
+  borderRadius: "var(--borderRadius-md)",
+  color: "var(--md-sys-color-on-surface-variant)",
+  fill: "var(--md-sys-color-on-surface-variant)",
+  transition: "var(--transitions-fast) background",
+
+  "&:hover": {
+    background: "var(--md-sys-color-surface-container-high)",
+  },
+});
+
+const PopoverBase = styled("div", {
+  base: {
+    zIndex: 100,
+
+    display: "flex",
+    flexDirection: "column",
+    gap: "var(--gap-sm)",
+
+    padding: "var(--gap-md)",
+    maxHeight: "min(420px, 60vh)",
+    minWidth: "260px",
+    maxWidth: "320px",
+    overflowY: "auto",
+
+    borderRadius: "var(--borderRadius-md)",
+    background: "var(--md-sys-color-surface-container-highest)",
+    color: "var(--md-sys-color-on-surface)",
+    boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
+  },
+});
+
+const PopoverDivider = styled("div", {
+  base: {
+    height: "1px",
+    flexShrink: 0,
+    background: "var(--md-sys-color-outline-variant)",
+    marginInline: "var(--gap-sm)",
+  },
+});
+
+const SettingsRow = styled("div", {
+  base: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "var(--gap-md)",
+
+    padding: "var(--gap-sm) var(--gap-md)",
+    fontSize: "0.85rem",
+    borderRadius: "var(--borderRadius-md)",
+    cursor: "pointer",
+    userSelect: "none",
+
+    transition: "background 0.1s",
+
+    "&:hover": {
+      background: "var(--md-sys-color-surface-container-high)",
+    },
+  },
+});

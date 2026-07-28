@@ -619,6 +619,10 @@ msgstr "Also read translated captions aloud using your device's voice. Runs on t
 msgid "Always Ask for Screen Share Quality"
 msgstr "Always Ask for Screen Share Quality"
 
+#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+msgid "Always on. Your voice and video are end-to-end encrypted on this device whenever everyone in the call supports it."
+msgstr "Always on. Your voice and video are end-to-end encrypted on this device whenever everyone in the call supports it."
+
 #: components/app/interface/settings/user/Language.tsx
 msgid "American (MM/DD/YYYY)"
 msgstr "American (MM/DD/YYYY)"
@@ -1064,6 +1068,10 @@ msgstr "Change Avatar"
 msgid "Change identity on {0}"
 msgstr "Change identity on {0}"
 
+#: src/interface/navigation/UserFooter.tsx
+msgid "Change input device"
+msgstr "Change input device"
+
 #: components/modal/modals/EditEmail.tsx
 msgid "Change login email"
 msgstr "Change login email"
@@ -1079,6 +1087,10 @@ msgstr "Change Nickname"
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Change other members' nicknames"
 msgstr "Change other members' nicknames"
+
+#: src/interface/navigation/UserFooter.tsx
+msgid "Change output device"
+msgstr "Change output device"
 
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Change own avatar"
@@ -1688,6 +1700,7 @@ msgstr "Database error, please contact support. ({0})"
 msgid "Date format"
 msgstr "Date format"
 
+#: src/interface/navigation/UserFooter.tsx
 #: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx
 #: components/app/interface/settings/user/notifications/Sounds.tsx
 msgid "Deafen"
@@ -2092,8 +2105,8 @@ msgid "Encrypt this group"
 msgstr "Encrypt this group"
 
 #: components/app/interface/settings/user/SecurityAndPrivacy.tsx
-msgid "Encrypt your voice and video on this device. Everyone in a call must have this on; web participants can't join encrypted, and server features that need the raw audio or video (recording, transcoding) are turned off in encrypted calls."
-msgstr "Encrypt your voice and video on this device. Everyone in a call must have this on; web participants can't join encrypted, and server features that need the raw audio or video (recording, transcoding) are turned off in encrypted calls."
+#~ msgid "Encrypt your voice and video on this device. Everyone in a call must have this on; web participants can't join encrypted, and server features that need the raw audio or video (recording, transcoding) are turned off in encrypted calls."
+#~ msgstr "Encrypt your voice and video on this device. Everyone in a call must have this on; web participants can't join encrypted, and server features that need the raw audio or video (recording, transcoding) are turned off in encrypted calls."
 
 #: components/ui/components/features/voice/callCard/VoiceCallCardStatus.tsx
 msgid "Encrypted · unverified"
@@ -3370,6 +3383,7 @@ msgstr "Move members between voice channels"
 msgid "Multi-factor authentication is already enabled for this account."
 msgstr "Multi-factor authentication is already enabled for this account."
 
+#: src/interface/navigation/UserFooter.tsx
 #: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx
 #: components/app/menus/UserContextMenu.tsx
 #: components/app/interface/settings/user/notifications/Sounds.tsx
@@ -4706,6 +4720,10 @@ msgstr "Set a password that users must enter before viewing this channel."
 msgid "Set channel password"
 msgstr "Set channel password"
 
+#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+msgid "Set up secure device keys to encrypt your calls. Web participants can't join encrypted calls, and server features that need the raw audio or video (recording, transcoding) are turned off in encrypted calls."
+msgstr "Set up secure device keys to encrypt your calls. Web participants can't join encrypted calls, and server features that need the raw audio or video (recording, transcoding) are turned off in encrypted calls."
+
 #: components/modal/modals/CustomStatus.tsx
 msgid "Set your status"
 msgstr "Set your status"
@@ -4714,6 +4732,7 @@ msgstr "Set your status"
 msgid "Setting you up as the owner…"
 msgstr "Setting you up as the owner…"
 
+#: src/interface/navigation/UserFooter.tsx
 #: components/modal/modals/ServerInfo.tsx
 #: components/app/interface/channels/text/SoftResMessage.tsx
 msgid "Settings"
@@ -5510,6 +5529,7 @@ msgstr "Unblock user"
 msgid "Uncaught Stoat error: {0}"
 msgstr "Uncaught Stoat error: {0}"
 
+#: src/interface/navigation/UserFooter.tsx
 #: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx
 #: components/app/interface/settings/user/notifications/Sounds.tsx
 msgid "Undeafen"
@@ -5535,6 +5555,7 @@ msgstr "Unmark as Mature"
 msgid "Unmark this channel as mature?"
 msgstr "Unmark this channel as mature?"
 
+#: src/interface/navigation/UserFooter.tsx
 #: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx
 #: components/app/interface/settings/user/notifications/Sounds.tsx
 msgid "Unmute"
@@ -5779,6 +5800,10 @@ msgstr "Voice Channel"
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "Voice Processing"
 msgstr "Voice Processing"
+
+#: src/interface/navigation/UserFooter.tsx
+msgid "Voice Settings"
+msgstr "Voice Settings"
 
 #: components/app/menus/UserContextMenu.tsx
 msgid "Volume"
@@ -6084,8 +6109,8 @@ msgid "Your account has been verified!"
 msgstr "Your account has been verified!"
 
 #: components/app/interface/settings/user/SecurityAndPrivacy.tsx
-msgid "Your calls negotiate end-to-end encryption on this device when everyone in the call supports it."
-msgstr "Your calls negotiate end-to-end encryption on this device when everyone in the call supports it."
+#~ msgid "Your calls negotiate end-to-end encryption on this device when everyone in the call supports it."
+#~ msgstr "Your calls negotiate end-to-end encryption on this device when everyone in the call supports it."
 
 #: components/modal/modals/E2EEVerify.tsx
 msgid "your contact"

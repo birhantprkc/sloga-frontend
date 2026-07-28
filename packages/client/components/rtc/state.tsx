@@ -767,11 +767,18 @@ class Voice {
       this.#startPushToTalk(room);
       this.#startVAD(room);
       const isAfk = channel.name?.toLowerCase() === "afk";
+      // Honour the persisted pre-call state (the sidebar user bar makes
+      // muting/deafening before a call a first-class action): a deafened or
+      // explicitly muted user must never join with a hot microphone, even in
+      // open-mic mode. Only reconcile micOn against the actual track when we
+      // asked for it — a deafen/AFK-forced "off" is not a mute preference.
+      const wantMic =
+        !isAfk && !this.#settings.deafen && this.#settings.micOn;
       if (this.speakingPermission)
         room.localParticipant
-          .setMicrophoneEnabled(isAfk ? false : (this.#settings.openMic || this.#settings.micOn))
+          .setMicrophoneEnabled(wantMic)
           .then((track) => {
-            this.#settings.micOn = track != null;
+            if (wantMic) this.#settings.micOn = track != null;
             if (!isAfk && track?.audioTrack) {
               const gain = this.#settings.microphoneGain ?? 100;
               // Processor/E2EE ordering (§4.3) — DO NOT REORDER: denoise
@@ -1345,6 +1352,42 @@ class Voice {
     } catch (e) {
       this.onErr(e);
     }
+  }
+
+  /**
+   * Whether the "anywhere" toggles should drive the live room. While still
+   * CONNECTING the room's mic state is not authoritative (the `connected`
+   * handler applies the persisted settings), so route writes to the settings
+   * instead — the join path picks them up.
+   */
+  #liveToggleReady() {
+    return this.room() && this.state() !== "CONNECTING";
+  }
+
+  /**
+   * Mute toggle for persistent UI (the sidebar user bar): applies to the live
+   * call when connected, otherwise flips the persisted preference so the next
+   * call starts in the chosen state. {@link toggleMute} throws without a room.
+   */
+  toggleMuteAnywhere() {
+    if (this.#liveToggleReady()) return this.toggleMute();
+    if (this.#settings.deafen) {
+      // Mirror toggleMute's in-call behaviour: unmuting while deafened
+      // undeafens and re-enables the microphone.
+      this.#settings.deafen = false;
+      this.#settings.micOn = true;
+      this.sound.playSound("undeafen");
+      return;
+    }
+    this.#settings.micOn = !this.#settings.micOn;
+    this.sound.playSound(this.#settings.micOn ? "unmute" : "mute");
+  }
+
+  /** Deafen counterpart to {@link toggleMuteAnywhere}. */
+  toggleDeafenAnywhere() {
+    if (this.#liveToggleReady()) return this.toggleDeafen();
+    this.#settings.deafen = !this.#settings.deafen;
+    this.sound.playSound(this.#settings.deafen ? "deafen" : "undeafen");
   }
 
   async toggleCamera() {
