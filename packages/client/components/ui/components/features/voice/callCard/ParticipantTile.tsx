@@ -93,6 +93,15 @@ export function ParticipantTile(props: TileProps) {
   };
   const isSpeaking = useIsSpeaking(participant);
 
+  /**
+   * Whether THIS tile's video publication is subscribed. Only consulted for
+   * the controlled screenshare (it gates the capture surface below); every
+   * tile still tracks it because the callback is also the mount-time report
+   * of the current state, and a controlled tile can mount already
+   * unsubscribed.
+   */
+  const [feedSubscribed, setFeedSubscribed] = createSignal(true);
+
   const [quality, setQuality] = createSignal<ConnectionQuality>(
     participant.connectionQuality,
   );
@@ -270,9 +279,22 @@ export function ParticipantTile(props: TileProps) {
                participant strip would leave a controller injecting against a
                still image. An immediate hard auto-pause, controller-side, not
                only a sharer-side concern. Wiring the callback here keeps the
-               `dist/`-shipped submodule untouched. */
+               `dist/`-shipped submodule untouched.
+
+               GATED on this tile being the controlled screenshare: the
+               callback is wired on EVERY tile's VideoTrack, so without the
+               gate any camera tile scrolling out of view in a 3+-person call
+               would kill the live capture — a tile can only ever speak for
+               its OWN feed. The stop itself rides the `feedSubscribed` gate
+               on the capture surface's `<Show>` below: unmounting runs the
+               surface's own generation-checked cleanup (release-all
+               included), and a resubscribe remounts it with a fresh capture
+               instead of leaving a dead surface that discards every event. */
             onSubscriptionStatusChanged={(subscribed: boolean) => {
-              if (!subscribed) voice.remoteControl.onFeedLost("unsubscribed");
+              setFeedSubscribed(subscribed);
+              if (!subscribed && isScreenShare() && controlling()) {
+                voice.remoteControl.onFeedLost("unsubscribed");
+              }
             }}
             ref={videoRef}
             on:resize={() => {
@@ -328,8 +350,12 @@ export function ParticipantTile(props: TileProps) {
             `Overlay` is `gridArea: "1/1"` with no `pointer-events: none` and
             no `z-index`. Mounted only while a session is armed on THIS
             participant's screenshare, so hover chrome and click-to-focus are
-            untouched the rest of the time. */}
-        <Show when={isScreenShare() && controlling()}>
+            untouched the rest of the time. `feedSubscribed` is part of the
+            condition so losing the feed unmounts the surface (its cleanup
+            releases everything held) and a resubscribe REMOUNTS it with a
+            fresh capture — the surface can only ever capture against video
+            that is actually flowing. */}
+        <Show when={isScreenShare() && controlling() && feedSubscribed()}>
           <RemoteControlCapture
             video={videoRef}
             videoDims={videoDims}

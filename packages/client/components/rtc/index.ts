@@ -12,6 +12,7 @@ export type { IncomingCall } from "./incomingCall";
 export {
   REMOTE_CONTROL_CLAIM,
   RemoteControl,
+  classifyKey,
   normalizeToContentBox,
 } from "./remoteControl";
 export type {

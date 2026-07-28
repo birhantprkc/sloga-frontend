@@ -55,8 +55,25 @@ const STREAM_LOSSY = 2;
  */
 const KEYFRAME_INTERVAL_MS = 250;
 
-/** Sharer-side grant heartbeat. Matches the server's 8 s / 16 s grace. */
-const HEARTBEAT_INTERVAL_MS = 8_000;
+/**
+ * Sharer-side grant heartbeat cadence. The server's grace is 8 s per beat
+ * (16 s at accept), and each beat RESETS the deadline to now + 8 s rather
+ * than extending it — so a cadence equal to the grace is a knife edge where
+ * one late tick expires the grant mid-session. Half the grace means a whole
+ * tick can be lost (timer jitter, event-loop stall, one failed POST) and the
+ * next one still lands inside the window. The route's bucket is 30 per 10 s.
+ */
+const HEARTBEAT_INTERVAL_MS = 4_000;
+
+/**
+ * How long heartbeats may keep the grant alive BEFORE the session has
+ * authenticated. Covers the sharer reading the native `RcArm` dialog (native
+ * caps it at 60 s) plus handshake-to-first-opened-packet slack. After this,
+ * an unauthenticated session stops being heartbeated and the server's 8 s /
+ * 16 s grace destroys the grant — see #startHeartbeat for why that gate
+ * exists at all.
+ */
+const HEARTBEAT_AUTH_GRACE_MS = 75_000;
 
 /**
  * Client-side offer expiry, matching the server's shipped
@@ -79,7 +96,7 @@ export const REMOTE_CONTROL_CLAIM =
 // The letterbox-aware coordinate mapping lives in its own dependency-free
 // leaf so Node's test runner can exercise it without Solid, LiveKit or the
 // path aliases — see remoteControlMapping.ts and its spec.
-export { normalizeToContentBox } from "./remoteControlMapping";
+export { classifyKey, normalizeToContentBox } from "./remoteControlMapping";
 
 type Invoke = (command: string, args?: unknown) => Promise<unknown>;
 
@@ -855,6 +872,13 @@ export class RemoteControl {
     const invoke = tauriInvoke();
     const sharing = this.sharing();
     if (!invoke || !sharing) return false;
+    // The grant was minted at ACCEPT with 16 s of grace, and `e2ee_rc_start`
+    // blocks on a human reading the `RcArm` dialog for up to 60 s. The
+    // heartbeat must therefore already be running while the dialog is up, or
+    // every sharer who actually reads it comes back to a reaped grant and a
+    // controller whose packets are silently dropped. Pre-authentication
+    // beats are bounded by HEARTBEAT_AUTH_GRACE_MS — see #startHeartbeat.
+    this.#startHeartbeat(args.grantId);
     try {
       const started = (await invoke("e2ee_rc_start", {
         rcSessionId: sharing.rcSessionId,
@@ -874,11 +898,14 @@ export class RemoteControl {
           sas: started.sas,
         });
       });
-      this.#startHeartbeat(args.grantId);
       return true;
     } catch (err) {
       // Declined, timed out, replayed, peer key rejected — all terminal, and
       // the offer is spent either way. Journalled natively; surfaced here.
+      // Stop the pre-arm heartbeat NOW rather than letting its next tick
+      // notice `sharing` is gone — every extra beat extends a grant whose
+      // session will never authenticate.
+      this.#stopHeartbeat();
       this.#setError(String(err));
       this.#setSharing(undefined);
       return false;
@@ -926,27 +953,42 @@ export class RemoteControl {
   }
 
   /**
-   * Keep the SFU capability alive — but ONLY while native reports the
-   * session has actually authenticated.
+   * Keep the SFU capability alive — but once the session has had its chance
+   * to authenticate, ONLY while native reports it actually has.
    *
-   * That condition is the whole point. The grant is minted at accept, before
-   * any packet has ever opened, and it is per-IDENTITY rather than per-topic,
-   * so "accept an offer, then let the handshake fail" would otherwise be a
-   * supported way to acquire a data-publish capability reaching every topic
-   * in the room — including `"captions"` — without ever controlling
-   * anything. Withholding the heartbeat lets the shipped 8 s / 16 s grace
-   * destroy it with no new backend work.
+   * The authenticated gate is the whole point. The grant is minted at
+   * accept, before any packet has ever opened, and it is per-IDENTITY rather
+   * than per-topic, so "accept an offer, then let the handshake fail" would
+   * otherwise be a supported way to acquire a data-publish capability
+   * reaching every topic in the room — including `"captions"` — without ever
+   * controlling anything. Withholding the heartbeat lets the shipped
+   * 8 s / 16 s grace destroy it with no new backend work.
+   *
+   * But the gate cannot be unconditional, because authentication is on the
+   * far side of a HUMAN: the sharer reads the `RcArm` dialog (60 s cap),
+   * then the controller's first packet has to open. So beats are allowed
+   * before authentication for a fixed window from accept
+   * (HEARTBEAT_AUTH_GRACE_MS), and the strict gate takes over after it. The
+   * accept-then-fail capability therefore lives at most ~grace + 16 s, and
+   * only while THIS renderer keeps beating for it — a sharer whose client
+   * dies stops extending anything, and an arm that fails, is declined, or
+   * times out stops the heartbeat on the spot.
    */
   #startHeartbeat(grantId: string) {
     this.#stopHeartbeat();
+    const graceUntil = Date.now() + HEARTBEAT_AUTH_GRACE_MS;
     this.#heartbeat = setInterval(() => {
       void (async () => {
-        const sharing = this.sharing();
         const ctx = this.#heartbeatCtx;
-        if (!sharing || !ctx) return this.#stopHeartbeat();
+        if (!this.sharing() || !ctx) return this.#stopHeartbeat();
         await this.refreshStatus();
+        // refreshStatus reconciles against native and may have ended the
+        // session (and this heartbeat) itself — re-read before extending a
+        // grant that endSharing is in the middle of releasing.
+        const sharing = this.sharing();
+        if (!sharing) return;
         const session = this.status()?.session;
-        if (!session || !session.authenticated) return;
+        if (!session?.authenticated && Date.now() > graceUntil) return;
         await fetch(
           `${ctx.apiBase}/channels/${sharing.channelId}/control/heartbeat`,
           {

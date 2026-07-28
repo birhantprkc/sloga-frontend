@@ -49,3 +49,41 @@ export function normalizeToContentBox(
   if (x < 0 || x > 1 || y < 0 || y > 1) return undefined;
   return { x, y };
 }
+
+/**
+ * §3's "two paths" decision for one keyboard event: does it travel as TEXT
+ * (`beforeinput` → `KEYEVENTF_UNICODE`) or as a SCAN CODE?
+ *
+ * A scan code resolves through the SHARER'S keyboard layout, so it is right
+ * for positional semantics and wrong for textual intent — a QWERTY
+ * controller pressing `KeyZ` types `w` on an AZERTY sharer, and accented
+ * characters, dead-key composition and IME candidates are unreachable by
+ * scan code at all. So anything that produces a character goes by text, and
+ * control/navigation/modifier keys and accelerator chords go by scan code.
+ *
+ * `"text"` — `key` is a single character and no accelerator modifier is
+ * down. AltGr counts as text, not as an accelerator: Windows browsers report
+ * it as Ctrl+Alt, and it exists precisely to produce characters (AZERTY
+ * AltGr+E is `€`).
+ *
+ * `"scan"` — everything else: named keys (`Enter`, `Backspace`, arrows,
+ * function keys, the modifiers themselves) and Ctrl/Alt/Meta chords, which
+ * must arrive as the chord (`Ctrl+C`), never as its character.
+ *
+ * Composition (`isComposing`, `Dead`, `Process`) is deliberately NOT this
+ * function's concern — the capture surface skips those events entirely and
+ * lets `compositionend` deliver the composed text.
+ */
+export function classifyKey(event: {
+  key: string;
+  ctrlKey: boolean;
+  altKey: boolean;
+  metaKey: boolean;
+  /** `getModifierState("AltGraph")` where available. */
+  altGraph?: boolean;
+}): "text" | "scan" {
+  if ([...event.key].length !== 1) return "scan";
+  if (event.altGraph || (event.ctrlKey && event.altKey)) return "text";
+  if (event.ctrlKey || event.altKey || event.metaKey) return "scan";
+  return "text";
+}

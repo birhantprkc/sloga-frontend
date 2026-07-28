@@ -11,7 +11,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { normalizeToContentBox } from "./remoteControlMapping.ts";
+import { classifyKey, normalizeToContentBox } from "./remoteControlMapping.ts";
 
 const rect = (left: number, top: number, width: number, height: number) => ({
   left,
@@ -110,4 +110,65 @@ test("returns undefined rather than NaN before the first resize event", () => {
     normalizeToContentBox(rect(0, 0, 0, 0), HD, at(0, 0)),
     undefined,
   );
+});
+
+// -- classifyKey: §3's "two paths" decision ---------------------------------
+
+const key = (
+  k: string,
+  mods: Partial<{
+    ctrlKey: boolean;
+    altKey: boolean;
+    metaKey: boolean;
+    altGraph: boolean;
+  }> = {},
+) => ({
+  key: k,
+  ctrlKey: false,
+  altKey: false,
+  metaKey: false,
+  ...mods,
+});
+
+test("plain and shifted printables travel as text", () => {
+  // A scan code resolves through the SHARER'S layout: QWERTY KeyZ types `w`
+  // on an AZERTY sharer. Anything that produces a character must go by text.
+  assert.equal(classifyKey(key("a")), "text");
+  assert.equal(classifyKey(key("A")), "text"); // shift is not an accelerator
+  assert.equal(classifyKey(key(" ")), "text");
+  assert.equal(classifyKey(key("é")), "text");
+  assert.equal(classifyKey(key("€")), "text");
+});
+
+test("accelerator chords travel as scan codes, never as their character", () => {
+  // The sharer must receive Ctrl+C, not a `c`.
+  assert.equal(classifyKey(key("c", { ctrlKey: true })), "scan");
+  assert.equal(classifyKey(key("e", { altKey: true })), "scan"); // menu accelerator
+  assert.equal(classifyKey(key("l", { metaKey: true })), "scan");
+});
+
+test("AltGr is text, not an accelerator", () => {
+  // Windows browsers report AltGr as Ctrl+Alt, and it exists precisely to
+  // produce characters (AZERTY AltGr+E is €) — both signal shapes count.
+  assert.equal(classifyKey(key("€", { ctrlKey: true, altKey: true })), "text");
+  assert.equal(classifyKey(key("€", { altGraph: true })), "text");
+});
+
+test("named keys travel as scan codes", () => {
+  for (const named of [
+    "Enter",
+    "Backspace",
+    "Tab",
+    "Escape",
+    "ArrowLeft",
+    "Home",
+    "F5",
+    "Shift",
+    "Control",
+    "Alt",
+    "Delete",
+    "Unidentified",
+  ]) {
+    assert.equal(classifyKey(key(named)), "scan", named);
+  }
 });

@@ -2,7 +2,7 @@ import { onCleanup, onMount } from "solid-js";
 
 import { styled } from "styled-system/jsx";
 
-import { normalizeToContentBox, useVoice } from "@revolt/rtc";
+import { classifyKey, normalizeToContentBox, useVoice } from "@revolt/rtc";
 import { useState } from "@revolt/state";
 
 /**
@@ -20,9 +20,9 @@ import { useState } from "@revolt/state";
  * The symptom is the nastiest kind: control looks granted, the sharer's
  * indicator lights up, and nothing moves.
  *
- * The fix is `zIndex: 3` here, which beats `Overlay` (auto) and the theater
- * chrome (`ImmersiveControls` is 4 but sits outside the tile). Deliberately
- * NOT `pointerEvents: "none"` on `Overlay` — that is the obvious fix and it
+ * The fix is a `zIndex` on the surface — 20, cleared against every overlay
+ * the call card paints; the full comparison table lives on `Surface` below.
+ * Deliberately NOT `pointerEvents: "none"` on `Overlay` — that is the obvious fix and it
  * silently kills the `use:floating` tooltip on the muted-participant icon
  * for every tile in every call, which is a real regression bought for
  * nothing since `z-index` alone is sufficient. `ParticipantCaption` already
@@ -47,6 +47,24 @@ export function RemoteControlCapture(props: {
   const state = useState();
   const rc = voice.remoteControl;
   let surface: HTMLDivElement | undefined;
+  /**
+   * §3's TEXT path needs an editable element: `beforeinput` and composition
+   * events only ever fire on one, and they are the only source of textual
+   * intent — a scan code resolves through the SHARER'S layout (QWERTY `KeyZ`
+   * types `w` on AZERTY) and can never produce an accent, a dead-key
+   * composition or an IME candidate. This invisible input is kept focused
+   * while capturing; printable keydowns are deliberately NOT
+   * `preventDefault`ed so the browser turns them into `beforeinput` here
+   * (and IME composition into `compositionend`), which is forwarded as a
+   * `text` event and injected natively via `KEYEVENTF_UNICODE`.
+   */
+  let textSink: HTMLInputElement | undefined;
+  /**
+   * One-shot: the controller's reserved push-to-talk key was pressed and
+   * would also produce a character through the sink. The reservation has to
+   * hold on BOTH paths, and `beforeinput` cannot see `event.code`.
+   */
+  let skipNextInsert = false;
 
   /**
    * Map a client point to normalized `[0,1]` coordinates of the video's
@@ -115,7 +133,10 @@ export function RemoteControlCapture(props: {
     swallow(event);
     const at = normalize(event);
     if (!at) return;
-    surface?.focus();
+    // Focus the TEXT SINK, not the surface: keyboard forwarding is
+    // window-level either way, but only a focused editable turns printable
+    // keys into the `beforeinput`/composition events the text path rides.
+    textSink?.focus({ preventScroll: true });
     // A drag that leaves this small tile would otherwise deliver `pointerup`
     // to whatever is underneath, leaving the sharer's mouse button
     // PHYSICALLY DOWN and rubber-band-selecting their desktop indefinitely.
@@ -206,11 +227,83 @@ export function RemoteControlCapture(props: {
     // controller's own microphone. Applied unconditionally rather than only
     // while push-to-talk is on, because the setting can flip mid-session and
     // the native arm is lazy.
-    if (event.code === state.voice.pushToTalkKey) return;
+    if (event.code === state.voice.pushToTalkKey) {
+      // A printable PTT key would still reach the sharer through the sink's
+      // `beforeinput` — flag the insertion for suppression there. Only when
+      // it is actually going to produce one, or the flag would swallow the
+      // next legitimate character instead.
+      skipNextInsert =
+        down &&
+        classifyKey({
+          key: event.key,
+          ctrlKey: event.ctrlKey,
+          altKey: event.altKey,
+          metaKey: event.metaKey,
+          altGraph: event.getModifierState("AltGraph"),
+        }) === "text";
+      return;
+    }
+
+    // Composition machinery owns these events: a scan code forwarded
+    // mid-composition double-types on the sharer, and `preventDefault` here
+    // would abort the very composition the text path exists to deliver.
+    // `compositionend` below is where the result comes out.
+    if (event.isComposing || event.key === "Dead" || event.key === "Process") {
+      return;
+    }
+
+    // §3: two paths, decided per event. TEXT keys are left alone (no
+    // preventDefault — that would suppress the `beforeinput` they exist to
+    // become) and are NOT forwarded as scan codes; SCAN keys — control,
+    // navigation, modifiers, accelerator chords — are swallowed and
+    // forwarded positionally. `stopPropagation` on both, so Sloga's own
+    // delegated handlers never react to remote-bound input.
+    const path = classifyKey({
+      key: event.key,
+      ctrlKey: event.ctrlKey,
+      altKey: event.altKey,
+      metaKey: event.metaKey,
+      altGraph: event.getModifierState("AltGraph"),
+    });
+    if (path === "text") {
+      event.stopPropagation();
+      return;
+    }
 
     event.preventDefault();
     event.stopPropagation();
     rc.queue({ kind: "key", code: event.code, down, repeat: event.repeat });
+  }
+
+  /**
+   * The text path's delivery point. Window-level capture like the key
+   * handlers — focus can drift off the sink, and wherever a printable lands
+   * while a session is live, it is remote-bound, not local.
+   */
+  function onBeforeInput(event: InputEvent) {
+    // Mid-composition updates are mutable — the candidate can change until
+    // commit — and are not cancelable in Chromium anyway. `compositionend`
+    // forwards the final text exactly once.
+    if (event.inputType === "insertCompositionText") return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.inputType !== "insertText" || !event.data) return;
+    if (skipNextInsert) {
+      skipNextInsert = false;
+      return;
+    }
+    // Native refuses a WHOLE batch whose text run exceeds MAX_TEXT_LEN
+    // (1024 bytes) — clamp far below it. A single beforeinput carries one
+    // keystroke's worth of text; anything longer is not typing.
+    rc.queue({ kind: "text", text: event.data.slice(0, 256) });
+  }
+
+  function onCompositionEnd(event: CompositionEvent) {
+    // The committed composition accumulated in the sink (insertCompositionText
+    // is not cancelable) — clear it so the next composition starts clean.
+    if (textSink) textSink.value = "";
+    if (!event.data) return;
+    rc.queue({ kind: "text", text: event.data.slice(0, 256) });
   }
 
   onMount(() => {
@@ -243,6 +336,11 @@ export function RemoteControlCapture(props: {
     // keybinds regardless; this is what actually forwards the keystrokes.
     window.addEventListener("keydown", keydown, true);
     window.addEventListener("keyup", keyup, true);
+    window.addEventListener("beforeinput", onBeforeInput as never, true);
+    window.addEventListener("compositionend", onCompositionEnd as never, true);
+    // Printables only become `beforeinput` inside an editable — put focus
+    // there from the start, not only on the first click.
+    textSink?.focus({ preventScroll: true });
 
     // Alt+Tab delivers a keydown for Alt and never a keyup, so without these
     // the sharer is left with Alt latched and every subsequent letter is an
@@ -263,6 +361,12 @@ export function RemoteControlCapture(props: {
       surface?.removeEventListener("auxclick", swallow, true);
       window.removeEventListener("keydown", keydown, true);
       window.removeEventListener("keyup", keyup, true);
+      window.removeEventListener("beforeinput", onBeforeInput as never, true);
+      window.removeEventListener(
+        "compositionend",
+        onCompositionEnd as never,
+        true,
+      );
       window.removeEventListener("blur", releaseAll);
       document.removeEventListener("visibilitychange", releaseAll);
       surface?.removeEventListener("pointercancel", releaseAll);
@@ -285,13 +389,47 @@ export function RemoteControlCapture(props: {
       // No visible affordance beyond the cursor: anything painted here sits
       // on top of the desktop the controller is trying to read.
       style={{ cursor: "crosshair" }}
-    />
+    >
+      <TextSink
+        ref={textSink}
+        type="text"
+        autocomplete="off"
+        spellcheck={false}
+        tabIndex={-1}
+        aria-hidden="true"
+      />
+    </Surface>
   );
 }
+
+/**
+ * Invisible, but a real focusable editable — `display: none` or
+ * `visibility: hidden` would make it unfocusable and kill the text path.
+ * `pointerEvents: none` so every click still hits the surface. The IME
+ * candidate window anchors to its top-left corner; a recorded cosmetic
+ * trade, not a bug.
+ */
+const TextSink = styled("input", {
+  base: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    width: "1px",
+    height: "1px",
+    opacity: 0,
+    border: "none",
+    padding: 0,
+    pointerEvents: "none",
+  },
+});
 
 const Surface = styled("div", {
   base: {
     gridArea: "1/1",
+    // Anchor for the absolutely-positioned TextSink. Stacking is unchanged:
+    // a grid item with a z-index already forms a stacking context, so
+    // becoming positioned does not create a new comparison.
+    position: "relative",
     width: "100%",
     height: "100%",
     /**
