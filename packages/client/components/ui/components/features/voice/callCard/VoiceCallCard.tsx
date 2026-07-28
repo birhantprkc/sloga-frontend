@@ -174,11 +174,30 @@ export function VoiceCallCardContext(props: { children: JSX.Element }) {
       <Portal ref={document.getElementById("floating")! as HTMLDivElement}>
         <Float ref={ref} mode={mode()} onPointerDown={mouseDown}>
           <Switch>
-            <Match when={mode()}>
+            {/* PiP is BLOCKED while this user is CONTROLLING someone, and it
+                is a different path rather than a smaller one: `MiniVideo`
+                never goes through `ParticipantTile`, so no capture surface
+                exists there at all, and it uses `object-fit: cover` — part of
+                the shared screen is CROPPED AWAY while the controller
+                believes they can see all of it, so clicking where they think
+                the edge is lands somewhere else entirely. PiP is entered by
+                an effect when the user navigates away from the call's
+                channel, not by a deliberate action, so this is the one
+                decision point.
+
+                Keyed on `controlling()` rather than on the capture surface
+                being mounted: the surface's lifetime is exactly what PiP
+                destroys, so gating on it would lift the block at the moment
+                it is needed. */}
+            <Match when={mode() && !voice.remoteControl.controlling()}>
               <VoiceCallCardPiP />
             </Match>
-            <Match when={channel()}>
-              <VoiceCallCard channel={channel()!} />
+            {/* `?? voice.channel()` so the docked card still renders for a
+                controller who has navigated away from the call's channel —
+                without it both arms fail (PiP suppressed, `channel()`
+                undefined) and the card vanishes mid-session. */}
+            <Match when={channel() ?? voice.channel()}>
+              {(inCall) => <VoiceCallCard channel={inCall()} />}
             </Match>
           </Switch>
         </Float>

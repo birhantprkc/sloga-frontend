@@ -107,6 +107,11 @@ msgstr ""
 msgid "{0} files exceed the maximum size limit of {maxSizeFormatted} and were not uploaded."
 msgstr ""
 
+#. placeholder {0}: name()
+#: components/ui/components/features/voice/callCard/RemoteControlOverlays.tsx
+msgid "{0} is giving you control of their screen"
+msgstr ""
+
 #. placeholder {0}: user.displayName ?? user.username
 #. placeholder {1}: nowLive.platform
 #: components/client/NotificationsWorker.tsx
@@ -478,6 +483,7 @@ msgstr ""
 
 #: src/interface/ServerEvents.tsx
 #: components/ui/components/features/voice/IncomingCallOverlay.tsx
+#: components/ui/components/features/voice/callCard/RemoteControlOverlays.tsx
 #: components/modal/modals/SignOutSessions.tsx
 msgid "Accept"
 msgstr ""
@@ -652,6 +658,10 @@ msgstr ""
 msgid "Announcement channels can be followed by other servers, and their messages published into those servers' channels."
 msgstr ""
 
+#: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
+msgid "Another program is using Ctrl+Shift+Alt+End, so that shortcut may not stop the session. Use the Stop button."
+msgstr ""
+
 #: components/app/interface/settings/channel/Overview.tsx
 msgid "Another server"
 msgstr ""
@@ -663,6 +673,10 @@ msgstr ""
 
 #: components/modal/modals/CreatePoll.tsx
 msgid "Answers"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
+msgid "Anyone you give control to can use your mouse and keyboard, run commands and open your files. Nobody from support will ever ask you for control."
 msgstr ""
 
 #: components/app/interface/settings/UserSettings.tsx
@@ -700,6 +714,10 @@ msgstr ""
 
 #: components/app/interface/settings/server/Overview.tsx
 msgid "Ask for this server to be shown in the public directory. Its name, icon, description and member count become publicly visible once approved."
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
+msgid "Ask them to move their mouse. Their pointer should move on the screen you are sharing. Keys and clicks are still blocked until you confirm."
 msgstr ""
 
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
@@ -981,6 +999,7 @@ msgid "Camera unavailable — check permissions and that no other app is using i
 msgstr ""
 
 #: src/interface/ServerEvents.tsx
+#: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
 #: components/modal/modals/SuspendUser.tsx
 #: components/modal/modals/SignOutSessions.tsx
 #: components/modal/modals/ServerIdentity.tsx
@@ -1168,6 +1187,10 @@ msgstr ""
 
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
 msgid "Chat Input"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
+msgid "Check the pointer is on the right screen"
 msgstr ""
 
 #: components/auth/src/flows/FlowCheck.tsx
@@ -1717,6 +1740,7 @@ msgstr ""
 
 #: src/interface/ServerEvents.tsx
 #: components/ui/components/features/voice/IncomingCallOverlay.tsx
+#: components/ui/components/features/voice/callCard/RemoteControlOverlays.tsx
 msgid "Decline"
 msgstr ""
 
@@ -2496,6 +2520,14 @@ msgstr ""
 
 #: components/modal/modals/ImportDiscord.tsx
 msgid "Getting a link"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
+msgid "Give control of this computer"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
+msgid "Give control of this screen"
 msgstr ""
 
 #: components/modal/modals/ReportContent.tsx
@@ -3337,6 +3369,8 @@ msgstr ""
 msgid "Minimise to Tray"
 msgstr ""
 
+#: src/interface/navigation/UserFooter.tsx
+#: src/interface/navigation/UserFooter.tsx
 #: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx
 #: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx
 msgid "Missing permission"
@@ -3509,6 +3543,10 @@ msgstr ""
 msgid "Nickname"
 msgstr "Ad"
 
+#: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
+msgid "No — stop"
+msgstr ""
+
 #: src/interface/channels/text/ThreadsListSidebar.tsx
 msgid "No active threads"
 msgstr ""
@@ -3599,6 +3637,10 @@ msgstr ""
 
 #: components/modal/modals/PollVoters.tsx
 msgid "No votes for this answer yet"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
+msgid "Nobody else is in this call yet."
 msgstr ""
 
 #: src/interface/Friends.tsx
@@ -4064,6 +4106,14 @@ msgstr ""
 msgid "Read past messages sent in channels"
 msgstr ""
 
+#: components/ui/components/features/voice/callCard/RemoteControlOverlays.tsx
+msgid "Read this aloud. If it does not match the code on their screen, stop — someone may be intercepting the connection."
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
+msgid "Read this aloud. If it does not match their code, stop the session. The copy shown in the system dialog when you pressed Start is the one that counts — this panel is only a convenience."
+msgstr ""
+
 #: components/modal/modals/ImportDiscord.tsx
 msgid "Reading the Discord template…"
 msgstr ""
@@ -4160,6 +4210,10 @@ msgstr ""
 
 #: components/app/menus/UserContextMenu.tsx
 msgid "Reject friend request"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/RemoteControlOverlays.tsx
+msgid "Release control"
 msgstr ""
 
 #: src/interface/channels/text/TextSearchSidebar.tsx
@@ -4974,9 +5028,17 @@ msgstr ""
 msgid "Stickers"
 msgstr ""
 
+#: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
+msgid "Still reading your displays — try again in a moment."
+msgstr ""
+
 #: components/app/interface/settings/user/voice/MicrophoneTest.tsx
 #: components/app/interface/settings/user/voice/CameraPreview.tsx
 msgid "Stop"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
+msgid "Stop at any time with Ctrl+Shift+Alt+End."
 msgstr ""
 
 #: components/app/interface/settings/channel/Overview.tsx
@@ -5111,6 +5173,10 @@ msgstr ""
 msgid "Tags let members categorise posts. Moderated tags can only be applied by members who can manage this channel."
 msgstr ""
 
+#: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
+msgid "Take back control"
+msgstr ""
+
 #: components/modal/modals/ReportContent.tsx
 msgid "Tell us what's wrong with this message"
 msgstr ""
@@ -5226,6 +5292,10 @@ msgstr "Mövzu"
 
 #: components/modal/modals/ImportDiscord.tsx
 msgid "then copy the link it gives you."
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
+msgid "They can control this computer"
 msgstr ""
 
 #: components/auth/src/flows/FlowOAuthCallback.tsx
@@ -5706,6 +5776,11 @@ msgstr ""
 msgid "Verified"
 msgstr ""
 
+#: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
+#: components/ui/components/features/voice/callCard/RemoteControlOverlays.tsx
+msgid "Verify"
+msgstr ""
+
 #: components/modal/modals/E2EEVerify.tsx
 msgid "Verify security"
 msgstr ""
@@ -5826,12 +5901,24 @@ msgstr ""
 msgid "Waiting for a worker…"
 msgstr ""
 
+#: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
+msgid "Waiting for them to accept…"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/RemoteControlOverlays.tsx
+msgid "Waiting for them to confirm on their machine"
+msgstr ""
+
 #: components/app/interface/settings/user/profile/UserProfileEditor.tsx
 msgid "Want to change username?"
 msgstr ""
 
 #: src/interface/ServerEvents.tsx
 msgid "was going"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/RemoteControlOverlays.tsx
+msgid "Watch their screen to see whether it is landing. Their computer can silently ignore input on system prompts and on windows with higher privileges, and they can take control back at any time."
 msgstr ""
 
 #: src/AndroidNag.tsx
@@ -5879,8 +5966,16 @@ msgstr ""
 msgid "Whether other users can edit these settings"
 msgstr ""
 
+#: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
+msgid "Which screen are you sharing?"
+msgstr ""
+
 #: components/modal/modals/CreateGroupOrServer.tsx
 msgid "Which would you like to Start?"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
+msgid "Who should get control?"
 msgstr ""
 
 #: components/ui/components/features/voice/callCard/VoiceCallCardPreview.tsx
@@ -5910,6 +6005,10 @@ msgstr ""
 
 #: src/interface/channels/text/Composition.tsx
 msgid "Write a message first, then schedule it"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
+msgid "Yes, that's the right screen"
 msgstr ""
 
 #: components/modal/modals/ImportDiscord.tsx
@@ -6146,8 +6245,20 @@ msgstr ""
 msgid "Your Google account's email address is not verified."
 msgstr ""
 
+#: components/ui/components/features/voice/callCard/RemoteControlOverlays.tsx
+msgid "Your input is being sent"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/RemoteControlOverlays.tsx
+msgid "Your input is not being delivered yet. They have to answer a prompt from their operating system first."
+msgstr ""
+
 #: components/i18n/errors.ts
 msgid "Your message is too long, please remove some characters and try again."
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/RemoteControlOverlays.tsx
+msgid "Your mouse and keyboard will be sent to their computer while the session lasts. Nothing on your computer is shared."
 msgstr ""
 
 #: components/modal/modals/MFARecovery.tsx

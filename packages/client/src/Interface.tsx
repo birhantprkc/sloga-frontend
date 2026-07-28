@@ -16,20 +16,21 @@ import { ChannelContextMenu, ServerContextMenu } from "@revolt/app";
 import { MessageCache } from "@revolt/app/interface/channels/text/MessageCache";
 import { Titlebar } from "@revolt/app/interface/desktop/Titlebar";
 import { useClient, useClientLifecycle } from "@revolt/client";
-import { State } from "@revolt/client/Controller";
-import { IS_POPOUT_WINDOW } from "@revolt/client/popout";
 import { ActivityWorker } from "@revolt/client/ActivityWorker";
 import { ApkUpdateWorker } from "@revolt/client/ApkUpdateWorker";
+import { State } from "@revolt/client/Controller";
 import { DiscordImportWorker } from "@revolt/client/DiscordImportWorker";
 import { NotificationsWorker } from "@revolt/client/NotificationsWorker";
 import { StreamerModeWorker } from "@revolt/client/StreamerModeWorker";
+import { IS_POPOUT_WINDOW } from "@revolt/client/popout";
 import { useModals } from "@revolt/modal";
 import { Navigate, useBeforeLeave, useLocation } from "@revolt/routing";
 import { useState } from "@revolt/state";
-import { streamerModeActive } from "@revolt/state/streamer";
 import { LAYOUT_SECTIONS } from "@revolt/state/stores/Layout";
+import { streamerModeActive } from "@revolt/state/streamer";
 import { CircularProgress } from "@revolt/ui";
 import { IncomingCallOverlay } from "@revolt/ui/components/features/voice/IncomingCallOverlay";
+import { RemoteControlOverlays } from "@revolt/ui/components/features/voice/callCard/RemoteControlOverlays";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
 import { SlideDrawer } from "../components/ui/components/navigation/SlideDrawer";
@@ -116,8 +117,8 @@ const Interface = (props: { children: JSX.Element }) => {
           >
             <Symbol size={16}>videocam</Symbol>
             <Trans>
-              Streamer Mode is on — personal info, invites and notifications
-              are hidden
+              Streamer Mode is on — personal info, invites and notifications are
+              hidden
             </Trans>
           </StreamerBanner>
         </Show>
@@ -170,6 +171,12 @@ const Interface = (props: { children: JSX.Element }) => {
             dismissed (or the tab reloaded) while the import runs. */}
         <DiscordImportWorker />
         <IncomingCallOverlay />
+        {/* Remote control's offer prompt, session panels and focused-window
+            panic handler. APP LEVEL on purpose: every one of these is a way
+            to STOP a live control session, and mounting them inside the call
+            card meant they all disappeared the moment the user clicked
+            another channel and the card flipped to PiP. */}
+        <RemoteControlOverlays />
       </AppRoot>
     </MessageCache>
   );

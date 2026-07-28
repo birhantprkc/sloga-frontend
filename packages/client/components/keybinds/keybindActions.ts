@@ -1,5 +1,7 @@
 import { ReactiveSet } from "@solid-primitives/set";
 
+import { keybindsSuppressed } from "./suppress";
+
 export enum KeybindAction {
   /**
    * Navigate to channel above current channel
@@ -97,6 +99,17 @@ export function keybindFilter(
   currentlyBound: Record<KeybindAction, number>,
   target: HTMLElement | null,
 ) {
+  // FIRST, before every other branch, and returning false for EVERY keybind:
+  // while a remote-control capture surface is live the keyboard belongs to
+  // the machine being controlled, not to this client. Placed here rather
+  // than relying on `stopPropagation` at the capture surface, because
+  // keyboard events target `document.activeElement` — one click on the call
+  // chrome, or the tile remounting on a focus toggle, and the capture div is
+  // no longer in the event path while these `document.body` listeners still
+  // are. See `./suppress` for why it is unconditional rather than scoped to
+  // CHAT_FOCUS_COMPOSITION.
+  if (keybindsSuppressed()) return false;
+
   if (keybind === KeybindAction.CHAT_FOCUS_COMPOSITION) {
     // don't allow focusing if modal/floating is open
     // or if we're editing a message

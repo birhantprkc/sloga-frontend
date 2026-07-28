@@ -11,6 +11,7 @@ import { useState } from "@revolt/state";
 import { Button, IconButton } from "@revolt/ui/components/design";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 import { VoiceDeviceSelector } from "./VoiceDeviceSelector";
+import { VoiceGiveControlButton } from "./VoiceGiveControlButton";
 import { VoiceSoundboardButton } from "./VoiceSoundboardButton";
 import { VoiceStatsOverlay } from "./VoiceStatsOverlay";
 
@@ -171,6 +172,13 @@ export function VoiceCallCardActions(props: { size: "xs" | "sm" }) {
         }
       >
         <VoiceSoundboardButton size={props.size} />
+      </Show>
+      {/* "Give control" sits on the sharer's own share, Teams-style. The
+          component gates itself on `CONFIGURATION.ENABLE_VIDEO`, a native
+          command probe, and an actually-live screenshare, so it simply is
+          not there on a shell that cannot do it. */}
+      <Show when={!compact()}>
+        <VoiceGiveControlButton size={props.size} />
       </Show>
       <Show when={!compact()}>
         <VoiceDeviceSelector size={props.size} />

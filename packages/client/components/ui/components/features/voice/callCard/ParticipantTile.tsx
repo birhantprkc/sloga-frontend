@@ -30,6 +30,7 @@ import { participantUserId } from "../participantIdentity";
 import { VoiceStatefulUserIcons } from "../VoiceStatefulUserIcons";
 
 import { ParticipantCaption } from "./ParticipantCaption";
+import { RemoteControlCapture } from "./RemoteControlCapture";
 
 type TileProps = {
   focus?: boolean;
@@ -79,6 +80,17 @@ export function ParticipantTile(props: TileProps) {
 
   const isVideo = () => !isVideoMuted();
   const isScreenShare = () => track.source === Track.Source.ScreenShare;
+
+  /**
+   * Is this tile the screen share we are currently controlling? The capture
+   * surface mounts only then — one live session, one surface, and never on
+   * someone else's tile.
+   */
+  const controlling = () => {
+    const session = voice.remoteControl.controlling();
+    if (!session) return false;
+    return participantUserId(participant.identity) === session.sharerId;
+  };
   const isSpeaking = useIsSpeaking(participant);
 
   const [quality, setQuality] = createSignal<ConnectionQuality>(
@@ -252,6 +264,16 @@ export function ParticipantTile(props: TileProps) {
             }}
             trackRef={track as TrackReference}
             manageSubscription={true}
+            /* `VideoTrack`'s visibility observer calls `setSubscribed(false)`
+               below 80% visibility after 3s, which FREEZES the last frame
+               with no `ended`, no `pause` and no `stalled` — so scrolling the
+               participant strip would leave a controller injecting against a
+               still image. An immediate hard auto-pause, controller-side, not
+               only a sharer-side concern. Wiring the callback here keeps the
+               `dist/`-shipped submodule untouched. */
+            onSubscriptionStatusChanged={(subscribed: boolean) => {
+              if (!subscribed) voice.remoteControl.onFeedLost("unsubscribed");
+            }}
             ref={videoRef}
             on:resize={() => {
               setVideoDims({
@@ -301,6 +323,19 @@ export function ParticipantTile(props: TileProps) {
             {qualityLabel()}
           </PingBadge>
         </Overlay>
+        {/* AFTER `<Overlay>`, deliberately: a capture surface placed as a
+            sibling before it is hit-test dead across the whole tile, because
+            `Overlay` is `gridArea: "1/1"` with no `pointer-events: none` and
+            no `z-index`. Mounted only while a session is armed on THIS
+            participant's screenshare, so hover chrome and click-to-focus are
+            untouched the rest of the time. */}
+        <Show when={isScreenShare() && controlling()}>
+          <RemoteControlCapture
+            video={videoRef}
+            videoDims={videoDims}
+            sharerIdentity={participant.identity}
+          />
+        </Show>
         <Show when={!isScreenShare()}>
           <ParticipantCaption identity={participant.identity} />
         </Show>

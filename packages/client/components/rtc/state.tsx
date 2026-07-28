@@ -17,22 +17,24 @@ import {
 } from "solid-livekit-components";
 
 import {
+  type TrackPublishOptions,
+  type VideoCaptureOptions,
+  isE2EESupported,
   LocalVideoTrack,
   Room,
   ScreenSharePresets,
   Track,
   TrackEvent,
-  type TrackPublishOptions,
-  type VideoCaptureOptions,
   VideoResolution,
-  isE2EESupported,
 } from "livekit-client";
 // Self-hosted LiveKit E2EE worker — Vite `?worker` bundling ships it inside
 // the npm package (dist/livekit-client.e2ee.worker.mjs), fully first-party,
 // NO CDN (§4.1). External worker origins are blocked by the desktop shell CSP
 // (slice 6.2b) and violate the no-CDN policy everywhere else.
+import { Capacitor, registerPlugin } from "@capacitor/core";
 import E2EEWorker from "livekit-client/e2ee-worker?worker";
 import { DenoiseTrackProcessor } from "livekit-rnnoise-processor";
+import { Channel, Message } from "stoat.js";
 
 class GainTrackProcessor {
   name = "gain-processor";
@@ -45,7 +47,11 @@ class GainTrackProcessor {
     this.#gainValue = gain;
   }
 
-  async init(opts: { track: MediaStreamTrack; audioContext: AudioContext; sourceNode: AudioNode }) {
+  async init(opts: {
+    track: MediaStreamTrack;
+    audioContext: AudioContext;
+    sourceNode: AudioNode;
+  }) {
     this.#ctx = opts.audioContext;
     this.#gainNode = opts.audioContext.createGain();
     this.#gainNode.gain.value = this.#gainValue / 100;
@@ -61,8 +67,6 @@ class GainTrackProcessor {
     this.processedTrack = undefined;
   }
 }
-import { Capacitor, registerPlugin } from "@capacitor/core";
-import { Channel, Message } from "stoat.js";
 
 /** Native Android foreground service keeping calls alive in the background */
 const VoiceCallServiceNative = Capacitor.isNativePlatform()
@@ -81,49 +85,45 @@ function nativeCallServiceStop() {
 
 import {
   type E2EEBridge,
-  SoundController,
   nativeE2EEAvailable,
+  SoundController,
   useClient,
   useSound,
 } from "@revolt/client";
-import { ReactiveMap } from "@solid-primitives/map";
 import { CONFIGURATION } from "@revolt/common";
 import { ModalControllerExtended, useModals } from "@revolt/modal";
 import { useState } from "@revolt/state";
 import {
-  CameraBackgroundMode,
   type CameraColorLookId,
   type CameraFaceFilterId,
+  CameraBackgroundMode,
   CameraQualityName,
   ScreenShareQualityName,
   Voice as VoiceSettings,
 } from "@revolt/state/stores/Voice";
 import { VoiceCallCardContext } from "@revolt/ui/components/features/voice/callCard/VoiceCallCard";
+import { ReactiveMap } from "@solid-primitives/map";
+import { RemoteControl } from "./remoteControl";
 
 import {
-  CameraEffectsController,
   type CameraBackgroundStatus,
+  CameraEffectsController,
 } from "./cameraEffects";
-import { faceSettingsActive } from "./faceFilterCatalog";
 import { LiveCaptions } from "./captions/liveCaptions";
 import { CaptionPublisher } from "./components/CaptionPublisher";
 import { CaptionSpeaker } from "./components/CaptionSpeaker";
 import { InRoom } from "./components/InRoom";
 import { RoomAudioManager } from "./components/RoomAudioManager";
+import { isDiceRollMessage, summariseDiceRoll } from "./diceRoll";
+import { faceSettingsActive } from "./faceFilterCatalog";
 import { MlsKeyProvider } from "./mlsCallKeys";
+import { type CallMode, type ChipState, chipState } from "./mlsCallModePolicy";
 import {
   type MlsMediaBinding,
   type MlsRosterMember,
-  type PublishGateReason,
   MlsCallSession,
 } from "./mlsCallSession";
-import {
-  type CallMode,
-  type ChipState,
-  chipState,
-} from "./mlsCallModePolicy";
 import { SoundboardPlayback } from "./soundboardPlayback";
-import { isDiceRollMessage, summariseDiceRoll } from "./diceRoll";
 
 /**
  * A dice-roll result shown briefly over the call's video (e.g. "Jeff rolled
@@ -336,6 +336,21 @@ class Voice {
    */
   readonly captions = new LiveCaptions();
   /**
+   * Remote desktop control during screen share. Owned by this class rather
+   * than by any component, because a tile is destroyed and rebuilt by
+   * ordinary actions — the grid and the focus box are DIFFERENT `TrackLoop`s,
+   * so toggling focus unmounts and remounts the tile mid-drag, taking any
+   * state it held with it. Held keys, held buttons, pointer capture and the
+   * seal pipeline all have to outlive that.
+   *
+   * Two subscriptions, on the two precedents in this file: an app-lifetime
+   * client-event subscription for the handshake events (the soundboard
+   * shape — a connect/disconnect one would go dead after the first call),
+   * and a room-scoped `attach`/`detach` for the data channel (the captions
+   * shape, including the explicit `off`).
+   */
+  readonly remoteControl = new RemoteControl();
+  /**
    * Client-local soundboard playback. Subscribes to the `soundboardSound`
    * client event app-lifetime (in the constructor) and plays a received clip
    * only if we are in the triggering call — never on the LiveKit/MLS path.
@@ -475,11 +490,13 @@ class Voice {
     this.cameraHwBrightness = hwBrightness;
     this.#setCameraHwBrightness = setHwBrightness;
 
-    const [bgStatus, setBgStatus] = createSignal<CameraBackgroundStatus>("idle");
+    const [bgStatus, setBgStatus] =
+      createSignal<CameraBackgroundStatus>("idle");
     this.cameraBackgroundStatus = bgStatus;
     this.#setCameraBackgroundStatus = setBgStatus;
 
-    const [ffStatus, setFfStatus] = createSignal<CameraBackgroundStatus>("idle");
+    const [ffStatus, setFfStatus] =
+      createSignal<CameraBackgroundStatus>("idle");
     this.cameraFaceFilterStatus = ffStatus;
     this.#setCameraFaceFilterStatus = setFfStatus;
 
@@ -585,6 +602,101 @@ class Voice {
       this.#soundboard.refreshOutputDevice();
     });
 
+    // Remote control. App-lifetime like the soundboard above, and for the
+    // same reason: these are client events, not room events.
+    createEffect(() => {
+      const client = this.getClient();
+      if (!client) return;
+
+      // Identify this device to native, once, as soon as the session exists.
+      // BOTH handshake commands fail closed until this is set — it is what
+      // stops a hostile server supplying both halves of the key-derivation
+      // transcript by having the controller echo back a server-asserted id.
+      const selfId = client.user?.id;
+      if (selfId) void this.remoteControl.setLocalUser(selfId);
+      this.remoteControl.setApiContext({
+        apiBase: client.options.baseURL,
+        authHeader: client.authenticationHeader as [string, string],
+      });
+
+      const onOffered = (detail: {
+        channelId: string;
+        offerId: string;
+        sharerId: string;
+        targetId: string;
+        sharerEphemeralPub: string;
+        rcSessionId: string;
+      }) => {
+        // `EventV1::private(id)` publishes to EVERY session of the target —
+        // off-call desktops, web, Android. Only the session that is actually
+        // in this call can complete the exchange, and the offer is
+        // single-use and offer-addressed, so a web tab answering first
+        // BURNS it and the desktop that could have taken it can no longer
+        // accept. Filter hard, and stay silent rather than showing a prompt
+        // that cannot be honoured.
+        if (this.state() !== "CONNECTED") return;
+        if (this.channel()?.id !== detail.channelId) return;
+        void this.remoteControl.supported().then((ok) => {
+          if (!ok) return;
+          this.remoteControl.presentOffer({
+            channelId: detail.channelId,
+            offerId: detail.offerId,
+            sharerId: detail.sharerId,
+            sharerEphemeralPub: detail.sharerEphemeralPub,
+            rcSessionId: detail.rcSessionId,
+          });
+        });
+      };
+
+      const onAccepted = (detail: {
+        channelId: string;
+        grantId: string;
+        controllerEphemeralPub: string;
+      }) => {
+        const sharing = this.remoteControl.sharing();
+        if (!sharing || sharing.channelId !== detail.channelId) return;
+        void this.remoteControl.armSession({
+          grantId: detail.grantId,
+          controllerEphemeralPub: detail.controllerEphemeralPub,
+          durationMs: 0,
+        });
+      };
+
+      const onDeclined = (detail: { channelId: string }) => {
+        const sharing = this.remoteControl.sharing();
+        if (sharing?.channelId === detail.channelId) {
+          void this.remoteControl.endSharing("declined");
+        }
+      };
+
+      const onEnded = (detail: {
+        channelId: string;
+        sharerId: string;
+        reason: string;
+      }) =>
+        this.remoteControl.onServerEnded(
+          detail.channelId,
+          detail.sharerId,
+          detail.reason,
+          // `RemoteControlEnded` is a CHANNEL-TOPIC event: it reaches every
+          // `ViewChannel` subscriber, and §0.7 permits several sharers per
+          // call. Without our own id to compare against, any other person's
+          // session ending in this channel would tear ours down.
+          client.user?.id,
+        );
+
+      client.addListener("remoteControlOffered", onOffered);
+      client.addListener("remoteControlAccepted", onAccepted);
+      client.addListener("remoteControlDeclined", onDeclined);
+      client.addListener("remoteControlEnded", onEnded);
+      onCleanup(() => {
+        client.removeListener("remoteControlOffered", onOffered);
+        client.removeListener("remoteControlAccepted", onAccepted);
+        client.removeListener("remoteControlDeclined", onDeclined);
+        client.removeListener("remoteControlEnded", onEnded);
+      });
+    });
+
     // Dice-roll toasts. A server-authoritative /roll is just a flagged message
     // on the channel, which every call participant already receives — so, like
     // the soundboard, subscribe app-lifetime here and scope in the handler
@@ -593,7 +705,8 @@ class Voice {
     createEffect(() => {
       const client = this.getClient();
       if (!client) return;
-      const handler = (message: Message) => this.#onMessageForDiceToast(message);
+      const handler = (message: Message) =>
+        this.#onMessageForDiceToast(message);
       client.addListener("messageCreate", handler);
       onCleanup(() => client.removeListener("messageCreate", handler));
     });
@@ -764,6 +877,7 @@ class Voice {
       this.#setState("CONNECTED");
       nativeCallServiceStart();
       this.captions.attach(room, room.localParticipant.identity);
+      this.remoteControl.attach(room, room.localParticipant.identity);
       this.#startPushToTalk(room);
       this.#startVAD(room);
       const isAfk = channel.name?.toLowerCase() === "afk";
@@ -772,43 +886,40 @@ class Voice {
       // explicitly muted user must never join with a hot microphone, even in
       // open-mic mode. Only reconcile micOn against the actual track when we
       // asked for it — a deafen/AFK-forced "off" is not a mute preference.
-      const wantMic =
-        !isAfk && !this.#settings.deafen && this.#settings.micOn;
+      const wantMic = !isAfk && !this.#settings.deafen && this.#settings.micOn;
       if (this.speakingPermission)
-        room.localParticipant
-          .setMicrophoneEnabled(wantMic)
-          .then((track) => {
-            if (wantMic) this.#settings.micOn = track != null;
-            if (!isAfk && track?.audioTrack) {
-              const gain = this.#settings.microphoneGain ?? 100;
-              // Processor/E2EE ordering (§4.3) — DO NOT REORDER: denoise
-              // (this AudioWorklet) and camera effects are PRE-encode track
-              // processors on the raw media; LiveKit E2EE runs POST-encode on
-              // encoded frames (RTCRtpScriptTransform). The fixed pipeline is
-              // processor → encoder → E2EE encrypt → SFU, so there is no slot
-              // conflict and denoise + E2EE coexist (test T-10). Moving E2EE
-              // ahead of the encoder, or a processor after it, would break
-              // one or the other.
-              if (this.#settings.noiseSupression === "enhanced") {
-                track.audioTrack.setProcessor(
-                  new DenoiseTrackProcessor({
-                    // Self-hosted worklet assets (public/rnnoise/) — never the
-                    // package's jsdelivr default: external script origins are
-                    // blocked by the desktop shell CSP (slice 6.2b) and violate
-                    // the no-CDN policy everywhere else. Must be absolute: the
-                    // lib resolves it with base-less `new URL(...)`.
-                    workletCDNURL: new URL(
-                      CONFIGURATION.RNNOISE_WORKLET_CDN_URL ||
-                        `${import.meta.env.BASE_URL}rnnoise/`,
-                      window.location.origin,
-                    ).href,
-                  }),
-                );
-              } else if (gain !== 100) {
-                track.audioTrack.setProcessor(new GainTrackProcessor(gain));
-              }
+        room.localParticipant.setMicrophoneEnabled(wantMic).then((track) => {
+          if (wantMic) this.#settings.micOn = track != null;
+          if (!isAfk && track?.audioTrack) {
+            const gain = this.#settings.microphoneGain ?? 100;
+            // Processor/E2EE ordering (§4.3) — DO NOT REORDER: denoise
+            // (this AudioWorklet) and camera effects are PRE-encode track
+            // processors on the raw media; LiveKit E2EE runs POST-encode on
+            // encoded frames (RTCRtpScriptTransform). The fixed pipeline is
+            // processor → encoder → E2EE encrypt → SFU, so there is no slot
+            // conflict and denoise + E2EE coexist (test T-10). Moving E2EE
+            // ahead of the encoder, or a processor after it, would break
+            // one or the other.
+            if (this.#settings.noiseSupression === "enhanced") {
+              track.audioTrack.setProcessor(
+                new DenoiseTrackProcessor({
+                  // Self-hosted worklet assets (public/rnnoise/) — never the
+                  // package's jsdelivr default: external script origins are
+                  // blocked by the desktop shell CSP (slice 6.2b) and violate
+                  // the no-CDN policy everywhere else. Must be absolute: the
+                  // lib resolves it with base-less `new URL(...)`.
+                  workletCDNURL: new URL(
+                    CONFIGURATION.RNNOISE_WORKLET_CDN_URL ||
+                      `${import.meta.env.BASE_URL}rnnoise/`,
+                    window.location.origin,
+                  ).href,
+                }),
+              );
+            } else if (gain !== 100) {
+              track.audioTrack.setProcessor(new GainTrackProcessor(gain));
             }
-          });
+          }
+        });
       if (isAfk) room.localParticipant.setCameraEnabled(false);
       for (const p of room.remoteParticipants.values()) {
         const screenShareTrack = p.getTrackPublication(
@@ -1156,6 +1267,13 @@ class Voice {
       this.#e2eeWorker = undefined;
       this.#mlsKeyProvider = undefined;
       this.captions.detach();
+      // Ends the capture surface and releases every held key and button. A
+      // controller who leaves the call while holding Ctrl must not leave it
+      // held down on someone else's machine — the sharer's native watchdog
+      // is the real guarantee, but there is no reason to make it do the work.
+      void this.remoteControl.endControlling("call_disconnected");
+      void this.remoteControl.endSharing("call_disconnected");
+      this.remoteControl.detach();
       this.#clearDiceToasts();
       this.callEncryption.clear();
       this.#publishGate.clear();
@@ -1724,7 +1842,9 @@ class Voice {
           // Clone before mutating — ScreenSharePresets.original is a shared
           // livekit-client singleton; writing to it in place corrupts it
           // process-wide for any other consumer.
-          const originalResolution = { ...ScreenSharePresets.original.resolution };
+          const originalResolution = {
+            ...ScreenSharePresets.original.resolution,
+          };
           originalResolution.frameRate = 5;
           originalResolution.aspectRatio = 0;
           if (this.getClient().configured()) {
@@ -2069,7 +2189,8 @@ class Voice {
   get listenPermission() {
     const channel = this.channel();
     if (!channel) return false;
-    if (channel.type === "DirectMessage" || channel.type === "Group") return true;
+    if (channel.type === "DirectMessage" || channel.type === "Group")
+      return true;
     return !!channel.havePermission("Listen");
   }
 
@@ -2077,7 +2198,8 @@ class Voice {
     const channel = this.channel();
     if (!channel) return false;
     // DMs and group DMs don't have server permissions — always allow speaking
-    if (channel.type === "DirectMessage" || channel.type === "Group") return true;
+    if (channel.type === "DirectMessage" || channel.type === "Group")
+      return true;
     return !!channel.havePermission("Speak");
   }
 
@@ -2297,7 +2419,10 @@ class Voice {
     if (!this.#settings.vadEnabled) return;
 
     try {
-      this.#vadStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      this.#vadStream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: false,
+      });
       this.#vadCtx = new AudioContext();
       const analyser = this.#vadCtx.createAnalyser();
       analyser.fftSize = 512;
@@ -2316,7 +2441,10 @@ class Voice {
           if (!room.localParticipant.isMicrophoneEnabled) {
             room.localParticipant.setMicrophoneEnabled(true);
           }
-        } else if (room.localParticipant.isMicrophoneEnabled && !this.#vadSilenceTimer) {
+        } else if (
+          room.localParticipant.isMicrophoneEnabled &&
+          !this.#vadSilenceTimer
+        ) {
           this.#vadSilenceTimer = setTimeout(() => {
             room.localParticipant.setMicrophoneEnabled(false);
             this.#vadSilenceTimer = undefined;

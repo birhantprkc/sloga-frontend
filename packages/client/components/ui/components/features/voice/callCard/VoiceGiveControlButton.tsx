@@ -1,0 +1,414 @@
+import {
+  For,
+  Match,
+  Show,
+  Switch,
+  createResource,
+  createSignal,
+} from "solid-js";
+
+import { Trans, useLingui } from "@lingui-solid/solid/macro";
+import { styled } from "styled-system/jsx";
+
+import { useClient } from "@revolt/client";
+import { CONFIGURATION } from "@revolt/common";
+import { useUser } from "@revolt/markdown/users";
+import { REMOTE_CONTROL_CLAIM, useVoice } from "@revolt/rtc";
+import { Button, IconButton } from "@revolt/ui/components/design";
+import { Symbol } from "@revolt/ui/components/utils/Symbol";
+
+import { participantUserId } from "../participantIdentity";
+
+/**
+ * "Give control" — the sharer's affordance, on their own screen share.
+ *
+ * Sharer-initiated only. There is no "request control" from a viewer, which
+ * is a deliberate subset of Teams rather than parity: it is the safer half,
+ * because the party whose machine is at risk is the one who initiates and
+ * there is no inbound channel for a stranger to pester someone into clicking
+ * Accept.
+ *
+ * Every dialog that actually MATTERS here is native and lives in the shell —
+ * `RcGive` before the offer goes out, and `RcArm` once the target accepts,
+ * which is the one that arms injection and carries the verification code.
+ * This picker is a HINT. It cannot write a grant, and it must never present
+ * itself as the thing that authorised the session.
+ */
+export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
+  const voice = useVoice();
+  const client = useClient();
+  const { t } = useLingui();
+  const rc = voice.remoteControl;
+
+  const [open, setOpen] = createSignal(false);
+  const [display, setDisplay] = createSignal<string>();
+  const [error, setError] = createSignal<string>();
+
+  // A COMMAND PROBE rather than a shell sniff — see `RemoteControl.supported`.
+  const [supported] = createResource(() => rc.supported());
+  const [displays] = createResource(open, async () => {
+    const found = await rc.displays();
+    // Default the selector to the primary monitor as soon as the list
+    // arrives. Leaving it blank meant a two-monitor sharer who did not touch
+    // the dropdown silently offered DISPLAY1 — and the `RcArm` dialog then
+    // names the wrong screen in the ONE line of that dialog that is not
+    // server-asserted. §5(C) catches it, but only after they have answered
+    // an OS prompt about the wrong monitor.
+    if (!display()) setDisplay(found.find((d) => d.primary)?.device);
+    return found;
+  });
+
+  const eligible = () => {
+    const room = voice.room();
+    const self = client()?.user?.id;
+    if (!room || !self) return [];
+    // One named participant, never "anyone who wants it".
+    return [...room.remoteParticipants.values()].filter(
+      (participant) => participantUserId(participant.identity) !== self,
+    );
+  };
+
+  const canOffer = () =>
+    CONFIGURATION.ENABLE_VIDEO &&
+    supported() === true &&
+    voice.screenshare() &&
+    !rc.sharing();
+
+  async function offer(userId: string, name: string) {
+    const api = client();
+    const channel = voice.channel();
+    const self = api?.user?.id;
+    const monitor = display() ?? displays()?.find((d) => d.primary)?.device;
+    if (!api || !channel || !self) return;
+    if (!monitor) {
+      // The monitor list has not resolved. Say so rather than doing nothing:
+      // a picker that silently ignores a click reads as a broken button.
+      setError(t`Still reading your displays — try again in a moment.`);
+      return;
+    }
+    setError(undefined);
+    setOpen(false);
+    await rc.offerControl({
+      apiBase: api.options.baseURL,
+      authHeader: api.authenticationHeader as [string, string],
+      channelId: channel.id,
+      sharerId: self,
+      controllerId: userId,
+      controllerName: name,
+      display: monitor,
+    });
+  }
+
+  return (
+    <Show when={canOffer()}>
+      <IconButton
+        size={props.size}
+        variant="tonal"
+        onPress={() => setOpen((was) => !was)}
+        use:floating={{
+          tooltip: {
+            placement: "top",
+            content: t`Give control of this screen`,
+          },
+        }}
+      >
+        <Symbol>desktop_windows</Symbol>
+      </IconButton>
+
+      <Show when={open()}>
+        <Popover>
+          <Sheet>
+            <Heading>
+              <Trans>Give control of this computer</Trans>
+            </Heading>
+
+            {/* The §5 display selector. The captured source is NOT knowable —
+              WebView2 handles the picker natively and no web API reveals which
+              display `getDisplayMedia` took — so the sharer says which one,
+              and the next step confirms it by eye. */}
+            <Label>
+              <Trans>Which screen are you sharing?</Trans>
+            </Label>
+            <Select
+              value={display() ?? ""}
+              onChange={(event) => setDisplay(event.currentTarget.value)}
+            >
+              <For each={displays() ?? []}>
+                {(monitor) => (
+                  <option value={monitor.device}>
+                    {monitor.device} — {monitor.width}×{monitor.height}
+                    {monitor.primary ? " (primary)" : ""}
+                  </option>
+                )}
+              </For>
+            </Select>
+
+            <Label>
+              <Trans>Who should get control?</Trans>
+            </Label>
+            <People>
+              <For each={eligible()}>
+                {(participant) => (
+                  <PersonRow
+                    userId={participantUserId(participant.identity)}
+                    onPick={offer}
+                  />
+                )}
+              </For>
+              <Show when={eligible().length === 0}>
+                <Muted>
+                  <Trans>Nobody else is in this call yet.</Trans>
+                </Muted>
+              </Show>
+            </People>
+
+            {/* §8: this is the tech-support scam, near enough verbatim, and the
+              warning belongs where the decision is made. */}
+            <Warning>
+              <Trans>
+                Anyone you give control to can use your mouse and keyboard, run
+                commands and open your files. Nobody from support will ever ask
+                you for control.
+              </Trans>
+            </Warning>
+
+            {/* The approved claim wording, rendered verbatim and never
+              paraphrased upward. It concedes keystroke timing in the same
+              sentence as confidentiality on purpose. */}
+            <Claim>{REMOTE_CONTROL_CLAIM}</Claim>
+
+            <Show when={error()}>
+              <Warning>{error()}</Warning>
+            </Show>
+            <Button size="sm" variant="text" onPress={() => setOpen(false)}>
+              <Trans>Cancel</Trans>
+            </Button>
+          </Sheet>
+        </Popover>
+      </Show>
+    </Show>
+  );
+}
+
+function PersonRow(props: {
+  userId: string;
+  onPick: (userId: string, name: string) => void;
+}) {
+  const user = useUser(props.userId);
+  const name = () => user()?.username ?? props.userId;
+  return (
+    <Button
+      size="sm"
+      variant="tonal"
+      onPress={() => props.onPick(props.userId, name())}
+    >
+      {name()}
+    </Button>
+  );
+}
+
+/**
+ * The sharer's in-call panel once a session exists: the §5(C) calibration
+ * step, then an honest running state and a Stop.
+ *
+ * Everything shown here is read from NATIVE state, never from a server event.
+ * Against the threat model this feature admits — a hostile server, and a
+ * compromised renderer that is equivalent to one — the server-written audit
+ * trail and server-rendered copy are worth nothing; what survives is local.
+ * The always-on-top indicator window is the authoritative surface, and this
+ * panel is its in-app companion.
+ */
+export function VoiceGiveControlPanel() {
+  const voice = useVoice();
+  const { t } = useLingui();
+  const rc = voice.remoteControl;
+  const [showCode, setShowCode] = createSignal(false);
+
+  return (
+    <Show when={rc.sharing()}>
+      {(session) => (
+        <Sheet>
+          <Switch>
+            <Match when={session().phase === "offered"}>
+              <Heading>
+                <Trans>Waiting for them to accept…</Trans>
+              </Heading>
+              <Muted>{session().controllerName}</Muted>
+            </Match>
+
+            <Match when={session().phase === "calibrating"}>
+              <Heading>
+                <Trans>Check the pointer is on the right screen</Trans>
+              </Heading>
+              {/* §5(C). Until this is confirmed native injects POINTER MOTION
+                  AND NOTHING ELSE, which is exactly enough to run the check
+                  and no more. The failure it closes has no attacker in it:
+                  with two monitors the sharer can pick the one they are not
+                  sharing, and the controller then drives a screen nobody is
+                  looking at — blind control, which is worse than none. */}
+              <Muted>
+                <Trans>
+                  Ask them to move their mouse. Their pointer should move on the
+                  screen you are sharing. Keys and clicks are still blocked
+                  until you confirm.
+                </Trans>
+              </Muted>
+              <Row>
+                <Button
+                  size="sm"
+                  variant="filled"
+                  onPress={() => rc.confirmCalibration(true)}
+                >
+                  <Trans>Yes, that's the right screen</Trans>
+                </Button>
+                <Button
+                  size="sm"
+                  variant="_error"
+                  onPress={() => rc.confirmCalibration(false)}
+                >
+                  <Trans>No — stop</Trans>
+                </Button>
+              </Row>
+            </Match>
+
+            <Match when={session().phase === "active"}>
+              <Heading>
+                <Trans>They can control this computer</Trans>
+              </Heading>
+              <Muted>{session().controllerName}</Muted>
+              <Muted>
+                <Trans>Stop at any time with Ctrl+Shift+Alt+End.</Trans>
+              </Muted>
+            </Match>
+          </Switch>
+
+          {/* The Verify affordance. Never on the path to accepting anything,
+              and deliberately not a green "verified" state: the authoritative
+              comparison is the one printed inside the native Start dialog,
+              because a code this page draws is a code a compromised renderer
+              chose. */}
+          <Show when={session().sas}>
+            <Button
+              size="sm"
+              variant="text"
+              onPress={() => setShowCode((v) => !v)}
+            >
+              <Trans>Verify</Trans>
+            </Button>
+            <Show when={showCode()}>
+              <Code>{session().sas}</Code>
+              <Muted>
+                <Trans>
+                  Read this aloud. If it does not match their code, stop the
+                  session. The copy shown in the system dialog when you pressed
+                  Start is the one that counts — this panel is only a
+                  convenience.
+                </Trans>
+              </Muted>
+            </Show>
+          </Show>
+
+          <Button
+            size="sm"
+            variant="_error"
+            onPress={() => rc.endSharing("sharer_stopped")}
+          >
+            <Trans>Take back control</Trans>
+          </Button>
+          <Show when={rc.error()}>
+            <Warning>{rc.error()}</Warning>
+          </Show>
+          <Show when={rc.status()?.hook?.hotkey_registered === false}>
+            <Warning>
+              {t`Another program is using Ctrl+Shift+Alt+End, so that shortcut may not stop the session. Use the Stop button.`}
+            </Warning>
+          </Show>
+        </Sheet>
+      )}
+    </Show>
+  );
+}
+
+const Sheet = styled("div", {
+  base: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "var(--gap-sm)",
+    padding: "var(--gap-lg)",
+    borderRadius: "var(--borderRadius-lg)",
+    background: "var(--md-sys-color-surface-container-high)",
+    color: "var(--md-sys-color-on-surface)",
+    maxWidth: "420px",
+    boxShadow: "0 8px 24px #0006",
+  },
+});
+
+/**
+ * The picker, positioned like every other call-card popover
+ * (`VoiceSoundboardButton`, `VoiceDeviceSelector`). Laid out inline it would
+ * wrap onto a second row INSIDE the rounded controls pill and stretch it,
+ * because `Actions` is a `flexWrap: wrap` row with `borderRadius: full`.
+ */
+const Popover = styled("div", {
+  base: {
+    position: "absolute",
+    // Fixed offset, not `100%`: the containing block is the call Card rather
+    // than this wrapper, so grow upward from just above the controls bar.
+    bottom: "64px",
+    left: "50%",
+    transform: "translateX(-50%)",
+    zIndex: 10,
+    minWidth: "300px",
+  },
+});
+
+const Heading = styled("div", {
+  base: { fontWeight: 600 },
+});
+
+const Label = styled("div", {
+  base: { fontSize: "0.85em", opacity: 0.8 },
+});
+
+const Muted = styled("div", {
+  base: { fontSize: "0.85em", opacity: 0.75 },
+});
+
+const Warning = styled("div", {
+  base: {
+    fontSize: "0.85em",
+    color: "var(--md-sys-color-error)",
+  },
+});
+
+const Claim = styled("div", {
+  base: { fontSize: "0.75em", opacity: 0.6 },
+});
+
+const Code = styled("div", {
+  base: {
+    fontFamily: "var(--monospace-font), monospace",
+    fontSize: "1.05em",
+    letterSpacing: "0.06em",
+    userSelect: "text",
+  },
+});
+
+const Row = styled("div", {
+  base: { display: "flex", gap: "var(--gap-sm)", flexWrap: "wrap" },
+});
+
+const People = styled("div", {
+  base: { display: "flex", gap: "var(--gap-sm)", flexWrap: "wrap" },
+});
+
+const Select = styled("select", {
+  base: {
+    font: "inherit",
+    padding: "var(--gap-sm)",
+    borderRadius: "var(--borderRadius-md)",
+    background: "var(--md-sys-color-surface-container-highest)",
+    color: "var(--md-sys-color-on-surface)",
+    border: "none",
+  },
+});

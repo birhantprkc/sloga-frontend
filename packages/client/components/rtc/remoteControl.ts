@@ -1,0 +1,1090 @@
+import { type Accessor, type Setter, batch, createSignal } from "solid-js";
+
+import type { Room } from "livekit-client";
+
+import { setKeybindSuppression } from "@revolt/keybinds/suppress";
+import { participantUserId } from "@revolt/ui/components/features/voice/participantIdentity";
+
+/**
+ * Remote desktop control during screen share — the renderer half.
+ *
+ * # What this module is, and what it deliberately is not
+ *
+ * It routes OPAQUE SEALED BYTES between the LiveKit data channel and native,
+ * and it never parses a packet or sees a key. Sealing and opening both happen
+ * in the desktop shell under a key derived from an ephemeral X25519 exchange
+ * that this code only ever handles the *public* halves of.
+ *
+ * That is not a stylistic choice. `e2ee_rc_open_apply` takes sealed bytes and
+ * nothing else, enforced by `build.rs` in the shell, because a plaintext
+ * entry point would be reachable from ANY renderer code execution — stored
+ * XSS, a compromised dependency, attached DevTools, the debug dev-origin
+ * capability — with the crypto fully intact and never consulted, turning an
+ * in-renderer bug into unattended keyboard-and-mouse control. So the AEAD
+ * *is* the authorization for injection.
+ *
+ * # What this feature may NOT claim, and this UI must not imply
+ *
+ * 1. It is **not** protected against the Sloga server, and a compromised
+ *    sharer-side renderer — this code — is cryptographically equivalent to a
+ *    hostile server here, because the peer's public key necessarily crosses
+ *    this hop. The approved public wording lives in
+ *    `REMOTE_CONTROL_CLAIM_MSG` and concedes keystroke timing in the same
+ *    sentence as confidentiality. Do not paraphrase it upward.
+ * 2. The controller has **no authenticated feedback channel** in v1: the
+ *    sharer→controller key is derived and immediately discarded, and the SFU
+ *    grant is minted for the controller identity only, so a sharer→controller
+ *    packet would be silently dropped by the SFU anyway. Nothing here can
+ *    substantiate "you are in control". The video track is the primary
+ *    signal; `secure_desktop` / `foreground_elevated` / `authenticated` from
+ *    `rc_status` describe the SHARER'S machine and are only meaningful on the
+ *    sharer's own side.
+ */
+
+/** LiveKit data-channel topic. Matches the shell's wire format. */
+const RC_TOPIC = "rc";
+
+/** Header field values, mirrored from the shell's `remote_control.rs`. */
+const STREAM_RELIABLE = 1;
+const STREAM_LOSSY = 2;
+
+/**
+ * Full-state keyframe cadence. The shell treats a gap in keyframes as the
+ * ONLY sustain signal — a trickle of motion does not hold a session up — and
+ * revokes after 10 s of silence, so this must keep running while idle.
+ */
+const KEYFRAME_INTERVAL_MS = 250;
+
+/** Sharer-side grant heartbeat. Matches the server's 8 s / 16 s grace. */
+const HEARTBEAT_INTERVAL_MS = 8_000;
+
+/**
+ * Client-side offer expiry, matching the server's shipped
+ * `REMOTE_CONTROL_OFFER_TTL_SECS` and native's pending-offer lifetime.
+ */
+const REMOTE_CONTROL_OFFER_TTL_MS = 90_000;
+
+/**
+ * The approved claim wording, pinned verbatim. Rendered where a user decides
+ * whether to hand over their machine.
+ */
+export const REMOTE_CONTROL_CLAIM =
+  "Remote control input is end-to-end encrypted between the two participants' devices. " +
+  "The Sloga server and the media server relay it and cannot read it, and no other " +
+  "participant in the call can read or forge it. Packet sizes are padded to fixed " +
+  "buckets, but the timing of your keystrokes and mouse activity is visible to the " +
+  "server. The server introduces the two parties and is trusted to do so honestly: " +
+  "this feature is not protected against a compromised Sloga server.";
+
+// The letterbox-aware coordinate mapping lives in its own dependency-free
+// leaf so Node's test runner can exercise it without Solid, LiveKit or the
+// path aliases — see remoteControlMapping.ts and its spec.
+export { normalizeToContentBox } from "./remoteControlMapping";
+
+type Invoke = (command: string, args?: unknown) => Promise<unknown>;
+
+function tauriInvoke(): Invoke | undefined {
+  return (
+    window as unknown as {
+      __TAURI__?: { core?: { invoke?: Invoke } };
+    }
+  ).__TAURI__?.core?.invoke;
+}
+
+export type RcDisplay = {
+  device: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  primary: boolean;
+  dpi: number;
+  aspect: number;
+};
+
+export type RcStatus = {
+  session?: {
+    sessionId: string;
+    channelId: string;
+    authenticated: boolean;
+    calibrated: boolean;
+    paused: boolean;
+    pauseReasons: string[];
+    revoked?: string;
+    packetsOpened: number;
+    eventsInjected: number;
+    heldKeys: number;
+    heldButtons: number;
+    msUntilExpiry: number;
+    display: string;
+    controllerDisplay: string;
+  };
+  controller?: {
+    sessionId: string;
+    channelId: string;
+    packetsSealed: number;
+    msUntilExpiry: number;
+  };
+  hook: { hotkey_registered: boolean };
+  secureDesktop: boolean;
+  foregroundElevated: boolean;
+  supported: boolean;
+};
+
+/** An inbound offer, rendered as an accept/decline prompt. */
+export type RcOffer = {
+  channelId: string;
+  offerId: string;
+  sharerId: string;
+  sharerEphemeralPub: string;
+  rcSessionId: string;
+};
+
+/**
+ * What the local user is doing right now. `"sharing"` and `"controlling"` are
+ * both reachable at once in principle (different calls), but the product
+ * offers one capture surface, so the store holds one of each at most.
+ */
+export type RcSharerPhase =
+  /** Offer sent; the target has not answered. */
+  | "offered"
+  /** Accepted and armed, but §5(C) calibration is unconfirmed. */
+  | "calibrating"
+  /** Full control. */
+  | "active";
+
+export type RcControllerPhase =
+  /** We accepted; the sharer has not answered their `RcArm` dialog yet. */
+  | "waiting"
+  /** The sharer armed and we are sending input. */
+  | "active";
+
+type PendingEvent =
+  | { kind: "move"; x: number; y: number }
+  | { kind: "button"; button: number; down: boolean; x: number; y: number }
+  | { kind: "wheel"; x: number; y: number; deltaX: number; deltaY: number }
+  | { kind: "key"; code: string; down: boolean; repeat?: boolean }
+  | { kind: "text"; text: string }
+  | { kind: "releaseAll" };
+
+export class RemoteControl {
+  // -- capability -------------------------------------------------------
+
+  #supported: boolean | undefined;
+
+  /**
+   * Whether this shell can do remote control at all.
+   *
+   * A COMMAND PROBE, not a shell guess. `nativeE2EEAvailable()` is the
+   * obvious candidate and is wrong: it is true on Android (Capacitor) and on
+   * the Electron/Linux shell, neither of which has any of these commands, so
+   * using it lights the affordance where the handshake dead-ends — the target
+   * accepts, nothing exists to answer with, and the sharer sits at
+   * "connecting…" until the 90 s offer TTL, having spent a native consent
+   * click on nothing. `rc_status().supported` is false on non-Windows by
+   * construction, and an ACL denial or a missing command throws, which is
+   * also "no".
+   */
+  async supported(): Promise<boolean> {
+    if (this.#supported !== undefined) return this.#supported;
+    const invoke = tauriInvoke();
+    if (!invoke) return (this.#supported = false);
+    try {
+      const status = (await invoke("rc_status")) as RcStatus;
+      return (this.#supported = !!status?.supported);
+    } catch {
+      return (this.#supported = false);
+    }
+  }
+
+  // -- reactive state ---------------------------------------------------
+
+  /** Inbound offer awaiting this user's accept/decline. */
+  readonly offer;
+  readonly #setOffer;
+
+  /** This user is giving control of their own machine. */
+  readonly sharing;
+  readonly #setSharing;
+
+  /** This user is driving someone else's machine. */
+  readonly controlling;
+  readonly #setControlling;
+
+  /** Last native status snapshot, polled while a session is live. */
+  readonly status;
+  readonly #setStatus;
+
+  /** Terminal/latched problem to surface, e.g. a failed handshake. */
+  readonly error;
+  readonly #setError;
+
+  constructor() {
+    [this.offer, this.#setOffer] = createSignal<RcOffer | undefined>();
+    [this.sharing, this.#setSharing] = createSignal<
+      | {
+          channelId: string;
+          rcSessionId: string;
+          controllerId: string;
+          controllerName: string;
+          grantId?: string;
+          display: string;
+          phase: RcSharerPhase;
+          sas?: string;
+        }
+      | undefined
+    >();
+    [this.controlling, this.#setControlling] = createSignal<
+      | {
+          channelId: string;
+          rcSessionId: string;
+          sharerId: string;
+          sharerName: string;
+          phase: RcControllerPhase;
+          sas?: string;
+        }
+      | undefined
+    >();
+    [this.status, this.#setStatus] = createSignal<RcStatus | undefined>();
+    [this.error, this.#setError] = createSignal<string | undefined>();
+    [this.captureActive, this.#setCaptureActive] = createSignal(false);
+  }
+
+  // -- room binding (LiveKit) -------------------------------------------
+
+  #room?: Room;
+  #dataHandler?: (...args: unknown[]) => void;
+  #localIdentity?: string;
+
+  /**
+   * Bind to a connected room. Mirrors `LiveCaptions.attach` deliberately,
+   * including the explicit `off` in `detach` — that is the only
+   * `dataReceived` precedent in the repo and the one §2 names as the
+   * permitted JS-side filter shape.
+   */
+  attach(room: Room, localIdentity: string) {
+    this.detach();
+    this.#room = room;
+    this.#localIdentity = localIdentity;
+    this.#dataHandler = (
+      payload: unknown,
+      participant?: unknown,
+      _kind?: unknown,
+      topic?: unknown,
+    ) => {
+      // THE FILTER'S BOUNDARY, and it is narrow on purpose: `topic` and
+      // `participant.identity` come from the LiveKit event object and are
+      // server-attested, which is what makes reading them a *filter* rather
+      // than a state mutation. NOTHING is read from the payload bytes — not
+      // the header, not the session id. Unauthenticated bytes may not
+      // influence any decision here.
+      if (topic !== RC_TOPIC) return;
+      const identity = (participant as { identity?: string } | undefined)
+        ?.identity;
+      if (!identity) return;
+      const sharing = this.sharing();
+      if (!sharing) return;
+      // `participantUserId`, not a hand-rolled split: SFU identities are
+      // device-qualified (`{user_id}:{device_id}`) since media E2EE, and that
+      // helper is the one place that knows the format.
+      if (participantUserId(identity) !== sharing.controllerId) return;
+      void this.#openApply(payload as Uint8Array);
+    };
+    room.on("dataReceived", this.#dataHandler as never);
+  }
+
+  /** Unbind. Safe to call repeatedly. */
+  detach() {
+    if (this.#room && this.#dataHandler) {
+      this.#room.off("dataReceived", this.#dataHandler as never);
+    }
+    this.#room = undefined;
+    this.#dataHandler = undefined;
+    this.#localIdentity = undefined;
+    this.stopCapture("disconnected");
+  }
+
+  /**
+   * Hand sealed bytes to native. Fire-and-forget by design: a WebView2
+   * `invoke` costs ~5 ms p50 and 15-37 ms p99, so awaiting one before
+   * accepting the next packet would serialise the injection path behind the
+   * transport rather than behind the work.
+   */
+  async #openApply(payload: Uint8Array) {
+    const invoke = tauriInvoke();
+    if (!invoke) return;
+    try {
+      await invoke("e2ee_rc_open_apply", payload);
+    } catch {
+      // A packet that fails to open is dropped SILENTLY, with no
+      // user-visible and no metric effect — otherwise a hostile SFU has an
+      // oracle and an unbounded IPC amplifier. Diagnostics live in
+      // `rc_status`, which is read-only.
+    }
+  }
+
+  // ===================================================================
+  // Capture — the controller's side
+  // ===================================================================
+
+  #rafHandle?: number;
+  #inFlight: Record<number, boolean> = {
+    [STREAM_RELIABLE]: false,
+    [STREAM_LOSSY]: false,
+  };
+  #pendingReliable: PendingEvent[] = [];
+  #pendingMotion?: { x: number; y: number; seq: number };
+  #motionSeq = 0;
+  /**
+   * Bumped by `startCapture`; the surface's cleanup only stops the capture it
+   * itself started.
+   *
+   * Toggling focus swaps the tile between two DIFFERENT `TrackLoop`s, and
+   * Solid mounts the new one before disposing the old one — so without this
+   * the new surface's `startCapture` early-returns ("already active") and the
+   * old surface's cleanup then stops the capture the new one is relying on.
+   * The result is a mounted, correctly-stacked, fully-wired surface that
+   * silently discards every event: "control looks granted, the indicator
+   * lights up, and nothing moves", which is verbatim the failure §6 exists to
+   * prevent, and nothing recovers it short of a new session.
+   */
+  #captureGeneration = 0;
+  #buttonMask = 0;
+  #pressedKeys = new Set<string>();
+  #lastKeyframe = 0;
+  #sharerIdentity?: string;
+
+  /**
+   * Whether a capture surface is currently mounted and armed. A SIGNAL
+   * rather than a plain field: components gate on it (PiP is blocked while
+   * it is true), and a non-reactive read there would leave the call card
+   * flipping to PiP mid-session — which is the one place the controller
+   * would be driving a cropped view of a desktop they cannot fully see.
+   */
+  readonly captureActive: Accessor<boolean>;
+  readonly #setCaptureActive: Setter<boolean>;
+
+  /**
+   * Start capturing. Suppresses this client's own keybinds for the duration
+   * — see `@revolt/keybinds/suppress` for why that is a global flag checked
+   * inside `keybindFilter` rather than `stopPropagation` alone.
+   */
+  startCapture(sharerIdentity: string): number {
+    const generation = ++this.#captureGeneration;
+    // Re-arming an already-active capture is NORMAL, not a no-op to skip: a
+    // focus toggle mounts the replacement surface before disposing the old
+    // one, so this runs with capture still live and must hand back a fresh
+    // generation so the outgoing surface's cleanup is ignored.
+    this.#setCaptureActive(true);
+    this.#sharerIdentity = sharerIdentity;
+    this.#buttonMask = 0;
+    this.#pressedKeys.clear();
+    this.#pendingReliable = [];
+    this.#pendingMotion = undefined;
+    this.#lastKeyframe = 0;
+    setKeybindSuppression(true);
+    if (this.#rafHandle !== undefined) cancelAnimationFrame(this.#rafHandle);
+    const pump = () => {
+      if (!this.captureActive() || generation !== this.#captureGeneration)
+        return;
+      this.#flush();
+      this.#rafHandle = requestAnimationFrame(pump);
+    };
+    this.#rafHandle = requestAnimationFrame(pump);
+    return generation;
+  }
+
+  /**
+   * Stop capturing and release everything held.
+   *
+   * The release-all is not optional and not merely tidy: `SendInput`'s
+   * key-down state lives in the OS, so a swallowed `keyup` — Alt+Tab gives a
+   * keydown for Alt and never a keyup — leaves a modifier physically down on
+   * SOMEONE ELSE'S machine, reachable with no attacker at all.
+   */
+  stopCapture(_reason: string, generation?: number) {
+    // A caller that names a generation only stops the capture IT started.
+    // Without this the outgoing tile's `onCleanup` — which runs AFTER the
+    // replacement has already mounted and re-armed — tears down the live
+    // capture and leaves a fully-wired surface that discards every event.
+    if (generation !== undefined && generation !== this.#captureGeneration) {
+      return;
+    }
+    if (!this.captureActive()) {
+      setKeybindSuppression(false);
+      return;
+    }
+    this.#setCaptureActive(false);
+    if (this.#rafHandle !== undefined) cancelAnimationFrame(this.#rafHandle);
+    this.#rafHandle = undefined;
+    // Best-effort, and deliberately fire-and-forget: if this packet never
+    // lands, the sharer's own native watchdog releases held input on the
+    // packet gap. The renderer is the untrusted party here — this is
+    // politeness, the watchdog is the guarantee.
+    this.#pendingReliable.push({ kind: "releaseAll" });
+    this.#buttonMask = 0;
+    this.#pressedKeys.clear();
+    // Through the SAME single-flight path `#flush` uses. Firing it directly
+    // while a keyframe seal is still in flight publishes two reliable packets
+    // whose `publishData` promises resolve independently — so they can land
+    // out of order, and a gap in the reliable counter is by definition a loud
+    // teardown on the sharer.
+    void this.#drain(STREAM_RELIABLE, true);
+    setKeybindSuppression(false);
+    this.#sharerIdentity = undefined;
+  }
+
+  /** Queue one event. Motion is coalesced; everything else is ordered. */
+  queue(event: PendingEvent) {
+    if (!this.captureActive()) return;
+    if (event.kind === "move") {
+      // Only the newest position matters — motion is idempotent and
+      // absolute, which is the whole reason it may ride the lossy stream.
+      // `motionSeq` belongs to the MOTION path and is advanced HERE, not per
+      // seal. Bumping it on every packet made the reliable stream — which
+      // carries no motion — race the lossy one inside a single frame: the
+      // ordered reliable packet is applied first, the sharer's motion
+      // high-water mark moves past the concurrent `Move`, and the move is
+      // dropped as stale. The pointer then freezes during exactly the drags
+      // and typing runs where it matters, and §5(C) calibration degrades,
+      // since motion is the only thing that injects there.
+      this.#pendingMotion = { x: event.x, y: event.y, seq: ++this.#motionSeq };
+      return;
+    }
+    if (event.kind === "button") {
+      this.#buttonMask = event.down
+        ? this.#buttonMask | (1 << event.button)
+        : this.#buttonMask & ~(1 << event.button);
+    }
+    if (event.kind === "key") {
+      if (event.down) this.#pressedKeys.add(event.code);
+      else this.#pressedKeys.delete(event.code);
+    }
+    if (event.kind === "releaseAll") {
+      this.#buttonMask = 0;
+      this.#pressedKeys.clear();
+    }
+    this.#pendingReliable.push(event);
+  }
+
+  #flush() {
+    const now = performance.now();
+    // Lossy: motion only, one packet per frame at most.
+    if (this.#pendingMotion) void this.#drain(STREAM_LOSSY, false);
+    // Reliable: never dropped, never reordered. If a seal is still in
+    // flight the events keep accumulating into the next batch rather than
+    // being sent out of order — the sharer's replay window treats a gap in
+    // the reliable counter as tampering and tears the session down.
+    const dueKeyframe = now - this.#lastKeyframe >= KEYFRAME_INTERVAL_MS;
+    if (this.#pendingReliable.length > 0 || dueKeyframe) {
+      this.#lastKeyframe = now;
+      void this.#drain(STREAM_RELIABLE, true);
+    }
+  }
+
+  /**
+   * Single-flight gate for one stream. THE ONLY WAY a packet is sent.
+   *
+   * Every caller goes through here rather than checking `#inFlight` at the
+   * call site: a second concurrent `#send` on the reliable stream publishes
+   * two packets whose `publishData` promises settle independently, so they
+   * can arrive out of order — and a gap in the reliable counter is, by
+   * definition in §2, unambiguous tampering and a loud teardown.
+   */
+  async #drain(stream: number, keyframe: boolean) {
+    if (this.#inFlight[stream]) return;
+    await this.#send(stream, keyframe);
+  }
+
+  async #send(stream: number, keyframe: boolean) {
+    const invoke = tauriInvoke();
+    const controlling = this.controlling();
+    const room = this.#room;
+    if (!invoke || !controlling || !room) return;
+
+    const motion = this.#pendingMotion;
+    const events: PendingEvent[] =
+      stream === STREAM_LOSSY
+        ? motion
+          ? [{ kind: "move", x: motion.x, y: motion.y }]
+          : []
+        : this.#pendingReliable;
+    // The motion sequence this packet declares. Reliable packets carry no
+    // motion, so they repeat the last one rather than advancing it — see
+    // `queue`.
+    const motionSeq =
+      stream === STREAM_LOSSY && motion ? motion.seq : this.#motionSeq;
+    if (stream === STREAM_LOSSY) this.#pendingMotion = undefined;
+    else this.#pendingReliable = [];
+    if (events.length === 0 && !keyframe) return;
+
+    this.#inFlight[stream] = true;
+    try {
+      // The absolute button mask and pressed-key set ride EVERY packet, so a
+      // lost or withheld "up" self-heals on the next one — that is what
+      // closes the attack where the SFU drops exactly the `mouseup` and
+      // leaves a button stuck down on the sharer's desktop.
+      //
+      // No sequence number: native assigns it per stream. A caller-chosen
+      // one is (key, nonce) reuse, so the parameter does not exist.
+      const sealed = (await invoke("e2ee_rc_seal", {
+        sessionId: controlling.rcSessionId,
+        stream,
+        keyframe,
+        batch: {
+          motionSeq,
+          buttonMask: this.#buttonMask,
+          pressedKeys: [...this.#pressedKeys],
+          events,
+        },
+      })) as number[];
+      await room.localParticipant.publishData(new Uint8Array(sealed), {
+        reliable: stream === STREAM_RELIABLE,
+        topic: RC_TOPIC,
+        // Scope the fan-out. A metadata and scale control, NOT a security
+        // one — the SFU still routes every packet.
+        destinationIdentities: this.#sharerIdentity
+          ? [this.#sharerIdentity]
+          : undefined,
+      });
+    } catch (err) {
+      // A seal that fails means the native session is gone (expired, ended,
+      // revoked). Stop rather than spin: there is no return channel to tell
+      // us why, so the honest response is to stop claiming to be in control.
+      this.#setError(String(err));
+      this.endControlling("seal_failed");
+    } finally {
+      this.#inFlight[stream] = false;
+    }
+  }
+
+  // ===================================================================
+  // Handshake
+  // ===================================================================
+
+  /**
+   * Record this device's own authenticated user id with native, once, at
+   * login.
+   *
+   * Both handshake commands fail CLOSED until this is set. It is what stops
+   * a hostile server supplying BOTH halves of the key-derivation transcript:
+   * the controller's `controllerId` must be this device's own id and never
+   * the server-asserted `target_id` from the offer event.
+   */
+  async setLocalUser(userId: string) {
+    const invoke = tauriInvoke();
+    if (!invoke || !(await this.supported())) return;
+    try {
+      await invoke("e2ee_rc_set_local_user", { userId });
+    } catch (err) {
+      this.#setError(String(err));
+    }
+  }
+
+  /** Monitors, for §5's display selector. */
+  async displays(): Promise<RcDisplay[]> {
+    const invoke = tauriInvoke();
+    if (!invoke) return [];
+    try {
+      const info = (await invoke("rc_displays")) as { displays: RcDisplay[] };
+      return info.displays ?? [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Poll native state. The only source the sharer-side UI may trust. */
+  async refreshStatus() {
+    const invoke = tauriInvoke();
+    if (!invoke) return;
+    let status: RcStatus;
+    try {
+      status = (await invoke("rc_status")) as RcStatus;
+    } catch {
+      // Leave the previous snapshot rather than inventing one.
+      return;
+    }
+    this.#setStatus(status);
+
+    // RECONCILE AGAINST NATIVE, because native can end a session without
+    // telling the renderer: the anti-cheat interlock fires mid-session, the
+    // panic key fires, the display topology changes, the max lifetime
+    // expires, the indicator gets hidden. All of those revoke natively and
+    // none of them is a server event. Without this the panel keeps saying
+    // "they can control this computer" and offering "take back control" for
+    // a session that stopped existing — §4's own description of the failure
+    // to avoid, the UI lying about who has access to the machine.
+    const sharing = this.sharing();
+    if (sharing && sharing.phase !== "offered") {
+      const native = status.session;
+      if (
+        !native ||
+        native.sessionId !== sharing.rcSessionId ||
+        native.revoked
+      ) {
+        this.#setError(native?.revoked ?? "session_ended");
+        void this.endSharing(native?.revoked ?? "native_revoked");
+        return;
+      }
+      // Keep the renderer's phase honest about calibration too — native is
+      // the authority on it, not the click that requested it.
+      if (native.calibrated && sharing.phase === "calibrating") {
+        this.#setSharing({ ...sharing, phase: "active" });
+      }
+    }
+
+    // The controller's phase advances on the one thing it can actually
+    // observe: packets have been sealed and published. That is precisely
+    // "your input is being sent" and nothing stronger — it does not mean the
+    // sharer armed, and it certainly does not mean anything landed.
+    //
+    // The alternative was to leave the phase at "waiting" forever, which the
+    // review rightly called out: the honesty rule forbids claiming "you are
+    // in control", it does not license telling a working session that its
+    // input is not being delivered.
+    const controlling = this.controlling();
+    if (
+      controlling &&
+      controlling.phase === "waiting" &&
+      (status.controller?.packetsSealed ?? 0) > 0
+    ) {
+      this.#setControlling({ ...controlling, phase: "active" });
+    }
+  }
+
+  /**
+   * SHARER, step 1: consent natively, then post the offer.
+   *
+   * The native `RcGive` dialog runs first and mints both opaque values. They
+   * are UNPADDED STANDARD base64 of exactly 32 bytes, which is what the
+   * shipped server pins with `require_opaque_32` — passed through
+   * byte-for-byte, never re-encoded.
+   */
+  async offerControl(args: {
+    apiBase: string;
+    authHeader: [string, string];
+    channelId: string;
+    sharerId: string;
+    controllerId: string;
+    controllerName: string;
+    display: string;
+  }): Promise<boolean> {
+    const invoke = tauriInvoke();
+    if (!invoke) return false;
+    this.#setError(undefined);
+    try {
+      const minted = (await invoke("e2ee_rc_offer", {
+        channelId: args.channelId,
+        sharerId: args.sharerId,
+        controllerId: args.controllerId,
+        targetDisplay: args.controllerName,
+      })) as { rcSessionId: string; sharerEphemeralPub: string };
+
+      // RAW FETCH, not the typed stoat-api client: it sends `{}` for routes
+      // it does not know, which would silently drop the ephemeral public and
+      // leave the server rejecting a body that looks fine from here.
+      const response = await fetch(
+        `${args.apiBase}/channels/${args.channelId}/control/offer`,
+        {
+          method: "POST",
+          headers: {
+            [args.authHeader[0]]: args.authHeader[1],
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            target: args.controllerId,
+            sharer_ephemeral_pub: minted.sharerEphemeralPub,
+            rc_session_id: minted.rcSessionId,
+          }),
+        },
+      );
+      if (!response.ok) {
+        // The native ephemeral must not outlive an offer the server never
+        // accepted — otherwise a retry could be answered with a peer public
+        // for a session nobody agreed to.
+        await invoke("e2ee_rc_cancel", { rcSessionId: minted.rcSessionId });
+        this.#setError(`offer rejected (${response.status})`);
+        return false;
+      }
+      this.#setSharing({
+        channelId: args.channelId,
+        rcSessionId: minted.rcSessionId,
+        controllerId: args.controllerId,
+        controllerName: args.controllerName,
+        display: args.display,
+        phase: "offered",
+      });
+      return true;
+    } catch (err) {
+      this.#setError(String(err));
+      return false;
+    }
+  }
+
+  #offerTimer?: ReturnType<typeof setTimeout>;
+
+  /**
+   * An inbound offer arrived. Rendered as an accept/decline prompt, and
+   * auto-dismissed at the server's own TTL.
+   *
+   * The expiry is not cosmetic. `RemoteControlDeclined` is private to the
+   * SHARER, so a target whose offer was cancelled or expired is told nothing
+   * — and answering a dead offer is expensive in a way a user cannot see: it
+   * shows a real `RcAccept` OS dialog, derives a key, and **burns
+   * `(channel, rc_session_id)` in the replay dedup**, all before the PUT
+   * comes back 404. The retry of that session id is then permanently
+   * refused. `incomingCall.ts` already sets the precedent for a client-side
+   * timeout on a server-lifetimed prompt.
+   */
+  presentOffer(offer: RcOffer) {
+    if (this.#offerTimer) clearTimeout(this.#offerTimer);
+    this.#setOffer(offer);
+    this.#offerTimer = setTimeout(
+      () => this.dismissOffer(),
+      REMOTE_CONTROL_OFFER_TTL_MS,
+    );
+  }
+
+  /** Clear a prompt without answering (the offer expires server-side). */
+  dismissOffer() {
+    if (this.#offerTimer) clearTimeout(this.#offerTimer);
+    this.#offerTimer = undefined;
+    this.#setOffer(undefined);
+  }
+
+  /**
+   * CONTROLLER: answer an offer.
+   *
+   * `controllerId` is **this device's own authenticated user id**, never
+   * `target_id` from the offer event, even though every other field here
+   * legitimately does come from that event. That field is server-asserted;
+   * echoing it back lets the server supply both halves of the key
+   * transcript, and a redirected session then derives and runs silently
+   * under a name the sharer never picked. Native refuses a mismatch, so the
+   * symptom is a hard error rather than a subtle one — but only if the right
+   * value is passed.
+   */
+  async respondToOffer(args: {
+    apiBase: string;
+    authHeader: [string, string];
+    offer: RcOffer;
+    localUserId: string;
+    sharerName: string;
+    accept: boolean;
+  }): Promise<boolean> {
+    const invoke = tauriInvoke();
+    this.#setOffer(undefined);
+    const url = `${args.apiBase}/channels/${args.offer.channelId}/control/offers/${args.offer.offerId}/respond`;
+    const headers = {
+      [args.authHeader[0]]: args.authHeader[1],
+      "Content-Type": "application/json",
+    };
+
+    if (!args.accept || !invoke) {
+      // A decline is a real, server-recorded signal, unlike the incoming-call
+      // ring's purely local dismissal — the sharer is waiting on it.
+      await fetch(url, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ accept: false }),
+      }).catch(() => undefined);
+      return false;
+    }
+
+    this.#setError(undefined);
+    try {
+      const accepted = (await invoke("e2ee_rc_accept", {
+        channelId: args.offer.channelId,
+        sharerId: args.offer.sharerId,
+        controllerId: args.localUserId,
+        sharerDisplay: args.sharerName,
+        sharerEphemeralPub: args.offer.sharerEphemeralPub,
+        rcSessionId: args.offer.rcSessionId,
+      })) as { controllerEphemeralPub: string; sas: string };
+
+      const response = await fetch(url, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({
+          accept: true,
+          controller_ephemeral_pub: accepted.controllerEphemeralPub,
+        }),
+      });
+      if (!response.ok) {
+        await invoke("rc_end", {
+          sessionId: args.offer.rcSessionId,
+          reason: "respond_rejected",
+        });
+        this.#setError(`accept rejected (${response.status})`);
+        return false;
+      }
+      this.#setControlling({
+        channelId: args.offer.channelId,
+        rcSessionId: args.offer.rcSessionId,
+        sharerId: args.offer.sharerId,
+        sharerName: args.sharerName,
+        // NOT "active": the sharer still has to answer their own `RcArm`
+        // dialog, and nothing tells us when they do. Until then input is
+        // sealed and sent and simply not injected, so a UI that claimed
+        // control here would be claiming something it cannot substantiate.
+        phase: "waiting",
+        sas: accepted.sas,
+      });
+      return true;
+    } catch (err) {
+      this.#setError(String(err));
+      return false;
+    }
+  }
+
+  /**
+   * SHARER, step 2: the controller accepted. Arm through the native `RcArm`
+   * dialog, which displays the verification code and is what actually turns
+   * injection on.
+   *
+   * A renderer that never calls this cannot inject. A renderer that calls it
+   * with a SUBSTITUTED peer public gets a session whose code does not match
+   * the controller's — which is exactly why the code is rendered inside the
+   * OS dialog and not only in a webview panel.
+   */
+  async armSession(args: {
+    grantId: string;
+    controllerEphemeralPub: string;
+    durationMs: number;
+  }): Promise<boolean> {
+    const invoke = tauriInvoke();
+    const sharing = this.sharing();
+    if (!invoke || !sharing) return false;
+    try {
+      const started = (await invoke("e2ee_rc_start", {
+        rcSessionId: sharing.rcSessionId,
+        controllerEphemeralPub: args.controllerEphemeralPub,
+        controllerDisplay: sharing.controllerName,
+        display: sharing.display,
+        durationMs: args.durationMs,
+      })) as { sas: string };
+      batch(() => {
+        this.#setSharing({
+          ...sharing,
+          grantId: args.grantId,
+          // §5(C): armed, but only pointer motion injects until the sharer
+          // confirms the pointer is landing on the screen they are actually
+          // sharing. Native enforces that; this is the UI's mirror of it.
+          phase: "calibrating",
+          sas: started.sas,
+        });
+      });
+      this.#startHeartbeat(args.grantId);
+      return true;
+    } catch (err) {
+      // Declined, timed out, replayed, peer key rejected — all terminal, and
+      // the offer is spent either way. Journalled natively; surfaced here.
+      this.#setError(String(err));
+      this.#setSharing(undefined);
+      return false;
+    }
+  }
+
+  /** §5(C): the sharer confirms (or rejects) the display calibration. */
+  async confirmCalibration(confirmed: boolean) {
+    const invoke = tauriInvoke();
+    const sharing = this.sharing();
+    if (!invoke || !sharing) return;
+    if (!confirmed) {
+      await this.endSharing("calibration_rejected");
+      return;
+    }
+    // Advance ONLY if native accepted. `rc_calibrate` returns false when
+    // there is no matching session — which is exactly the case where saying
+    // "they can control this computer" would be a lie, because the session
+    // was revoked between arming and this click.
+    let accepted = false;
+    try {
+      accepted = (await invoke("rc_calibrate", {
+        sessionId: sharing.rcSessionId,
+        confirmed: true,
+      })) as boolean;
+    } catch (err) {
+      this.#setError(String(err));
+    }
+    if (accepted) {
+      this.#setSharing({ ...sharing, phase: "active" });
+    } else {
+      this.#setError("session_ended");
+      await this.endSharing("calibration_no_session");
+    }
+  }
+
+  // -- heartbeat --------------------------------------------------------
+
+  #heartbeat?: ReturnType<typeof setInterval>;
+  #heartbeatCtx?: { apiBase: string; authHeader: [string, string] };
+
+  /** Supply the credentials the heartbeat needs. Called on connect. */
+  setApiContext(ctx: { apiBase: string; authHeader: [string, string] }) {
+    this.#heartbeatCtx = ctx;
+  }
+
+  /**
+   * Keep the SFU capability alive — but ONLY while native reports the
+   * session has actually authenticated.
+   *
+   * That condition is the whole point. The grant is minted at accept, before
+   * any packet has ever opened, and it is per-IDENTITY rather than per-topic,
+   * so "accept an offer, then let the handshake fail" would otherwise be a
+   * supported way to acquire a data-publish capability reaching every topic
+   * in the room — including `"captions"` — without ever controlling
+   * anything. Withholding the heartbeat lets the shipped 8 s / 16 s grace
+   * destroy it with no new backend work.
+   */
+  #startHeartbeat(grantId: string) {
+    this.#stopHeartbeat();
+    this.#heartbeat = setInterval(() => {
+      void (async () => {
+        const sharing = this.sharing();
+        const ctx = this.#heartbeatCtx;
+        if (!sharing || !ctx) return this.#stopHeartbeat();
+        await this.refreshStatus();
+        const session = this.status()?.session;
+        if (!session || !session.authenticated) return;
+        await fetch(
+          `${ctx.apiBase}/channels/${sharing.channelId}/control/heartbeat`,
+          {
+            method: "POST",
+            headers: { [ctx.authHeader[0]]: ctx.authHeader[1] },
+          },
+        ).catch(() => undefined);
+      })();
+      void grantId;
+    }, HEARTBEAT_INTERVAL_MS);
+  }
+
+  #stopHeartbeat() {
+    if (this.#heartbeat) clearInterval(this.#heartbeat);
+    this.#heartbeat = undefined;
+  }
+
+  // -- teardown ---------------------------------------------------------
+
+  /** Sharer: take back control. */
+  async endSharing(reason: string) {
+    const invoke = tauriInvoke();
+    const sharing = this.sharing();
+    this.#stopHeartbeat();
+    this.#setSharing(undefined);
+    if (!sharing) return;
+    if (invoke) {
+      // An offer that never became a session is a PENDING record in the
+      // shell, not an injector record — `rc_end` cannot see it, so only
+      // `e2ee_rc_cancel` destroys and zeroizes the ephemeral private. §2
+      // requires that on decline; without it the key survives to the 90 s
+      // offer TTL after the target has already said no.
+      if (sharing.phase === "offered") {
+        await invoke("e2ee_rc_cancel", {
+          rcSessionId: sharing.rcSessionId,
+        }).catch(() => undefined);
+      }
+      await invoke("rc_end", {
+        sessionId: sharing.rcSessionId,
+        reason,
+      }).catch(() => undefined);
+    }
+    const ctx = this.#heartbeatCtx;
+    if (ctx && sharing.grantId) {
+      await fetch(
+        `${ctx.apiBase}/channels/${sharing.channelId}/control/${sharing.grantId}`,
+        {
+          method: "DELETE",
+          headers: { [ctx.authHeader[0]]: ctx.authHeader[1] },
+        },
+      ).catch(() => undefined);
+    }
+  }
+
+  /** Controller: release control. */
+  async endControlling(reason: string) {
+    const invoke = tauriInvoke();
+    const controlling = this.controlling();
+    this.stopCapture(reason);
+    this.#setControlling(undefined);
+    if (!controlling) return;
+    if (invoke) {
+      await invoke("rc_end", {
+        sessionId: controlling.rcSessionId,
+        reason,
+      }).catch(() => undefined);
+    }
+    const ctx = this.#heartbeatCtx;
+    if (ctx) {
+      // The controller has no grant id — the release route is grant-id
+      // addressed and the grant id rides the sharer's private accept event.
+      // Ending natively drops the sealing key, and the sharer's heartbeat
+      // stops when their own session ends, so the capability expires within
+      // the 16 s grace regardless.
+      void ctx;
+    }
+  }
+
+  /**
+   * `RemoteControlEnded` from the server. A server message may END a session
+   * and never sustain one, so this is honoured unconditionally in the one
+   * direction it is allowed to act in.
+   */
+  onServerEnded(
+    channelId: string,
+    sharerId: string,
+    reason: string,
+    localUserId?: string,
+  ) {
+    const sharing = this.sharing();
+    // `RemoteControlEnded` is a CHANNEL-TOPIC event, so it fans out to every
+    // `ViewChannel` subscriber, and §0.7 permits several sharers per call.
+    // Without the `sharerId` check, any other person's session ending in this
+    // channel tears down yours — and in a large server channel that is most
+    // of the time.
+    if (
+      sharing &&
+      sharing.channelId === channelId &&
+      sharerId === localUserId
+    ) {
+      void this.endSharing(`server:${reason}`);
+    }
+    const controlling = this.controlling();
+    if (
+      controlling &&
+      controlling.channelId === channelId &&
+      controlling.sharerId === sharerId
+    ) {
+      void this.endControlling(`server:${reason}`);
+    }
+  }
+
+  /**
+   * The controller's video feed stopped being trustworthy — unsubscribed by
+   * the visibility observer, track ended, muted, or the tile unmounted.
+   *
+   * An IMMEDIATE hard pause, not a warning. `VideoTrack`'s observer calls
+   * `setSubscribed(false)` below 80% visibility after 3 s, which freezes the
+   * last frame with no `ended`, no `pause` and no `stalled` event — so
+   * scrolling the participant strip would otherwise leave the controller
+   * happily injecting against a still image of a desktop that has moved on.
+   * Blind control is worse than no control.
+   */
+  onFeedLost(reason: string, generation?: number) {
+    if (!this.captureActive()) return;
+    this.stopCapture(`feed_lost:${reason}`, generation);
+  }
+
+  /** The local user's `Ctrl+Shift+Alt+End`, from a focused Sloga window. */
+  async panic() {
+    const invoke = tauriInvoke();
+    // Native anchor first: it revokes inside native rather than in renderer
+    // state, so it holds even if this code is compromised. Renderer-reachable
+    // is acceptable in this ONE direction — it can only ever stop control.
+    if (invoke) await invoke("rc_panic_local").catch(() => undefined);
+    // On a controller machine there is no sharer session for `rc_panic_local`
+    // to stop, so the meaningful local action is to stop sending.
+    if (this.controlling()) await this.endControlling("panic_key");
+    if (this.sharing()) await this.endSharing("panic_key");
+  }
+}

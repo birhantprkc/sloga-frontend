@@ -1,0 +1,273 @@
+import {
+  Match,
+  Show,
+  Switch,
+  createSignal,
+  onCleanup,
+  onMount,
+} from "solid-js";
+
+import { Portal } from "solid-js/web";
+
+import { Trans, useLingui } from "@lingui-solid/solid/macro";
+import { styled } from "styled-system/jsx";
+
+import { useClient } from "@revolt/client";
+import { useUser } from "@revolt/markdown/users";
+import { REMOTE_CONTROL_CLAIM, useVoice } from "@revolt/rtc";
+import { Button } from "@revolt/ui/components/design";
+import { VoiceGiveControlPanel } from "./VoiceGiveControlButton";
+
+/**
+ * The two remote-control surfaces that are not the sharer's own panel: the
+ * inbound offer prompt, and the controller's status while driving.
+ *
+ * Mounted once alongside the call card. Both are deliberately plain — an
+ * offer is an OFFER, not a warning: nothing of the target's is at risk, and
+ * dressing it as dangerous is exactly how people are trained to dismiss the
+ * prompt that does matter (the sharer's, which is native).
+ */
+export function RemoteControlOverlays() {
+  const voice = useVoice();
+  const client = useClient();
+  const { t } = useLingui();
+  const rc = voice.remoteControl;
+
+  // The focused-window panic handler. `RegisterHotKey` in the shell already
+  // covers the focused case on the SHARER'S machine, so this is
+  // belt-and-braces there — but it is the only path that survives the combo
+  // being owned by another process, and on the CONTROLLER'S machine no
+  // hotkey is registered at all, so this is the primary path.
+  //
+  // It calls the native `rc_panic_local` rather than keeping the revoke in
+  // renderer state: renderer state is what a compromised renderer controls,
+  // and a kill switch is the last thing that should live there.
+  onMount(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.ctrlKey &&
+        event.shiftKey &&
+        event.altKey &&
+        event.code === "End"
+      ) {
+        event.preventDefault();
+        void rc.panic();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    onCleanup(() => window.removeEventListener("keydown", onKeyDown, true));
+  });
+
+  // Poll native while anything is live, so the sharer's panel can say
+  // "control appears frozen" from native facts rather than from hope.
+  onMount(() => {
+    const timer = setInterval(() => {
+      if (rc.sharing() || rc.controlling()) void rc.refreshStatus();
+    }, 1000);
+    onCleanup(() => clearInterval(timer));
+  });
+
+  // Portalled and mounted at APP level (the `IncomingCallOverlay` precedent),
+  // NOT inside the call card. Everything here is a stop affordance — the
+  // panic handler, "take back control", "release control", the §5(C)
+  // calibration prompt, the offer prompt — and mounting it inside
+  // `VoiceCallCardActiveRoom` meant every one of them vanished the moment the
+  // user browsed to another channel and the card flipped to PiP. A live
+  // session you can no longer see or stop because you clicked a channel is
+  // the worst shape this feature can take.
+  return (
+    <Portal ref={document.getElementById("floating")! as HTMLDivElement}>
+      <Stack>
+        <Show when={rc.offer()}>
+          {(offer) => <OfferPrompt offer={offer()} />}
+        </Show>
+        <VoiceGiveControlPanel />
+        <ControllerPanel />
+      </Stack>
+    </Portal>
+  );
+
+  function OfferPrompt(props: {
+    offer: NonNullable<ReturnType<typeof rc.offer>>;
+  }) {
+    const sharer = useUser(props.offer.sharerId);
+    const name = () => sharer()?.username ?? props.offer.sharerId;
+
+    async function respond(accept: boolean) {
+      const api = client();
+      const self = api?.user?.id;
+      if (!api || !self) return;
+      await rc.respondToOffer({
+        apiBase: api.options.baseURL,
+        authHeader: api.authenticationHeader as [string, string],
+        offer: props.offer,
+        // THIS DEVICE'S OWN id, never `target_id` from the event, even
+        // though every other field here does come from it. That field is
+        // server-asserted; echoing it back would let the server supply both
+        // halves of the key transcript, and a redirected session would then
+        // derive, authenticate and run silently under a name the sharer
+        // never picked.
+        localUserId: self,
+        sharerName: name(),
+        accept,
+      });
+    }
+
+    return (
+      <Sheet>
+        {/* Interpolated through `t`, with NO JSX inside the message. Writing
+            this as `<Trans>{name()} is giving you…</Trans>` renders the text
+            THREE TIMES — it passes tsc, extract and compile in silence and is
+            visible only in a browser. */}
+        <Heading>{t`${name()} is giving you control of their screen`}</Heading>
+        <Muted>
+          <Trans>
+            Your mouse and keyboard will be sent to their computer while the
+            session lasts. Nothing on your computer is shared.
+          </Trans>
+        </Muted>
+        <Row>
+          <Button size="sm" variant="filled" onPress={() => respond(true)}>
+            <Trans>Accept</Trans>
+          </Button>
+          <Button size="sm" variant="text" onPress={() => respond(false)}>
+            <Trans>Decline</Trans>
+          </Button>
+        </Row>
+      </Sheet>
+    );
+  }
+
+  /**
+   * The controller's own status. The hard rule here is what it must NOT say.
+   *
+   * There is no authenticated feedback channel in v1 — the sharer→controller
+   * key is derived and immediately discarded, and the SFU grant covers the
+   * controller identity only, so a reply packet would be dropped by the SFU
+   * anyway. Nothing this client can observe substantiates "you are in
+   * control". So there is no green state: the strongest honest claim is
+   * "your input is being sent", and the video feed is the real signal.
+   *
+   * `secure_desktop` / `foreground_elevated` from `rc_status` are NOT used
+   * here. They describe whichever machine ran the call — on a controller
+   * that is the controller's own desktop, so wiring a "frozen" banner to
+   * them is wrong in both directions: the sharer hitting a UAC prompt does
+   * not set them, and the controller opening one sets them while the
+   * sharer's session is perfectly healthy.
+   */
+  function ControllerPanel() {
+    const [showCode, setShowCode] = createSignal(false);
+    return (
+      <Show when={rc.controlling()}>
+        {(session) => (
+          <Sheet>
+            <Switch>
+              <Match when={session().phase === "waiting"}>
+                <Heading>
+                  <Trans>Waiting for them to confirm on their machine</Trans>
+                </Heading>
+                <Muted>
+                  <Trans>
+                    Your input is not being delivered yet. They have to answer a
+                    prompt from their operating system first.
+                  </Trans>
+                </Muted>
+              </Match>
+              <Match when={session().phase === "active"}>
+                <Heading>
+                  <Trans>Your input is being sent</Trans>
+                </Heading>
+                <Muted>
+                  <Trans>
+                    Watch their screen to see whether it is landing. Their
+                    computer can silently ignore input on system prompts and on
+                    windows with higher privileges, and they can take control
+                    back at any time.
+                  </Trans>
+                </Muted>
+              </Match>
+            </Switch>
+            <Muted>{session().sharerName}</Muted>
+
+            <Show when={session().sas}>
+              <Button
+                size="sm"
+                variant="text"
+                onPress={() => setShowCode((was) => !was)}
+              >
+                <Trans>Verify</Trans>
+              </Button>
+              <Show when={showCode()}>
+                <Code>{session().sas}</Code>
+                <Muted>
+                  <Trans>
+                    Read this aloud. If it does not match the code on their
+                    screen, stop — someone may be intercepting the connection.
+                  </Trans>
+                </Muted>
+              </Show>
+            </Show>
+
+            <Claim>{REMOTE_CONTROL_CLAIM}</Claim>
+            <Button
+              size="sm"
+              variant="_error"
+              onPress={() => rc.endControlling("controller_released")}
+            >
+              <Trans>Release control</Trans>
+            </Button>
+          </Sheet>
+        )}
+      </Show>
+    );
+  }
+}
+
+const Sheet = styled("div", {
+  base: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "var(--gap-sm)",
+    padding: "var(--gap-lg)",
+    borderRadius: "var(--borderRadius-lg)",
+    background: "var(--md-sys-color-surface-container-high)",
+    color: "var(--md-sys-color-on-surface)",
+    maxWidth: "420px",
+  },
+});
+
+/**
+ * Fixed to the top-centre of the viewport, above the call card's own float
+ * layer. These panels must be reachable from anywhere in the app, so they
+ * cannot be laid out inside anything that scrolls or unmounts with a route.
+ */
+const Stack = styled("div", {
+  base: {
+    position: "fixed",
+    top: "var(--gap-lg)",
+    left: "50%",
+    transform: "translateX(-50%)",
+    zIndex: 200,
+    display: "flex",
+    flexDirection: "column",
+    gap: "var(--gap-md)",
+    alignItems: "center",
+    pointerEvents: "none",
+    "& > *": { pointerEvents: "auto" },
+  },
+});
+
+const Heading = styled("div", { base: { fontWeight: 600 } });
+const Muted = styled("div", { base: { fontSize: "0.85em", opacity: 0.75 } });
+const Claim = styled("div", { base: { fontSize: "0.75em", opacity: 0.6 } });
+const Row = styled("div", {
+  base: { display: "flex", gap: "var(--gap-sm)", flexWrap: "wrap" },
+});
+const Code = styled("div", {
+  base: {
+    fontFamily: "var(--monospace-font), monospace",
+    fontSize: "1.05em",
+    letterSpacing: "0.06em",
+    userSelect: "text",
+  },
+});

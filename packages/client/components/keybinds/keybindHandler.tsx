@@ -14,6 +14,7 @@ import {
   keybindFilter,
 } from "./keybindActions";
 import { DEFAULT_MAC_SEQUENCES, DEFAULT_SEQUENCES } from "./keybindSequences";
+import { registerActiveKeyReset } from "./suppress";
 
 type KeybindContext = {
   createKeybind: (keybind: KeybindAction, callback: () => void) => void;
@@ -131,6 +132,15 @@ export function KeybindContext(props: { children: JSXElement }) {
 
   document.body.addEventListener("keydown", onKeyDown);
   document.body.addEventListener("keyup", onKeyUp);
+
+  // `activeKeys` is closure-local and lives as long as this window, so any
+  // `keyup` that does not reach `document.body` latches its key FOREVER —
+  // and `firing()` then re-evaluates that stale combination on every
+  // subsequent keystroke. A remote-control capture surface swallows keyups
+  // by design, so it needs a way to clear the set on both edges of a
+  // session; without one, holding Escape as capture starts leaves this
+  // client closing floating elements on every keypress until a reload.
+  onCleanup(registerActiveKeyReset(() => activeKeys.clear()));
 
   onCleanup(() => {
     document.body.removeEventListener("keydown", onKeyDown);

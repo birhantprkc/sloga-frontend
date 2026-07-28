@@ -118,6 +118,16 @@ export function floating(element: HTMLElement, accessor: Accessor<Props>) {
    * Handle context menu click
    */
   function onContextMenu(event: MouseEvent) {
+    // Respect an overlay that has already claimed this right-click. This
+    // listener is bubble-phase and previously ignored `defaultPrevented`
+    // entirely, so anything painting over an element with `use:floating`
+    // could suppress the browser menu and still get Sloga's context menu
+    // opened on top of it — `preventDefault` is not `stopPropagation`, and
+    // per spec it does not suppress `contextmenu` delivery. The remote
+    // -control capture surface is the first overlay to hit this, but it is a
+    // latent hazard for any future one.
+    if (event.defaultPrevented) return;
+
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation();

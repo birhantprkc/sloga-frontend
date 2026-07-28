@@ -1,13 +1,26 @@
-export { VoiceContext, useVoice, platformMediaE2EESupported } from "./state";
+export { VoiceContext, platformMediaE2EESupported, useVoice } from "./state";
 export type { DiceRollToast } from "./state";
 
 export {
+  INCOMING_CALL_TIMEOUT_MS,
+  dismissIncomingCall,
   incomingCall,
   presentIncomingCall,
-  dismissIncomingCall,
-  INCOMING_CALL_TIMEOUT_MS,
 } from "./incomingCall";
 export type { IncomingCall } from "./incomingCall";
+
+export {
+  REMOTE_CONTROL_CLAIM,
+  RemoteControl,
+  normalizeToContentBox,
+} from "./remoteControl";
+export type {
+  RcControllerPhase,
+  RcDisplay,
+  RcOffer,
+  RcSharerPhase,
+  RcStatus,
+} from "./remoteControl";
 
 export {
   captionBroadcastSupported,
@@ -20,29 +33,29 @@ export { InRoom } from "./components/InRoom";
 export { RoomAudioManager } from "./components/RoomAudioManager";
 
 export {
+  BrightnessVideoProcessor,
   CameraEffectsController,
+  SEGMENTATION_ASSET_PATHS,
   cameraBackgroundSupported,
   faceFiltersSupported,
-  SEGMENTATION_ASSET_PATHS,
-  BrightnessVideoProcessor,
 } from "./cameraEffects";
 export type {
-  CameraBackgroundStatus,
   CameraBackgroundMode,
+  CameraBackgroundStatus,
   CameraEffectSettings,
 } from "./cameraEffects";
 
-export { FACE_FILTERS, COLOR_LOOKS } from "./faceFilterCatalog";
-export type { FaceFilterDef, ColorLookDef } from "./faceFilterCatalog";
+export { COLOR_LOOKS, FACE_FILTERS } from "./faceFilterCatalog";
+export type { ColorLookDef, FaceFilterDef } from "./faceFilterCatalog";
 export { FILTER_ASSETS_BASE } from "./faceFilterProcessor";
 
 export {
+  addUpload,
+  backgroundExists,
   listBackgrounds,
   listPresets,
   listUploads,
-  addUpload,
   removeUpload,
-  backgroundExists,
   resolveBackgroundUrl,
 } from "./cameraBackgrounds";
 export type {

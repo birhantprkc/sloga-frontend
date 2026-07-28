@@ -42,6 +42,11 @@ export function VoiceCallCardActiveRoom() {
       {/* Dice-roll results flashed over the video (§ /roll → in-call overlay).
           Sits above the tiles in every mode (normal / fullscreen / theater). */}
       <DiceRollOverlay />
+      {/* NOTE remote control's panels and its panic handler are NOT mounted
+          here. They live in `<RemoteControlOverlays>` at app level
+          (`src/Interface.tsx`), because every one of them is a way to STOP a
+          live session and this component unmounts the moment the user browses
+          to another channel. */}
       {/* Theater mode hides every control; the only chrome is the auto-dimming
           exit button overlaid on the selected window (Escape also exits). */}
       <Show when={!voice.immersive()} fallback={<ImmersiveExit />}>
