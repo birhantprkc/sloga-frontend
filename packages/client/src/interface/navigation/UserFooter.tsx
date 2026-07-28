@@ -39,7 +39,7 @@ export function UserFooter() {
   const inCall = () => !!voice.room();
 
   return (
-    <Base>
+    <Base data-user-footer>
       <UserArea ref={setMenuAnchor}>
         <Avatar
           size={32}
@@ -231,18 +231,26 @@ function DevicePopover(props: {
   );
 }
 
+// Floats over the bottom of the whole nav block (server rail + channel
+// list); the columns reserve matching space via MainBar's withFooter
+// variant so scrolled content is never trapped underneath.
 const Base = styled("div", {
   base: {
-    flexShrink: 0,
-    marginTop: "auto",
+    position: "absolute",
+    left: "10px",
+    right: "10px",
+    bottom: "10px",
+    zIndex: 30,
 
     display: "flex",
     alignItems: "center",
     gap: "2px",
     padding: "var(--gap-sm) var(--gap-md)",
 
-    background: "var(--md-sys-color-surface-container)",
-    borderTop: "1px solid var(--md-sys-color-outline-variant)",
+    background: "var(--md-sys-color-surface-container-high)",
+    border: "1px solid var(--md-sys-color-outline-variant)",
+    borderRadius: "var(--borderRadius-lg)",
+    boxShadow: "0 4px 16px rgba(0,0,0,0.35)",
   },
 });
 

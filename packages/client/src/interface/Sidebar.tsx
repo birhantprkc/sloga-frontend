@@ -15,11 +15,14 @@ import { useState } from "@revolt/state";
 import { LAYOUT_SECTIONS } from "@revolt/state/stores/Layout";
 
 import { HomeSidebar, ServerList, ServerSidebar } from "./navigation";
+import { UserFooter } from "./navigation/UserFooter";
 
 const MainBar = styled("div", {
   base: {
     display: "flex",
     flexShrink: 0,
+    // Containing block for the floating user bar.
+    position: "relative",
 
     _phone: {
       "--layout-width-channel-sidebar": "auto",
@@ -27,6 +30,24 @@ const MainBar = styled("div", {
       width: "100vw",
       height: "100%",
     },
+  },
+  variants: {
+    /**
+     * Reserve room at the bottom of both columns (server rail + channel
+     * list) so their content can always scroll clear of the floating
+     * user bar, which overlays the bottom of the nav block.
+     */
+    withFooter: {
+      true: {
+        "& > *:not([data-user-footer])": {
+          paddingBottom: "64px",
+        },
+      },
+      false: {},
+    },
+  },
+  defaultVariants: {
+    withFooter: false,
   },
 });
 
@@ -47,8 +68,13 @@ export const Sidebar = (props: {
   const params = useParams<{ server: string }>();
   const location = useLocation();
 
+  /** Whether the channel sidebar (and with it the user bar) is shown. */
+  const showSidebar = () =>
+    state.layout.getSectionState(LAYOUT_SECTIONS.PRIMARY_SIDEBAR, true) &&
+    !location.pathname.startsWith("/discover");
+
   return (
-    <MainBar class="main_bar">
+    <MainBar class="main_bar" withFooter={showSidebar()}>
       <ServerList
         orderedServers={state.ordering.orderedServers(client())}
         setServerOrder={state.ordering.setServerOrder}
@@ -73,17 +99,13 @@ export const Sidebar = (props: {
         }
         menuGenerator={props.menuGenerator}
       />
-      <Show
-        when={
-          state.layout.getSectionState(LAYOUT_SECTIONS.PRIMARY_SIDEBAR, true) &&
-          !location.pathname.startsWith("/discover")
-        }
-      >
+      <Show when={showSidebar()}>
         <Switch fallback={<Home />}>
           <Match when={params.server}>
             <Server />
           </Match>
         </Switch>
+        <UserFooter />
       </Show>
     </MainBar>
   );
