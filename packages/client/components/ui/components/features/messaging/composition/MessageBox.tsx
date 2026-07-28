@@ -163,6 +163,9 @@ const ActionBar = styled("div", {
     color: "var(--md-sys-color-on-surface)",
 
     overflowX: "auto",
+    // commit the browser to horizontal panning so a slightly-diagonal swipe
+    // scrolls the bar instead of ambiguously panning the page
+    touchAction: "pan-x",
     scrollbarWidth: "none",
     "&::-webkit-scrollbar": { display: "none" },
   },

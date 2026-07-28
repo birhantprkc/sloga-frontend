@@ -83,6 +83,20 @@ export class SlideDrawer {
     if (e.touches.length > 1) return this.endTouch();
     if (this.touch || !this.eGet()) return;
 
+    //Leave the gesture to any ancestor that actually scrolls horizontally
+    //(e.g. the composer action bar) — otherwise the drawer steals the swipe
+    //and the un-scrolled touch can land as a click on whatever is under it
+    for (
+      let el = e.target instanceof Element ? e.target : null;
+      el && el !== this.root;
+      el = el.parentElement
+    ) {
+      if (el.scrollWidth > el.clientWidth) {
+        const { overflowX } = getComputedStyle(el);
+        if (overflowX === "auto" || overflowX === "scroll") return;
+      }
+    }
+
     //Track this touch
     const t = e.touches[0];
     this.touch = {
