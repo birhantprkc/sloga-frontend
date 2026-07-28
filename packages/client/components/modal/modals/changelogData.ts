@@ -9,6 +9,22 @@ import type { ChangelogResponse } from "./Changelog";
  */
 export const CHANGELOGS: ChangelogResponse[] = [
   {
+    id: "sloga-2026-07-28",
+    title: "Patch Notes",
+    published_at: "2026-07-28T16:30:00.000Z",
+    markdown_content: `## v0.16.0 — Your voice controls, always at hand
+
+### 🎛️ New user bar
+- **A quick-access bar at the bottom of the sidebar** — your avatar and status, plus mute, deafen and settings, always one click away. No more digging into a call to reach them.
+- **Mute or deafen before you even join** — the bar works outside calls too, and whatever you set is exactly how you'll enter the next call. No more hot-mic surprises.
+- **Switch your microphone or speakers on the fly** — the little arrows next to each toggle open a device picker, with a shortcut straight into Voice Settings.
+- Click your avatar in the bar to change your presence or status message.
+
+- On the web now; desktop and Android pick it up with their next update.
+
+*Sloga — Hop on.*`,
+  },
+  {
     id: "sloga-2026-07-27",
     title: "Patch Notes",
     published_at: "2026-07-27T18:00:00.000Z",
