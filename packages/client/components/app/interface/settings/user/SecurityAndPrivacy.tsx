@@ -16,9 +16,14 @@ import { CONFIGURATION } from "@revolt/common";
 import { useUser } from "@revolt/markdown/users";
 import { useModals } from "@revolt/modal";
 import type { RcTrustedPeer } from "@revolt/rtc";
-import { platformMediaE2EESupported, useVoice } from "@revolt/rtc";
+import {
+  REMOTE_CONTROL_EXPRESS_NOTE,
+  platformMediaE2EESupported,
+  useVoice,
+} from "@revolt/rtc";
 import { CategoryButton, Checkbox, Column, iconSize } from "@revolt/ui";
 
+import MdBolt from "@material-design-icons/svg/outlined/bolt.svg?component-solid";
 import MdDesktopWindows from "@material-design-icons/svg/outlined/desktop_windows.svg?component-solid";
 import MdKey from "@material-design-icons/svg/outlined/key.svg?component-solid";
 import MdLock from "@material-design-icons/svg/outlined/lock.svg?component-solid";
@@ -101,25 +106,90 @@ function RemoteControlTrustCard() {
     }
   }
 
+  // -- Express Connect (part 3) ----------------------------------------
+  //
+  // The switch itself is NOT settable from here. Turning it on asks native
+  // to show its own opt-in dialog and the flag is written on the far side of
+  // that; a renderer that could set it could remove one of the two
+  // confirmations standing between it and the keyboard. Turning it OFF is
+  // unrestricted, because that direction only adds friction back.
+  const [express, setExpress] = createSignal(false);
+
+  async function reloadExpress() {
+    setExpress(await rc.expressEnabled());
+  }
+
+  onMount(() => {
+    if (CONFIGURATION.ENABLE_REMOTE_CONTROL) void reloadExpress();
+  });
+
+  async function toggleExpress() {
+    setBusy(true);
+    try {
+      if (express()) await rc.disableExpress();
+      else await rc.enableExpress();
+      await reloadExpress();
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
-    <Show when={supported() === true && peers().length > 0}>
+    <Show when={supported() === true}>
+      <Show when={peers().length > 0}>
+        <CategoryButton.Group>
+          <For each={peers()}>
+            {(peer) => (
+              <TrustedPeerRow peer={peer} busy={busy()} onForget={forget} />
+            )}
+          </For>
+          <CategoryButton
+            icon={<MdDesktopWindows {...iconSize(24)} />}
+            disabled={busy()}
+            description={
+              <Trans>
+                Everyone above goes back to needing both confirmations.
+              </Trans>
+            }
+            onClick={() => void forgetEveryone()}
+          >
+            <Trans>Forget everyone</Trans>
+          </CategoryButton>
+        </CategoryButton.Group>
+      </Show>
+
+      {/* Express Connect. Shown even with an empty trust list, because it is
+          the switch that has to be findable — but note it does nothing at
+          all until someone is remembered, which is §8's mitigation and is
+          said in the description rather than left to be discovered.
+
+          🔴 REMOTE_CONTROL_EXPRESS_NOTE is a SECURITY STATEMENT and is not
+          yet reviewed. The pinned claim is unchanged and still true; what
+          this adds is that the verification code and the second OS
+          confirmation are gone in this mode. Review before shipping. */}
       <CategoryButton.Group>
-        <For each={peers()}>
-          {(peer) => (
-            <TrustedPeerRow peer={peer} busy={busy()} onForget={forget} />
-          )}
-        </For>
         <CategoryButton
-          icon={<MdDesktopWindows {...iconSize(24)} />}
           disabled={busy()}
-          description={
-            <Trans>
-              Everyone above goes back to needing both confirmations.
-            </Trans>
+          action={
+            <span style={{ "pointer-events": "none", display: "flex" }}>
+              <Checkbox checked={express()} />
+            </span>
           }
-          onClick={() => void forgetEveryone()}
+          icon={<MdBolt {...iconSize(24)} />}
+          description={
+            express() ? (
+              REMOTE_CONTROL_EXPRESS_NOTE
+            ) : (
+              <Trans>
+                Start sessions with people you have remembered in one step
+                instead of two. Sloga will no longer show you a verification
+                code for them. People you have not remembered are unaffected.
+              </Trans>
+            )
+          }
+          onClick={() => void toggleExpress()}
         >
-          <Trans>Forget everyone</Trans>
+          <Trans>Express Connect</Trans>
         </CategoryButton>
       </CategoryButton.Group>
     </Show>

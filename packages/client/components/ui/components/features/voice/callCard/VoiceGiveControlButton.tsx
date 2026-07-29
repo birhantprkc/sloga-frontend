@@ -15,6 +15,7 @@ import { CONFIGURATION } from "@revolt/common";
 import { useUser } from "@revolt/markdown/users";
 import {
   REMOTE_CONTROL_CLAIM,
+  REMOTE_CONTROL_EXPRESS_NOTE,
   REMOTE_CONTROL_TRUST_NOTE,
   useVoice,
 } from "@revolt/rtc";
@@ -56,6 +57,11 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
 
   // A COMMAND PROBE rather than a shell sniff — see `RemoteControl.supported`.
   const [supported] = createResource(() => rc.supported());
+  // Whether Express Connect is switched on for this device. Re-read every
+  // time the picker opens rather than once at mount: it is changed in
+  // Settings, which is a different screen in the same session, and a stale
+  // `false` here would show the wrong warning at the exact moment it counts.
+  const [express] = createResource(open, () => rc.expressEnabled());
   const [displays] = createResource(open, async () => {
     const found = await rc.displays();
     // Default the selector to the primary monitor as soon as the list
@@ -296,6 +302,16 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
             </Remember>
             <Show when={remember()}>
               <Warning>{REMOTE_CONTROL_TRUST_NOTE}</Warning>
+            </Show>
+
+            {/* 🔴 Also an unreviewed SECURITY STATEMENT. Shown whenever
+              Express Connect is on, not only when it will apply to the
+              person about to be picked — native decides that per peer (it
+              needs them already remembered) and this component cannot know
+              which rows qualify without asking about each one. Over-warning
+              is the safe direction; under-warning is not. */}
+            <Show when={express()}>
+              <Warning>{REMOTE_CONTROL_EXPRESS_NOTE}</Warning>
             </Show>
 
             {/* §8: this is the tech-support scam, near enough verbatim, and the

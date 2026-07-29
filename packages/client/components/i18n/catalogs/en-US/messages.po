@@ -2286,6 +2286,10 @@ msgstr ""
 msgid "Export soft reserves"
 msgstr ""
 
+#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+msgid "Express Connect"
+msgstr ""
+
 #: components/modal/modals/LinkWarning.tsx
 msgid "External links can be dangerous!"
 msgstr ""
@@ -5022,6 +5026,10 @@ msgstr ""
 
 #: components/app/interface/settings/user/Native.tsx
 msgid "Start Minimised to Tray"
+msgstr ""
+
+#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+msgid "Start sessions with people you have remembered in one step instead of two. Sloga will no longer show you a verification code for them. People you have not remembered are unaffected."
 msgstr ""
 
 #: components/ui/components/features/voice/callCard/VoiceCallCardPreview.tsx

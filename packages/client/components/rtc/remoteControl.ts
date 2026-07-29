@@ -222,6 +222,33 @@ export const REMOTE_CONTROL_TRUST_NOTE =
   "people you would hand your keyboard to in person, and remove them in " +
   "Settings under Security & Privacy.";
 
+/**
+ * What the app must say wherever Express Connect is on, in addition to
+ * `REMOTE_CONTROL_CLAIM` and never instead of it.
+ *
+ * 🔴 THIS IS A SECURITY STATEMENT AND IT IS NOT YET REVIEWED — the same
+ * standing as `REMOTE_CONTROL_TRUST_NOTE`, and it matters more, because this
+ * mode removes the verification code entirely.
+ *
+ * The pinned §0.2 claim already says the server introduces the two parties
+ * and is trusted to do so honestly, so nothing in it becomes FALSE here.
+ * What changes is that the one mechanism by which two humans could ever
+ * *notice* a wrong introduction — comparing the code — is gone, and so is
+ * the second OS confirmation. That has to be said out loud rather than left
+ * for a reader to infer from an unchanged paragraph.
+ *
+ * Note the missing code costs the same thing against a compromised sharer
+ * RENDERER as against a hostile server: §0.2 pairs them deliberately,
+ * because the peer's public key necessarily crosses the renderer.
+ */
+export const REMOTE_CONTROL_EXPRESS_NOTE =
+  "Express Connect is on. Sloga asks you once, when you click, instead of " +
+  "twice — and it cannot show you a verification code, because there is " +
+  "nothing to compare until the other person has answered. You are taking " +
+  "the server's word for who you have been connected to, with no way to " +
+  "notice if it is wrong. It applies only to people you have already chosen " +
+  "to remember; anyone else still goes through every step.";
+
 /** An inbound offer, rendered as an accept/decline prompt. */
 export type RcOffer = {
   channelId: string;
@@ -746,6 +773,53 @@ export class RemoteControl {
     } catch (err) {
       this.#setError(String(err));
       return 0;
+    }
+  }
+
+  // -- Express Connect (slice 6 part 3) ---------------------------------
+  //
+  // Same shape as trust and for the same reason: reading and switching OFF
+  // are commands, switching ON is a native dialog inside core. A renderer
+  // that could set this flag could remove one of the two confirmations
+  // standing between it and the keyboard.
+
+  /** Is Express Connect on for this device? Off on any failure. */
+  async expressEnabled(): Promise<boolean> {
+    const invoke = tauriInvoke();
+    if (!invoke) return false;
+    try {
+      return (await invoke("rc_express_status")) as boolean;
+    } catch {
+      // Deliberately silent AND false: an unreadable flag must never read as
+      // "on", and a settings row that cannot resolve its own state is not
+      // worth an error banner.
+      return false;
+    }
+  }
+
+  /**
+   * Ask native to show the Express Connect opt-in. Returns the resulting
+   * state, which is `false` if the user declined the dialog.
+   */
+  async enableExpress(): Promise<boolean> {
+    const invoke = tauriInvoke();
+    if (!invoke) return false;
+    try {
+      return (await invoke("rc_express_enable")) as boolean;
+    } catch (err) {
+      this.#setError(String(err));
+      return false;
+    }
+  }
+
+  /** Turn Express Connect off. No dialog — this only adds friction back. */
+  async disableExpress(): Promise<void> {
+    const invoke = tauriInvoke();
+    if (!invoke) return;
+    try {
+      await invoke("rc_express_disable");
+    } catch (err) {
+      this.#setError(String(err));
     }
   }
 

@@ -11,6 +11,7 @@ export type { IncomingCall } from "./incomingCall";
 
 export {
   REMOTE_CONTROL_CLAIM,
+  REMOTE_CONTROL_EXPRESS_NOTE,
   REMOTE_CONTROL_TRUST_NOTE,
   RemoteControl,
   classifyKey,
