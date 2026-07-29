@@ -185,6 +185,43 @@ export type RcStatus = {
   supported: boolean;
 };
 
+/**
+ * A peer this machine has been told to remember, so their offer-time native
+ * dialog is skipped. Ids and timestamps only — native never stored a
+ * username, and inventing one here would put a server-asserted string into
+ * the list whose whole job is letting the user recognise what they approved.
+ */
+export type RcTrustedPeer = {
+  userId: string;
+  /** Device-qualified: `"{user}:{device}"`. The trust is bound to it. */
+  identity: string;
+  /** Unix SECONDS, not milliseconds — these come from Rust's `SystemTime`. */
+  grantedUtc: number;
+  lastUsedUtc: number;
+};
+
+/**
+ * What the picker must say once "remember this person" is in play, in
+ * addition to `REMOTE_CONTROL_CLAIM` and never instead of it.
+ *
+ * 🔴 THIS IS A SECURITY STATEMENT AND IT IS NOT YET REVIEWED. The pinned
+ * §0.2 claim is unchanged and still true — the crypto did not move — but the
+ * *number of OS confirmations* did, from two to one, and plan §0.2's
+ * corollary is explicit that a mode which changes what is true must change
+ * its own text rather than let the existing wording keep asserting the old
+ * property. So this is a SEPARATE string, deliberately not a paraphrase of
+ * the claim in either direction, and it must be reviewed before it ships.
+ *
+ * It describes what someone could do rather than what a protocol guarantees,
+ * because that is what a person deciding this can actually weigh.
+ */
+export const REMOTE_CONTROL_TRUST_NOTE =
+  "Remembering someone removes one of the two system confirmations Sloga asks " +
+  "for on this computer. One is still required every time, before any of their " +
+  "input reaches you — but there is one fewer moment to stop. Only remember " +
+  "people you would hand your keyboard to in person, and remove them in " +
+  "Settings under Security & Privacy.";
+
 /** An inbound offer, rendered as an accept/decline prompt. */
 export type RcOffer = {
   channelId: string;
@@ -664,6 +701,54 @@ export class RemoteControl {
     }
   }
 
+  // -- per-peer trust (slice 6 part 2) ----------------------------------
+  //
+  // Read and revoke only. There is deliberately no `trust()` here to match:
+  // a renderer able to write that list could grant itself a way past the
+  // `RcGive` dialog, so the grant happens inside core on the far side of
+  // that dialog returning true. Revocation is safe in this direction
+  // because it can only ever REMOVE authority.
+
+  /** Remembered peers, for Settings → Security & Privacy. */
+  async trustedPeers(): Promise<RcTrustedPeer[]> {
+    const invoke = tauriInvoke();
+    if (!invoke) return [];
+    try {
+      return (await invoke("rc_trusted_peers")) as RcTrustedPeer[];
+    } catch (err) {
+      // Surfaced rather than swallowed: an empty list is the one answer this
+      // screen must never give by accident, because it reads as "nobody is
+      // remembered" — which is exactly the reassurance a failed read cannot
+      // substantiate.
+      this.#setError(String(err));
+      return [];
+    }
+  }
+
+  /** Forget one peer, putting their native dialog back. */
+  async revokeTrust(userId: string): Promise<boolean> {
+    const invoke = tauriInvoke();
+    if (!invoke) return false;
+    try {
+      return (await invoke("rc_revoke_trust", { userId })) as boolean;
+    } catch (err) {
+      this.#setError(String(err));
+      return false;
+    }
+  }
+
+  /** Forget everyone. Returns how many rows went. */
+  async revokeAllTrust(): Promise<number> {
+    const invoke = tauriInvoke();
+    if (!invoke) return 0;
+    try {
+      return (await invoke("rc_revoke_all_trust")) as number;
+    } catch (err) {
+      this.#setError(String(err));
+      return 0;
+    }
+  }
+
   /** Monitors, for §5's display selector. */
   async displays(): Promise<RcDisplay[]> {
     const invoke = tauriInvoke();
@@ -749,8 +834,25 @@ export class RemoteControl {
     channelId: string;
     sharerId: string;
     controllerId: string;
+    /**
+     * The peer's FULL device-qualified LiveKit identity, from the
+     * server-attested participant object — not the bare user id. Per-peer
+     * trust is bound to it, so passing the user id here would silently widen
+     * "remember this person on this machine" into "remember them on any
+     * machine". Native refuses a pair whose halves disagree and refuses a
+     * bare id outright, so the failure is a dialog that keeps appearing
+     * rather than one that stops.
+     */
+    controllerIdentity: string;
     controllerName: string;
     display: string;
+    /**
+     * REQUEST that native remember this peer. It grants nothing on its own:
+     * it changes the copy of the native `RcGive` dialog, and the row is
+     * written inside core only after that dialog returns true. There is no
+     * command that writes the trust list, deliberately.
+     */
+    remember: boolean;
   }): Promise<boolean> {
     const invoke = tauriInvoke();
     if (!invoke) return false;
@@ -760,7 +862,9 @@ export class RemoteControl {
         channelId: args.channelId,
         sharerId: args.sharerId,
         controllerId: args.controllerId,
+        controllerIdentity: args.controllerIdentity,
         targetDisplay: args.controllerName,
+        remember: args.remember,
       })) as { rcSessionId: string; sharerEphemeralPub: string };
 
       // RAW FETCH, not the typed stoat-api client: it sends `{}` for routes

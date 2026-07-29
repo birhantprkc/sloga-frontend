@@ -13,7 +13,11 @@ import { styled } from "styled-system/jsx";
 import { useClient } from "@revolt/client";
 import { CONFIGURATION } from "@revolt/common";
 import { useUser } from "@revolt/markdown/users";
-import { REMOTE_CONTROL_CLAIM, useVoice } from "@revolt/rtc";
+import {
+  REMOTE_CONTROL_CLAIM,
+  REMOTE_CONTROL_TRUST_NOTE,
+  useVoice,
+} from "@revolt/rtc";
 import { Button, IconButton } from "@revolt/ui/components/design";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
@@ -45,6 +49,10 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
   const [error, setError] = createSignal<string>();
   // An offer is out at native and the OS dialog is up.
   const [busy, setBusy] = createSignal(false);
+  // "Remember this person." Off every time the picker opens — a standing
+  // opt-in that survives between sessions is how someone ends up remembering
+  // a stranger they meant to help once.
+  const [remember, setRemember] = createSignal(false);
 
   // A COMMAND PROBE rather than a shell sniff — see `RemoteControl.supported`.
   const [supported] = createResource(() => rc.supported());
@@ -101,6 +109,31 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
     return users;
   };
 
+  /**
+   * The peer's FULL device-qualified LiveKit identity, which per-peer trust
+   * is bound to.
+   *
+   * `eligible()` deliberately dedupes to bare user ids because the OFFER is
+   * addressed to a user and the server picks the session — but trust is
+   * bound to a device, so it needs the identity back. Where the same person
+   * is in the call on two devices this takes the first, which is the same
+   * arbitrary-but-consistent choice the deduped row already represents.
+   *
+   * Returns `""` for a participant with no device half (a non-E2EE
+   * participant carries a bare user id). Native refuses to remember that,
+   * which is correct: "any device of theirs" is not what the dialog asks.
+   */
+  const identityOf = (userId: string) => {
+    const room = voice.room();
+    if (!room) return "";
+    for (const participant of room.remoteParticipants.values()) {
+      if (participantUserId(participant.identity) === userId) {
+        return participant.identity;
+      }
+    }
+    return "";
+  };
+
   // `ENABLE_REMOTE_CONTROL` is already folded into `supported()`, which is
   // where it has to live to darken the inbound direction as well. It is
   // repeated here so that the release gate is visible at the affordance
@@ -147,8 +180,12 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
       channelId: channel.id,
       sharerId: self,
       controllerId: userId,
+      controllerIdentity: identityOf(userId),
       controllerName: name,
       display: monitor,
+      // A REQUEST, not a grant. It changes what the native dialog says; the
+      // trust row is written inside core only if that dialog returns true.
+      remember: remember(),
     });
     setBusy(false);
 
@@ -167,7 +204,15 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
       <IconButton
         size={props.size}
         variant="tonal"
-        onPress={() => setOpen((was) => !was)}
+        onPress={() =>
+          setOpen((was) => {
+            // Reset on every open, not on close: a checkbox that stayed
+            // ticked from the last time is how someone remembers a person
+            // they never meant to.
+            if (!was) setRemember(false);
+            return !was;
+          })
+        }
         use:floating={{
           tooltip: {
             placement: "top",
@@ -225,6 +270,33 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
                 </Muted>
               </Show>
             </People>
+
+            {/* Per-peer trust. This box only ASKS: what it changes is the
+              copy of the native dialog on the next screen, and the trust is
+              recorded by that dialog returning true, inside the shell. A
+              renderer that could write the list could grant itself a way
+              past a consent dialog, so there is no command that does.
+
+              🔴 The note beneath is a SECURITY STATEMENT for a mode with a
+              different property than the pinned claim — one OS confirmation
+              instead of two. It is a separate string on purpose and must be
+              reviewed before it ships; do not fold it into
+              REMOTE_CONTROL_CLAIM, which is still true and still rendered
+              verbatim below. */}
+            <Remember>
+              <input
+                type="checkbox"
+                checked={remember()}
+                onChange={(event) => setRemember(event.currentTarget.checked)}
+              />
+              <Trans>
+                Skip one of the two system confirmations for this person next
+                time
+              </Trans>
+            </Remember>
+            <Show when={remember()}>
+              <Warning>{REMOTE_CONTROL_TRUST_NOTE}</Warning>
+            </Show>
 
             {/* §8: this is the tech-support scam, near enough verbatim, and the
               warning belongs where the decision is made. */}
@@ -487,6 +559,22 @@ const Row = styled("div", {
 
 const People = styled("div", {
   base: { display: "flex", gap: "var(--gap-sm)", flexWrap: "wrap" },
+});
+
+/**
+ * The "remember this person" row. A bare `<input type=checkbox>` rather than
+ * the design-system `Checkbox`, which is a display-only indicator whose
+ * clicks are meant to pass through to a `CategoryButton` row — there is no
+ * row here to pass them to.
+ */
+const Remember = styled("label", {
+  base: {
+    display: "flex",
+    alignItems: "center",
+    gap: "var(--gap-sm)",
+    fontSize: "0.85em",
+    cursor: "pointer",
+  },
 });
 
 const Select = styled("select", {

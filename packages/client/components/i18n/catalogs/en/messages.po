@@ -2262,6 +2262,10 @@ msgstr "Every"
 msgid "Every post must have at least one tag"
 msgstr "Every post must have at least one tag"
 
+#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+msgid "Everyone above goes back to needing both confirmations."
+msgstr "Everyone above goes back to needing both confirmations."
+
 #: src/interface/ServerEvents.tsx
 msgid "Everyone in that selection was already invited or can't view this event"
 msgstr "Everyone in that selection was already invited or can't view this event"
@@ -2423,6 +2427,10 @@ msgstr "For 8 hours"
 #: components/modal/modals/SoftResExport.tsx
 msgid "For the RollFor addon on Turtle WoW: open its soft-res import window, paste the string and import."
 msgstr "For the RollFor addon on Turtle WoW: open its soft-res import window, paste the string and import."
+
+#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+msgid "Forget everyone"
+msgstr "Forget everyone"
 
 #: components/app/interface/settings/ChannelSettings.tsx
 msgid "Forum"
@@ -4882,9 +4890,17 @@ msgstr "Silent"
 msgid "Skip for now"
 msgstr "Skip for now"
 
+#: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
+msgid "Skip one of the two system confirmations for this person next time"
+msgstr "Skip one of the two system confirmations for this person next time"
+
 #: src/interface/channels/text/Composition.tsx
 msgid "Slash commands are unavailable in encrypted conversations."
 msgstr "Slash commands are unavailable in encrypted conversations."
+
+#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+msgid "Sloga asks you once instead of twice before this person can use your mouse and keyboard. Select to undo."
+msgstr "Sloga asks you once instead of twice before this person can use your mouse and keyboard. Select to undo."
 
 #: components/ui/components/features/profiles/ProfileBadges.tsx
 msgid "Sloga Developer"

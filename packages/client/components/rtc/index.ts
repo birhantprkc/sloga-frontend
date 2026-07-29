@@ -11,6 +11,7 @@ export type { IncomingCall } from "./incomingCall";
 
 export {
   REMOTE_CONTROL_CLAIM,
+  REMOTE_CONTROL_TRUST_NOTE,
   RemoteControl,
   classifyKey,
   normalizeToContentBox,
@@ -22,6 +23,7 @@ export type {
   RcOffer,
   RcSharerPhase,
   RcStatus,
+  RcTrustedPeer,
 } from "./remoteControl";
 
 export {
