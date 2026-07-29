@@ -21,6 +21,7 @@ import { CONFIGURATION } from "@revolt/common";
 import { useState } from "@revolt/state";
 import { FlowTitle } from "./Flow";
 import { Fields, Form } from "./Form";
+import hopOnSloga from "./hop-on-sloga.mp4";
 
 /**
  * Whether the server offers Google OAuth login.
@@ -91,20 +92,38 @@ export default function FlowLogin() {
       <Switch
         fallback={
           <>
-            {/* Deliberately not <Trans>: "Sloga" is the wordmark and both
-                parts carry brand colors, per-letter (same as the website hero) */}
-            <div style={{ "font-weight": "700", "line-height": "1.2" }}>
-              <span style={{ color: "#27A163", "font-size": "1.6rem" }}>
-                Hop on
-              </span>{" "}
-              <span style={{ "font-size": "1.9rem" }}>
-                <span style={{ color: "#3BB8ED" }}>S</span>
-                <span style={{ color: "#F5870D" }}>l</span>
-                <span style={{ color: "#27A163" }}>o</span>
-                <span style={{ color: "#CF2A27" }}>g</span>
-                <span style={{ color: "#C05FC8" }}>a</span>
-              </span>
-            </div>
+            {/* "Hop on Sloga" brand animation. The clip's background is
+                rgb(6,10,14) — darker than the card (and the phone page bg) in
+                every channel, so lighten-blend erases it; keep it that way if
+                the clip is ever regenerated. */}
+            <video
+              src={hopOnSloga}
+              autoplay
+              muted
+              playsinline
+              preload="auto"
+              aria-label="Hop on Sloga"
+              style={{
+                "width": "100%",
+                "mix-blend-mode": "lighten",
+                "pointer-events": "none",
+                "margin-block": "-12px",
+              }}
+              ref={(el) => {
+                // Solid runs refs before insertion, so this beats the
+                // browser's autoplay-on-insert; play() here would not.
+                if (
+                  window.matchMedia("(prefers-reduced-motion: reduce)").matches
+                ) {
+                  el.autoplay = false;
+                  el.addEventListener(
+                    "loadedmetadata",
+                    () => (el.currentTime = el.duration),
+                    { once: true },
+                  );
+                }
+              }}
+            />
             <div style={{"--md-sys-color-primary": "#FF8A00", "--mdui-color-primary": "255, 138, 0", "display": "contents"}}>
             <Form onSubmit={performLogin}>
               <Fields fields={["email", "password"]} />
