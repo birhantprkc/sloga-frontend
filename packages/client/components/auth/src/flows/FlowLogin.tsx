@@ -10,7 +10,6 @@ import {
   Button,
   Checkbox,
   CircularProgress,
-  Column,
   Row,
   Text,
   iconSize,
@@ -92,47 +91,52 @@ export default function FlowLogin() {
       <Switch
         fallback={
           <>
-            <FlowTitle subtitle={<Trans>Sign into Sloga</Trans>} emoji="wave">
-              <Trans>Welcome!</Trans>
-            </FlowTitle>
+            {/* Deliberately not <Trans>: "Sloga" is the wordmark and both
+                parts carry brand colors, per-letter (same as the website hero) */}
+            <div style={{ "font-weight": "700", "line-height": "1.2" }}>
+              <span style={{ color: "#27A163", "font-size": "1.6rem" }}>
+                Hop on
+              </span>{" "}
+              <span style={{ "font-size": "1.9rem" }}>
+                <span style={{ color: "#3BB8ED" }}>S</span>
+                <span style={{ color: "#F5870D" }}>l</span>
+                <span style={{ color: "#27A163" }}>o</span>
+                <span style={{ color: "#CF2A27" }}>g</span>
+                <span style={{ color: "#C05FC8" }}>a</span>
+              </span>
+            </div>
             <div style={{"--md-sys-color-primary": "#FF8A00", "--mdui-color-primary": "255, 138, 0", "display": "contents"}}>
             <Form onSubmit={performLogin}>
               <Fields fields={["email", "password"]} />
-              <Checkbox
-                checked={keepLoggedIn()}
-                onChange={(event) =>
-                  setKeepLoggedIn(event.currentTarget.checked)
-                }
+              <div
+                style={{
+                  "display": "flex",
+                  "align-items": "center",
+                  "justify-content": "space-between",
+                  "gap": "var(--gap-md)",
+                  "width": "100%",
+                }}
               >
-                <Trans>Keep me logged in</Trans>
-              </Checkbox>
-              <div style={{"display": "flex", "flex-direction": "column", "gap": "inherit", "width": "100%"}}>
-                <Column gap="xl" align>
-                  <a href="/login/reset">
-                    <Button variant="text">
-                      <Trans>Reset password</Trans>
-                    </Button>
-                  </a>
-                  <a href="/login/resend">
-                    <Button variant="text">
-                      <Trans>Resend verification</Trans>
-                    </Button>
-                  </a>
-                </Column>
-                <Row align justify>
-                  <a href="..">
-                    <Button variant="text">
-                      <MdArrowBack {...iconSize("1.2em")} /> <Trans>Back</Trans>
-                    </Button>
-                  </a>
-                  <Button type="submit" bg="#FF8A00">
-                    <Trans>Login</Trans>
+                <Checkbox
+                  checked={keepLoggedIn()}
+                  onChange={(event) =>
+                    setKeepLoggedIn(event.currentTarget.checked)
+                  }
+                >
+                  <Trans>Keep me logged in</Trans>
+                </Checkbox>
+                <a href="/login/reset">
+                  <Button variant="text">
+                    <Trans>Reset password</Trans>
                   </Button>
-                </Row>
+                </a>
+              </div>
+              <div style={{"display": "flex", "flex-direction": "column", "gap": "inherit", "width": "100%"}}>
                 <Show when={oauthGoogle()}>
                   <Row align justify>
                     <Button
-                      variant="outlined"
+                      size="md"
+                      bg="#3BB8ED"
                       onPress={() => {
                         state.auth.setRemember(keepLoggedIn());
                         // Full-page navigation — the SPA router would
@@ -146,6 +150,16 @@ export default function FlowLogin() {
                     </Button>
                   </Row>
                 </Show>
+                <Row align justify>
+                  <a href="..">
+                    <Button variant="text">
+                      <MdArrowBack {...iconSize("1.2em")} /> <Trans>Back</Trans>
+                    </Button>
+                  </a>
+                  <Button type="submit" bg="#FF8A00">
+                    <Trans>Login</Trans>
+                  </Button>
+                </Row>
               </div>
             </Form>
             </div>
