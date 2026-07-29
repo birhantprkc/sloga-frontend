@@ -310,12 +310,13 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
               <Warning>{REMOTE_CONTROL_TRUST_NOTE}</Warning>
             </Show>
 
-            {/* 🔴 Also an unreviewed SECURITY STATEMENT. Shown whenever
-              Express Connect is on, not only when it will apply to the
-              person about to be picked — native decides that per peer (it
-              needs them already remembered) and this component cannot know
-              which rows qualify without asking about each one. Over-warning
-              is the safe direction; under-warning is not. */}
+            {/* 🔴 Also a SECURITY STATEMENT (reviewed 2026-07-29, same pass
+              as the trust note above). Shown whenever Express Connect is on,
+              not only when it will apply to the person about to be picked —
+              native decides that per peer (it needs them already remembered)
+              and this component cannot know which rows qualify without asking
+              about each one. Over-warning is the safe direction; under-warning
+              is not. */}
             <Show when={express()}>
               <Warning>{REMOTE_CONTROL_EXPRESS_NOTE}</Warning>
             </Show>
