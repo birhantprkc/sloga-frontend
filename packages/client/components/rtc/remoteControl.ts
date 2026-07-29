@@ -962,6 +962,20 @@ export class RemoteControl {
         controllerIdentity: args.controllerIdentity,
         targetDisplay: args.controllerName,
         remember: args.remember,
+        // Under Express Connect the native dialog raised HERE is the arming
+        // one, so it has to state what `RcArm` would have: which monitor is
+        // being handed over and how long the session may run. Native resolves
+        // both — `display` is looked up in the real monitor list and the
+        // label composed in Rust, exactly as `e2ee_rc_start` does — and then
+        // PINS them. Arming later with anything else is refused, which is
+        // what makes the one dialog a user reads in that mode binding rather
+        // than decorative.
+        //
+        // Both values must match what `armSession` passes or the arm fails
+        // closed. `durationMs: 0` means "native's default", and it is the
+        // same 0 sent there; see the note on `armSession`.
+        display: args.display,
+        durationMs: 0,
       })) as { rcSessionId: string; sharerEphemeralPub: string };
 
       // RAW FETCH, not the typed stoat-api client: it sends `{}` for routes
@@ -1151,6 +1165,15 @@ export class RemoteControl {
   async armSession(args: {
     grantId: string;
     controllerEphemeralPub: string;
+    /**
+     * 🔴 Must be the SAME value `offerControl` sent, and `sharing.display`
+     * must still be the display it sent. Under Express Connect the offer
+     * dialog stated both, native pinned the labels it composed from them, and
+     * `rc_arm` refuses a session whose terms have moved — which is the point:
+     * that dialog is the only one the user reads in that mode, so it has to
+     * bind. Both paths send 0, meaning "native's default"; if a duration
+     * picker ever lands, it has to be chosen before the OFFER, not here.
+     */
     durationMs: number;
   }): Promise<boolean> {
     const invoke = tauriInvoke();
