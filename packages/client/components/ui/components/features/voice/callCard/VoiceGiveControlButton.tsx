@@ -101,8 +101,13 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
     return users;
   };
 
+  // `ENABLE_REMOTE_CONTROL` is already folded into `supported()`, which is
+  // where it has to live to darken the inbound direction as well. It is
+  // repeated here so that the release gate is visible at the affordance
+  // itself rather than only two files away.
   const canOffer = () =>
     CONFIGURATION.ENABLE_VIDEO &&
+    CONFIGURATION.ENABLE_REMOTE_CONTROL &&
     supported() === true &&
     voice.screenshare() &&
     !rc.sharing();

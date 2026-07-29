@@ -155,6 +155,26 @@ export default {
     ((import.meta.env.VITE_CFG_ENABLE_VIDEO as string) ?? "").toLowerCase() ==
     "true",
   /**
+   * Enable the remote desktop control affordances (give/take control).
+   *
+   * DEFAULT OFF, and deliberately opt-in rather than opt-out: the feature is
+   * still in its live-test matrix, and `rc_status().supported` alone is not a
+   * release gate — it answers "can this shell inject input", which is true of
+   * every published Windows build. Without this flag a public installer shows
+   * "Give control" to everyone who screenshares.
+   *
+   * Read it at `RemoteControl.supported()`, which is the choke point the
+   * offer button, the inbound-offer listeners and `setLocalUser` all pass
+   * through — the handshake commands fail closed when the local user is
+   * never set, so one flag darkens both directions.
+   *
+   * Set `VITE_CFG_ENABLE_REMOTE_CONTROL=true` for the side-load matrix builds.
+   */
+  ENABLE_REMOTE_CONTROL:
+    (
+      (import.meta.env.VITE_CFG_ENABLE_REMOTE_CONTROL as string) ?? ""
+    ).toLowerCase() == "true",
+  /**
    * Session ID to set during development.
    */
   DEVELOPMENT_SESSION_ID: import.meta.env.DEV

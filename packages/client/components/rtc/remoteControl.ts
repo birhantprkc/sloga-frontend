@@ -2,6 +2,7 @@ import { type Accessor, type Setter, batch, createSignal } from "solid-js";
 
 import type { Room } from "livekit-client";
 
+import { CONFIGURATION } from "@revolt/common";
 import { setKeybindSuppression } from "@revolt/keybinds/suppress";
 import { participantUserId } from "@revolt/ui/components/features/voice/participantIdentity";
 
@@ -237,9 +238,17 @@ export class RemoteControl {
    * click on nothing. `rc_status().supported` is false on non-Windows by
    * construction, and an ACL denial or a missing command throws, which is
    * also "no".
+   *
+   * `ENABLE_REMOTE_CONTROL` is checked FIRST and is a release gate, not a
+   * capability probe: the command probe answers "can this shell inject
+   * input", which is true of every published Windows build, so it cannot by
+   * itself keep an unfinished feature dark. Checking it here rather than at
+   * each affordance covers the inbound direction too — `setLocalUser`
+   * returns early, and both handshake commands fail closed without it.
    */
   async supported(): Promise<boolean> {
     if (this.#supported !== undefined) return this.#supported;
+    if (!CONFIGURATION.ENABLE_REMOTE_CONTROL) return (this.#supported = false);
     const invoke = tauriInvoke();
     if (!invoke) return (this.#supported = false);
     try {
