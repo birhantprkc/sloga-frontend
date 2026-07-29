@@ -1247,6 +1247,10 @@ msgstr "Click to stop"
 msgid "Click to test your microphone input level."
 msgstr "Click to test your microphone input level."
 
+#: components/ui/components/features/voice/callCard/RemoteControlOverlays.tsx
+msgid "Clicks on the shared screen go to their computer, so Sloga's own buttons over the video will not respond. Resize from here instead."
+msgstr "Clicks on the shared screen go to their computer, so Sloga's own buttons over the video will not respond. Resize from here instead."
+
 #: components/app/interface/settings/UserSettings.tsx
 msgid "Client Settings"
 msgstr "Client Settings"

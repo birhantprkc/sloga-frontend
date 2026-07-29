@@ -198,6 +198,63 @@ export function RemoteControlOverlays() {
             </Switch>
             <Muted>{session().sharerName}</Muted>
 
+            {/* §1.8d — SIZE THE TILE FROM HERE, because you cannot size it
+                from the tile.
+
+                The capture `Surface` is `zIndex: 20` over the whole tile so
+                that a remote click cannot hit Sloga's own chrome — every
+                overlay it covers used to be a dead zone, and the theater one
+                actively EXITED theater mode. The unhandled consequence was
+                the mirror image: once control starts the controller is
+                frozen at whatever size they had, with the expand button
+                silently unresponsive and nothing saying why.
+
+                🔴 The fix must NOT be to lower that z-index; it would put
+                every dead zone back. This panel is portalled to `#floating`
+                at `zIndex: 200`, outside the call card's stacking context
+                entirely, so a click here never traverses the tile — which is
+                the "bind tile sizing to a controller-side action" direction
+                rather than the "exempt an in-tile affordance" one.
+
+                Both actions are exactly what the call card's own two buttons
+                do, in the order a user would press them, so this introduces
+                no state the app could not already reach. `toggleFullscreen
+                (false)` drops immersive on its way out, so one call restores
+                both. Message ids are reused from those buttons deliberately:
+                `lingui extract` does not run in this tree. */}
+            <Row>
+              <Show
+                when={voice.immersive()}
+                fallback={
+                  <Button
+                    size="sm"
+                    variant="tonal"
+                    onPress={() => {
+                      voice.toggleFullscreen(true);
+                      voice.toggleImmersive(true);
+                    }}
+                  >
+                    <Trans>Maximize & hide participants</Trans>
+                  </Button>
+                }
+              >
+                <Button
+                  size="sm"
+                  variant="tonal"
+                  onPress={() => voice.toggleFullscreen(false)}
+                >
+                  <Trans>Exit theater mode</Trans>
+                </Button>
+              </Show>
+            </Row>
+            <Muted>
+              <Trans>
+                Clicks on the shared screen go to their computer, so Sloga's own
+                buttons over the video will not respond. Resize from here
+                instead.
+              </Trans>
+            </Muted>
+
             <Show when={session().sas}>
               <Button
                 size="sm"
