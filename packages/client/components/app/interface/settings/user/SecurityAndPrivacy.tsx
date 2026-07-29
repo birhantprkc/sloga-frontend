@@ -163,10 +163,13 @@ function RemoteControlTrustCard() {
           all until someone is remembered, which is §8's mitigation and is
           said in the description rather than left to be discovered.
 
-          🔴 REMOTE_CONTROL_EXPRESS_NOTE is a SECURITY STATEMENT and is not
-          yet reviewed. The pinned claim is unchanged and still true; what
-          this adds is that the verification code and the second OS
-          confirmation are gone in this mode. Review before shipping. */}
+          🔴 REMOTE_CONTROL_EXPRESS_NOTE is a SECURITY STATEMENT (reviewed
+          2026-07-29). The pinned claim is unchanged and still true; what this
+          adds is that the OS-drawn verification code is gone in this mode.
+          The off-state description below carried the same false delta the
+          note did — "one step instead of two" — and is corrected with it:
+          the peers this applies to were already at one confirmation, so what
+          changes is WHEN it is asked, not how many. */}
       <CategoryButton.Group>
         <CategoryButton
           disabled={busy()}
@@ -181,9 +184,11 @@ function RemoteControlTrustCard() {
               REMOTE_CONTROL_EXPRESS_NOTE
             ) : (
               <Trans>
-                Start sessions with people you have remembered in one step
-                instead of two. Sloga will no longer show you a verification
-                code for them. People you have not remembered are unaffected.
+                For people you have remembered, Sloga asks when you click
+                instead of after they answer, so you do not have to come back to
+                your computer. It is the same one confirmation, and it cannot
+                show a verification code. People you have not remembered are
+                unaffected.
               </Trans>
             )
           }

@@ -204,50 +204,73 @@ export type RcTrustedPeer = {
  * What the picker must say once "remember this person" is in play, in
  * addition to `REMOTE_CONTROL_CLAIM` and never instead of it.
  *
- * 🔴 THIS IS A SECURITY STATEMENT AND IT IS NOT YET REVIEWED. The pinned
- * §0.2 claim is unchanged and still true — the crypto did not move — but the
- * *number of OS confirmations* did, from two to one, and plan §0.2's
- * corollary is explicit that a mode which changes what is true must change
- * its own text rather than let the existing wording keep asserting the old
- * property. So this is a SEPARATE string, deliberately not a paraphrase of
- * the claim in either direction, and it must be reviewed before it ships.
+ * 🔴 THIS IS A SECURITY STATEMENT. The pinned §0.2 claim is unchanged and
+ * still true — the crypto did not move — but the *number of OS
+ * confirmations* did, from two to one, and plan §0.2's corollary is explicit
+ * that a mode which changes what is true must change its own text rather than
+ * let the existing wording keep asserting the old property. So this is a
+ * SEPARATE string, deliberately not a paraphrase of the claim in either
+ * direction.
  *
  * It describes what someone could do rather than what a protocol guarantees,
  * because that is what a person deciding this can actually weigh.
+ *
+ * Reviewed 2026-07-29. Two things came out of that and are now load-bearing:
+ * the survivor is the STRONGER dialog (it arms, and it carries the code), so
+ * staying silent about that under-claimed a trade a user might otherwise
+ * decline; and the note has to hold when Express Connect is also on, where
+ * the dialog that stays is the click-time one and has no code.
  */
 export const REMOTE_CONTROL_TRUST_NOTE =
-  "Remembering someone removes one of the two system confirmations Sloga asks " +
-  "for on this computer. One is still required every time, before any of their " +
-  "input reaches you — but there is one fewer moment to stop. Only remember " +
-  "people you would hand your keyboard to in person, and remove them in " +
-  "Settings under Security & Privacy.";
+  "Remembering someone removes one of the two system confirmations Sloga " +
+  "shows on this computer. One still stands every time, before any of their " +
+  "input reaches you — the one that shows the verification code and starts " +
+  "the session. There is one fewer moment to stop. If Express Connect is on, " +
+  "the one that stays is the one you see when you click, and it has no code. " +
+  "Only remember people you would hand your keyboard to in person; remove " +
+  "them in Settings under Security & Privacy.";
 
 /**
  * What the app must say wherever Express Connect is on, in addition to
  * `REMOTE_CONTROL_CLAIM` and never instead of it.
  *
- * 🔴 THIS IS A SECURITY STATEMENT AND IT IS NOT YET REVIEWED — the same
- * standing as `REMOTE_CONTROL_TRUST_NOTE`, and it matters more, because this
- * mode removes the verification code entirely.
+ * 🔴 THIS IS A SECURITY STATEMENT — the same standing as
+ * `REMOTE_CONTROL_TRUST_NOTE`, and it matters more, because this mode
+ * removes the OS-drawn verification code.
  *
  * The pinned §0.2 claim already says the server introduces the two parties
  * and is trusted to do so honestly, so nothing in it becomes FALSE here.
  * What changes is that the one mechanism by which two humans could ever
- * *notice* a wrong introduction — comparing the code — is gone, and so is
- * the second OS confirmation. That has to be said out loud rather than left
+ * *notice* a wrong introduction — comparing a code neither endpoint's
+ * renderer chose — is gone. That has to be said out loud rather than left
  * for a reader to infer from an unchanged paragraph.
  *
  * Note the missing code costs the same thing against a compromised sharer
  * RENDERER as against a hostile server: §0.2 pairs them deliberately,
- * because the peer's public key necessarily crosses the renderer.
+ * because the peer's public key necessarily crosses the renderer. The string
+ * says "Sloga's word" rather than "the server's word" for exactly that
+ * reason — to a user those are one thing, and it covers both halves without
+ * a lecture about renderers.
+ *
+ * Reviewed 2026-07-29. Two claims were WRONG and must not come back:
+ *
+ *   - "asks you once instead of twice" — express applies only to an
+ *     already-remembered peer, and such a peer was ALREADY at one dialog.
+ *     The count does not change. What changes is WHEN: click time, so the
+ *     sharer does not have to return to the machine after the peer answers.
+ *   - "no way to notice if it is wrong" — a SAS is still derived and still
+ *     rendered behind Verify. What is lost is the OS copy, the only one a
+ *     compromised renderer cannot choose, plus the prompt to compare it.
  */
 export const REMOTE_CONTROL_EXPRESS_NOTE =
-  "Express Connect is on. Sloga asks you once, when you click, instead of " +
-  "twice — and it cannot show you a verification code, because there is " +
-  "nothing to compare until the other person has answered. You are taking " +
-  "the server's word for who you have been connected to, with no way to " +
-  "notice if it is wrong. It applies only to people you have already chosen " +
-  "to remember; anyone else still goes through every step.";
+  "Express Connect is on. For people you have already remembered, Sloga asks " +
+  "you once when you click, instead of once after they answer. That is the " +
+  "same number of confirmations — what it buys is not having to come back to " +
+  "your computer. What it costs is the check: no code can exist before they " +
+  "answer, so the system confirmation shows none. The code in the Sloga " +
+  "window is drawn by the app itself, so it cannot help if the app has been " +
+  "tampered with — either way you are taking Sloga's word for who you were " +
+  "connected to. People you have not remembered still go through every step.";
 
 /** An inbound offer, rendered as an accept/decline prompt. */
 export type RcOffer = {

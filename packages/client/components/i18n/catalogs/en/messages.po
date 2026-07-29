@@ -2428,6 +2428,10 @@ msgstr "For 3 hours"
 msgid "For 8 hours"
 msgstr "For 8 hours"
 
+#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+msgid "For people you have remembered, Sloga asks when you click instead of after they answer, so you do not have to come back to your computer. It is the same one confirmation, and it cannot show a verification code. People you have not remembered are unaffected."
+msgstr "For people you have remembered, Sloga asks when you click instead of after they answer, so you do not have to come back to your computer. It is the same one confirmation, and it cannot show a verification code. People you have not remembered are unaffected."
+
 #: components/modal/modals/SoftResExport.tsx
 msgid "For the RollFor addon on Turtle WoW: open its soft-res import window, paste the string and import."
 msgstr "For the RollFor addon on Turtle WoW: open its soft-res import window, paste the string and import."
@@ -4127,8 +4131,8 @@ msgid "Read this aloud. If it does not match the code on their screen, stop — 
 msgstr "Read this aloud. If it does not match the code on their screen, stop — someone may be intercepting the connection."
 
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
-msgid "Read this aloud. If it does not match their code, stop the session. The copy shown in the system dialog when you pressed Start is the one that counts — this panel is only a convenience."
-msgstr "Read this aloud. If it does not match their code, stop the session. The copy shown in the system dialog when you pressed Start is the one that counts — this panel is only a convenience."
+msgid "Read this aloud. If it does not match their code, stop the session. This panel is drawn by the app. If Sloga showed you this code in a system dialog when you started, that copy is the one that counts."
+msgstr "Read this aloud. If it does not match their code, stop the session. This panel is drawn by the app. If Sloga showed you this code in a system dialog when you started, that copy is the one that counts."
 
 #: components/modal/modals/ImportDiscord.tsx
 msgid "Reading the Discord template…"
@@ -5027,10 +5031,6 @@ msgstr "Start import"
 #: components/app/interface/settings/user/Native.tsx
 msgid "Start Minimised to Tray"
 msgstr "Start Minimised to Tray"
-
-#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
-msgid "Start sessions with people you have remembered in one step instead of two. Sloga will no longer show you a verification code for them. People you have not remembered are unaffected."
-msgstr "Start sessions with people you have remembered in one step instead of two. Sloga will no longer show you a verification code for them. People you have not remembered are unaffected."
 
 #: components/ui/components/features/voice/callCard/VoiceCallCardPreview.tsx
 msgid "Start the call"

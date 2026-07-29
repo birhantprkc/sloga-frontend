@@ -285,10 +285,16 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
 
               🔴 The note beneath is a SECURITY STATEMENT for a mode with a
               different property than the pinned claim — one OS confirmation
-              instead of two. It is a separate string on purpose and must be
-              reviewed before it ships; do not fold it into
-              REMOTE_CONTROL_CLAIM, which is still true and still rendered
-              verbatim below. */}
+              instead of two. It is a separate string on purpose (reviewed
+              2026-07-29); do not fold it into REMOTE_CONTROL_CLAIM, which is
+              still true and still rendered verbatim below.
+
+              The label itself was reviewed and left ALONE deliberately. It
+              never names which confirmation goes, and "one of the two, next
+              time" is true in both express states — rc_dialog_plan rows 1→2
+              and 3→4 both go from two dialogs to one. What it leaves out,
+              that under Express Connect the one skipped is the one carrying
+              the code, is covered by the note directly beneath it. */}
             <Remember>
               <input
                 type="checkbox"
@@ -461,7 +467,17 @@ export function VoiceGiveControlPanel() {
               and deliberately not a green "verified" state: the authoritative
               comparison is the one printed inside the native Start dialog,
               because a code this page draws is a code a compromised renderer
-              chose. */}
+              chose.
+
+              🔴 …except in Express Connect, where there was no native Start
+              dialog carrying a code. The old copy told the user flatly that
+              "the copy shown in the system dialog when you pressed Start is
+              the one that counts", which in that mode points at a surface
+              they never saw and implies they did. Conditional wording until
+              native returns `arm_dialog` from the offer record alongside the
+              SAS — it knows; the renderer does not, and must NOT infer it
+              from the express switch, which is exactly the bit a compromised
+              renderer would flip. */}
           <Show when={session().sas}>
             <Button
               size="sm"
@@ -475,9 +491,9 @@ export function VoiceGiveControlPanel() {
               <Muted>
                 <Trans>
                   Read this aloud. If it does not match their code, stop the
-                  session. The copy shown in the system dialog when you pressed
-                  Start is the one that counts — this panel is only a
-                  convenience.
+                  session. This panel is drawn by the app. If Sloga showed you
+                  this code in a system dialog when you started, that copy is
+                  the one that counts.
                 </Trans>
               </Muted>
             </Show>
