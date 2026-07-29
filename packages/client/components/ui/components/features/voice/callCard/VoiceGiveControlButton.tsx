@@ -43,6 +43,8 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
   const [open, setOpen] = createSignal(false);
   const [display, setDisplay] = createSignal<string>();
   const [error, setError] = createSignal<string>();
+  // An offer is out at native and the OS dialog is up.
+  const [busy, setBusy] = createSignal(false);
 
   // A COMMAND PROBE rather than a shell sniff — see `RemoteControl.supported`.
   const [supported] = createResource(() => rc.supported());
@@ -87,11 +89,24 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
     !rc.sharing();
 
   async function offer(userId: string, name: string) {
+    // One offer in flight at a time. `e2ee_rc_offer` mints an ephemeral and
+    // puts a native dialog on screen, so a second click while the first is
+    // open would mint a second keypair for an offer nobody can answer.
+    if (busy()) return;
+
     const api = client();
     const channel = voice.channel();
     const self = api?.user?.id;
     const monitor = display() ?? displays()?.find((d) => d.primary)?.device;
-    if (!api || !channel || !self) return;
+    if (!api || !channel || !self) {
+      // Was a bare `return` — the same silent dead click the no-monitor
+      // branch below already refuses to ship. Not localised, for the reason
+      // every other failure state in this feature is not: the text is a
+      // diagnostic, and it is rendered by the same <Warning> that renders
+      // `rc.error()` raw.
+      setError(`cannot offer: ${!channel ? "not in a call" : "no account id"}`);
+      return;
+    }
     if (!monitor) {
       // The monitor list has not resolved. Say so rather than doing nothing:
       // a picker that silently ignores a click reads as a broken button.
@@ -99,8 +114,8 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
       return;
     }
     setError(undefined);
-    setOpen(false);
-    await rc.offerControl({
+    setBusy(true);
+    const offered = await rc.offerControl({
       apiBase: api.options.baseURL,
       authHeader: api.authenticationHeader as [string, string],
       channelId: channel.id,
@@ -109,6 +124,16 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
       controllerName: name,
       display: monitor,
     });
+    setBusy(false);
+
+    // CLOSE ONLY ON SUCCESS. Closing first meant every failure — a declined
+    // native dialog, `FeatureDisabled`, "not publishing screen video", an
+    // unset local user id — resolved into a panel that had already
+    // unmounted, so the picker simply vanished and said nothing. Closing
+    // here is belt-and-braces anyway: a live offer makes `rc.sharing()`
+    // truthy, which drops `canOffer()` and unmounts this whole subtree.
+    if (offered) setOpen(false);
+    else setError(rc.error() ?? "offer failed");
   }
 
   return (
@@ -160,7 +185,9 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
             </Label>
             <People>
               <For each={eligible()}>
-                {(userId) => <PersonRow userId={userId} onPick={offer} />}
+                {(userId) => (
+                  <PersonRow userId={userId} busy={busy()} onPick={offer} />
+                )}
               </For>
               <Show when={eligible().length === 0}>
                 <Muted>
@@ -199,6 +226,7 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
 
 function PersonRow(props: {
   userId: string;
+  busy: boolean;
   onPick: (userId: string, name: string) => void;
 }) {
   const user = useUser(props.userId);
@@ -227,6 +255,7 @@ function PersonRow(props: {
       <Button
         size="sm"
         variant="tonal"
+        isDisabled={props.busy}
         onPress={() => props.onPick(props.userId, name())}
       >
         {name()}

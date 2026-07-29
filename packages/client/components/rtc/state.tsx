@@ -602,18 +602,32 @@ class Voice {
       this.#soundboard.refreshOutputDevice();
     });
 
+    // Identify this device to native as soon as the session is hydrated.
+    // BOTH handshake commands fail closed until this is set — it is what
+    // stops a hostile server supplying both halves of the key-derivation
+    // transcript by having the controller echo back a server-asserted id.
+    //
+    // Tracked on `client.ready()`, NOT on `client.user`: `user` is a plain
+    // field on the client, so reading it registers no dependency. On a cold
+    // start the client object exists before the Ready packet lands, so the
+    // first run reads `undefined` — and with nothing else tracked the effect
+    // would never run again. The id then stays unset for the whole process
+    // and every handshake fails closed on an identity mismatch. `ready()` is
+    // the signal set in the same Ready handler that assigns `user`, and it
+    // resets on each reconnect, so this re-runs per established session.
+    createEffect(() => {
+      const client = this.getClient();
+      if (!client?.ready()) return;
+      const selfId = client.user?.id;
+      if (selfId) void this.remoteControl.setLocalUser(selfId);
+    });
+
     // Remote control. App-lifetime like the soundboard above, and for the
     // same reason: these are client events, not room events.
     createEffect(() => {
       const client = this.getClient();
       if (!client) return;
 
-      // Identify this device to native, once, as soon as the session exists.
-      // BOTH handshake commands fail closed until this is set — it is what
-      // stops a hostile server supplying both halves of the key-derivation
-      // transcript by having the controller echo back a server-asserted id.
-      const selfId = client.user?.id;
-      if (selfId) void this.remoteControl.setLocalUser(selfId);
       this.remoteControl.setApiContext({
         apiBase: client.options.baseURL,
         authHeader: client.authenticationHeader as [string, string],

@@ -112,6 +112,36 @@ function tauriInvoke(): Invoke | undefined {
   ).__TAURI__?.core?.invoke;
 }
 
+/**
+ * Name WHY the server refused an offer, not merely that it did.
+ *
+ * Every refusal in `assert_offer_predicate` is a 400, so the status alone
+ * cannot separate `FeatureDisabled` from "sharer is not publishing screen
+ * video" from `NotInVoiceChannel` — and those three point at three
+ * completely different things to go and fix (an operator flag, a stale
+ * voice-ingress, a call that is not what it looks like). Refusals are also
+ * half the matrix: B1/B2/B3/B5/B6/B8 are all "must be refused" legs, and a
+ * leg that cannot tell WHICH refusal it got has not really been observed.
+ *
+ * The tag is `type`; `FailedValidation` and `MissingPermission` carry their
+ * detail in `error` / `permission`.
+ */
+async function refusalReason(response: Response): Promise<string> {
+  try {
+    const body = (await response.json()) as {
+      type?: string;
+      error?: string;
+      permission?: string;
+    };
+    const detail = body.error ?? body.permission;
+    if (!body.type) return "no reason given";
+    return detail ? `${body.type}: ${detail}` : body.type;
+  } catch {
+    // A refusal with no JSON body is still a refusal worth reporting.
+    return "no reason given";
+  }
+}
+
 export type RcDisplay = {
   device: string;
   x: number;
@@ -745,7 +775,9 @@ export class RemoteControl {
         // accepted — otherwise a retry could be answered with a peer public
         // for a session nobody agreed to.
         await invoke("e2ee_rc_cancel", { rcSessionId: minted.rcSessionId });
-        this.#setError(`offer rejected (${response.status})`);
+        this.#setError(
+          `offer rejected (${response.status} ${await refusalReason(response)})`,
+        );
         return false;
       }
       // KEEP THE OFFER ID. Both response events are matched against it, and
