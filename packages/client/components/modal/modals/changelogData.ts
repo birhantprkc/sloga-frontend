@@ -9,6 +9,32 @@ import type { ChangelogResponse } from "./Changelog";
  */
 export const CHANGELOGS: ChangelogResponse[] = [
   {
+    id: "sloga-2026-07-29",
+    title: "Patch Notes",
+    published_at: "2026-07-29T18:00:00.000Z",
+    markdown_content: `## v0.17.0 — Encrypted images, and desktop downloads fixed
+
+### 🖥️ Desktop
+- **The attachment download button works again** — on the desktop app it had been doing nothing at all. The same fix brings back every link that opens outside Sloga, including **Continue** on a link warning.
+- **The new user bar has landed here too** — your avatar and status plus mute, deafen and settings at the bottom of the sidebar, on desktop and Android now as well as the web.
+
+### 🖼️ Encrypted images
+- **Encrypted image attachments open in the full image viewer**, the same as any other image — pinch, zoom, and step through them properly instead of squinting at a thumbnail.
+- **Save an encrypted image straight from the viewer** when you want to keep it.
+
+### 💬 Messaging
+- **Share a server or a group with someone? You can DM them.** No friend request first.
+- When a DM can't be opened, Sloga now says why instead of quietly doing nothing.
+- On phones, opening a DM slides the drawer out of your way.
+
+### ✨ Polish
+- A fresh look for the login screen.
+- Horizontal strips — emoji rows, category pickers — keep your swipe instead of handing it to the navigation drawer.
+- Server discovery requests tick when you click anywhere on the row, not just on the checkbox itself.
+
+*Sloga — Hop on.*`,
+  },
+  {
     id: "sloga-2026-07-28",
     title: "Patch Notes",
     published_at: "2026-07-28T16:30:00.000Z",
