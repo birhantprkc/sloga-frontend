@@ -32,6 +32,16 @@ export default defineConfig({
             paddingInline: "var(--padding-inline)",
           },
         },
+        // Live-recording indicator. A slow opacity fade, NOT a blink: this
+        // runs for the whole recording in a call bar the user is looking past,
+        // and a hard flash there is genuinely unpleasant over an hour. Never
+        // the sole carrier of the state — the filled button and icon say it
+        // too, so `prefers-reduced-motion` can drop this entirely.
+        voiceRecordingPulse: {
+          "0%": { opacity: "1" },
+          "50%": { opacity: "0.45" },
+          "100%": { opacity: "1" },
+        },
         incomingCallPulse: {
           "0%": {
             boxShadow: "0 0 0 0 var(--md-sys-color-primary)",

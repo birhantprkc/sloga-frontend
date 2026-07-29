@@ -22,6 +22,25 @@ export function VoiceCallCardPreview(props: { channel: Channel }) {
   const ids = () => [...props.channel.voiceParticipants.keys()];
   const users = useUsers(ids);
 
+  /**
+   * Pre-join recording warning. Reads the SAME roster this card already renders
+   * participants from, so it needs no extra probe — and it is the reason the
+   * `recording` flag lives on voice state: the fact has to be knowable BEFORE
+   * connecting, while declining to join is still an option.
+   */
+  const recorderIds = () => {
+    const ids: string[] = [];
+    for (const participant of props.channel.voiceParticipants.values()) {
+      if (participant.isRecording()) ids.push(participant.userId);
+    }
+    return ids;
+  };
+  const recorders = useUsers(recorderIds);
+  const recorderNames = () =>
+    recorders()
+      .map((user) => user?.username)
+      .filter((name): name is string => !!name);
+
   // Pre-join mode (§3.4 compose-time = send-time rule + A3 cap warning): show
   // what mode the call WILL use before joining, refreshed on roster change.
   const prejoin = useCallPrejoinMode(() => ({
@@ -63,6 +82,20 @@ export function VoiceCallCardPreview(props: { channel: Channel }) {
         </Show>
       </Text>
       <Text class="body">{subtext()}</Text>
+      {/* Warn BEFORE the click that joins. Placed above the encryption badge
+          because it is the more consequential fact: an encrypted call that is
+          being recorded is still being recorded. */}
+      <Show when={recorderIds().length}>
+        <RecordingWarning>
+          <Symbol size={14}>fiber_manual_record</Symbol>
+          <Show
+            when={recorderNames().length}
+            fallback={<Trans>Someone here says they are recording</Trans>}
+          >
+            <Trans>{recorderNames().join(", ")} says they are recording</Trans>
+          </Show>
+        </RecordingWarning>
+      </Show>
       <Show when={prejoin()}>
         {(mode) => (
           <PrejoinBadge kind={mode().mode}>
@@ -100,6 +133,18 @@ export function VoiceCallCardPreview(props: { channel: Channel }) {
     </Preview>
   );
 }
+
+const RecordingWarning = styled("div", {
+  base: {
+    display: "flex",
+    alignItems: "center",
+    gap: "var(--gap-sm)",
+    marginTop: "var(--gap-sm)",
+    fontSize: "0.75rem",
+    fontWeight: 700,
+    color: "var(--md-sys-color-error)",
+  },
+});
 
 const PrejoinBadge = styled("div", {
   base: {

@@ -12,6 +12,7 @@ import { Button, IconButton } from "@revolt/ui/components/design";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 import { VoiceDeviceSelector } from "./VoiceDeviceSelector";
 import { VoiceGiveControlButton } from "./VoiceGiveControlButton";
+import { VoiceRecordButton } from "./VoiceRecordButton";
 import { VoiceSoundboardButton } from "./VoiceSoundboardButton";
 import { VoiceStatsOverlay } from "./VoiceStatsOverlay";
 
@@ -179,6 +180,14 @@ export function VoiceCallCardActions(props: { size: "xs" | "sm" }) {
           not there on a shell that cannot do it. */}
       <Show when={!compact()}>
         <VoiceGiveControlButton size={props.size} />
+      </Show>
+      {/* Recording stays OFF the compact PiP card. The 300px card only fits
+          the essentials, and a control whose side effect is telling everyone
+          in the call something is a poor candidate for a cramped row where it
+          could be hit by accident. Stopping is still possible: the banner and
+          the docked card both remain reachable. */}
+      <Show when={!compact()}>
+        <VoiceRecordButton size={props.size} />
       </Show>
       <Show when={!compact()}>
         <VoiceDeviceSelector size={props.size} />

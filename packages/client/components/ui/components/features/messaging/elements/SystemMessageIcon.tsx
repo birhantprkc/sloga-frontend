@@ -8,6 +8,7 @@ import {
   BiRegularPlus,
   BiRegularRightArrowAlt,
   BiRegularX,
+  BiSolidCircle,
   BiSolidImage,
   BiSolidInfoCircle,
   BiSolidKey,
@@ -99,6 +100,14 @@ export function SystemMessageIcon(props: {
           <Match when={props.systemMessage.type === "call_started"}>
             <BiRegularPhone size={16} />
           </Match>
+          <Match
+            when={
+              props.systemMessage.type === "call_recording_started" ||
+              props.systemMessage.type === "call_recording_stopped"
+            }
+          >
+            <BiSolidCircle size={16} />
+          </Match>
           <Match when={props.systemMessage.type === "thread_created"}>
             <BiRegularChat size={16} />
           </Match>
@@ -157,6 +166,15 @@ const Base = styled("div", {
       },
       call_started: {
         color: "var(--md-sys-color-primary)",
+      },
+      // Error-coloured, not primary: a recording notice in scrollback should
+      // read at a glance as the one call event with consequences after the
+      // call is over.
+      call_recording_started: {
+        color: "var(--md-sys-color-error)",
+      },
+      call_recording_stopped: {
+        color: "var(--md-sys-color-outline)",
       },
       thread_created: {
         color: "var(--md-sys-color-primary)",

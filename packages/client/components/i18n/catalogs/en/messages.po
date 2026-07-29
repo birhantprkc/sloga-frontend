@@ -171,6 +171,16 @@ msgstr "{0} reported ({1})"
 msgid "{0} reserved"
 msgstr "{0} reserved"
 
+#. placeholder {0}: names().join(", ")
+#: components/ui/components/features/voice/callCard/VoiceCallRecordingBanner.tsx
+msgid "{0} said they are recording this call."
+msgstr "{0} said they are recording this call."
+
+#. placeholder {0}: recorderNames().join(", ")
+#: components/ui/components/features/voice/callCard/VoiceCallCardPreview.tsx
+msgid "{0} says they are recording"
+msgstr "{0} says they are recording"
+
 #. placeholder {0}: rows().length
 #: components/app/interface/channels/text/ScheduledMessagesBar.tsx
 msgid "{0} scheduled"
@@ -316,6 +326,14 @@ msgstr "<0/> started a call that lasted "
 #: components/ui/components/features/messaging/elements/SystemMessage.tsx
 msgid "<0/> started a thread: <1/>"
 msgstr "<0/> started a thread: <1/>"
+
+#: components/ui/components/features/messaging/elements/SystemMessage.tsx
+msgid "<0/> started recording the call"
+msgstr "<0/> started recording the call"
+
+#: components/ui/components/features/messaging/elements/SystemMessage.tsx
+msgid "<0/> stopped recording the call"
+msgstr "<0/> stopped recording the call"
 
 #: components/ui/components/features/messaging/elements/SystemMessage.tsx
 msgid "<0/> transferred group ownership to <1/>"
@@ -2633,6 +2651,7 @@ msgid "Hidden by Streamer Mode"
 msgstr "Hidden by Streamer Mode"
 
 #: components/modal/modals/ImportDiscord.tsx
+#: components/ui/components/features/voice/callCard/VoiceCallRecordingBanner.tsx
 msgid "Hide"
 msgstr "Hide"
 
@@ -2996,6 +3015,7 @@ msgid "Leave {0}?"
 msgstr "Leave {0}?"
 
 #: components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
+#: components/ui/components/features/voice/callCard/VoiceCallRecordingBanner.tsx
 msgid "Leave call"
 msgstr "Leave call"
 
@@ -4183,6 +4203,23 @@ msgstr "Record a video message"
 msgid "Record a voice message"
 msgstr "Record a voice message"
 
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
+msgid "Record Call"
+msgstr "Record Call"
+
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
+msgid "Record call audio to their own device — everyone in the call is told"
+msgstr "Record call audio to their own device — everyone in the call is told"
+
+#: components/ui/components/features/voice/callCard/VoiceRecordButton.tsx
+msgid "Record the call audio — everyone in the call will be told"
+msgstr "Record the call audio — everyone in the call will be told"
+
+#: components/ui/components/features/voice/callCard/VoiceCallRecordingBanner.tsx
+msgid "Recording"
+msgstr "Recording"
+
 #: components/ui/components/features/messaging/composition/CameraMessageButton.tsx
 msgid "Recording a video message"
 msgstr "Recording a video message"
@@ -4190,6 +4227,10 @@ msgstr "Recording a video message"
 #: components/ui/components/features/messaging/composition/VoiceMessageButton.tsx
 msgid "Recording a voice message"
 msgstr "Recording a voice message"
+
+#: components/ui/components/features/voice/callCard/VoiceRecordButton.tsx
+msgid "Recording isn't supported on this device"
+msgstr "Recording isn't supported on this device"
 
 #: components/app/interface/settings/user/voice/MicrophoneTest.tsx
 msgid "Recording… (max 5s)"
@@ -4954,9 +4995,17 @@ msgstr "Soft-reserve sheets are not available in encrypted conversations — res
 msgid "Some hard reserves are not in the selected raids' loot — remove them (or restore the raid) before saving."
 msgstr "Some hard reserves are not in the selected raids' loot — remove them (or restore the raid) before saving."
 
+#: components/ui/components/features/voice/callCard/VoiceCallCardPreview.tsx
+msgid "Someone here says they are recording"
+msgstr "Someone here says they are recording"
+
 #: components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
 msgid "Someone in this call is not using encrypted calls. Your audio and video stay paused until you turn off encryption."
 msgstr "Someone in this call is not using encrypted calls. Your audio and video stay paused until you turn off encryption."
+
+#: components/ui/components/features/voice/callCard/VoiceCallRecordingBanner.tsx
+msgid "Someone in this call said they are recording it."
+msgstr "Someone in this call said they are recording it."
 
 #: components/modal/modals/EditEmail.tsx
 msgid "someone@example.com"
@@ -5076,6 +5125,10 @@ msgstr "Stop being an Announcement Channel"
 #: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx
 msgid "Stop camera"
 msgstr "Stop camera"
+
+#: components/ui/components/features/voice/callCard/VoiceRecordButton.tsx
+msgid "Stop recording"
+msgstr "Stop recording"
 
 #: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx
 msgid "Stop sharing"
@@ -6067,6 +6120,10 @@ msgstr "You are banned from this server."
 #: src/interface/channels/text/Composition.tsx
 msgid "You are in slowmode, wait before invoking commands."
 msgstr "You are in slowmode, wait before invoking commands."
+
+#: components/ui/components/features/voice/callCard/VoiceCallRecordingBanner.tsx
+msgid "You are recording this call. Everyone in the call has been told."
+msgstr "You are recording this call. Everyone in the call has been told."
 
 #. placeholder {0}: members().length
 #: components/modal/modals/E2EEEnableGroup.tsx

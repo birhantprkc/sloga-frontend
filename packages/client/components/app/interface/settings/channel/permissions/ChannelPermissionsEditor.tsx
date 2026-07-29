@@ -413,6 +413,19 @@ export function ChannelPermissionsEditor(props: Props) {
       },
     },
     {
+      // Bit 42. Off by default (not in DEFAULT_PERMISSION), so this row is the
+      // only way an ordinary member gets it — recording is the one voice action
+      // whose output outlives the call. The description says everyone is told,
+      // because granting this grants a disclosed capability, not a secret one.
+      key: "RecordCall",
+      value: 2n ** 42n,
+      title: t`Record Call`,
+      description: {
+        TextChannel: t`Record call audio to their own device — everyone in the call is told`,
+        Server: t`Record call audio to their own device — everyone in the call is told`,
+      },
+    },
+    {
       heading: t`Mentions`,
       key: "MentionEveryone",
       value: 2n ** 37n,

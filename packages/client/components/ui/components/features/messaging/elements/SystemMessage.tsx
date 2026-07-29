@@ -2,6 +2,7 @@ import { JSX, Match, Show, Switch } from "solid-js";
 
 import { Trans } from "@lingui-solid/solid/macro";
 import {
+  CallRecordingSystemMessage,
   CallStartedSystemMessage,
   ChannelEditSystemMessage,
   ChannelOwnershipChangeSystemMessage,
@@ -267,6 +268,25 @@ export function SystemMessage(props: Props) {
                 `/channel/${(props.systemMessage as ThreadCreatedSystemMessage).threadId}`
               }
             />
+          </Trans>
+        </Match>
+        {/* The durable record of a recording. Worded as a report of what
+            someone declared — "started recording", not "this call was
+            recorded" — because the server only ever knew the claim. */}
+        <Match when={props.systemMessage.type === "call_recording_started"}>
+          <Trans>
+            <UserMention
+              userId={(props.systemMessage as CallRecordingSystemMessage).byId}
+            />{" "}
+            started recording the call
+          </Trans>
+        </Match>
+        <Match when={props.systemMessage.type === "call_recording_stopped"}>
+          <Trans>
+            <UserMention
+              userId={(props.systemMessage as CallRecordingSystemMessage).byId}
+            />{" "}
+            stopped recording the call
           </Trans>
         </Match>
         <Match when={props.systemMessage.type === "text"}>

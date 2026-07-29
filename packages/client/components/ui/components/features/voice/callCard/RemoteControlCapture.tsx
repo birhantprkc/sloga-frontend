@@ -522,7 +522,10 @@ const Surface = styled("div", {
      *                                 fills `View`, so this covers the
      *                                 maximized window's own close button
      *   ImmersiveChipOverlay     5  — top-left, over the app icon / File menu
-     *   VoiceCallDowngradeBanner 5  — a full-width strip across the top
+     *   TopBanners               5  — the top strip stack: the §3.4 downgrade
+     *                                 banner and the recording notice. The
+     *                                 container itself is `pointer-events:
+     *                                 none`, but its children are not
      *   VoiceCallRosterPanel     6  — 280px x 70% down the right-hand side
      *
      * Each of those was a dead zone where a remote click hit Sloga's chrome

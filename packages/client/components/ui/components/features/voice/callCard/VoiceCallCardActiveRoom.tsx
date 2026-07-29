@@ -16,6 +16,7 @@ import {
   VoiceCallEncryptionChip,
 } from "./VoiceCallCardStatus";
 import { VoiceCallDowngradeBanner } from "./VoiceCallDowngradeBanner";
+import { VoiceCallRecordingBanner } from "./VoiceCallRecordingBanner";
 import { VoiceCallRosterPanel } from "./VoiceCallRosterPanel";
 
 /**
@@ -30,8 +31,18 @@ export function VoiceCallCardActiveRoom() {
           theater/fullscreen too (FE-12) — they render OUTSIDE the chrome
           `<Show>` below, overlaid on the participant grid. In immersive mode
           the chip gets its own overlay copy (the controls-bar instance is
-          hidden with the rest of the chrome). */}
-      <VoiceCallDowngradeBanner />
+          hidden with the rest of the chrome).
+
+          Both top strips live in ONE stack rather than each pinning itself to
+          `top: 0`: a mixed-encryption call that is also being recorded shows
+          both, and two independently-absolute strips would sit exactly on top
+          of each other — hiding whichever lost. Downgrade goes first because
+          it is the blocking one (audio is paused pending a decision); the
+          recording notice is informational. */}
+      <TopBanners>
+        <VoiceCallDowngradeBanner />
+        <VoiceCallRecordingBanner />
+      </TopBanners>
       <VoiceCallRosterPanel />
       <Show when={voice.immersive()}>
         <ImmersiveChipOverlay>
@@ -434,6 +445,33 @@ const FocusBox = styled("div", {
     flexDirection: "column",
     justifyContent: "center",
     margin: "0 auto",
+  },
+});
+
+/**
+ * The top-of-call strip stack: whole-call notices that must be seen in every
+ * mode, in priority order, never overlapping each other.
+ *
+ * `pointerEvents: none` on the container with `auto` restored on its children
+ * so the empty gap either side of a small chip does not swallow clicks meant
+ * for the participant tiles underneath.
+ */
+const TopBanners = styled("div", {
+  base: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 5,
+
+    display: "flex",
+    flexDirection: "column",
+    gap: "var(--gap-sm)",
+
+    pointerEvents: "none",
+    "& > *": {
+      pointerEvents: "auto",
+    },
   },
 });
 

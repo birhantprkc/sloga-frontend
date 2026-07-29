@@ -140,14 +140,13 @@ export function VoiceCallDowngradeBanner() {
   );
 }
 
+// Positioning now belongs to `<TopBanners>` in VoiceCallCardActiveRoom, which
+// stacks this with the recording notice — a call can be both mixed-encryption
+// and recorded, and two `top: 0` strips would hide one another. FE-12 is
+// unaffected: the stack is still outside the chrome `<Show>`, so this stays
+// visible in fullscreen and theater mode.
 const Banner = styled("div", {
   base: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 5,
-
     display: "flex",
     flexWrap: "wrap",
     alignItems: "center",

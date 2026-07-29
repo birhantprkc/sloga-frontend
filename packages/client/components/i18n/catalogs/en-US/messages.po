@@ -171,6 +171,16 @@ msgstr ""
 msgid "{0} reserved"
 msgstr ""
 
+#. placeholder {0}: names().join(", ")
+#: components/ui/components/features/voice/callCard/VoiceCallRecordingBanner.tsx
+msgid "{0} said they are recording this call."
+msgstr ""
+
+#. placeholder {0}: recorderNames().join(", ")
+#: components/ui/components/features/voice/callCard/VoiceCallCardPreview.tsx
+msgid "{0} says they are recording"
+msgstr ""
+
 #. placeholder {0}: rows().length
 #: components/app/interface/channels/text/ScheduledMessagesBar.tsx
 msgid "{0} scheduled"
@@ -315,6 +325,14 @@ msgstr ""
 
 #: components/ui/components/features/messaging/elements/SystemMessage.tsx
 msgid "<0/> started a thread: <1/>"
+msgstr ""
+
+#: components/ui/components/features/messaging/elements/SystemMessage.tsx
+msgid "<0/> started recording the call"
+msgstr ""
+
+#: components/ui/components/features/messaging/elements/SystemMessage.tsx
+msgid "<0/> stopped recording the call"
 msgstr ""
 
 #: components/ui/components/features/messaging/elements/SystemMessage.tsx
@@ -2633,6 +2651,7 @@ msgid "Hidden by Streamer Mode"
 msgstr ""
 
 #: components/modal/modals/ImportDiscord.tsx
+#: components/ui/components/features/voice/callCard/VoiceCallRecordingBanner.tsx
 msgid "Hide"
 msgstr ""
 
@@ -2996,6 +3015,7 @@ msgid "Leave {0}?"
 msgstr ""
 
 #: components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
+#: components/ui/components/features/voice/callCard/VoiceCallRecordingBanner.tsx
 msgid "Leave call"
 msgstr ""
 
@@ -4183,12 +4203,33 @@ msgstr ""
 msgid "Record a voice message"
 msgstr ""
 
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
+msgid "Record Call"
+msgstr ""
+
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
+msgid "Record call audio to their own device — everyone in the call is told"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceRecordButton.tsx
+msgid "Record the call audio — everyone in the call will be told"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceCallRecordingBanner.tsx
+msgid "Recording"
+msgstr ""
+
 #: components/ui/components/features/messaging/composition/CameraMessageButton.tsx
 msgid "Recording a video message"
 msgstr ""
 
 #: components/ui/components/features/messaging/composition/VoiceMessageButton.tsx
 msgid "Recording a voice message"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceRecordButton.tsx
+msgid "Recording isn't supported on this device"
 msgstr ""
 
 #: components/app/interface/settings/user/voice/MicrophoneTest.tsx
@@ -4954,8 +4995,16 @@ msgstr ""
 msgid "Some hard reserves are not in the selected raids' loot — remove them (or restore the raid) before saving."
 msgstr ""
 
+#: components/ui/components/features/voice/callCard/VoiceCallCardPreview.tsx
+msgid "Someone here says they are recording"
+msgstr ""
+
 #: components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
 msgid "Someone in this call is not using encrypted calls. Your audio and video stay paused until you turn off encryption."
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceCallRecordingBanner.tsx
+msgid "Someone in this call said they are recording it."
 msgstr ""
 
 #: components/modal/modals/EditEmail.tsx
@@ -5075,6 +5124,10 @@ msgstr ""
 
 #: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx
 msgid "Stop camera"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceRecordButton.tsx
+msgid "Stop recording"
 msgstr ""
 
 #: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx
@@ -6066,6 +6119,10 @@ msgstr ""
 
 #: src/interface/channels/text/Composition.tsx
 msgid "You are in slowmode, wait before invoking commands."
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceCallRecordingBanner.tsx
+msgid "You are recording this call. Everyone in the call has been told."
 msgstr ""
 
 #. placeholder {0}: members().length

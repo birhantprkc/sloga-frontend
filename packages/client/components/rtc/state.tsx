@@ -107,6 +107,12 @@ import { watchLocalUserId } from "./localUserIdentity";
 import { RemoteControl } from "./remoteControl";
 
 import {
+  CallRecorder,
+  callRecordingSupported,
+  recordingFilename,
+  saveRecording,
+} from "./callRecorder";
+import {
   type CameraBackgroundStatus,
   CameraEffectsController,
 } from "./cameraEffects";
@@ -414,6 +420,30 @@ class Voice {
   callRosterPanelOpen: Accessor<boolean>;
   #setCallRosterPanelOpen: Setter<boolean>;
 
+  // --- Local call recording (call-recording plan §1) -----------------
+  /**
+   * Whether THIS client is recording. Set only once the server has accepted
+   * the claim (see `toggleRecording` — disclosure precedes capture), so it can
+   * never read true while the rest of the call believes otherwise.
+   */
+  recording: Accessor<boolean>;
+  #setRecording: Setter<boolean>;
+  /** In-flight start/stop, to keep the button from double-firing. */
+  recordingBusy: Accessor<boolean>;
+  #setRecordingBusy: Setter<boolean>;
+  /** Last recording failure, shown on the button; cleared on the next try. */
+  recordingError: Accessor<string | undefined>;
+  #setRecordingError: Setter<string | undefined>;
+  /**
+   * Recorders whose banner this user has dismissed, by user id.
+   *
+   * Per-RECORDER rather than a single boolean: dismissing Jeff's banner must
+   * not pre-hide the one for whoever starts recording next. Cleared when the
+   * call ends, so a dismissal never outlives the recording it was about.
+   */
+  #recordingDismissed = new ReactiveMap<string, true>();
+  #recorder: CallRecorder | undefined;
+
   /**
    * The single publish-gate reason SET (FE-3/R2-1/R2-7). Local upstream
    * publishing flows ONLY when this is empty; the session adds/removes its
@@ -513,6 +543,18 @@ class Voice {
       createSignal<unknown>();
     this.callEncryptionError = callEncryptionError;
     this.#setCallEncryptionError = setCallEncryptionError;
+
+    const [recording, setRecording] = createSignal(false);
+    this.recording = recording;
+    this.#setRecording = setRecording;
+
+    const [recordingBusy, setRecordingBusy] = createSignal(false);
+    this.recordingBusy = recordingBusy;
+    this.#setRecordingBusy = setRecordingBusy;
+
+    const [recordingError, setRecordingError] = createSignal<string>();
+    this.recordingError = recordingError;
+    this.#setRecordingError = setRecordingError;
 
     const [callNonEnrolled, setCallNonEnrolled] = createSignal<
       readonly string[]
@@ -1321,6 +1363,26 @@ class Voice {
       const room = this.room();
       if (!room) return;
 
+      // Finalise the recording BEFORE the room is torn down, because
+      // `room.disconnect()` stops every track and the graph would then feed
+      // silence into a still-running MediaRecorder.
+      //
+      // NOT awaited, and this method must stay synchronous: `connect()` calls
+      // `disconnect()` without awaiting and then bumps `#connectGen`, so an
+      // async teardown here would let a new call start mid-teardown and defeat
+      // the supersession token. It is safe unawaited because
+      // `MediaRecorder.stop()` runs in this same synchronous turn (the promise
+      // executor inside `CallRecorder.stop()` is reached before any await), so
+      // the capture boundary lands ahead of the track teardown — only the
+      // final flush and the blob assembly finish later, and neither needs the
+      // tracks alive.
+      //
+      // The `disconnect` cause also skips the retraction call: voice-state
+      // teardown clears the flag server-side, and the channel is about to go.
+      if (this.#recorder) void this.#stopRecording("disconnect");
+      this.#recordingDismissed.clear();
+      this.#setRecordingError(undefined);
+
       room.removeAllListeners();
       room.disconnect();
 
@@ -1576,6 +1638,179 @@ class Voice {
       this.#setVideo(room.localParticipant.isCameraEnabled);
     } catch (e) {
       this.onErr(e);
+    }
+  }
+
+  // --- Local call recording (call-recording plan §1) -----------------
+
+  /** Whether this shell can record at all (MediaRecorder + WebAudio + Opus). */
+  get recordingSupported(): boolean {
+    return callRecordingSupported();
+  }
+
+  /**
+   * Participants who say they are recording, as user ids — including this
+   * client when it is recording. Drives the banner and the pre-join warning.
+   *
+   * Read from the CHANNEL's voice participants rather than the LiveKit room:
+   * that map is populated from the roster fetch, so it is already correct for
+   * someone who joined after a recording began, and it is a `ReactiveMap` so
+   * this tracks without a version counter.
+   */
+  recordersInCall(): string[] {
+    const channel = this.channel();
+    if (!channel) return [];
+    const ids: string[] = [];
+    for (const participant of channel.voiceParticipants.values()) {
+      if (participant.isRecording()) ids.push(participant.userId);
+    }
+    return ids;
+  }
+
+  /** Recorders this user has not dismissed the banner for. */
+  undismissedRecorders(): string[] {
+    return this.recordersInCall().filter(
+      (id) => !this.#recordingDismissed.has(id),
+    );
+  }
+
+  /** Hide the banner for the recordings currently running. The persistent
+   *  indicator stays — see `VoiceCallRecordingBanner`. */
+  dismissRecordingBanner(): void {
+    for (const id of this.recordersInCall()) {
+      this.#recordingDismissed.set(id, true);
+    }
+  }
+
+  /**
+   * Start or stop recording this call locally.
+   *
+   * **Disclosure precedes capture, deliberately.** The server claim goes out
+   * FIRST and capture only begins once it is accepted; if capture then fails
+   * we retract the claim. The failure modes are not symmetric — a claim with
+   * no recording over-warns for one round trip, while a recording with no
+   * claim is exactly the undisclosed capture this feature exists to prevent.
+   * So the order is never "start, then tell them".
+   *
+   * On stop the file is handed to the user even if the retraction call fails:
+   * losing someone's recording to a network blip would be worse, and leaving
+   * the call clears the flag server-side regardless.
+   */
+  async toggleRecording(): Promise<void> {
+    if (this.recordingBusy()) return;
+
+    const room = this.room();
+    const channel = this.channel();
+    if (!room || !channel) return;
+
+    this.#setRecordingBusy(true);
+    this.#setRecordingError(undefined);
+
+    try {
+      if (this.recording()) {
+        await this.#stopRecording("user");
+      } else {
+        if (!callRecordingSupported()) {
+          throw new Error("Recording isn't supported on this device.");
+        }
+
+        await this.#claimRecording(channel.id, true);
+
+        const recorder = new CallRecorder(room, (reason) => {
+          this.#setRecordingError(reason);
+          void this.#stopRecording("auto");
+        });
+
+        try {
+          await recorder.start();
+        } catch (error) {
+          // Retract rather than leave the call warned about a recording that
+          // never began.
+          await this.#claimRecording(channel.id, false).catch(() => undefined);
+          throw error;
+        }
+
+        this.#recorder = recorder;
+        this.#setRecording(true);
+      }
+    } catch (error) {
+      this.#setRecordingError(
+        error instanceof Error ? error.message : "Couldn't start recording.",
+      );
+      console.error("[rtc] recording toggle failed", error);
+    } finally {
+      this.#setRecordingBusy(false);
+    }
+  }
+
+  /**
+   * Tear down the recorder, save the audio, and clear the claim.
+   *
+   * Called by the user's Stop, by the recorder's own error/size auto-stop, and
+   * by call teardown. Idempotent: `CallRecorder.stop()` returns undefined once
+   * already stopped, which matters because disconnect can race the user.
+   */
+  async #stopRecording(cause: "user" | "auto" | "disconnect"): Promise<void> {
+    const recorder = this.#recorder;
+    this.#recorder = undefined;
+    this.#setRecording(false);
+
+    const channelId = this.channel()?.id;
+    const channelName = this.channel()?.name;
+
+    if (recorder) {
+      try {
+        const result = await recorder.stop();
+        if (result) {
+          saveRecording(
+            result.blob,
+            recordingFilename(
+              channelName,
+              recorder.startedAt,
+              result.blob.type,
+            ),
+          );
+        }
+      } catch (error) {
+        console.error("[rtc] failed to finalise the recording", error);
+        this.#setRecordingError("The recording could not be saved.");
+      }
+    }
+
+    // On disconnect the server clears the flag with the voice state, so the
+    // retraction is redundant there — and the channel may already be gone.
+    if (channelId && cause !== "disconnect") {
+      await this.#claimRecording(channelId, false).catch((error) => {
+        console.error("[rtc] failed to clear the recording flag", error);
+      });
+    }
+  }
+
+  /**
+   * Tell the server whether we are recording. Raw fetch, not the typed
+   * client: the generated client sends `{}` for routes it does not know, so a
+   * typed call here could silently no-op — and a silent no-op means an
+   * undisclosed recording.
+   */
+  async #claimRecording(channelId: string, recording: boolean): Promise<void> {
+    const client = this.getClient();
+    if (!client) throw new Error("Not connected.");
+
+    const [header, value] = client.authenticationHeader;
+    const response = await fetch(
+      `${client.options.baseURL}/channels/${channelId}/recording`,
+      { method: recording ? "PUT" : "DELETE", headers: { [header]: value } },
+    );
+
+    if (!response.ok) {
+      if (response.status === 403) {
+        throw new Error("You don't have permission to record this call.");
+      }
+      throw new Error(
+        recording
+          ? `Couldn't tell the call about the recording (${response.status}).`
+          : `Couldn't clear the recording indicator (${response.status}).`,
+      );
     }
   }
 
