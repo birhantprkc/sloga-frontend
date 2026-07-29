@@ -56,9 +56,28 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
     // names the wrong screen in the ONE line of that dialog that is not
     // server-asserted. §5(C) catches it, but only after they have answered
     // an OS prompt about the wrong monitor.
-    if (!display()) setDisplay(found.find((d) => d.primary)?.device);
+    //
+    // `?? found[0]` because the selector is HIDDEN at one monitor (see
+    // `mustChooseDisplay`): with no dropdown left to fall back on, a machine
+    // that reports its only display without the primary flag would leave
+    // `display()` unset and every click would refuse with "still reading
+    // your displays".
+    if (!display())
+      setDisplay((found.find((d) => d.primary) ?? found[0])?.device);
     return found;
   });
+
+  /**
+   * Whether the sharer has a real choice to make.
+   *
+   * At one monitor the dropdown is pure noise: one option, already selected,
+   * and picking it changes nothing. It is one of the seven interactions
+   * slice 6 exists to cut, and dropping it costs no property — native still
+   * holds the selection, still refuses to inject when that monitor's rect is
+   * unavailable, and still revokes on any topology change. **Kept for 2+
+   * monitors**, which is the case §5 was written for.
+   */
+  const mustChooseDisplay = () => (displays()?.length ?? 0) > 1;
 
   const eligible = () => {
     const room = voice.room();
@@ -97,7 +116,9 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
     const api = client();
     const channel = voice.channel();
     const self = api?.user?.id;
-    const monitor = display() ?? displays()?.find((d) => d.primary)?.device;
+    const found = displays();
+    const monitor =
+      display() ?? (found?.find((d) => d.primary) ?? found?.[0])?.device;
     if (!api || !channel || !self) {
       // Was a bare `return` — the same silent dead click the no-monitor
       // branch below already refuses to ship. Not localised, for the reason
@@ -159,26 +180,30 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
               <Trans>Give control of this computer</Trans>
             </Heading>
 
-            {/* The §5 display selector. The captured source is NOT knowable —
-              WebView2 handles the picker natively and no web API reveals which
-              display `getDisplayMedia` took — so the sharer says which one,
-              and the next step confirms it by eye. */}
-            <Label>
-              <Trans>Which screen are you sharing?</Trans>
-            </Label>
-            <Select
-              value={display() ?? ""}
-              onChange={(event) => setDisplay(event.currentTarget.value)}
-            >
-              <For each={displays() ?? []}>
-                {(monitor) => (
-                  <option value={monitor.device}>
-                    {monitor.device} — {monitor.width}×{monitor.height}
-                    {monitor.primary ? " (primary)" : ""}
-                  </option>
-                )}
-              </For>
-            </Select>
+            {/* The §5 display selector, shown ONLY when there is more than
+              one monitor. The captured source is NOT knowable — WebView2
+              handles the picker natively and no web API reveals which display
+              `getDisplayMedia` took — so the sharer says which one, and the
+              next step confirms it by eye. With a single monitor there is
+              nothing to say and nothing to confirm, so both steps go. */}
+            <Show when={mustChooseDisplay()}>
+              <Label>
+                <Trans>Which screen are you sharing?</Trans>
+              </Label>
+              <Select
+                value={display() ?? ""}
+                onChange={(event) => setDisplay(event.currentTarget.value)}
+              >
+                <For each={displays() ?? []}>
+                  {(monitor) => (
+                    <option value={monitor.device}>
+                      {monitor.device} — {monitor.width}×{monitor.height}
+                      {monitor.primary ? " (primary)" : ""}
+                    </option>
+                  )}
+                </For>
+              </Select>
+            </Show>
 
             <Label>
               <Trans>Who should get control?</Trans>

@@ -879,11 +879,16 @@ export class RemoteControl {
 
     this.#setError(undefined);
     try {
+      // No `sharerDisplay`: slice 6 removed the controller's native
+      // `RcAccept` dialog, which was the only thing that name reached, so
+      // native no longer takes it. The Accept button that led here IS the
+      // consent on this side now — see `ConfirmRequest` in e2ee-core for why
+      // that is sound, and note it leaves the SHARER's two OS dialogs
+      // untouched, which is where the §0.2 floor actually lives.
       const accepted = (await invoke("e2ee_rc_accept", {
         channelId: args.offer.channelId,
         sharerId: args.offer.sharerId,
         controllerId: args.localUserId,
-        sharerDisplay: args.sharerName,
         sharerEphemeralPub: args.offer.sharerEphemeralPub,
         rcSessionId: args.offer.rcSessionId,
       })) as { controllerEphemeralPub: string; sas: string };
@@ -955,7 +960,7 @@ export class RemoteControl {
         controllerDisplay: sharing.controllerName,
         display: sharing.display,
         durationMs: args.durationMs,
-      })) as { sas: string };
+      })) as { sas: string; calibrated: boolean };
       batch(() => {
         this.#setSharing({
           ...sharing,
@@ -963,7 +968,16 @@ export class RemoteControl {
           // §5(C): armed, but only pointer motion injects until the sharer
           // confirms the pointer is landing on the screen they are actually
           // sharing. Native enforces that; this is the UI's mirror of it.
-          phase: "calibrating",
+          //
+          // …unless native already calibrated the session itself, which it
+          // does when this machine has exactly ONE monitor: the gate exists
+          // to catch a two-monitor sharer confirming the screen they are not
+          // sharing, and with one display there is no second screen to have
+          // picked. Read from `started`, not from a monitor count taken
+          // here — native's answer is the one that was true while it held
+          // the arm, and it is the same enumeration the topology watchdog
+          // will revoke against if a second monitor appears.
+          phase: started.calibrated ? "active" : "calibrating",
           sas: started.sas,
         });
       });
