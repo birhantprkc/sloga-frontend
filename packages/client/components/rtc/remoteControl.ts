@@ -115,13 +115,15 @@ function tauriInvoke(): Invoke | undefined {
 /**
  * Name WHY the server refused an offer, not merely that it did.
  *
- * Every refusal in `assert_offer_predicate` is a 400, so the status alone
- * cannot separate `FeatureDisabled` from "sharer is not publishing screen
- * video" from `NotInVoiceChannel` — and those three point at three
- * completely different things to go and fix (an operator flag, a stale
- * voice-ingress, a call that is not what it looks like). Refusals are also
- * half the matrix: B1/B2/B3/B5/B6/B8 are all "must be refused" legs, and a
- * leg that cannot tell WHICH refusal it got has not really been observed.
+ * Most refusals in `assert_offer_predicate` share one status, so the status
+ * alone cannot separate `FeatureDisabled` from "sharer is not publishing
+ * screen video" from `NotInVoiceChannel` — all three are 400, and they point
+ * at three completely different things to go and fix (an operator flag, a
+ * stale voice-ingress, a call that is not what it looks like). Only
+ * `MissingPermission` (403) and the two conflict cases (409) stand out on
+ * status. Refusals are also half the matrix: B1/B2/B3/B5/B6/B8 are all "must
+ * be refused" legs, and a leg that cannot tell WHICH refusal it got has not
+ * really been observed.
  *
  * The tag is `type`; `FailedValidation` and `MissingPermission` carry their
  * detail in `error` / `permission`.
