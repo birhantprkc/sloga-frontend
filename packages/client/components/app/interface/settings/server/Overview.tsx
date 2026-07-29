@@ -395,16 +395,11 @@ export default function ServerOverview(props: ServerSettingsProps) {
               }
             >
               <CategoryButton
-                action={
-                  <Checkbox
-                    checked={props.server.discoveryRequested}
-                    onChange={(event) =>
-                      setDiscoveryRequested(event.currentTarget.checked)
-                    }
-                  />
-                }
+                action={<Checkbox checked={props.server.discoveryRequested} />}
                 description={t`Ask for this server to be shown in the public directory. Its name, icon, description and member count become publicly visible once approved.`}
-                onClick={() => void 0}
+                onClick={() =>
+                  setDiscoveryRequested(!props.server.discoveryRequested)
+                }
               >
                 <Trans>Request public listing</Trans>
               </CategoryButton>
