@@ -365,6 +365,15 @@ const Scroll = styled("div", {
     flexGrow: 1,
     minHeight: 0,
     padding: "0 var(--gap-lg) var(--gap-lg)",
+
+    // On a phone the floating user bar is pinned over the bottom of every
+    // screen (it belongs to the nav block, which there is a drawer the content
+    // slides straight over). End padding on a scroller counts towards the
+    // scroll extent, so the last row of posts can be scrolled clear of the bar
+    // instead of ending underneath it.
+    _phone: {
+      paddingBlockEnd: "calc(var(--gap-lg) + var(--layout-height-user-footer))",
+    },
   },
 });
 

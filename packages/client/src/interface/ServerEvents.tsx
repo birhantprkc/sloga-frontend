@@ -2243,6 +2243,15 @@ const PageBase = styled("div", {
     background: "var(--md-sys-color-surface)",
     color: "var(--md-sys-color-on-surface)",
     overflow: "hidden",
+
+    // On a phone the floating user bar is pinned over the bottom of every
+    // screen (it belongs to the nav block, which there is a drawer the content
+    // slides straight over). Reserving here rather than inside either panel
+    // shortens the calendar and the event list in one place, and leaves the
+    // strip behind the bar painted in this page's own surface.
+    _phone: {
+      paddingBlockEnd: "var(--layout-height-user-footer)",
+    },
   },
 });
 
