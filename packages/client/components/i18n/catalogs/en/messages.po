@@ -123,6 +123,21 @@ msgstr "{0} is live on {1}"
 msgid "{0} is not using encrypted calls. Your audio and video stay paused until you turn off encryption."
 msgstr "{0} is not using encrypted calls. Your audio and video stay paused until you turn off encryption."
 
+#. placeholder {0}: names()[0]
+#: components/ui/components/features/voice/callCard/VoiceCallRecordingBanner.tsx
+msgid "{0} is recording"
+msgstr "{0} is recording"
+
+#. placeholder {0}: recorderNames()[0]
+#: components/ui/components/features/voice/callCard/VoiceCallCardPreview.tsx
+msgid "{0} is recording audio"
+msgstr "{0} is recording audio"
+
+#. placeholder {0}: names()[0]
+#: components/ui/components/features/voice/callCard/VoiceCallRecordingBanner.tsx
+msgid "{0} is recording audio."
+msgstr "{0} is recording audio."
+
 #. placeholder {0}: users()[0]!.username
 #: components/ui/components/features/messaging/composition/TypingIndicator.tsx
 msgid "{0} is typing…"
@@ -149,6 +164,21 @@ msgstr "{0} made {1} the new group owner"
 #: components/modal/modals/SoftResReserve.tsx
 msgid "{0} of {1} picked"
 msgstr "{0} of {1} picked"
+
+#. placeholder {0}: names().length
+#: components/ui/components/features/voice/callCard/VoiceCallRecordingBanner.tsx
+msgid "{0} people are recording"
+msgstr "{0} people are recording"
+
+#. placeholder {0}: recorderNames().length
+#: components/ui/components/features/voice/callCard/VoiceCallCardPreview.tsx
+msgid "{0} people are recording audio"
+msgstr "{0} people are recording audio"
+
+#. placeholder {0}: names().length
+#: components/ui/components/features/voice/callCard/VoiceCallRecordingBanner.tsx
+msgid "{0} people are recording audio."
+msgstr "{0} people are recording audio."
 
 #. placeholder {0}: (message.systemMessage as MessagePinnedSystemMessage).by?.username
 #: components/client/NotificationsWorker.tsx
@@ -4220,6 +4250,10 @@ msgstr "Record call audio to their own device — everyone in the call is told"
 msgid "Record the call audio — everyone in the call will be told"
 msgstr "Record the call audio — everyone in the call will be told"
 
+#: components/ui/components/features/voice/callCard/VoiceRecordButton.tsx
+msgid "Record the call audio — you'll choose where to save it, and everyone in the call will be told"
+msgstr "Record the call audio — you'll choose where to save it, and everyone in the call will be told"
+
 #: components/ui/components/features/voice/callCard/VoiceCallRecordingBanner.tsx
 msgid "Recording"
 msgstr "Recording"
@@ -5000,12 +5034,20 @@ msgid "Some hard reserves are not in the selected raids' loot — remove them (o
 msgstr "Some hard reserves are not in the selected raids' loot — remove them (or restore the raid) before saving."
 
 #: components/ui/components/features/voice/callCard/VoiceCallCardPreview.tsx
+msgid "Someone here is recording audio"
+msgstr "Someone here is recording audio"
+
+#: components/ui/components/features/voice/callCard/VoiceCallCardPreview.tsx
 msgid "Someone here says they are recording"
 msgstr "Someone here says they are recording"
 
 #: components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
 msgid "Someone in this call is not using encrypted calls. Your audio and video stay paused until you turn off encryption."
 msgstr "Someone in this call is not using encrypted calls. Your audio and video stay paused until you turn off encryption."
+
+#: components/ui/components/features/voice/callCard/VoiceCallRecordingBanner.tsx
+msgid "Someone in this call is recording audio."
+msgstr "Someone in this call is recording audio."
 
 #: components/ui/components/features/voice/callCard/VoiceCallRecordingBanner.tsx
 msgid "Someone in this call said they are recording it."
@@ -6128,6 +6170,10 @@ msgstr "You are banned from this server."
 #: src/interface/channels/text/Composition.tsx
 msgid "You are in slowmode, wait before invoking commands."
 msgstr "You are in slowmode, wait before invoking commands."
+
+#: components/ui/components/features/voice/callCard/VoiceCallRecordingBanner.tsx
+msgid "You are recording"
+msgstr "You are recording"
 
 #: components/ui/components/features/voice/callCard/VoiceCallRecordingBanner.tsx
 msgid "You are recording this call. Everyone in the call has been told."

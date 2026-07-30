@@ -1,4 +1,4 @@
-import { Show } from "solid-js";
+import { Match, Show, Switch } from "solid-js";
 
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import { styled } from "styled-system/jsx";
@@ -57,10 +57,26 @@ export function VoiceCallRecordingBanner() {
         when={undismissed().length}
         fallback={
           /* Dismissed: the notice shrinks to this, and there is no control to
-             remove it. */
+             remove it.
+
+             It NAMES the recorder rather than saying a bare "Recording". This
+             is the state a call spends most of its time in once someone hides
+             the banner, so it is the line most people will actually read — and
+             "who" is the part that matters. Self-recording says "You are"
+             instead of echoing your own name back at you. */
           <Chip>
             <Symbol size={14}>fiber_manual_record</Symbol>
-            <Trans>Recording</Trans>
+            <Switch fallback={<Trans>Recording</Trans>}>
+              <Match when={selfRecording() && names().length <= 1}>
+                <Trans>You are recording</Trans>
+              </Match>
+              <Match when={names().length === 1}>
+                <Trans>{names()[0]} is recording</Trans>
+              </Match>
+              <Match when={names().length > 1}>
+                <Trans>{names().length} people are recording</Trans>
+              </Match>
+            </Switch>
           </Chip>
         }
       >
@@ -76,18 +92,29 @@ export function VoiceCallRecordingBanner() {
                 </Trans>
               }
             >
-              <Show
-                when={names().length}
+              {/* Stated as fact, and matched word-for-word to the pre-join
+                  card: the same fact told twice in two different phrasings
+                  reads as a bug and invites the reader to wonder which one is
+                  the real claim. Honest for the reason given on that card —
+                  the flag can only over-report, and nothing here implies the
+                  absence of a banner means nobody is recording.
+
+                  Count-branched, not name-joined: "is" makes a joined list
+                  ungrammatical, and at two or more the identities are in the
+                  roster panel while the fact that matters here is that it is
+                  happening. */}
+              <Switch
                 fallback={
-                  <Trans>
-                    Someone in this call said they are recording it.
-                  </Trans>
+                  <Trans>Someone in this call is recording audio.</Trans>
                 }
               >
-                <Trans>
-                  {names().join(", ")} said they are recording this call.
-                </Trans>
-              </Show>
+                <Match when={names().length === 1}>
+                  <Trans>{names()[0]} is recording audio.</Trans>
+                </Match>
+                <Match when={names().length > 1}>
+                  <Trans>{names().length} people are recording audio.</Trans>
+                </Match>
+              </Switch>
             </Show>
           </Text>
           <Actions>
@@ -148,8 +175,11 @@ const Chip = styled("div", {
     padding: "2px var(--gap-md)",
     fontSize: "0.6875rem",
     fontWeight: 700,
-    textTransform: "uppercase",
-    letterSpacing: "0.04em",
+    // NO `textTransform: uppercase` (and no letter-spacing): the chip now
+    // carries a display name, and upper-casing it would render "JEFFS IS
+    // RECORDING" — destroying casing the user chose deliberately, and mangling
+    // names in scripts that have no case at all.
+    whiteSpace: "nowrap",
 
     background: "var(--md-sys-color-error-container)",
     color: "var(--md-sys-color-on-error-container)",

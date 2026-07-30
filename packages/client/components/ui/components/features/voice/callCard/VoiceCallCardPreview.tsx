@@ -88,12 +88,27 @@ export function VoiceCallCardPreview(props: { channel: Channel }) {
       <Show when={recorderIds().length}>
         <RecordingWarning>
           <Symbol size={14}>fiber_manual_record</Symbol>
-          <Show
-            when={recorderNames().length}
-            fallback={<Trans>Someone here says they are recording</Trans>}
-          >
-            <Trans>{recorderNames().join(", ")} says they are recording</Trans>
-          </Show>
+          {/* Stated as fact rather than hedged ("says they are recording"),
+              which is honest here: the flag can only ever OVER-report — a
+              client could claim it without recording, which merely over-warns.
+              It cannot under-report in any way wording would fix, and nothing
+              on this card implies the converse (that no warning means nobody
+              is recording). "audio" is load-bearing: without it people assume
+              video is being captured too.
+
+              Branched on count rather than joining names, because "is" makes a
+              joined list ungrammatical — "JeffS, Bob is recording audio". At
+              two or more the names are dropped for a count; who they are is on
+              the roster, and the fact that matters before joining is that it
+              is happening at all. */}
+          <Switch fallback={<Trans>Someone here is recording audio</Trans>}>
+            <Match when={recorderNames().length === 1}>
+              <Trans>{recorderNames()[0]} is recording audio</Trans>
+            </Match>
+            <Match when={recorderNames().length > 1}>
+              <Trans>{recorderNames().length} people are recording audio</Trans>
+            </Match>
+          </Switch>
         </RecordingWarning>
       </Show>
       <Show when={prejoin()}>

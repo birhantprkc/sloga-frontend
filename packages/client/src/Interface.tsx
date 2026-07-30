@@ -30,6 +30,7 @@ import { LAYOUT_SECTIONS } from "@revolt/state/stores/Layout";
 import { streamerModeActive } from "@revolt/state/streamer";
 import { CircularProgress } from "@revolt/ui";
 import { IncomingCallOverlay } from "@revolt/ui/components/features/voice/IncomingCallOverlay";
+import { CallRecordingNotices } from "@revolt/ui/components/features/voice/callCard/CallRecordingNotices";
 import { RemoteControlOverlays } from "@revolt/ui/components/features/voice/callCard/RemoteControlOverlays";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
@@ -177,6 +178,11 @@ const Interface = (props: { children: JSX.Element }) => {
             card meant they all disappeared the moment the user clicked
             another channel and the card flipped to PiP. */}
         <RemoteControlOverlays />
+        {/* "Recording saved to …" / "couldn't save it". APP LEVEL for the same
+            reason as the overlays above: a recording usually ends by leaving
+            the call, which unmounts the call card — mounted there, this would
+            be destroyed in the same tick as the message it has to deliver. */}
+        <CallRecordingNotices />
       </AppRoot>
     </MessageCache>
   );

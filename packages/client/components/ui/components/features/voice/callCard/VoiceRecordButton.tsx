@@ -35,8 +35,11 @@ export function VoiceRecordButton(props: { size: "xs" | "sm" }) {
     if (!supported) return t`Recording isn't supported on this device`;
     const error = voice.recordingError();
     if (error) return error;
-    return recording()
-      ? t`Stop recording`
+    if (recording()) return t`Stop recording`;
+    // Names BOTH consequences of the click, because both are surprising if
+    // unmentioned: a file dialog opens, and everyone in the call is told.
+    return voice.recordingSavesToFile
+      ? t`Record the call audio — you'll choose where to save it, and everyone in the call will be told`
       : t`Record the call audio — everyone in the call will be told`;
   };
 

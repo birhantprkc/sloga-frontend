@@ -107,9 +107,14 @@ import { watchLocalUserId } from "./localUserIdentity";
 import { RemoteControl } from "./remoteControl";
 
 import {
+  type RecordingTarget,
   CallRecorder,
   callRecordingSupported,
+  isSaveCancelled,
+  pickRecordingTarget,
   recordingFilename,
+  recordingMimeType,
+  saveDialogSupported,
   saveRecording,
 } from "./callRecorder";
 import {
@@ -435,6 +440,25 @@ class Voice {
   recordingError: Accessor<string | undefined>;
   #setRecordingError: Setter<string | undefined>;
   /**
+   * One-shot user-facing notice about a recording (saved / couldn't save).
+   * Consumed and cleared by `CallRecordingNotices`, which turns it into a
+   * snackbar — the Voice instance is constructed OUTSIDE `SnackbarProvider`, so
+   * it cannot show one itself.
+   *
+   * This exists because the save used to fail SILENTLY: the fallback anchor
+   * download reports success and writes nothing in an embedded webview, so a
+   * recording could vanish with no error anywhere. Every terminal outcome now
+   * says something.
+   */
+  recordingNotice: Accessor<
+    | { kind: "saved" | "handed-off" | "failed"; message: string; at: number }
+    | undefined
+  >;
+  #setRecordingNotice: Setter<
+    | { kind: "saved" | "handed-off" | "failed"; message: string; at: number }
+    | undefined
+  >;
+  /**
    * Recorders whose banner this user has dismissed, by user id.
    *
    * Per-RECORDER rather than a single boolean: dismissing Jeff's banner must
@@ -555,6 +579,14 @@ class Voice {
     const [recordingError, setRecordingError] = createSignal<string>();
     this.recordingError = recordingError;
     this.#setRecordingError = setRecordingError;
+
+    const [recordingNotice, setRecordingNotice] = createSignal<{
+      kind: "saved" | "handed-off" | "failed";
+      message: string;
+      at: number;
+    }>();
+    this.recordingNotice = recordingNotice;
+    this.#setRecordingNotice = setRecordingNotice;
 
     const [callNonEnrolled, setCallNonEnrolled] = createSignal<
       readonly string[]
@@ -1649,6 +1681,16 @@ class Voice {
   }
 
   /**
+   * Whether pressing record will open a real save dialog and stream to that
+   * file. False on shells without the File System Access API, which fall back
+   * to buffering and an anchor download — a path that cannot confirm it
+   * worked, so the button copy must not promise a dialog there.
+   */
+  get recordingSavesToFile(): boolean {
+    return saveDialogSupported();
+  }
+
+  /**
    * Participants who say they are recording, as user ids — including this
    * client when it is recording. Drives the banner and the pre-join warning.
    *
@@ -1703,37 +1745,86 @@ class Voice {
     const channel = this.channel();
     if (!room || !channel) return;
 
+    if (this.recording()) {
+      this.#setRecordingBusy(true);
+      this.#setRecordingError(undefined);
+      try {
+        await this.#stopRecording("user");
+      } finally {
+        this.#setRecordingBusy(false);
+      }
+      return;
+    }
+
+    if (!callRecordingSupported()) {
+      this.#setRecordingError("Recording isn't supported on this device.");
+      return;
+    }
+
+    // THE PICKER GOES FIRST, AND BEFORE ANY `await`.
+    //
+    // `showSaveFilePicker` needs transient user activation, which the click
+    // that got us here provides — but awaiting anything first spends it and the
+    // picker then throws. So: no `await`, no busy flag, no server call ahead of
+    // this line.
+    //
+    // Asking up front (rather than at stop) is also what makes the recording
+    // crash-safe and unbounded: audio streams to the file as it is captured, so
+    // a browser crash mid-call leaves a valid partial recording instead of
+    // losing everything held in memory.
+    let target: RecordingTarget | undefined;
+    if (saveDialogSupported()) {
+      try {
+        target = await pickRecordingTarget(
+          recordingFilename(
+            channel.name,
+            Date.now(),
+            // The container this shell will really encode, so the suggested
+            // extension matches the bytes.
+            recordingMimeType() ?? "audio/webm",
+          ),
+        );
+      } catch (error) {
+        // Cancelling the dialog is a decision, not a failure: nothing has been
+        // claimed and nothing captured, so leave no error on screen.
+        if (isSaveCancelled(error)) return;
+        this.#setRecordingError("Couldn't open the save dialog.");
+        console.error("[rtc] save picker failed", error);
+        return;
+      }
+    }
+
     this.#setRecordingBusy(true);
     this.#setRecordingError(undefined);
 
     try {
-      if (this.recording()) {
-        await this.#stopRecording("user");
-      } else {
-        if (!callRecordingSupported()) {
-          throw new Error("Recording isn't supported on this device.");
-        }
+      // Disclosure precedes capture: the claim goes out BEFORE the recorder
+      // starts, and is retracted if the recorder fails to start.
+      await this.#claimRecording(channel.id, true);
 
-        await this.#claimRecording(channel.id, true);
-
-        const recorder = new CallRecorder(room, (reason) => {
+      const recorder = new CallRecorder(
+        room,
+        (reason) => {
           this.#setRecordingError(reason);
           void this.#stopRecording("auto");
-        });
+        },
+        target,
+      );
 
-        try {
-          await recorder.start();
-        } catch (error) {
-          // Retract rather than leave the call warned about a recording that
-          // never began.
-          await this.#claimRecording(channel.id, false).catch(() => undefined);
-          throw error;
-        }
-
-        this.#recorder = recorder;
-        this.#setRecording(true);
+      try {
+        await recorder.start();
+      } catch (error) {
+        // Retract rather than leave the call warned about a recording that
+        // never began, and release the file handle we opened.
+        await this.#claimRecording(channel.id, false).catch(() => undefined);
+        await target?.abort().catch(() => undefined);
+        throw error;
       }
+
+      this.#recorder = recorder;
+      this.#setRecording(true);
     } catch (error) {
+      await target?.abort().catch(() => undefined);
       this.#setRecordingError(
         error instanceof Error ? error.message : "Couldn't start recording.",
       );
@@ -1759,21 +1850,59 @@ class Voice {
     const channelName = this.channel()?.name;
 
     if (recorder) {
+      // Read BEFORE stop(): finalising clears the handle, so reading it in the
+      // catch below would always come back undefined and the error message
+      // would never name the file it failed to write.
+      const targetName = recorder.targetName;
       try {
         const result = await recorder.stop();
-        if (result) {
-          saveRecording(
-            result.blob,
-            recordingFilename(
-              channelName,
-              recorder.startedAt,
-              result.blob.type,
-            ),
+        const mb = result
+          ? Math.max(1, Math.round(result.bytes / 1_048_576))
+          : 0;
+
+        if (!result) {
+          // Started and stopped before a single chunk landed. Say so — silence
+          // here would read as a save.
+          this.#setRecordingNotice({
+            kind: "failed",
+            message: "That recording was too short to save.",
+            at: Date.now(),
+          });
+        } else if (result.savedAs) {
+          // Streamed: already on disk, and we know its name.
+          this.#setRecordingNotice({
+            kind: "saved",
+            message: `Recording saved to ${result.savedAs} (${mb} MB).`,
+            at: Date.now(),
+          });
+        } else if (result.blob) {
+          // Fallback path. `saveRecording` CANNOT confirm it worked (it writes
+          // nothing at all in some embedded webviews while reporting success),
+          // so the wording claims only what is true: it was handed to the
+          // browser.
+          const filename = recordingFilename(
+            channelName,
+            recorder.startedAt,
+            result.blob.type,
           );
+          saveRecording(result.blob, filename);
+          this.#setRecordingNotice({
+            kind: "handed-off",
+            message: `Recording sent to your downloads as ${filename} (${mb} MB). If it doesn't appear, this app can't save files directly.`,
+            at: Date.now(),
+          });
         }
       } catch (error) {
         console.error("[rtc] failed to finalise the recording", error);
         this.#setRecordingError("The recording could not be saved.");
+        this.#setRecordingNotice({
+          kind: "failed",
+          message:
+            targetName !== undefined
+              ? `Couldn't finish writing ${targetName}. Any audio already written is still in the file.`
+              : "The recording could not be saved.",
+          at: Date.now(),
+        });
       }
     }
 

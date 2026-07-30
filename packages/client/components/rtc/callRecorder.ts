@@ -44,12 +44,121 @@ const MIME_CANDIDATES = [
 const TIMESLICE_MS = 5_000;
 
 /**
- * A hard ceiling on buffered audio, because chunks accumulate in memory until
- * the recording stops. At Opus voice bitrates ~120 MB is on the order of a
- * couple of days of talking, so this is a runaway guard (a stuck recorder in
- * a forgotten tab), not a duration limit anyone will meet by using it.
+ * A hard ceiling on buffered audio, for the FALLBACK path only (a shell with no
+ * File System Access API, where chunks must accumulate in memory until the
+ * recording stops). At Opus voice bitrates ~120 MB is on the order of a couple
+ * of days of talking, so this is a runaway guard — a stuck recorder in a
+ * forgotten tab — not a duration limit anyone meets by using the feature.
+ *
+ * The streaming path has NO ceiling: chunks go straight to disk.
  */
 const MAX_BUFFERED_BYTES = 120 * 1024 * 1024;
+
+/**
+ * A file the user chose, that audio is written to AS IT IS CAPTURED.
+ *
+ * Streaming rather than buffer-then-save exists because of a live finding: in
+ * an embedded webview (the Electron-based browser pane; plausibly the Tauri
+ * shell too, on the `on_new_window` precedent) an `<a download>` click
+ * **reports success and writes nothing**. It throws no error, logs nothing, and
+ * the recording is simply gone. Streaming to a handle the user picked replaces
+ * a silent-failure path with one that cannot silently fail — and as a bonus
+ * removes the memory ceiling and leaves a valid partial file if the app dies
+ * mid-call.
+ */
+export interface RecordingTarget {
+  /** Name the user actually chose (may differ from what we suggested). */
+  readonly name: string;
+  /** Append one chunk. Calls are serialised internally — order is preserved. */
+  write(chunk: Blob): Promise<void>;
+  /** Flush and finalise. */
+  close(): Promise<void>;
+  /** Give up; leaves whatever was written. */
+  abort(): Promise<void>;
+}
+
+/** The slice of the File System Access API used here. TS's DOM lib in this
+ *  project does not declare it. */
+type SaveFilePicker = (options: {
+  suggestedName?: string;
+  types?: { description?: string; accept: Record<string, string[]> }[];
+}) => Promise<{
+  name: string;
+  createWritable(): Promise<{
+    write(data: Blob): Promise<void>;
+    close(): Promise<void>;
+    abort?(): Promise<void>;
+  }>;
+}>;
+
+function filePicker(): SaveFilePicker | undefined {
+  return (window as unknown as { showSaveFilePicker?: SaveFilePicker })
+    .showSaveFilePicker;
+}
+
+/** Whether this shell can show a real "save as" dialog. */
+export function saveDialogSupported(): boolean {
+  return typeof filePicker() === "function";
+}
+
+/** True for the DOMException a cancelled file picker throws. */
+export function isSaveCancelled(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { name?: string }).name === "AbortError"
+  );
+}
+
+/**
+ * Ask the user where to put the recording, and open it for writing.
+ *
+ * MUST be called synchronously from the click that starts recording — the
+ * picker requires transient user activation, and anything awaited first spends
+ * it. Returns undefined when the shell has no picker (caller falls back to
+ * buffering); throws `AbortError` when the user cancels, which is not an error.
+ */
+export async function pickRecordingTarget(
+  suggestedName: string,
+): Promise<RecordingTarget | undefined> {
+  const picker = filePicker();
+  if (!picker) return undefined;
+
+  // Derive the accepted type from the suggested name so the dialog's filter
+  // matches the container we will actually write (see `recordingMimeType`).
+  const ext = suggestedName.slice(suggestedName.lastIndexOf("."));
+  const mime =
+    ext === ".ogg" ? "audio/ogg" : ext === ".m4a" ? "audio/mp4" : "audio/webm";
+
+  const handle = await picker({
+    suggestedName,
+    types: [{ description: "Audio recording", accept: { [mime]: [ext] } }],
+  });
+  const writable = await handle.createWritable();
+
+  // Serialise writes: MediaRecorder can deliver a chunk while the previous
+  // write is still in flight, and concurrent writes to one stream interleave.
+  let queue: Promise<void> = Promise.resolve();
+
+  return {
+    name: handle.name || suggestedName,
+    write(chunk) {
+      queue = queue.then(() => writable.write(chunk));
+      return queue;
+    },
+    async close() {
+      await queue;
+      await writable.close();
+    },
+    async abort() {
+      // Swallow a failed pending write — we are already giving up, and the
+      // point is to leave the bytes that did land.
+      await queue.catch(() => undefined);
+      if (writable.abort) await writable.abort().catch(() => undefined);
+      else await writable.close().catch(() => undefined);
+    },
+  };
+}
 
 export type CallRecorderState =
   | { kind: "idle" }
@@ -69,6 +178,17 @@ function pickMimeType(): string | undefined {
 }
 
 /**
+ * The container this shell will actually encode into.
+ *
+ * Exported so the save dialog can suggest a filename whose extension matches
+ * the bytes. Suggesting `.webm` and then writing Ogg produces a file players
+ * refuse on the strength of its name alone.
+ */
+export function recordingMimeType(): string | undefined {
+  return pickMimeType();
+}
+
+/**
  * Owns one recording. Constructed per recording rather than per call so a
  * stop/start cycle cannot inherit a half-torn-down audio graph.
  */
@@ -84,10 +204,26 @@ export class CallRecorder {
   #startedAt = 0;
   #overflowed = false;
   #onAutoStop: (reason: string) => void;
+  /** Where audio goes as it is captured; undefined = buffer-then-save fallback. */
+  #target: RecordingTarget | undefined;
+  /** Bytes handed to the target, for the "saved N MB" confirmation. */
+  #bytesWritten = 0;
+  /** First streaming-write failure — a full disk must not pass as a save. */
+  #writeError: unknown;
 
-  constructor(room: Room, onAutoStop: (reason: string) => void) {
+  constructor(
+    room: Room,
+    onAutoStop: (reason: string) => void,
+    target?: RecordingTarget,
+  ) {
     this.#room = room;
     this.#onAutoStop = onAutoStop;
+    this.#target = target;
+  }
+
+  /** The file being written, when streaming. */
+  get targetName(): string | undefined {
+    return this.#target?.name;
   }
 
   get startedAt(): number {
@@ -135,6 +271,21 @@ export class CallRecorder {
 
     recorder.ondataavailable = (event) => {
       if (!event.data || event.data.size === 0) return;
+
+      // Streaming path: straight to the file the user chose. No ceiling, and a
+      // crash leaves a valid partial recording rather than nothing.
+      if (this.#target) {
+        this.#bytesWritten += event.data.size;
+        void this.#target.write(event.data).catch((error) => {
+          // A disk that filled up (or a revoked handle) must be LOUD — a
+          // truncated file that reported success is the failure mode this
+          // whole design exists to remove.
+          this.#writeError ??= error;
+          this.#onAutoStop("Couldn't write to the recording file.");
+        });
+        return;
+      }
+
       if (this.#bufferedBytes + event.data.size > MAX_BUFFERED_BYTES) {
         // Stop rather than grow without bound. Whatever was captured up to
         // here is kept and still saved — dropping it would be the worse
@@ -156,14 +307,28 @@ export class CallRecorder {
   }
 
   /**
-   * Flush, tear the graph down and hand back the finished audio. Returns
-   * undefined when nothing was captured (an immediate start/stop).
+   * Flush, tear the graph down, and finalise the recording.
+   *
+   * Returns `{ savedAs }` when it was streamed to a file the user picked (it is
+   * already on disk — the caller has nothing to save), or `{ blob }` for the
+   * fallback path (the caller must hand it over). Returns undefined when
+   * nothing was captured at all.
    *
    * Safe to call twice: the second call finds no recorder and returns
-   * undefined, which matters because both the user's Stop and the
-   * disconnect teardown can race here.
+   * undefined, which matters because both the user's Stop and the disconnect
+   * teardown can race here.
    */
-  async stop(): Promise<{ blob: Blob; durationMs: number } | undefined> {
+  async stop(): Promise<
+    | {
+        durationMs: number;
+        bytes: number;
+        /** Set when streamed: the file is already written. */
+        savedAs?: string;
+        /** Set on the fallback path: the caller still has to save this. */
+        blob?: Blob;
+      }
+    | undefined
+  > {
     const recorder = this.#recorder;
     if (!recorder) return undefined;
     this.#recorder = undefined;
@@ -188,8 +353,29 @@ export class CallRecorder {
 
     this.#detach();
 
+    // Streaming path: the bytes are already on disk, so all that remains is to
+    // close the handle. A write that failed earlier is rethrown here rather
+    // than reported as a successful save.
+    const target = this.#target;
+    if (target) {
+      this.#target = undefined;
+      try {
+        await target.close();
+      } catch (error) {
+        this.#writeError ??= error;
+      }
+      if (this.#writeError) throw this.#writeError;
+      if (this.#bytesWritten === 0) return undefined;
+      return {
+        durationMs,
+        bytes: this.#bytesWritten,
+        savedAs: target.name,
+      };
+    }
+
     const chunks = this.#chunks;
     this.#chunks = [];
+    const bytes = this.#bufferedBytes;
     this.#bufferedBytes = 0;
 
     if (chunks.length === 0) return undefined;
@@ -197,6 +383,7 @@ export class CallRecorder {
     return {
       blob: new Blob(chunks, { type: recorder.mimeType || "audio/webm" }),
       durationMs,
+      bytes,
     };
   }
 
@@ -355,12 +542,17 @@ export function recordingFilename(
 }
 
 /**
- * Hand the finished file to the user.
+ * FALLBACK save, for shells with no File System Access API.
  *
- * An anchor download, which the desktop shell turns into its own save flow —
- * the same path the attachment download button uses, and the reason
- * `on_new_window` had to exist there. Kept as one seam so a future native
- * "save to…" only changes this function.
+ * 🔴 **This path cannot be trusted, and cannot detect its own failure.**
+ * Verified live 2026-07-30 in the Electron-based browser pane: the `click()`
+ * below throws nothing, logs nothing, and **no file is written**. Real
+ * Chrome/Edge honour it; embedded webviews may not (compare the `wry`
+ * `on_new_window` bug, where every `window.open` was dropped silently).
+ *
+ * There is no API to confirm a download started, so a caller must never report
+ * "saved" off the back of this — say the file was handed to the browser's
+ * downloads, and prefer {@link pickRecordingTarget} whenever it exists.
  */
 export function saveRecording(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);

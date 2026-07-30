@@ -15,7 +15,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { recordingFilename } from "./callRecorder.ts";
+import { isSaveCancelled, recordingFilename } from "./callRecorder.ts";
 
 /** 2026-07-29 14:05 local time, as a millisecond epoch. */
 const AT = new Date(2026, 6, 29, 14, 5, 0).getTime();
@@ -32,7 +32,10 @@ test("maps each container to the extension its players expect", () => {
     recordingFilename("a", AT, "audio/ogg;codecs=opus"),
     "a-2026-07-29-1405.ogg",
   );
-  assert.equal(recordingFilename("a", AT, "audio/mp4"), "a-2026-07-29-1405.m4a");
+  assert.equal(
+    recordingFilename("a", AT, "audio/mp4"),
+    "a-2026-07-29-1405.m4a",
+  );
   // Anything unrecognised falls back to webm rather than producing a file with
   // no extension, which Windows refuses to open at all.
   assert.equal(recordingFilename("a", AT, ""), "a-2026-07-29-1405.webm");
@@ -54,11 +57,20 @@ test("collapses whitespace so the name survives a shell without quoting", () => 
 });
 
 test("falls back to 'call' when there is no usable channel name", () => {
-  assert.equal(recordingFilename(undefined, AT, "audio/webm"), "call-2026-07-29-1405.webm");
+  assert.equal(
+    recordingFilename(undefined, AT, "audio/webm"),
+    "call-2026-07-29-1405.webm",
+  );
   // A name made ENTIRELY of stripped characters must not leave a filename
   // that begins with the separator (`-2026-…` reads as a flag to CLI tools).
-  assert.equal(recordingFilename("///", AT, "audio/webm"), "call-2026-07-29-1405.webm");
-  assert.equal(recordingFilename("???", AT, "audio/webm"), "call-2026-07-29-1405.webm");
+  assert.equal(
+    recordingFilename("///", AT, "audio/webm"),
+    "call-2026-07-29-1405.webm",
+  );
+  assert.equal(
+    recordingFilename("???", AT, "audio/webm"),
+    "call-2026-07-29-1405.webm",
+  );
 });
 
 test("keeps long channel names bounded but still recognisable", () => {
@@ -73,12 +85,31 @@ test("two recordings a minute apart cannot overwrite each other", () => {
   assert.notEqual(first, second);
 });
 
+// A cancelled save dialog must read as a DECISION, not a failure: it decides
+// whether the click leaves an error on screen, and whether the recording claim
+// (which is sent to everyone in the call) goes out at all.
+test("a cancelled file picker is recognised, and nothing else is", () => {
+  const abort = new Error("The user aborted a request.");
+  abort.name = "AbortError";
+  assert.equal(isSaveCancelled(abort), true);
+
+  assert.equal(isSaveCancelled(new Error("disk full")), false);
+  assert.equal(isSaveCancelled({ name: "NotAllowedError" }), false);
+  assert.equal(isSaveCancelled(undefined), false);
+  assert.equal(isSaveCancelled(null), false);
+  assert.equal(isSaveCancelled("AbortError"), false);
+});
+
 test("names sort chronologically as strings", () => {
   // Zero-padding is what makes this true; without it "2026-7-9" sorts after
   // "2026-11-1" and a directory listing stops being a timeline.
   const names = [
     recordingFilename("c", new Date(2026, 10, 1, 9, 5).getTime(), "audio/webm"),
-    recordingFilename("c", new Date(2026, 6, 9, 14, 30).getTime(), "audio/webm"),
+    recordingFilename(
+      "c",
+      new Date(2026, 6, 9, 14, 30).getTime(),
+      "audio/webm",
+    ),
     recordingFilename("c", new Date(2026, 6, 9, 9, 5).getTime(), "audio/webm"),
   ];
   assert.deepEqual([...names].sort(), [names[2], names[1], names[0]]);
