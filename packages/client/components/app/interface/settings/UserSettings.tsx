@@ -8,7 +8,6 @@ import {
   allowsDonationLinks,
   nativeE2EEAvailable,
   useClient,
-  useClientLifecycle,
 } from "@revolt/client";
 import { CONFIGURATION } from "@revolt/common";
 import { useUser } from "@revolt/markdown/users";
@@ -130,7 +129,6 @@ const Config: SettingsConfiguration<{ server: Server }> = {
    */
   list(_, onClose) {
     const { pop, openModal } = useModals();
-    const { logout } = useClientLifecycle();
 
     return {
       context: null!,
@@ -363,8 +361,11 @@ const Config: SettingsConfiguration<{ server: Server }> = {
                 </ColouredText>
               ),
               onClick() {
+                // Close settings first, then confirm — the same dialog the
+                // user menu's Sign out opens, so neither route signs you out
+                // on a single click.
                 pop();
-                logout();
+                openModal({ type: "sign_out" });
               },
             },
           ],
