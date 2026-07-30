@@ -33,12 +33,33 @@ import { Room, RoomEvent, Track } from "livekit-client";
 
 /** Wire format. Opus in WebM is the only combination every target shell
  *  reliably encodes; the ordered list degrades rather than throwing. */
-const MIME_CANDIDATES = [
+/**
+ * Container preference, most-compatible first.
+ *
+ * **`audio/mp4` (AAC in `.m4a`) leads deliberately, for playback compatibility
+ * rather than quality.** A recording is the one thing this feature produces
+ * that leaves the app: people open it in Windows Media Player, Audacity,
+ * Premiere, a phone, or hand it to someone else. Opus-in-WebM is the better
+ * codec per byte, and it is what a browser reaches for by default — but plenty
+ * of ordinary desktop software still will not open a `.webm` audio file, and a
+ * recording you cannot open is worth nothing.
+ *
+ * **MP3 is not an option and cannot be added here.** No browser ships an MP3
+ * *encoder* — `MediaRecorder.isTypeSupported("audio/mpeg")` is false in
+ * Chromium (verified live, Chrome 148); the MP3 support browsers advertise is
+ * decode-only. A literal `.mp3` needs a WASM encoder (lamejs) fed from a PCM
+ * tap, which is a different feature with real CPU cost. AAC is the natively
+ * encodable format that opens in the same places, so it gets the same job done
+ * for one line.
+ *
+ * WebM/Opus stays as the fallback for shells with no AAC encoder.
+ */
+export const MIME_CANDIDATES = [
+  "audio/mp4",
   "audio/webm;codecs=opus",
   "audio/webm",
   "audio/ogg;codecs=opus",
-  "audio/mp4",
-];
+] as const;
 
 /** Chunk cadence. Small enough that a crash loses seconds, not minutes. */
 const TIMESLICE_MS = 5_000;

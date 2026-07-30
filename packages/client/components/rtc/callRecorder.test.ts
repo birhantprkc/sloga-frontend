@@ -15,7 +15,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { isSaveCancelled, recordingFilename } from "./callRecorder.ts";
+import {
+  MIME_CANDIDATES,
+  isSaveCancelled,
+  recordingFilename,
+} from "./callRecorder.ts";
 
 /** 2026-07-29 14:05 local time, as a millisecond epoch. */
 const AT = new Date(2026, 6, 29, 14, 5, 0).getTime();
@@ -83,6 +87,30 @@ test("two recordings a minute apart cannot overwrite each other", () => {
   const first = recordingFilename("general", AT, "audio/webm");
   const second = recordingFilename("general", AT + 60_000, "audio/webm");
   assert.notEqual(first, second);
+});
+
+// The container ORDER is a product decision, not an implementation detail, and
+// it looks exactly like a list someone would "tidy" back into codec-quality
+// order. AAC leads because the recording LEAVES the app — plenty of ordinary
+// desktop software still refuses a .webm audio file, and a recording you cannot
+// open is worth nothing. Opus-in-WebM is the better codec and the wrong default.
+test("AAC is preferred over Opus, because the file has to open elsewhere", () => {
+  assert.equal(
+    MIME_CANDIDATES[0],
+    "audio/mp4",
+    "AAC must be tried first — see the comment on MIME_CANDIDATES",
+  );
+  // Opus must still be present as the fallback for shells with no AAC encoder.
+  assert.ok(
+    MIME_CANDIDATES.some((type) => type.includes("opus")),
+    "an Opus fallback must remain for shells that cannot encode AAC",
+  );
+  // And every candidate must map to an extension the filename helper knows,
+  // or a file lands with a name its own player will reject.
+  for (const type of MIME_CANDIDATES) {
+    const name = recordingFilename("c", AT, type);
+    assert.match(name, /\.(m4a|webm|ogg)$/, `unmapped container: ${type}`);
+  }
 });
 
 // A cancelled save dialog must read as a DECISION, not a failure: it decides
