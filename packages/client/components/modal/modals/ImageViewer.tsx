@@ -1,20 +1,29 @@
 import {
-  Match,
-  Show,
-  Switch,
   createEffect,
   createSignal,
+  Match,
   on,
   onCleanup,
+  Show,
+  Switch,
 } from "solid-js";
 import { Portal } from "solid-js/web";
 import { Motion, Presence } from "solid-motionone";
 
+import { useLingui } from "@lingui-solid/solid/macro";
 import Panzoom, { PanzoomObject } from "@panzoom/panzoom";
 import { css } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 
-import { Column, Dialog, DialogProps, IconButton, Text } from "@revolt/ui";
+import {
+  canCopyImageToClipboard,
+  Column,
+  copyImageToClipboard,
+  Dialog,
+  DialogProps,
+  IconButton,
+  Text,
+} from "@revolt/ui";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
 import { Modals } from "../types";
@@ -22,7 +31,30 @@ import { Modals } from "../types";
 export function ImageViewerModal(
   props: DialogProps & Modals & { type: "image_viewer" },
 ) {
+  const { t } = useLingui();
   const [ref, setRef] = createSignal<HTMLElement>();
+
+  /**
+   * Outcome of the last copy, shown on the button itself — an error dialog
+   * stacked over a fullscreen viewer would be worse than the icon saying so.
+   */
+  const [copied, setCopied] = createSignal<"idle" | "done" | "failed">("idle");
+  let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+
+  onCleanup(() => clearTimeout(copiedTimer));
+
+  function copyImage() {
+    copyImageToClipboard(props.file!.originalUrl)
+      .then(() => setCopied("done"))
+      .catch((error) => {
+        console.error("[clipboard] copy image failed", error);
+        setCopied("failed");
+      })
+      .finally(() => {
+        clearTimeout(copiedTimer);
+        copiedTimer = setTimeout(() => setCopied("idle"), 2000);
+      });
+  }
 
   let panzoom: PanzoomObject;
 
@@ -124,6 +156,26 @@ export function ImageViewerModal(
                     <IconButton onPress={() => panzoom?.zoomIn()}>
                       <Symbol>zoom_in</Symbol>
                     </IconButton>
+                    <Show
+                      when={
+                        props.file?.metadata.type === "Image" &&
+                        canCopyImageToClipboard()
+                      }
+                    >
+                      <IconButton
+                        aria-label={t`Copy image`}
+                        onPress={copyImage}
+                      >
+                        <Switch fallback={<Symbol>content_copy</Symbol>}>
+                          <Match when={copied() === "done"}>
+                            <Symbol>check</Symbol>
+                          </Match>
+                          <Match when={copied() === "failed"}>
+                            <Symbol>error</Symbol>
+                          </Match>
+                        </Switch>
+                      </IconButton>
+                    </Show>
                     <Show when={props.file}>
                       <a
                         target="_blank"

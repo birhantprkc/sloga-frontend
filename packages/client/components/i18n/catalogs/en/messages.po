@@ -1477,6 +1477,11 @@ msgstr "Copy file link"
 msgid "Copy ID"
 msgstr "Copy ID"
 
+#: components/modal/modals/ImageViewer.tsx
+#: components/app/menus/MessageContextMenu.tsx
+msgid "Copy image"
+msgstr "Copy image"
+
 #: components/modal/modals/ImportDiscord.tsx
 msgid "Copy invite"
 msgstr "Copy invite"
@@ -1531,6 +1536,10 @@ msgstr "Copy user ID"
 #: components/app/interface/settings/channel/webhooks/ViewWebhook.tsx
 msgid "Copy webhook URL"
 msgstr "Copy webhook URL"
+
+#: components/app/menus/MessageContextMenu.tsx
+msgid "Could not copy this image to the clipboard."
+msgstr "Could not copy this image to the clipboard."
 
 #: components/i18n/errors.ts
 msgid "Could not find what you requested."

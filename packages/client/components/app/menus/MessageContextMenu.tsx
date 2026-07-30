@@ -1,12 +1,13 @@
 import { Accessor, For, Match, Show, Switch } from "solid-js";
 
-import { Trans } from "@lingui-solid/solid/macro";
+import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import { File, Message } from "stoat.js";
 
 import { useClient, useE2EE, useUser } from "@revolt/client";
 import { CustomEmoji, UnicodeEmoji } from "@revolt/markdown/emoji";
 import { useModals } from "@revolt/modal";
 import { useState } from "@revolt/state";
+import { canCopyImageToClipboard, copyImageToClipboard } from "@revolt/ui";
 import { MediaPickerProps } from "@revolt/ui/components/features/messaging/composition/picker/CompositionMediaPicker";
 
 import MdBadge from "@material-design-icons/svg/outlined/badge.svg?component-solid";
@@ -21,6 +22,7 @@ import MdForum from "@material-design-icons/svg/outlined/forum.svg?component-sol
 import MdForward from "@material-design-icons/svg/outlined/forward.svg?component-solid";
 import MdLink from "@material-design-icons/svg/outlined/link.svg?component-solid";
 import MdHowToVote from "@material-design-icons/svg/outlined/how_to_vote.svg?component-solid";
+import MdImage from "@material-design-icons/svg/outlined/image.svg?component-solid";
 import MdMarkChatUnread from "@material-design-icons/svg/outlined/mark_chat_unread.svg?component-solid";
 import MdOpenInNew from "@material-design-icons/svg/outlined/open_in_new.svg?component-solid";
 import MdPin from "@material-design-icons/svg/outlined/pin_invoke.svg?component-solid";
@@ -51,6 +53,7 @@ export function MessageContextMenu(props: {
   const state = useState();
   const client = useClient();
   const e2ee = useE2EE();
+  const { t } = useLingui();
   const { openModal, showError } = useModals();
 
   /**
@@ -194,6 +197,23 @@ export function MessageContextMenu(props: {
     navigator.clipboard.writeText(props.file?.originalUrl ?? "");
   }
 
+  /**
+   * Whether the attached file is an image this engine can put on the
+   * clipboard — the pixels themselves, as opposed to its link.
+   */
+  const canCopyImage = () =>
+    props.file?.metadata.type === "Image" && canCopyImageToClipboard();
+
+  /**
+   * Copies the image itself to the clipboard
+   */
+  function copyImage() {
+    copyImageToClipboard(props.file!.originalUrl).catch((error) => {
+      console.error("[clipboard] copy image failed", error);
+      showError(new Error(t`Could not copy this image to the clipboard.`));
+    });
+  }
+
   function copyLink() {
     navigator.clipboard.writeText(props.link ?? "");
   }
@@ -204,6 +224,11 @@ export function MessageContextMenu(props: {
         <ContextMenuButton icon={MdOpenInNew} onClick={openFile}>
           <Trans>Open file</Trans>
         </ContextMenuButton>
+        <Show when={canCopyImage()}>
+          <ContextMenuButton icon={MdImage} onClick={copyImage}>
+            <Trans>Copy image</Trans>
+          </ContextMenuButton>
+        </Show>
         <ContextMenuButton icon={MdLink} onClick={copyFileLink}>
           <Trans>Copy file link</Trans>
         </ContextMenuButton>

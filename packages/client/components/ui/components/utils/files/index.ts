@@ -1,3 +1,7 @@
+export {
+  canCopyImageToClipboard,
+  copyImageToClipboard,
+} from "./copyImageToClipboard";
 export { FileDropAnywhereCollector } from "./FileDropAnywhereCollector";
 export { FileDropGuard } from "./FileDropGuard";
 export { FileInput } from "./FileInput";
