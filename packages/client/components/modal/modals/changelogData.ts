@@ -9,6 +9,44 @@ import type { ChangelogResponse } from "./Changelog";
  */
 export const CHANGELOGS: ChangelogResponse[] = [
   {
+    id: "sloga-2026-07-30",
+    title: "Patch Notes",
+    published_at: "2026-07-30T16:00:00.000Z",
+    markdown_content: `## v0.18.0 — Record a call, and give the screen share the whole room
+
+### ⏺️ Record a call
+- **A record button in DM, group and voice-channel calls.** Everyone's audio — their mics, their shared screen's sound, and your own — mixed into a single file on your machine.
+- **Everyone in the call is told.** A banner runs the whole time, a message lands in the channel, and anyone joining a call already being recorded is warned before they connect. Hide the banner and it collapses to a ⏺ marker that stays put.
+- **You choose where the file goes before recording starts**, and it's written as you speak. A crash or a closed laptop leaves a playable file of everything up to that moment instead of nothing.
+- **Saved as .m4a**, so it opens in Windows Media Player, VLC, Apple Music, Audacity — anything, without conversion.
+- Recording happens on your own machine because it's the only place it can: calls are end-to-end encrypted, so the server never has the audio to record. Only someone in the call can capture it.
+- **Server owners get a new "Record Call" permission**, off by default — nobody can record in your voice channels until you say so.
+- To be straight with you: this tells you when someone uses **this button**. It can't know about a screen recorder or a phone sitting on the desk — no app can.
+
+### 🖥️ Screen sharing
+- **A shared screen now takes the whole call** — everyone else moves into a column down the left instead of a strip across the bottom, so the picture fills the frame properly.
+- Shares focus themselves when they start, but only once, and never by dragging you off a share you're already watching.
+- Narrow windows, phones and the floating call window keep the layout they had.
+- With nobody sharing, the participant grid centres and wraps again instead of running down one edge.
+
+### 💬 Messaging
+- **Every message shows its time**, not just the first of a run — and a new **Appearance** setting turns them all off if you'd rather have the clean look.
+- **Type \`:D\` and get an emoji.** The usual set — \`:)\` \`:(\` \`:P\` \`;)\` \`<3\` and friends — expands as you type. Times, file paths and code are left alone, ctrl-Z brings back what you typed, and there's a setting to switch it off.
+- **\`:D\` used to insert a dice.** The emoji suggestion list was opening on a single letter and Enter picked \`:die:\` instead of sending your message. Fixed.
+- **Copy an image**, not just its link — from the attachment menu or the fullscreen viewer, ready to paste straight into another app.
+
+### ✨ Polish
+- **Right-clicking Sloga's own chrome** — sidebar padding, the space under the member list, call surfaces — no longer opens your browser's menu over the top. Text boxes keep theirs, and shift+right-click still gets you the browser's.
+- **The member list uses the space it's given** instead of being squeezed into the bottom of the channel column.
+- **Fixed: a single visit at phone width could hide a server's member list for good**, on desktop too, until you found the button again.
+- On phones, the user bar no longer covers the message box, the last row of forum posts, or the bottom of the events calendar.
+- Naming an emoji something invalid now says what a valid name looks like, instead of showing you the validator's raw output.
+
+- On the web now; desktop and Android pick these up with their next update.
+
+*Sloga — Hop on.*`,
+  },
+  {
     id: "sloga-2026-07-29",
     title: "Patch Notes",
     published_at: "2026-07-29T18:00:00.000Z",
