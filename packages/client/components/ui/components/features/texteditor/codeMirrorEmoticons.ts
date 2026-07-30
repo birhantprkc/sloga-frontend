@@ -15,8 +15,8 @@ import { emoticonExpansionAt } from "./emoticonExpansion";
  * the draft, so expandTrailingEmoticon handles it there.
  *
  * The replacement is its own history entry, so undo brings the emoticon back
- * exactly as it was typed. That is the escape hatch for anyone who wanted the
- * literal text; a code span is the other one.
+ * exactly as it was typed. That is the escape hatch for a single one; a code
+ * span is the other, and `appearance:expand_emoticons` turns the lot off.
  * @returns Editor extension
  */
 export function codeMirrorEmoticons() {
@@ -30,6 +30,8 @@ export function codeMirrorEmoticons() {
    * @returns Whether anything was replaced
    */
   function expand(view: EditorView, from: number, to: number) {
+    if (!state.settings.getValue("appearance:expand_emoticons")) return false;
+
     const spec = emoticonExpansionAt({
       state: view.state,
       from,

@@ -5623,6 +5623,10 @@ msgstr ""
 msgid "Try again"
 msgstr ""
 
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Turn emoticons like :D into emoji"
+msgstr ""
+
 #: components/modal/modals/E2EEDisable.tsx
 msgid "Turn off"
 msgstr ""

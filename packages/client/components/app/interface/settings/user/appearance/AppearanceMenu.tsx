@@ -389,6 +389,18 @@ export function AppearanceMenu() {
           <Trans>Show send message button</Trans>
         </Checkbox>
 
+        <Checkbox
+          checked={state.settings.getValue("appearance:expand_emoticons")}
+          onChange={(event) =>
+            state.settings.setValue(
+              "appearance:expand_emoticons",
+              event.currentTarget.checked,
+            )
+          }
+        >
+          <Trans>Turn emoticons like :D into emoji</Trans>
+        </Checkbox>
+
         <FloatingSelect
           label={t`Emoji Pack (affects your messages only)`}
           value={state.settings.getValue("appearance:unicode_emoji")}

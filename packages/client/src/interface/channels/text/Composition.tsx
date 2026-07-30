@@ -686,7 +686,10 @@ export function MessageComposition(props: Props) {
     // only expands the ones a space was typed after, and the last thing typed
     // before sending never gets one. Written back to the draft because that is
     // what sendDraft reads, which also covers the send button and phone taps.
-    if (typeof useContent !== "string") {
+    if (
+      typeof useContent !== "string" &&
+      state.settings.getValue("appearance:expand_emoticons")
+    ) {
       const expanded = expandTrailingEmoticon(
         rawContent,
         unicodeEmojiPackPrefix(

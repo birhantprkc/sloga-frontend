@@ -46,12 +46,14 @@ export function EditMessage(props: { message: Message }) {
       // Expanded after the unchanged-message check, so opening an old message
       // that ends in ":D" and saving it untouched still saves nothing.
       change.mutate(
-        expandTrailingEmoticon(
-          content,
-          unicodeEmojiPackPrefix(
-            state.settings.getValue("appearance:unicode_emoji") as string,
-          ),
-        ),
+        state.settings.getValue("appearance:expand_emoticons")
+          ? expandTrailingEmoticon(
+              content,
+              unicodeEmojiPackPrefix(
+                state.settings.getValue("appearance:unicode_emoji") as string,
+              ),
+            )
+          : content,
       );
     } else if (isOpen("delete_message")) {
       void props.message.delete();

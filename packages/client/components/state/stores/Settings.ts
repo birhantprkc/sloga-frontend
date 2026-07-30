@@ -62,6 +62,11 @@ interface SettingsDefinition {
   "appearance:show_send_button": boolean;
 
   /**
+   * Whether typing an emoticon like ":D" turns it into an emoji
+   */
+  "appearance:expand_emoticons": boolean;
+
+  /**
    * Whether to render messages in compact mode
    */
   "appearance:compact_mode": boolean;
@@ -187,6 +192,7 @@ const EXPECTED_TYPES: { [K in keyof SettingsDefinition]: ValueType<K> } = {
   "notifications:push": "string",
   "appearance:unicode_emoji": "string",
   "appearance:show_send_button": "boolean",
+  "appearance:expand_emoticons": "boolean",
   "appearance:compact_mode": "boolean",
   "advanced:copy_id": "boolean",
   "advanced:admin_panel": "boolean",
@@ -217,6 +223,10 @@ export type TypeSettings = Partial<SettingsDefinition>;
  * Default values for settings, if applicable.
  */
 const DEFAULT_VALUES: TypeSettings = {
+  // Also in default() below: that one is the baseline clean() builds on, while
+  // this one is what getValue() falls back to for a key a stored settings blob
+  // has never heard of — which is every existing user, for a new key.
+  "appearance:expand_emoticons": true,
   "sounds:message_variant": 4,
   "sounds:ringtone_variant": 8,
   "sounds:disconnect_variant": 3,
@@ -263,6 +273,9 @@ export class Settings extends AbstractStore<"settings", TypeSettings> {
       "notifications:push": "default",
       "appearance:unicode_emoji": "fluent-3d",
       "appearance:show_send_button": true,
+      // On: the expansion shipped before the toggle did, so off would be a
+      // behaviour change. Mirrored in DEFAULT_VALUES — see the note there.
+      "appearance:expand_emoticons": true,
       "appearance:compact_mode": false,
       "advanced:copy_id": false,
       "advanced:admin_panel": false,
