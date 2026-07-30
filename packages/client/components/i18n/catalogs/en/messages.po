@@ -2106,6 +2106,10 @@ msgstr "Emoji (optional)"
 msgid "Emoji Name"
 msgstr "Emoji Name"
 
+#: components/app/interface/settings/server/emojis/EmojiList.tsx
+msgid "Emoji names can only use letters, numbers and underscores."
+msgstr "Emoji names can only use letters, numbers and underscores."
+
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
 msgid "Emoji Pack (affects your messages only)"
 msgstr "Emoji Pack (affects your messages only)"

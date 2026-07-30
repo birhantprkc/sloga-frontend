@@ -20,6 +20,11 @@ import {
 } from "@revolt/ui";
 
 /**
+ * Names the server will accept, mirrors RE_EMOJI in revolt_models
+ */
+const RE_EMOJI_NAME = /^[a-zA-Z0-9_]+$/;
+
+/**
  * Emoji list
  */
 export function EmojiList(props: { server: Server }) {
@@ -34,7 +39,17 @@ export function EmojiList(props: { server: Server }) {
 
   const editGroup = createFormGroup(
     {
-      name: createFormControl("", { required: true }),
+      name: createFormControl("", {
+        required: true,
+        // caught here so the rule is stated in words; otherwise the server
+        // rejects it and the only thing we can show is its validator dump
+        validators: (value: string) =>
+          !value || RE_EMOJI_NAME.test(value)
+            ? null
+            : {
+                [t`Emoji names can only use letters, numbers and underscores.`]: true,
+              },
+      }),
       file: createFormControl<string | File[] | null>(null, {
         required: true,
       }),
