@@ -18,6 +18,10 @@ import emojiMapping from "../../../emojiMapping.json";
 import { AutoCompleteSearchSpace } from "../../utils/autoComplete";
 
 import { isInCodeBlock } from "./codeMirrorCommon";
+import {
+  RE_emojiValidFor,
+  emojiSuggestionsOpenFor,
+} from "./emojiSuggestionGate";
 
 const EMOJI_KEYS = Object.keys(emojiMapping).sort();
 const MAPPED_EMOJI_KEYS = EMOJI_KEYS.map(
@@ -30,7 +34,6 @@ const MAPPED_EMOJI_KEYS = EMOJI_KEYS.map(
 );
 
 const RE_match = /(?<!\w)[:@%#]\w*/;
-const RE_emojiValidFor = /(?<!\w):\w*/;
 const RE_mentionValidFor = /(?<!\w)@\w*/;
 const RE_roleValidFor = /(?<!\w)@\w*/;
 const RE_channelValidFor = /(?<!\w)#\w*/;
@@ -153,6 +156,9 @@ export function codeMirrorAutoCompleteSource(
     const normalizedText = token.text.normalize("NFKC");
     switch (normalizedText[0]) {
       case ":":
+        if (!context.explicit && !emojiSuggestionsOpenFor(normalizedText)) {
+          return null;
+        }
         return {
           from: token.from,
           options: emoji(),
