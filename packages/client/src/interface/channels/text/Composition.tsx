@@ -22,6 +22,7 @@ import { SOFTRES_CREATION_ENABLED } from "@revolt/app";
 import { E2EESendError, useClient, useE2EE, useSound } from "@revolt/client";
 import { CONFIGURATION, debounce, useDevice } from "@revolt/common";
 import { Keybind, KeybindAction, createKeybind } from "@revolt/keybinds";
+import { unicodeEmojiPackPrefix } from "@revolt/markdown/emoji/UnicodeEmoji";
 import { useModals } from "@revolt/modal";
 import { useState } from "@revolt/state";
 import {
@@ -38,6 +39,7 @@ import {
   VoiceMessageButton,
   humanFileSize,
 } from "@revolt/ui";
+import { expandTrailingEmoticon } from "@revolt/ui/components/features/texteditor/emoticonExpansion";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 import { useSearchSpace } from "@revolt/ui/components/utils/autoComplete";
 import { UserSlowmodes } from "stoat.js/lib/events/v1";
@@ -677,6 +679,25 @@ export function MessageComposition(props: Props) {
       if (command) {
         await sendInteraction(command, slash[2] ?? "");
         return;
+      }
+    }
+
+    // This is a plain message, so expand an emoticon it ends on: the editor
+    // only expands the ones a space was typed after, and the last thing typed
+    // before sending never gets one. Written back to the draft because that is
+    // what sendDraft reads, which also covers the send button and phone taps.
+    if (typeof useContent !== "string") {
+      const expanded = expandTrailingEmoticon(
+        rawContent,
+        unicodeEmojiPackPrefix(
+          state.settings.getValue("appearance:unicode_emoji") as string,
+        ),
+      );
+      if (expanded !== rawContent) {
+        state.draft.setDraft(props.channel.id, {
+          ...draft(),
+          content: expanded,
+        });
       }
     }
 

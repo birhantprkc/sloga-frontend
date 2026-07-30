@@ -7,10 +7,12 @@ import { styled } from "styled-system/jsx";
 
 import { useClient } from "@revolt/client";
 import { KeybindAction, createKeybind } from "@revolt/keybinds";
+import { unicodeEmojiPackPrefix } from "@revolt/markdown/emoji/UnicodeEmoji";
 import { useModals } from "@revolt/modal";
 import { useState } from "@revolt/state";
 import { Text } from "@revolt/ui";
 import { TextEditor2 } from "@revolt/ui/components/features/texteditor/TextEditor2";
+import { expandTrailingEmoticon } from "@revolt/ui/components/features/texteditor/emoticonExpansion";
 import { useSearchSpace } from "@revolt/ui/components/utils/autoComplete";
 
 export function EditMessage(props: { message: Message }) {
@@ -39,7 +41,18 @@ export function EditMessage(props: { message: Message }) {
         return;
       }
 
-      change.mutate(content);
+      // Same as sending: an emoticon typed at the very end never got the space
+      // that expands one in the editor. Covers enter and the save link alike.
+      // Expanded after the unchanged-message check, so opening an old message
+      // that ends in ":D" and saving it untouched still saves nothing.
+      change.mutate(
+        expandTrailingEmoticon(
+          content,
+          unicodeEmojiPackPrefix(
+            state.settings.getValue("appearance:unicode_emoji") as string,
+          ),
+        ),
+      );
     } else if (isOpen("delete_message")) {
       void props.message.delete();
       pop();

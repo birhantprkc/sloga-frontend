@@ -57,6 +57,16 @@ export const UNICODE_EMOJI_PUA_PACK: Record<string, UnicodeEmojiPacks> = {
   ["\uE0E6"]: "twemoji",
 };
 
+/**
+ * Prefix that tells readers which pack an emoji the app inserted should be
+ * drawn from. The default pack is canonically unmarked, hence the empty
+ * string.
+ * @param pack Pack the sender has chosen
+ * @returns Marker to put in front of the emoji
+ */
+export const unicodeEmojiPackPrefix = (pack?: string) =>
+  UNICODE_EMOJI_PACK_PUA[pack!] ?? "";
+
 export const startsWithPackPUA = (emoji: string) => {
   if (emoji.startsWith(":")) return false;
   if (emoji.slice(0, 1).match("[\uE0E0-\uE0E6]")) return true;

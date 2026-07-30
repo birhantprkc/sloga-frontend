@@ -12,6 +12,7 @@ import { AutoCompleteSearchSpace } from "../../utils/autoComplete";
 import { useDevice } from "@revolt/common";
 import { codeMirrorAutoComplete } from "./codeMirrorAutoComplete";
 import { isInFencedCodeBlock } from "./codeMirrorCommon";
+import { codeMirrorEmoticons } from "./codeMirrorEmoticons";
 import { smartLineWrapping } from "./codeMirrorLineWrap";
 import { markPlugins } from "./codeMirrorMarks";
 import { markdownTheme } from "./codeMirrorTheme";
@@ -170,6 +171,9 @@ export function TextEditor2(props: Props) {
         /* Autocomplete */
         // eslint-disable-next-line solid/reactivity
         codeMirrorAutoComplete(props.autoCompleteSearchSpace),
+
+        /* Expand ":D" and friends into emoji */
+        codeMirrorEmoticons(),
 
         /* Custom items */
         codeMirrorWidgets(),
