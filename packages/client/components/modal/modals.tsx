@@ -74,6 +74,7 @@ import { ScreenShareSettingsModal } from "./modals/ScreenShareSettings";
 import { ServerIdentityModal } from "./modals/ServerIdentity";
 import { ServerInfoModal } from "./modals/ServerInfo";
 import { SettingsModal } from "./modals/Settings";
+import { SignOutModal } from "./modals/SignOut";
 import { SignOutSessionsModal } from "./modals/SignOutSessions";
 import { SignedOutModal } from "./modals/SignedOut";
 import { SoftResExportModal } from "./modals/SoftResExport";
@@ -241,6 +242,8 @@ export function RenderModal(props: ActiveModal & { onClose: () => void }) {
       return <SettingsModal {...modalProps} />;
     case "signed_out":
       return <SignedOutModal {...modalProps} />;
+    case "sign_out":
+      return <SignOutModal {...modalProps} />;
     case "sign_out_sessions":
       return <SignOutSessionsModal {...modalProps} />;
     case "user_profile":

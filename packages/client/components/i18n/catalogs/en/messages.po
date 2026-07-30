@@ -760,6 +760,10 @@ msgstr "Are you sure you want to go to "
 msgid "Are you sure you want to remove {0} from {1}?"
 msgstr "Are you sure you want to remove {0} from {1}?"
 
+#: components/modal/modals/SignOut.tsx
+msgid "Are you sure you want to Sign out?"
+msgstr "Are you sure you want to Sign out?"
+
 #: components/app/interface/settings/server/Overview.tsx
 msgid "Ask for this server to be shown in the public directory. Its name, icon, description and member count become publicly visible once approved."
 msgstr "Ask for this server to be shown in the public directory. Its name, icon, description and member count become publicly visible once approved."
@@ -3626,6 +3630,10 @@ msgstr "New to the server"
 msgid "Nickname"
 msgstr "Nickname"
 
+#: components/modal/modals/SignOut.tsx
+msgid "No"
+msgstr "No"
+
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
 msgid "No — stop"
 msgstr "No — stop"
@@ -4970,6 +4978,10 @@ msgstr "Sign in failed"
 msgid "Sign in with your account to link your channel."
 msgstr "Sign in with your account to link your channel."
 
+#: src/interface/navigation/servers/UserMenu.tsx
+msgid "Sign out"
+msgstr "Sign out"
+
 #: components/auth/src/flows/FlowLogin.tsx
 msgid "Sign into Sloga"
 msgstr "Sign into Sloga"
@@ -6151,6 +6163,10 @@ msgstr "Would you like to join this server?"
 msgid "Write a message first, then schedule it"
 msgstr "Write a message first, then schedule it"
 
+#: components/modal/modals/SignOut.tsx
+msgid "Yes"
+msgstr "Yes"
+
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
 msgid "Yes, that's the right screen"
 msgstr "Yes, that's the right screen"
@@ -6307,6 +6323,10 @@ msgstr "You won't be able to rejoin unless you are re-invited."
 #: components/ui/components/features/voice/callCard/VoiceCallCardPreview.tsx
 msgid "You'll join unencrypted — the call will show a warning"
 msgstr "You'll join unencrypted — the call will show a warning"
+
+#: components/modal/modals/SignOut.tsx
+msgid "You'll need to log in again to get back to your messages."
+msgstr "You'll need to log in again to get back to your messages."
 
 #: components/i18n/errors.ts
 msgid "You're already part of this group."

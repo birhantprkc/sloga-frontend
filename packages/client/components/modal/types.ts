@@ -394,6 +394,9 @@ export type Modals =
       type: "signed_out";
     }
   | {
+      type: "sign_out";
+    }
+  | {
       type: "sign_out_sessions";
       client: Client;
     }

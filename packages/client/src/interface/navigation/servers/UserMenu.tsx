@@ -31,6 +31,7 @@ import MdContactPage from "@material-design-icons/svg/outlined/contact_page.svg?
 import MdDelete from "@material-design-icons/svg/outlined/delete.svg?component-solid";
 import MdEditNote from "@material-design-icons/svg/outlined/edit_note.svg?component-solid";
 import MdInfo from "@material-design-icons/svg/outlined/info.svg?component-solid";
+import MdLogout from "@material-design-icons/svg/outlined/logout.svg?component-solid";
 import MdNotificationsOff from "@material-design-icons/svg/outlined/notifications_off.svg?component-solid";
 
 interface Props {
@@ -262,6 +263,19 @@ export function UserMenu(props: Props) {
                   <Trans>Copy user ID</Trans>
                 </ContextMenuButton>
               </Show>
+
+              <ContextMenuDivider />
+
+              <ContextMenuButton
+                icon={MdLogout}
+                destructive
+                onClick={() => {
+                  close();
+                  openModal({ type: "sign_out" });
+                }}
+              >
+                <Trans>Sign out</Trans>
+              </ContextMenuButton>
             </ContextMenu>
           </Motion>
         </Show>
