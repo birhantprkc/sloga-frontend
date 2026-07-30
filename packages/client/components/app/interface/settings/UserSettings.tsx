@@ -357,7 +357,7 @@ const Config: SettingsConfiguration<{ server: Server }> = {
               ),
               title: (
                 <ColouredText colour="var(--md-sys-color-error)">
-                  <Trans>Log Out</Trans>
+                  <Trans>Sign out</Trans>
                 </ColouredText>
               ),
               onClick() {
