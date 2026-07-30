@@ -512,15 +512,21 @@ const Call = styled("div", {
 });
 
 const Grid = styled("div", {
+  /**
+   * No-one focused: a centred grid that wraps, filling the card. `safe` on both
+   * centring keywords so a grid taller than the card starts at the top edge
+   * instead of overflowing equally in both directions — half of it would be
+   * unreachable above the scroll origin.
+   *
+   * Both focus layouts below turn this into a single line, so they each set
+   * `flexWrap`/`minHeight` back themselves.
+   */
   base: {
     display: "flex",
-    flexDirection: "column",
-    flexWrap: "nowrap",
-    justifyContent: "flex-start",
-    alignItems: "flex-start",
-    alignSelf: "flex-start",
-    minHeight: "auto",
-    width: "fit-content",
+    flexWrap: "wrap",
+    justifyContent: "safe center",
+    alignContent: "safe center",
+    minHeight: "100%",
     gap: "var(--gap-md)",
   },
 
@@ -529,6 +535,10 @@ const Grid = styled("div", {
       true: {
         flexDirection: "column",
         flexWrap: "nowrap",
+        // Held over from the base grid, which no longer sets it: without it
+        // these tiles stretch to the full width instead of keeping the size
+        // their aspect ratio gives them.
+        alignItems: "flex-start",
         alignSelf: "stretch",
         width: "auto",
         height: `max(20%, ${TILE_MIN_FOCUS_HEIGHT})`,
@@ -553,6 +563,9 @@ const Grid = styled("div", {
         order: -1,
         alignSelf: "stretch",
         alignItems: "stretch",
+        // Top of the column down, not centred: the column scrolls, and a
+        // centred overflow puts its first tile above the scroll origin.
+        justifyContent: "flex-start",
         width: SIDEBAR_WIDTH,
         flexShrink: 0,
         height: "100%",
