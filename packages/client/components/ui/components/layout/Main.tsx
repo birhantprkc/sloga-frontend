@@ -30,6 +30,15 @@ export const main = cva({
     _phone: {
       margin: 0,
       borderRadius: 0,
+
+      // The floating user bar belongs to the nav block, but on a phone that
+      // block is a drawer the content slides straight over — so the bar ends
+      // up pinned to the bottom of every screen, on top of whatever is there
+      // (it was hiding the composer's input row). Reserve its height here so
+      // the message list and the two composer bars sit above it. The strip
+      // this leaves is painted in this surface, so there is no visible seam
+      // behind the bar.
+      paddingBlockEnd: "var(--layout-height-user-footer)",
     },
   },
 });

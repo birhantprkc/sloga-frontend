@@ -96,5 +96,12 @@ const themeConstants = {
     "width-channel-sidebar": "248px",
     "width-user-context-menu-truncate": "300px",
     "height-message-box": "32vh",
+    /**
+     * Space the floating user bar needs at the bottom of whatever it overlays.
+     * Covers the pill itself plus its 10px offset from the edge; every
+     * container that reserves room for it reads this, so the bar can only ever
+     * be resized in one place.
+     */
+    "height-user-footer": "64px",
   },
 };

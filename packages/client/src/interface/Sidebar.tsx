@@ -40,7 +40,7 @@ const MainBar = styled("div", {
     withFooter: {
       true: {
         "& > *:not([data-user-footer])": {
-          paddingBottom: "64px",
+          paddingBottom: "var(--layout-height-user-footer)",
         },
       },
       false: {},
