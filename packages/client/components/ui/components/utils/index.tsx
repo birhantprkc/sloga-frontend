@@ -1,4 +1,5 @@
 export { ColouredText } from "./ColouredText";
+export { ContextMenuGuard } from "./ContextMenuGuard";
 export { Deferred } from "./Deferred";
 export { Draggable } from "./Draggable";
 export { Form2 } from "./Form2";
