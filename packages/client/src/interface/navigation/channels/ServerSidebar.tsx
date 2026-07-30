@@ -108,6 +108,14 @@ export const ServerSidebar = (props: Props) => {
     props.channelId ? client().channels.get(props.channelId) : undefined,
   );
 
+  // Server text channels host the member list at the bottom of this column
+  // rather than in a right-hand one; the channel list has to stop growing
+  // when it is there, otherwise it claims every spare pixel and leaves the
+  // members scrolling inside a strip with dead space above it.
+  const showMemberList = () =>
+    selectedChannel()?.type === "TextChannel" &&
+    state.layout.getSectionState(LAYOUT_SECTIONS.MEMBER_SIDEBAR, true);
+
   // Users can manage certain parts of the server individually, regardless of their ManageServer Permission
   const canManageServer = () =>
     props.server.orPermission(
@@ -241,7 +249,14 @@ export const ServerSidebar = (props: Props) => {
       </Switch>
       <div
         use:invisibleScrollable
-        style={{ "flex-grow": 1, "margin-bottom": "var(--gap-md)" }}
+        style={{
+          flex: showMemberList() ? "0 1 auto" : "1 1 auto",
+          "min-height": 0,
+          // Only capped while sharing the column, so the members always keep
+          // a 40% floor on servers with a long channel list.
+          "max-height": showMemberList() ? "60%" : "none",
+          "margin-bottom": "var(--gap-md)",
+        }}
         use:floating={props.menuGenerator(props.server)}
       >
         <Draggable
@@ -267,18 +282,13 @@ export const ServerSidebar = (props: Props) => {
           )}
         </Draggable>
       </div>
-      <Show
-        when={
-          selectedChannel()?.type === "TextChannel" &&
-          state.layout.getSectionState(LAYOUT_SECTIONS.MEMBER_SIDEBAR, true)
-        }
-      >
+      <Show when={showMemberList()}>
         <div
           ref={memberScrollTarget}
           use:invisibleScrollable
           style={{
-            "flex-shrink": 0,
-            "max-height": "40%",
+            flex: "1 1 auto",
+            "min-height": 0,
             "border-top": "1px solid var(--md-sys-color-outline-variant)",
             overflow: "auto",
           }}
