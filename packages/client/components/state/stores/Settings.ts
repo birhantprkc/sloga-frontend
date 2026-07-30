@@ -72,6 +72,11 @@ interface SettingsDefinition {
   "appearance:compact_mode": boolean;
 
   /**
+   * Whether to show the time a message was sent next to it
+   */
+  "appearance:show_timestamps": boolean;
+
+  /**
    * Indicate new users to Stoat
    * TODO: implement
    */
@@ -194,6 +199,7 @@ const EXPECTED_TYPES: { [K in keyof SettingsDefinition]: ValueType<K> } = {
   "appearance:show_send_button": "boolean",
   "appearance:expand_emoticons": "boolean",
   "appearance:compact_mode": "boolean",
+  "appearance:show_timestamps": "boolean",
   "advanced:copy_id": "boolean",
   "advanced:admin_panel": "boolean",
   "sounds:message_variant": "number",
@@ -227,6 +233,7 @@ const DEFAULT_VALUES: TypeSettings = {
   // this one is what getValue() falls back to for a key a stored settings blob
   // has never heard of — which is every existing user, for a new key.
   "appearance:expand_emoticons": true,
+  "appearance:show_timestamps": true,
   "sounds:message_variant": 4,
   "sounds:ringtone_variant": 8,
   "sounds:disconnect_variant": 3,
@@ -277,6 +284,11 @@ export class Settings extends AbstractStore<"settings", TypeSettings> {
       // behaviour change. Mirrored in DEFAULT_VALUES — see the note there.
       "appearance:expand_emoticons": true,
       "appearance:compact_mode": false,
+      // On: messages have always carried a timestamp in their header, so off
+      // would be a behaviour change. Mirrored in DEFAULT_VALUES — see the note
+      // there; a key in only one of the two reads undefined for every existing
+      // user, whose stored blob predates it.
+      "appearance:show_timestamps": true,
       "advanced:copy_id": false,
       "advanced:admin_panel": false,
       "sounds:message_variant": 4,

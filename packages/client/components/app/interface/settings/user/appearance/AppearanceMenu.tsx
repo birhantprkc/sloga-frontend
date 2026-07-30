@@ -294,6 +294,18 @@ export function AppearanceMenu() {
           </Trans>
         </Checkbox>
 
+        <Checkbox
+          checked={state.settings.getValue("appearance:show_timestamps")}
+          onChange={(event) =>
+            state.settings.setValue(
+              "appearance:show_timestamps",
+              event.currentTarget.checked,
+            )
+          }
+        >
+          <Trans>Show message timestamps</Trans>
+        </Checkbox>
+
         <Preview>
           <MessagePreview>
             <MessageContainer

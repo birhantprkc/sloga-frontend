@@ -6,6 +6,7 @@ import { styled } from "styled-system/jsx";
 
 import { useMessage } from "@revolt/app";
 import { useDevice } from "@revolt/common";
+import { useState } from "@revolt/state";
 import { Ripple, typography } from "@revolt/ui/components/design";
 import { Column, Row } from "@revolt/ui/components/layout";
 import {
@@ -290,16 +291,6 @@ const infoText = cva({
         marginTop: "0.15em",
       },
     },
-    hidden: {
-      true: {
-        opacity: 0,
-        transition: "var(--transitions-fast) opacity",
-
-        _groupHover: {
-          opacity: 1,
-        },
-      },
-    },
   },
 });
 
@@ -322,6 +313,18 @@ export function MessageContainer(props: Props) {
   const { t } = useLingui();
   const { message } = useMessage();
   const { isMobile } = useDevice();
+  const state = useState();
+
+  /**
+   * Whether to render the sent time next to this message.
+   *
+   * Only a real Date is a timestamp: DraftMessage passes a status label
+   * ("Sending…", "Failed to send") through the same prop, and the setting
+   * must never hide that.
+   */
+  const showTime = () =>
+    !(props.timestamp instanceof Date) ||
+    state.settings.getValue("appearance:show_timestamps");
 
   return (
     <div
@@ -364,76 +367,85 @@ export function MessageContainer(props: Props) {
             {props.infoMatch ?? <Match when={false} children={null} />}
             <Match when={props.compact}>
               <CompactInfo gap="sm" align>
-                <div
-                  class={infoText()}
-                  use:floating={{
-                    tooltip: {
-                      placement: "top",
-                      content: () => (
-                        <>
-                          {t`Sent`}{" "}
-                          <Time
-                            format="datetime"
-                            value={props.timestamp}
-                            referenceTime={props._referenceTime}
-                          />
-                        </>
-                      ),
-                      aria: "",
-                    },
-                  }}
-                >
-                  <Time
-                    format="time"
-                    value={props.timestamp}
-                    referenceTime={props._referenceTime}
-                  />
-                </div>
+                <Show when={showTime()}>
+                  <div
+                    class={infoText()}
+                    use:floating={{
+                      tooltip: {
+                        placement: "top",
+                        content: () => (
+                          <>
+                            {t`Sent`}{" "}
+                            <Time
+                              format="datetime"
+                              value={props.timestamp}
+                              referenceTime={props._referenceTime}
+                            />
+                          </>
+                        ),
+                        aria: "",
+                      },
+                    }}
+                  >
+                    <Time
+                      format="time"
+                      value={props.timestamp}
+                      referenceTime={props._referenceTime}
+                    />
+                  </div>
+                </Show>
                 {props.username}
                 {props.info}
               </CompactInfo>
             </Match>
             <Match when={props.tail}>
-              <div
-                class={infoText({ hidden: !props.edited, prefix: true })}
-                use:floating={{
-                  tooltip: {
-                    placement: "top",
-                    content: () => (
-                      <Column>
-                        <span>
-                          {t`Sent`}{" "}
-                          <Time
-                            format="datetime"
-                            value={props.timestamp}
-                            referenceTime={props._referenceTime}
-                          />
-                        </span>
-                        <Show when={props.edited}>
+              {/* Nothing at all when timestamps are off and there is no edit
+                  marker to show — the gutter keeps its width either way, so
+                  the message body does not shift */}
+              <Show when={showTime() || props.edited}>
+                <div
+                  class={infoText({ prefix: true })}
+                  use:floating={{
+                    tooltip: {
+                      placement: "top",
+                      content: () => (
+                        <Column>
                           <span>
-                            {t`Edited`}{" "}
+                            {t`Sent`}{" "}
                             <Time
                               format="datetime"
-                              value={props.edited}
+                              value={props.timestamp}
                               referenceTime={props._referenceTime}
                             />
                           </span>
-                        </Show>
-                      </Column>
-                    ),
-                    aria: "",
-                  },
-                }}
-              >
-                <Show when={props.edited}>(edited)</Show>
-                <Show when={!props.edited}>
-                  <Time
-                    value={props.timestamp}
-                    format="time"
-                    referenceTime={props._referenceTime}
-                  />
-                </Show>
-              </div>
+                          <Show when={props.edited}>
+                            <span>
+                              {t`Edited`}{" "}
+                              <Time
+                                format="datetime"
+                                value={props.edited}
+                                referenceTime={props._referenceTime}
+                              />
+                            </span>
+                          </Show>
+                        </Column>
+                      ),
+                      aria: "",
+                    },
+                  }}
+                >
+                  {/* The gutter is one timestamp wide, so an edited message
+                      spends it on the edit marker; the tooltip carries both */}
+                  <Show when={props.edited}>(edited)</Show>
+                  <Show when={!props.edited}>
+                    <Time
+                      value={props.timestamp}
+                      format="time"
+                      referenceTime={props._referenceTime}
+                    />
+                  </Show>
+                </div>
+              </Show>
             </Match>
           </Switch>
         </Info>
@@ -448,30 +460,32 @@ export function MessageContainer(props: Props) {
                     when={props.timestamp instanceof Date}
                     fallback={props.timestamp as JSX.Element}
                   >
-                    <span
-                      use:floating={{
-                        tooltip: {
-                          placement: "top",
-                          content: () => (
-                            <>
-                              {t`Sent`}{" "}
-                              <Time
-                                format="datetime"
-                                value={props.timestamp}
-                                referenceTime={props._referenceTime}
-                              />
-                            </>
-                          ),
-                          aria: "",
-                        },
-                      }}
-                    >
-                      <Time
-                        format="calendar"
-                        value={props.timestamp}
-                        referenceTime={props._referenceTime}
-                      />
-                    </span>
+                    <Show when={showTime()}>
+                      <span
+                        use:floating={{
+                          tooltip: {
+                            placement: "top",
+                            content: () => (
+                              <>
+                                {t`Sent`}{" "}
+                                <Time
+                                  format="datetime"
+                                  value={props.timestamp}
+                                  referenceTime={props._referenceTime}
+                                />
+                              </>
+                            ),
+                            aria: "",
+                          },
+                        }}
+                      >
+                        <Time
+                          format="calendar"
+                          value={props.timestamp}
+                          referenceTime={props._referenceTime}
+                        />
+                      </span>
+                    </Show>
                   </Show>
                   <Show when={props.edited}>
                     <span
