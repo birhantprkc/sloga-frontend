@@ -86,9 +86,15 @@ const Interface = (props: { children: JSX.Element }) => {
   //Drawer slider for mobile
   let rootRef, sDrawer: SlideDrawer | undefined;
   const [contRef, setContRef] = createSignal<HTMLDivElement>();
+  // Reset both nav sections to their defaults so the slide drawer owns
+  // visibility at phone widths. setSectionState clears the stored override
+  // when value === defaultValue, so both calls below drop their override
+  // instead of writing one — passing `false` against MEMBER_SIDEBAR's `true`
+  // default persisted "members hidden" into the settings store, which then
+  // followed the account onto desktop and every later session.
   function rstLayout() {
     state.layout.setSectionState(LAYOUT_SECTIONS.PRIMARY_SIDEBAR, false, false);
-    state.layout.setSectionState(LAYOUT_SECTIONS.MEMBER_SIDEBAR, false, true);
+    state.layout.setSectionState(LAYOUT_SECTIONS.MEMBER_SIDEBAR, true, true);
   }
   createEffect(() => {
     //Create drawer
