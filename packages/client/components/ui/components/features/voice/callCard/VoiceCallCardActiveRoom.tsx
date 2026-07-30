@@ -1,6 +1,6 @@
 import { useLingui } from "@lingui-solid/solid/macro";
 import { createResizeObserver } from "@solid-primitives/resize-observer";
-import { createEffect, For, onMount, Show } from "solid-js";
+import { createEffect, createSignal, For, onMount, Show } from "solid-js";
 import { TrackLoop } from "solid-livekit-components";
 import { styled } from "styled-system/jsx";
 
@@ -148,7 +148,11 @@ function ImmersiveExit() {
 }
 
 const TILE_MIN_WIDTH = "250px",
-  TILE_MIN_FOCUS_HEIGHT = "100px";
+  TILE_MIN_FOCUS_HEIGHT = "100px",
+  /** Width of the side column of other participants in the focus layout. */
+  SIDEBAR_WIDTH = "min(28%, 260px)",
+  /** Card width it takes to earn a side column instead of a bottom strip. */
+  SIDEBAR_MIN_CARD_WIDTH = 560;
 
 /**
  * Show a grid of participants
@@ -161,6 +165,30 @@ function Participants() {
   const testTrackCount = 0;
 
   let callRef: HTMLDivElement | undefined;
+
+  const [callWidth, setCallWidth] = createSignal(0);
+
+  /**
+   * Focus layout: everyone else goes into a vertical column down the left and
+   * the focused window (typically a screen share) takes all the room that
+   * leaves — instead of the focused window sharing its height with a strip.
+   *
+   * Gated on the CARD's width rather than the viewport's: the card is narrow on
+   * a phone, in the docked column and in the floating window, and a side column
+   * there would leave the share a sliver. Below the threshold the strip layout
+   * is kept as-is. Theater mode hides the others entirely, so it never applies.
+   *
+   * Never while CONTROLLING someone's screen, at any width: the controller is
+   * aiming a pointer at a whole remote desktop rendered into that tile, and
+   * every pixel the column takes is aim they lose. Same reasoning that blocks
+   * PiP for a controller (see VoiceCallCard) — and the controller's own float
+   * is 640px wide, which would otherwise clear the threshold.
+   */
+  const sidebar = () =>
+    !!voice.focusId() &&
+    !voice.immersive() &&
+    !voice.remoteControl.controlling() &&
+    callWidth() >= SIDEBAR_MIN_CARD_WIDTH;
 
   const tileWidth = () => {
     if (!voice.focusId()) return TILE_MIN_WIDTH;
@@ -185,16 +213,21 @@ function Participants() {
       if (el === callRef) {
         el.style.setProperty("--vc-w", `${width}px`);
         el.style.setProperty("--vc-h", `${height}px`);
+        setCallWidth(width);
       }
     });
   });
 
   return (
-    <Call ref={callRef} class={voice.focusId() ? "" : scrollableStyles()}>
+    <Call
+      ref={callRef}
+      sidebar={sidebar()}
+      class={voice.focusId() ? "" : scrollableStyles()}
+    >
       <InRoom>
-        <FocusedParticipant />
+        <FocusedParticipant sidebar={sidebar()} />
         <Show when={voice.focusId() && !voice.immersive()}>
-          <ShowBarButtonHolder>
+          <ShowBarButtonHolder sidebar={sidebar()}>
             <div style={{ "margin-bottom": "10px" }}>
               <IconButton
                 size="xs"
@@ -209,18 +242,35 @@ function Participants() {
               >
                 <Show
                   when={voice.showBar()}
-                  fallback={<Symbol>keyboard_arrow_up</Symbol>}
+                  fallback={
+                    <Symbol>
+                      {sidebar() ? "keyboard_arrow_right" : "keyboard_arrow_up"}
+                    </Symbol>
+                  }
                 >
-                  <Symbol>keyboard_arrow_down</Symbol>
+                  <Symbol>
+                    {sidebar() ? "keyboard_arrow_left" : "keyboard_arrow_down"}
+                  </Symbol>
                 </Show>
               </IconButton>
             </div>
           </ShowBarButtonHolder>
         </Show>
         <Grid
-          focus={!!voice.focusId()}
+          /* One layout variant at a time: the column and the strip set the same
+             properties to different values, and a recipe merges its variants in
+             declaration order — so letting both match would make the layout a
+             function of which one is written first in the file. */
+          focus={!!voice.focusId() && !sidebar()}
+          sidebar={sidebar()}
           show={voice.showBar()}
-          class={voice.focusId() ? scrollableStyles({ direction: "x" }) : ""}
+          class={
+            sidebar()
+              ? scrollableStyles({ direction: "y" })
+              : voice.focusId()
+                ? scrollableStyles({ direction: "x" })
+                : ""
+          }
           style={{ "--vc-tile-width": tileWidth() }}
         >
           <TrackLoop
@@ -241,14 +291,48 @@ function Participants() {
   );
 }
 
-function FocusedParticipant() {
+function FocusedParticipant(props: { sidebar: boolean }) {
   const voice = useVoice();
+
+  const [focusEl, setFocusEl] = createSignal<HTMLDivElement>();
+  const [focusSize, setFocusSize] = createSignal({ width: 0, height: 0 });
+
+  createResizeObserver(focusEl, ({ width, height }) =>
+    setFocusSize({ width, height }),
+  );
+
+  /**
+   * Shadow the card-level `--vc-w`/`--vc-h` with the focus area's OWN size, so
+   * the focused tile's aspect maths (ParticipantTile's `getHeight`) describes
+   * the box it actually sits in. Without it the side column's width still
+   * counts as available and the tile comes out taller than its video, which
+   * letterboxes the picture inside the tile's own background.
+   *
+   * ONLY in the side-column layout, where flex gives this box a width of its
+   * own (`flexBasis: 0` + `flexGrow`). In the strip layout the box hugs its
+   * tile instead (auto margins, no definite width), so its width is partly a
+   * function of the tile — feeding that back in as the tile's height input
+   * would be circular. There the card-level values are already right.
+   */
+  createEffect(() => {
+    const el = focusEl();
+    if (!el) return;
+
+    const { width, height } = focusSize();
+    if (props.sidebar && width && height) {
+      el.style.setProperty("--vc-w", `${width}px`);
+      el.style.setProperty("--vc-h", `${height}px`);
+    } else {
+      el.style.removeProperty("--vc-w");
+      el.style.removeProperty("--vc-h");
+    }
+  });
 
   return (
     <Show when={voice.focusTrack()}>
       <TrackLoop tracks={() => [voice.focusTrack()!]}>
         {() => (
-          <FocusBox>
+          <FocusBox ref={setFocusEl} sidebar={props.sidebar}>
             <ParticipantTile focus />
           </FocusBox>
         )}
@@ -386,6 +470,24 @@ const ShowBarButtonHolder = styled("div", {
     display: "flex",
     flexDirection: "column-reverse",
   },
+  variants: {
+    /**
+     * In the side-column layout the toggle comes out of the flow (it would
+     * otherwise sit between the column and the video as a zero-height item)
+     * and pins to the bottom-left corner, so it stays in the same place
+     * whether the column is showing or collapsed.
+     */
+    sidebar: {
+      true: {
+        position: "absolute",
+        left: "var(--gap-md)",
+        bottom: "var(--gap-md)",
+        zIndex: 3,
+        height: "auto",
+        alignSelf: "auto",
+      },
+    },
+  },
 });
 
 const Call = styled("div", {
@@ -396,6 +498,16 @@ const Call = styled("div", {
     gap: "var(--gap-sm)",
     flexGrow: 1,
     minHeight: 0,
+  },
+  variants: {
+    // Others down the left, focused window filling what's left of the row.
+    sidebar: {
+      true: {
+        flexDirection: "row",
+        alignItems: "stretch",
+        gap: "var(--gap-md)",
+      },
+    },
   },
 });
 
@@ -429,12 +541,62 @@ const Grid = styled("div", {
         },
       },
     },
+    /**
+     * The focus layout's side column: a scrolling vertical stack of everyone
+     * else, pulled ahead of the focused window with `order` so it lands on the
+     * left while the DOM keeps the focused track first.
+     */
+    sidebar: {
+      true: {
+        flexDirection: "column",
+        flexWrap: "nowrap",
+        order: -1,
+        alignSelf: "stretch",
+        alignItems: "stretch",
+        width: SIDEBAR_WIDTH,
+        flexShrink: 0,
+        height: "100%",
+        minHeight: 0,
+        transition: "width .3s ease",
+
+        "& .vc_tile": {
+          width: "100%",
+          height: "auto",
+          maxWidth: "none",
+          // Tiles keep their 16:9 box and the column scrolls; without this
+          // they would squash to share the card's height between them.
+          flexShrink: 0,
+        },
+      },
+    },
+    // Hiding is per-layout (collapse the strip's height, the column's width),
+    // so the styles live in the compound variants below.
     show: {
-      false: {
+      false: {},
+    },
+  },
+  /**
+   * Hiding collapses whichever axis the active layout owns — so it depends on
+   * both variants, which is why it lives here rather than in `show`. Clipping
+   * the tiles is left to the scrollable class the JSX already applies (the
+   * strip hides overflow-y, the column overflow-x).
+   */
+  compoundVariants: [
+    {
+      sidebar: [false],
+      show: [false],
+      css: {
         height: 0,
       },
     },
-  },
+    {
+      sidebar: [true],
+      show: [false],
+      css: {
+        width: 0,
+      },
+    },
+  ],
 });
 
 const FocusBox = styled("div", {
@@ -445,6 +607,23 @@ const FocusBox = styled("div", {
     flexDirection: "column",
     justifyContent: "center",
     margin: "0 auto",
+  },
+  variants: {
+    /**
+     * In a row, `height: 0` would collapse the focus area — it grows along the
+     * main axis now, so the height comes back and the auto margins go.
+     * `flexBasis: 0` + `minWidth: 0` make the width purely flex-driven (exactly
+     * the space the column leaves) rather than content-driven, which is what
+     * lets it be measured and fed back as the tile's aspect input.
+     */
+    sidebar: {
+      true: {
+        height: "100%",
+        flexBasis: 0,
+        minWidth: 0,
+        margin: 0,
+      },
+    },
   },
 });
 

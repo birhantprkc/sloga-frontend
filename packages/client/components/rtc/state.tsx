@@ -8,6 +8,7 @@ import {
   JSX,
   onCleanup,
   Setter,
+  untrack,
   useContext,
 } from "solid-js";
 import {
@@ -292,6 +293,13 @@ class Voice {
    * (slice 6.4); the password is entered natively and never reaches the store. */
   #mfaFlow: ModalControllerExtended["mfaFlow"];
   private screenShareTracks: Set<string>;
+  /**
+   * Screen-share track ids auto-focus has already had its one chance at (see
+   * `#watchScreenShareFocus`). Pruned as shares end, so a re-share counts as a
+   * new event — but a share the viewer deliberately un-focused is never
+   * re-grabbed while it is still running.
+   */
+  #autoFocusedShares = new Set<string>();
   private disposeTrackRoot: (() => void) | undefined;
   #pttKeydown: ((e: KeyboardEvent) => void) | undefined;
   #pttKeyup: ((e: KeyboardEvent) => void) | undefined;
@@ -965,6 +973,10 @@ class Voice {
         ],
         { room, onlySubscribed: false },
       );
+      // Lives in this root (not in a component) so it is armed for the whole
+      // call and torn down with the track list on disconnect — the call card
+      // unmounts whenever the user browses to another channel.
+      this.#watchScreenShareFocus();
       return dispose;
     });
 
@@ -1424,10 +1436,15 @@ class Voice {
         this.#setChannel();
         this.#setFullscreen(false);
         this.#setImmersive(false);
+        // Focus is per-track-list state: leaving it set would start the NEXT
+        // call in the focus layout with nothing to focus, until the card's
+        // clearing effect gets a chance to run.
+        this.#setFocus(undefined);
         this.vidTracks = () => [];
       });
 
       this.screenShareTracks = new Set();
+      this.#autoFocusedShares.clear();
       this.disposeTrackRoot?.();
       this.disposeTrackRoot = undefined;
       this.#stopPushToTalk();
@@ -2497,6 +2514,49 @@ class Voice {
 
   trackId(t: TrackReferenceOrPlaceholder) {
     return `${t.source}_${t.participant.sid}`;
+  }
+
+  /**
+   * Focus a screen share as soon as it appears, so the shared screen takes the
+   * whole frame and everyone else drops into the side column.
+   *
+   * Deliberately narrow, because a focus change moves the viewer's video
+   * around underneath them:
+   * - each share gets exactly ONE chance (ids remembered until the share
+   *   ends), so un-focusing it is respected for as long as it runs;
+   * - a viewer already watching another share is never yanked to the new one;
+   * - the sharer's OWN screen is skipped — their card would show their card.
+   */
+  #watchScreenShareFocus() {
+    createEffect(() => {
+      const shares = this.vidTracks().filter(
+        (t) =>
+          t.source === Track.Source.ScreenShare &&
+          !t.participant.isLocal &&
+          "publication" in t &&
+          t.publication,
+      );
+
+      const live = new Set(shares.map((t) => this.trackId(t)));
+      for (const id of this.#autoFocusedShares)
+        if (!live.has(id)) this.#autoFocusedShares.delete(id);
+
+      const fresh = shares.find(
+        (t) => !this.#autoFocusedShares.has(this.trackId(t)),
+      );
+      if (!fresh) return;
+      for (const id of live) this.#autoFocusedShares.add(id);
+
+      // Read (and write) the focus untracked: this effect only ever reacts to
+      // the track list, never to its own write.
+      untrack(() => {
+        // Same guard as `toggleFocus` — focusing the only window there is
+        // would leave an empty side column.
+        if (this.vidTracks().length < 2) return;
+        if (this.focusTrack()?.source === Track.Source.ScreenShare) return;
+        this.#setFocus(this.trackId(fresh));
+      });
+    });
   }
 
   toggleFocus(t?: TrackReferenceOrPlaceholder) {
