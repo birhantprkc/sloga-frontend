@@ -39,32 +39,31 @@
 import { cleanTranscript } from "./transcriptText.ts";
 
 /**
- * 🔴 **NOT WORKING IN A BROWSER YET — do not treat this as shippable.**
+ * ## The version pin is load-bearing — do not casually bump it
  *
- * Verified in the dev server 2026-07-31. The model downloads correctly from
- * our own origin and the Node path transcribes real speech, but no browser
- * session has ever been created:
+ * Verified working end to end in Chrome 2026-07-31: model fetched from our own
+ * origin, session created, live speech transcribed and attributed, on
+ * `@huggingface/transformers` 3.8.1 with onnxruntime-web 1.22.
  *
- * - With `@huggingface/transformers` 4.2.0 (onnxruntime-web 1.26.0-dev) every
- *   attempt dies in an ORT graph-optimisation pass: `qdq_actions.cc:137
- *   TransposeDQWeightsForMatMulNBits Missing required scale`. Reproduced on
- *   q8, int8, uint8 AND unquantised fp32 weights, and with the optimiser set
- *   to disabled, basic, and on the WebGPU provider — nine combinations, one
- *   error. The identical files load fine under onnxruntime-node 1.24.3, so it
- *   is the web runtime, not the model.
- * - Pinned back to 3.8.1 (onnxruntime-web 1.22) that error is GONE, which
- *   confirms the diagnosis, but the runtime then reports `both async and sync
- *   fetching of the wasm failed`. The `.wasm` and its loader both serve 200
- *   from {@link ORT_WASM_BASE}, and the failing request is made from inside a
- *   worker, so it is a loader-path problem rather than a missing file.
+ * **4.x does not work here.** With 4.2.0 (onnxruntime-web 1.26.0-dev) session
+ * creation dies in an ORT graph-optimisation pass — `qdq_actions.cc:137
+ * TransposeDQWeightsForMatMulNBits Missing required scale`. That was
+ * reproduced across q8, int8, uint8 AND unquantised fp32 weights, and with the
+ * optimiser disabled, basic, and on the WebGPU provider: nine combinations,
+ * one identical error. The same files load fine under onnxruntime-node, so it
+ * is the web runtime rather than the model.
  *
- * Next step is most likely to stop hand-vendoring the ORT runtime and let vite
- * emit it as a bundled asset (`?url` import), which makes the path vite's
- * problem and stays same-origin either way.
+ * **Two traps cost hours here, and will again.**
  *
- * Everything else in this file is exercised and correct; only session creation
- * is blocked. The button will surface the failure rather than pretending, but
- * this must not reach a build until a session has actually been created.
+ * 1. Vite pre-bundles dependencies. After changing the transformers version,
+ *    the page keeps being served the OLD pre-bundle until vite re-optimises on
+ *    the next server start — so 3.8.1 appeared to fail with a spurious `both
+ *    async and sync fetching of the wasm failed` while the page was in fact
+ *    still running 4.2.0. **Restart the dev server after touching this
+ *    dependency, and confirm "Re-optimizing dependencies" in its output.**
+ * 2. The vendored ORT runtime under {@link ORT_WASM_BASE} must come from the
+ *    EXACT version resolved here. The pnpm store keeps old copies, so a bare
+ *    `find` for an onnxruntime-web dist happily returns the wrong one.
  */
 
 /** Where the vendored model and the ONNX runtime are served from, same-origin. */
