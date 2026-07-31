@@ -43,8 +43,21 @@ export function ImageViewerModal(
 
   onCleanup(() => clearTimeout(copiedTimer));
 
+  /**
+   * The copy action for whatever this viewer is showing, or undefined when
+   * there isn't one. An E2EE attachment brings its own (the shell decrypts
+   * and writes the clipboard natively); a plain one is fetched here.
+   */
+  const copyAction = (): (() => Promise<void>) | undefined => {
+    if (props.encrypted) return props.encrypted.onCopyImage;
+    if (props.file?.metadata.type === "Image" && canCopyImageToClipboard()) {
+      return () => copyImageToClipboard(props.file!.originalUrl);
+    }
+    return undefined;
+  };
+
   function copyImage() {
-    copyImageToClipboard(props.file!.originalUrl)
+    copyAction()?.()
       .then(() => setCopied("done"))
       .catch((error) => {
         console.error("[clipboard] copy image failed", error);
@@ -156,12 +169,7 @@ export function ImageViewerModal(
                     <IconButton onPress={() => panzoom?.zoomIn()}>
                       <Symbol>zoom_in</Symbol>
                     </IconButton>
-                    <Show
-                      when={
-                        props.file?.metadata.type === "Image" &&
-                        canCopyImageToClipboard()
-                      }
-                    >
+                    <Show when={copyAction()}>
                       <IconButton
                         aria-label={t`Copy image`}
                         onPress={copyImage}

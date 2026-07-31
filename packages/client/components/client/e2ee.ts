@@ -591,6 +591,16 @@ interface NativeTransport {
    * Tauri IPC and uploads from the webview instead.
    */
   readonly nativeBlobTransfer: boolean;
+  /**
+   * True when the webview may copy a decrypted attachment to the clipboard
+   * ITSELF (Android): `attachmentUrl` there is a same-origin path the shell's
+   * WebViewClient intercepts, so an ordinary fetch reaches it. On the desktop
+   * shells it is a custom protocol that deliberately serves no
+   * `Access-Control-Allow-Origin` and is absent from the CSP's `connect-src`
+   * — fetch and the canvas fallback are both blocked BY DESIGN, and copying
+   * has to go through the shell's own clipboard command instead.
+   */
+  readonly clipboardImageInWebview: boolean;
   invoke<T>(
     command: string,
     args?: Record<string, unknown> | Uint8Array,
@@ -671,6 +681,7 @@ interface NativeTransport {
 
 class TauriTransport implements NativeTransport {
   readonly nativeBlobTransfer = false;
+  readonly clipboardImageInWebview = false;
   #tauri = (window as unknown as { __TAURI__: TauriGlobal }).__TAURI__;
 
   invoke<T>(
@@ -743,6 +754,7 @@ export type SlogaShellGlobal = {
  */
 class ElectronTransport implements NativeTransport {
   readonly nativeBlobTransfer = false;
+  readonly clipboardImageInWebview = false;
   #e2ee = (window as unknown as { slogaShell: Required<SlogaShellGlobal> })
     .slogaShell.e2ee;
 
@@ -851,6 +863,9 @@ type E2eeCapacitorPlugin = {
 
 class CapacitorTransport implements NativeTransport {
   readonly nativeBlobTransfer = true;
+  // `/_e2ee-att/...` is same-origin (the WebViewClient intercepts it before
+  // the asset server), so the ordinary clipboard helper reaches it here.
+  readonly clipboardImageInWebview = true;
   #plugin = registerPlugin<E2eeCapacitorPlugin>("E2ee");
 
   /**
@@ -3266,6 +3281,31 @@ export class E2EEBridge implements E2EEAdapter {
    */
   attachmentSave(messageId: string, idx: number): Promise<boolean> {
     return this.#invoke<boolean>("e2ee_attachment_save", { messageId, idx });
+  }
+
+  /**
+   * Whether copying a decrypted attachment must go through the SHELL rather
+   * than the webview. False only on Android, where the render URL is
+   * same-origin; see `NativeTransport.clipboardImageInWebview`.
+   */
+  attachmentCopyImageIsNative(): boolean {
+    return !this.#transport.clipboardImageInWebview;
+  }
+
+  /**
+   * Ask the SHELL to copy one decrypted attachment image to the system
+   * clipboard. The decode and the clipboard write both happen in native
+   * code -- plaintext never enters the webview, exactly as for
+   * `attachmentSave`. Rejects with the scrubbed native error.
+   *
+   * Only meaningful when `attachmentCopyImageIsNative()`; on Android the
+   * caller copies from `attachmentUrl` itself.
+   */
+  attachmentCopyImage(messageId: string, idx: number): Promise<void> {
+    return this.#invoke<void>("e2ee_attachment_copy_image", {
+      messageId,
+      idx,
+    });
   }
 
   /** Reactive attachment metadata of a message (empty when none) */

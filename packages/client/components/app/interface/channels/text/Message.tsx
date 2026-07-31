@@ -500,6 +500,7 @@ export function Message(props: Props) {
             <EncryptedAttachment
               meta={meta}
               messageId={props.message.id}
+              message={props.message}
               e2ee={e2ee!}
             />
           )}

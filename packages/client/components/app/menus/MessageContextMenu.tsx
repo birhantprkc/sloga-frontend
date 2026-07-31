@@ -47,6 +47,18 @@ export function MessageContextMenu(props: {
   message?: Message;
   reactPicker?: Accessor<MediaPickerProps | undefined>;
   file?: File;
+  /**
+   * A decrypted E2EE attachment. It has no `File` and no shareable URL —
+   * it renders from the shell's `e2ee-att` protocol — so it gets Copy
+   * image and Save only. "Open file" and "Copy file link" are deliberately
+   * absent: that URL is meaningless outside this app and putting it on the
+   * clipboard would leak the message id for nothing.
+   */
+  encryptedFile?: {
+    isImage: boolean;
+    copyImage: () => void;
+    save: () => void;
+  };
   link?: string;
 }) {
   const user = useUser();
@@ -241,6 +253,24 @@ export function MessageContextMenu(props: {
             <Trans>Save file</Trans>
           </ContextMenuButton>
         </a>
+
+        <ContextMenuDivider />
+      </Show>
+      <Show when={props.encryptedFile}>
+        <Show when={props.encryptedFile!.isImage}>
+          <ContextMenuButton
+            icon={MdImage}
+            onClick={() => props.encryptedFile!.copyImage()}
+          >
+            <Trans>Copy image</Trans>
+          </ContextMenuButton>
+        </Show>
+        <ContextMenuButton
+          icon={MdDownload}
+          onClick={() => props.encryptedFile!.save()}
+        >
+          <Trans>Save file</Trans>
+        </ContextMenuButton>
 
         <ContextMenuDivider />
       </Show>

@@ -1,12 +1,20 @@
 import { Match, Show, Switch } from "solid-js";
 
 import { useLingui } from "@lingui-solid/solid/macro";
+import { Message } from "stoat.js";
 import { css } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 
 import type { E2EEAttachmentMeta, E2EEBridge } from "@revolt/client";
 import { useModals } from "@revolt/modal";
+import { canCopyImageToClipboard, copyImageToClipboard } from "@revolt/ui";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
+
+// Relative, NOT the `@revolt/app` barrel: that barrel re-exports Message.tsx,
+// which imports this file — going through it would close a module cycle on
+// `useMessage` at evaluation time. Message.tsx reaches the menu the same way.
+import { MessageContextMenu } from "../../../menus/MessageContextMenu";
+import { useMessage } from "./Message";
 
 /**
  * One end-to-end encrypted attachment (slice 3.5).
@@ -21,10 +29,12 @@ import { Symbol } from "@revolt/ui/components/utils/Symbol";
 export function EncryptedAttachment(props: {
   meta: E2EEAttachmentMeta;
   messageId: string;
+  message?: Message;
   e2ee: E2EEBridge;
 }) {
   const { t } = useLingui();
-  const { openModal } = useModals();
+  const { openModal, showError } = useModals();
+  const { reactPicker } = useMessage();
 
   const url = () =>
     props.e2ee.attachmentUrl(props.messageId, props.meta.idx ?? 0);
@@ -37,6 +47,50 @@ export function EncryptedAttachment(props: {
       );
 
   const kind = () => props.meta.mime.split("/")[0];
+
+  /**
+   * Whether this attachment can be put on the clipboard. On the desktop
+   * shells that is the shell's own command; on Android the render URL is
+   * same-origin so the ordinary webview helper works, and there it also
+   * needs a `ClipboardItem`.
+   */
+  const canCopy = () =>
+    props.meta.state === "ready" &&
+    kind() === "image" &&
+    (props.e2ee.attachmentCopyImageIsNative() || canCopyImageToClipboard());
+
+  /**
+   * Copy the decrypted image. The native branch never lets plaintext reach
+   * this webview at all; the Android branch fetches a same-origin URL the
+   * shell decrypts per request. Returns the promise so the fullscreen
+   * viewer can report the outcome on its own button.
+   */
+  const runCopy = () => {
+    const idx = props.meta.idx ?? 0;
+    return props.e2ee.attachmentCopyImageIsNative()
+      ? props.e2ee.attachmentCopyImage(props.messageId, idx)
+      : copyImageToClipboard(url());
+  };
+
+  /** Menu path: nothing else is watching, so failure goes to a dialog. */
+  const copyImage = () =>
+    void runCopy().catch((error) => {
+      console.error("[e2ee] attachment copy failed", error);
+      showError(new Error(t`Could not copy this image to the clipboard.`));
+    });
+
+  /** Right-click menu for a rendered E2EE attachment (parity with plain ones) */
+  const contextMenu = () => (
+    <MessageContextMenu
+      message={props.message}
+      reactPicker={reactPicker}
+      encryptedFile={{
+        isImage: canCopy(),
+        copyImage,
+        save,
+      }}
+    />
+  );
 
   const humanSize = () => {
     const size = props.meta.size;
@@ -113,9 +167,11 @@ export function EncryptedAttachment(props: {
                 filename: props.meta.name,
                 humanReadableSize: humanSize(),
                 onSave: save,
+                onCopyImage: canCopy() ? runCopy : undefined,
               },
             })
           }
+          use:floating={{ contextMenu }}
         />
       </Match>
       <Match when={props.meta.state === "ready" && kind() === "video"}>
@@ -129,13 +185,14 @@ export function EncryptedAttachment(props: {
           playsinline
           preload="metadata"
           src={url()}
+          use:floating={{ contextMenu }}
         />
       </Match>
       <Match when={props.meta.state === "ready" && kind() === "audio"}>
         <StateContainer>
           <Details>
             <span>{props.meta.name}</span>
-            <audio controls src={url()} />
+            <audio controls src={url()} use:floating={{ contextMenu }} />
           </Details>
         </StateContainer>
       </Match>

@@ -310,6 +310,12 @@ export type Modals =
         filename: string;
         humanReadableSize: string;
         onSave: () => void;
+        /**
+         * Absent when the attachment is not a copyable image, or when this
+         * engine has no clipboard image support — the button is then not
+         * rendered at all rather than rendered broken.
+         */
+        onCopyImage?: () => Promise<void>;
       };
     }
   | {
