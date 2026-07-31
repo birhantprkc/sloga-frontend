@@ -1,4 +1,5 @@
 import { For, Show, createMemo } from "solid-js";
+import { Portal } from "solid-js/web";
 
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import { styled } from "styled-system/jsx";
@@ -13,12 +14,22 @@ import { participantUserId } from "../participantIdentity";
 /**
  * The live transcript, and the only place it can be got out of the app.
  *
- * **It stays open after the call ends when there is something in it.** The
- * transcript exists only in this browser's memory, and a call can end without
- * warning — the network drops, the other side hangs up. If the panel vanished
- * with the call, so would the only route to Export. So the panel is shown
- * whenever transcription is running OR there is a transcript nobody has dealt
- * with yet, and Discard is the one control that throws it away.
+ * **Mounted at APP level and portalled, never inside the call card.** This was
+ * originally rendered inside `VoiceCallCardActiveRoom`, which looked right and
+ * was wrong in the most damaging possible way: that card renders only
+ * `when={inCall()}`, so the moment a call ended the panel unmounted and took
+ * the only route to Export with it — while the transcript itself sat intact
+ * and unreachable in memory. Caught in a live run, 2026-07-31. The same card
+ * also flips to PiP when the user browses to another channel, which would have
+ * hidden it a second way.
+ *
+ * `RemoteControlOverlays` carries the identical note for the identical reason,
+ * and `CallRecordingNotices` is app-level because a recording usually ends by
+ * LEAVING the call. Anything that must survive the end of a call belongs here,
+ * not in the card.
+ *
+ * The panel is shown whenever transcription is running OR a transcript nobody
+ * has dealt with yet exists; Discard is the one control that throws it away.
  */
 export function VoiceTranscriptPanel() {
   const voice = useVoice();
@@ -44,79 +55,84 @@ export function VoiceTranscriptPanel() {
 
   return (
     <Show when={open()}>
-      <Panel>
-        <Header>
-          <Text class="title">
-            <Trans>Transcript</Trans>
-          </Text>
-          <Show when={voice.transcribing()}>
-            <LiveDot title={t`Transcribing`} />
-          </Show>
-        </Header>
+      <Portal ref={document.getElementById("floating")! as HTMLDivElement}>
+        <Panel>
+          <Header>
+            <Text class="title">
+              <Trans>Transcript</Trans>
+            </Text>
+            <Show when={voice.transcribing()}>
+              <LiveDot title={t`Transcribing`} />
+            </Show>
+          </Header>
 
-        <Lines>
-          <For
-            each={segments()}
-            fallback={
-              <Empty>
-                <Trans>Nothing has been transcribed yet.</Trans>
-              </Empty>
-            }
-          >
-            {(segment) => (
-              <Line>
-                <Speaker>{nameFor(segment.identity)}</Speaker>
-                <Said>{segment.text}</Said>
-              </Line>
-            )}
-          </For>
-        </Lines>
+          <Lines>
+            <For
+              each={segments()}
+              fallback={
+                <Empty>
+                  <Trans>Nothing has been transcribed yet.</Trans>
+                </Empty>
+              }
+            >
+              {(segment) => (
+                <Line>
+                  <Speaker>{nameFor(segment.identity)}</Speaker>
+                  <Said>{segment.text}</Said>
+                </Line>
+              )}
+            </For>
+          </Lines>
 
-        <Actions>
-          <Action
-            onClick={() => void voice.copyTranscript(names())}
-            title={t`Copy the transcript to the clipboard`}
-          >
-            <Symbol size={16}>content_copy</Symbol>
-            <Trans>Copy</Trans>
-          </Action>
-          {/* Two files, because they answer different needs: .vtt loads as
+          <Actions>
+            <Action
+              onClick={() => void voice.copyTranscript(names())}
+              title={t`Copy the transcript to the clipboard`}
+            >
+              <Symbol size={16}>content_copy</Symbol>
+              <Trans>Copy</Trans>
+            </Action>
+            {/* Two files, because they answer different needs: .vtt loads as
               subtitles beside a recording of the same call, .txt is what
               people paste into notes. */}
-          <Action
-            onClick={() => void voice.exportTranscript("txt", names())}
-            title={t`Save the transcript as a text file`}
-          >
-            <Symbol size={16}>download</Symbol>
-            .txt
-          </Action>
-          <Action
-            onClick={() => void voice.exportTranscript("vtt", names())}
-            title={t`Save the transcript as subtitles`}
-          >
-            <Symbol size={16}>download</Symbol>
-            .vtt
-          </Action>
-          <Show when={!voice.transcribing() && segments().length > 0}>
             <Action
-              onClick={() => voice.transcript.discard()}
-              title={t`Throw this transcript away`}
+              onClick={() => void voice.exportTranscript("txt", names())}
+              title={t`Save the transcript as a text file`}
             >
-              <Symbol size={16}>delete</Symbol>
-              <Trans>Discard</Trans>
+              <Symbol size={16}>download</Symbol>
+              .txt
             </Action>
-          </Show>
-        </Actions>
-      </Panel>
+            <Action
+              onClick={() => void voice.exportTranscript("vtt", names())}
+              title={t`Save the transcript as subtitles`}
+            >
+              <Symbol size={16}>download</Symbol>
+              .vtt
+            </Action>
+            <Show when={!voice.transcribing() && segments().length > 0}>
+              <Action
+                onClick={() => voice.transcript.discard()}
+                title={t`Throw this transcript away`}
+              >
+                <Symbol size={16}>delete</Symbol>
+                <Trans>Discard</Trans>
+              </Action>
+            </Show>
+          </Actions>
+        </Panel>
+      </Portal>
     </Show>
   );
 }
 
 const Panel = styled("div", {
   base: {
-    position: "absolute",
-    // Below the roster panel's corner so the two never sit on top of one
-    // another when both are open.
+    // FIXED, not absolute: portalled into `#floating`, which is not a
+    // positioned ancestor, so an absolute panel would anchor to the document
+    // and drift with scroll.
+    position: "fixed",
+    // Bottom corner, clear of the roster panel's top corner so the two never
+    // sit on top of one another when both are open.
     bottom: "var(--gap-lg)",
     right: "var(--gap-lg)",
     zIndex: 6,

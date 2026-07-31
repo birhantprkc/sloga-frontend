@@ -33,6 +33,7 @@ import { CircularProgress } from "@revolt/ui";
 import { IncomingCallOverlay } from "@revolt/ui/components/features/voice/IncomingCallOverlay";
 import { CallRecordingNotices } from "@revolt/ui/components/features/voice/callCard/CallRecordingNotices";
 import { RemoteControlOverlays } from "@revolt/ui/components/features/voice/callCard/RemoteControlOverlays";
+import { VoiceTranscriptPanel } from "@revolt/ui/components/features/voice/callCard/VoiceTranscriptPanel";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
 import { SlideDrawer } from "../components/ui/components/navigation/SlideDrawer";
@@ -203,6 +204,12 @@ const Interface = (props: { children: JSX.Element }) => {
             the call, which unmounts the call card — mounted there, this would
             be destroyed in the same tick as the message it has to deliver. */}
         <CallRecordingNotices />
+        {/* The live transcript and its Export/Copy/Discard controls. APP LEVEL
+            for the same reason again, and it was caught the hard way: mounted
+            inside the call card, the panel unmounted the instant a call ended
+            and took the only route to Export with it, while the transcript sat
+            intact and unreachable in memory. */}
+        <VoiceTranscriptPanel />
       </AppRoot>
     </MessageCache>
   );
