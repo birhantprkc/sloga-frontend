@@ -13,6 +13,7 @@ import { Symbol } from "@revolt/ui/components/utils/Symbol";
 import { VoiceDeviceSelector } from "./VoiceDeviceSelector";
 import { VoiceGiveControlButton } from "./VoiceGiveControlButton";
 import { VoiceRecordButton } from "./VoiceRecordButton";
+import { VoiceTranscribeButton } from "./VoiceTranscribeButton";
 import { VoiceSoundboardButton } from "./VoiceSoundboardButton";
 import { VoiceStatsOverlay } from "./VoiceStatsOverlay";
 
@@ -188,6 +189,12 @@ export function VoiceCallCardActions(props: { size: "xs" | "sm" }) {
           the docked card both remain reachable. */}
       <Show when={!compact()}>
         <VoiceRecordButton size={props.size} />
+      </Show>
+      {/* Transcription is off the compact card for the same reason as
+          recording: its side effect is telling everyone in the call
+          something, which is a poor fit for a cramped row. */}
+      <Show when={!compact()}>
+        <VoiceTranscribeButton size={props.size} />
       </Show>
       <Show when={!compact()}>
         <VoiceDeviceSelector size={props.size} />

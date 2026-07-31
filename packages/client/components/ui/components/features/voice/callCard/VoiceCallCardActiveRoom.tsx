@@ -18,6 +18,7 @@ import {
 import { VoiceCallDowngradeBanner } from "./VoiceCallDowngradeBanner";
 import { VoiceCallRecordingBanner } from "./VoiceCallRecordingBanner";
 import { VoiceCallRosterPanel } from "./VoiceCallRosterPanel";
+import { VoiceTranscriptPanel } from "./VoiceTranscriptPanel";
 
 /**
  * Call card (active)
@@ -44,6 +45,10 @@ export function VoiceCallCardActiveRoom() {
         <VoiceCallRecordingBanner />
       </TopBanners>
       <VoiceCallRosterPanel />
+      {/* Stays mounted after the call ends while a transcript is unsaved: it
+          is the only route to Export, and the transcript lives nowhere but
+          this browser's memory. */}
+      <VoiceTranscriptPanel />
       <Show when={voice.immersive()}>
         <ImmersiveChipOverlay>
           <VoiceCallEncryptionChip />

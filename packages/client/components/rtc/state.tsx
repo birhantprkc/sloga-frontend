@@ -106,6 +106,12 @@ import { VoiceCallCardContext } from "@revolt/ui/components/features/voice/callC
 import { ReactiveMap } from "@solid-primitives/map";
 import { CaptureClaim } from "./captureClaim";
 import { CallTranscriber } from "./transcription/callTranscriber";
+import {
+  type TranscriptFormat,
+  toTxt,
+  toVtt,
+  transcriptFilename,
+} from "./transcription/transcriptExport";
 import { TranscriptStore } from "./transcription/transcriptStore";
 import {
   getTranscriptionEngine,
@@ -1784,6 +1790,11 @@ class Voice {
     return saveDialogSupported();
   }
 
+  /** Whether this shell can run the speech model at all. */
+  get transcriptionSupported(): boolean {
+    return transcriptionSupported();
+  }
+
   /**
    * Participants who say they are recording, as user ids — including this
    * client when it is recording. Drives the banner and the pre-join warning.
@@ -2057,7 +2068,9 @@ class Voice {
    * easily outlive the call it was started in, and without that check it would
    * raise a flag on a channel the user has already left, or on the next call.
    */
-  async toggleTranscription(options: { language?: string } = {}): Promise<void> {
+  async toggleTranscription(
+    options: { language?: string } = {},
+  ): Promise<void> {
     if (this.transcriptionBusy()) return;
 
     const room = this.room();
@@ -2176,6 +2189,95 @@ class Voice {
     }
 
     await drained?.catch(() => undefined);
+  }
+
+  /**
+   * Write the transcript to a file the user picks.
+   *
+   * **Two phases, and the order matters.** The save dialog is opened
+   * SYNCHRONOUSLY from the click, because it needs transient user activation
+   * and anything awaited first spends it. Only then does this wait for the
+   * model to finish what it is still holding — the queue runs a few seconds
+   * behind live speech, so writing at the moment of the click would reliably
+   * drop the last thing anyone said, which is usually the reason someone is
+   * exporting at all.
+   */
+  async exportTranscript(
+    format: TranscriptFormat,
+    names: Map<string, string>,
+  ): Promise<void> {
+    const startedAt = this.transcript.startedAt ?? Date.now();
+    const channelName = this.channel()?.name;
+    const filename = transcriptFilename(channelName, startedAt, format);
+
+    // PHASE 1 — the picker, before any await.
+    let target: RecordingTarget | undefined;
+    if (saveDialogSupported()) {
+      try {
+        target = await pickRecordingTarget(filename);
+      } catch (error) {
+        // Cancelling is a decision, not a failure.
+        if (isSaveCancelled(error)) return;
+        this.#setTranscriptionError("Couldn't open the save dialog.");
+        return;
+      }
+    }
+
+    // PHASE 2 — let the queue drain, THEN write.
+    await this.#transcriber?.stop().catch(() => undefined);
+
+    const text = this.#renderTranscript(format, names, startedAt, channelName);
+
+    if (target) {
+      try {
+        await target.write(new Blob([text], { type: "text/plain" }));
+        await target.close();
+      } catch (error) {
+        console.error("[rtc] failed to write the transcript", error);
+        this.#setTranscriptionError("The transcript could not be saved.");
+      }
+      return;
+    }
+
+    // No picker in this shell. The anchor fallback cannot confirm it worked
+    // (it writes nothing at all in some embedded webviews while reporting
+    // success), so the copy promises only what is true.
+    saveRecording(new Blob([text], { type: "text/plain" }), filename);
+  }
+
+  /**
+   * Put the transcript on the clipboard.
+   *
+   * The reliable route where no save dialog exists — and often the one people
+   * actually want, since a transcript usually ends up pasted somewhere.
+   */
+  async copyTranscript(names: Map<string, string>): Promise<void> {
+    await this.#transcriber?.stop().catch(() => undefined);
+    const startedAt = this.transcript.startedAt ?? Date.now();
+    const text = this.#renderTranscript(
+      "txt",
+      names,
+      startedAt,
+      this.channel()?.name,
+    );
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (error) {
+      console.error("[rtc] failed to copy the transcript", error);
+      this.#setTranscriptionError("Couldn't copy the transcript.");
+    }
+  }
+
+  #renderTranscript(
+    format: TranscriptFormat,
+    names: Map<string, string>,
+    startedAt: number,
+    channelName: string | undefined,
+  ): string {
+    const segments = this.transcript.segments();
+    return format === "vtt"
+      ? toVtt(segments, names)
+      : toTxt(segments, names, { channelName, startedAt });
   }
 
   /**
