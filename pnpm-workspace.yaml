@@ -9,6 +9,13 @@ packages:
 allowBuilds:
   "@swc/core": true
   esbuild: true
+  # Pulled in by @huggingface/transformers, which is used ONLY in the browser
+  # here (onnxruntime-web). These three build native binaries for server-side
+  # inference and image decoding that nothing in this app ever loads, so their
+  # build scripts stay off rather than costing every install a native compile.
+  onnxruntime-node: false
+  protobufjs: false
+  sharp: false
 nodeLinker: isolated
 
 # Override prettier because some of the submodules have ancient prettiers required

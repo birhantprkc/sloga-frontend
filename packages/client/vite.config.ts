@@ -10,6 +10,7 @@ import solidPlugin from "vite-plugin-solid";
 import solidSvg from "vite-plugin-solid-svg";
 
 import codegenPlugin from "./codegen.plugin";
+import modelsPlugin from "./models.plugin";
 
 const base = process.env.BASE_PATH ?? "/";
 
@@ -28,6 +29,7 @@ export default defineConfig({
     Inspect(),
     devtools(),
     codegenPlugin(),
+    modelsPlugin(),
     babelMacrosPlugin(),
     linguiSolidPlugin(),
     solidPlugin(),
