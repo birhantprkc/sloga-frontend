@@ -41,7 +41,7 @@ import type {
 } from "stoat.js";
 
 import { classifyEnvelopeError } from "./mlsEnvelopeClassify";
-import { IS_POPOUT_WINDOW } from "./popout";
+import { IS_OVERLAY_WINDOW, IS_POPOUT_WINDOW } from "./popout";
 
 /** Author id used for locally-injected system/marker messages */
 const SYSTEM_AUTHOR = "00000000000000000000000000";
@@ -562,7 +562,11 @@ export function nativeE2EEAvailable(): boolean {
   // the posture too: the popout's Tauri capability grants no e2ee
   // commands, and the Electron popout preload never exposes
   // slogaShell.e2ee.)
-  if (IS_POPOUT_WINDOW) return false;
+  // The voice overlay window is a PASSIVE RENDERER with no client at all, so
+  // the same one-driver rule applies even more strongly than it does to the
+  // popout. Its Tauri capability grants no e2ee commands and the Electron
+  // overlay preload is nonce-less, so the shells enforce this too.
+  if (IS_POPOUT_WINDOW || IS_OVERLAY_WINDOW) return false;
   if ((window as { __TAURI__?: TauriGlobal }).__TAURI__?.core?.invoke)
     return true;
   // Electron shell (EL1.2): the preload exposes slogaShell.e2ee ONLY when

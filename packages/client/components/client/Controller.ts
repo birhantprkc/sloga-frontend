@@ -10,6 +10,7 @@ import type { State as ApplicationState } from "@revolt/state";
 import type { Session } from "@revolt/state/stores/Auth";
 import { killServiceWorkerSubscription } from "./NotificationsController";
 import { E2EEBridge, nativeE2EEAvailable } from "./e2ee";
+import { IS_OVERLAY_WINDOW } from "./popout";
 
 export enum State {
   Ready = "Ready",
@@ -501,7 +502,16 @@ export default class ClientController {
       ].includes(this.lifecycle.state()),
     );
 
-    const session = state.auth.getSession();
+    // The voice overlay window must never open a WebSocket. `MountContext`
+    // already short-circuits before any ClientContext is constructed, so in
+    // practice this constructor is not even reached there — this is
+    // defence in depth, so that a future refactor of the provider stack
+    // cannot silently hand the overlay a second live client.
+    //
+    // Note the asymmetry with the friends popout, which is deliberate: the
+    // popout IS a second full client and keeps its cached login. Only the
+    // overlay is gated here.
+    const session = IS_OVERLAY_WINDOW ? undefined : state.auth.getSession();
     if (session) {
       this.lifecycle.transition({
         type: TransitionType.LoginCached,

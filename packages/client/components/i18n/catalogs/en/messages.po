@@ -6472,3 +6472,81 @@ msgstr "Open channel"
 #: src/interface/ServerEvents.tsx
 msgid "Attendees can join this channel from the event when it starts. Only members who can see the channel will see the event."
 msgstr "Attendees can join this channel from the event when it starts. Only members who can see the channel will see the event."
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Avatars and names"
+msgstr "Avatars and names"
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Avatars only"
+msgstr "Avatars only"
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Bottom left"
+msgstr "Bottom left"
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Bottom right"
+msgstr "Bottom right"
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "In-game overlay"
+msgstr "In-game overlay"
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Names only"
+msgstr "Names only"
+
+#. placeholder {0}: Math.round(voice.overlayOpacity * 100)
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Opacity: {0}%"
+msgstr "Opacity: {0}%"
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Overlay opacity"
+msgstr "Overlay opacity"
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Overlay size"
+msgstr "Overlay size"
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Round-trip time for your own microphone stream. Shows a dash while your mic is not transmitting."
+msgstr "Round-trip time for your own microphone stream. Shows a dash while your mic is not transmitting."
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Screen corner"
+msgstr "Screen corner"
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Show latency"
+msgstr "Show latency"
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Show overlay during calls"
+msgstr "Show overlay during calls"
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Show who is talking on top of your game during a call. Works in borderless-windowed games; exclusive fullscreen cannot be drawn over."
+msgstr "Show who is talking on top of your game during a call. Works in borderless-windowed games; exclusive fullscreen cannot be drawn over."
+
+#. placeholder {0}: Math.round(voice.overlayScale * 100)
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Size: {0}%"
+msgstr "Size: {0}%"
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Top left"
+msgstr "Top left"
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Top right"
+msgstr "Top right"
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Wayland session detected — the overlay may not stay above games on this desktop. X11 sessions are fully supported."
+msgstr "Wayland session detected — the overlay may not stay above games on this desktop. X11 sessions are fully supported."
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "What the overlay shows"
+msgstr "What the overlay shows"

@@ -6,6 +6,7 @@ import { Column } from "@revolt/ui";
 import { CameraOptions } from "./CameraOptions";
 import { MicrophoneLevelMeter } from "./MicrophoneLevelMeter";
 import { MicrophoneTest } from "./MicrophoneTest";
+import { OverlaySettings } from "./OverlaySettings";
 import { VoiceInputOptions } from "./VoiceInputOptions";
 import { VoiceProcessingOptions } from "./VoiceProcessingOptions";
 /**
@@ -21,6 +22,9 @@ export function VoiceSettings() {
       <Show when={CONFIGURATION.ENABLE_VIDEO}>
         <CameraOptions />
       </Show>
+      {/* Renders nothing unless a desktop shell can actually open the
+          window, so the feature is dark on release web by construction. */}
+      <OverlaySettings />
     </Column>
   );
 }

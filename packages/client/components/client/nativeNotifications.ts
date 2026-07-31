@@ -5,6 +5,7 @@
  *   WebView2, so we route through the tauri-plugin-notification global.
  * - Web: standard Notification API.
  */
+import { tauriInvoke } from "@revolt/common";
 
 type TauriNotificationApi = {
   sendNotification(options: {
@@ -51,24 +52,6 @@ export async function requestNotificationPermission(): Promise<boolean> {
 
   if (!("Notification" in window)) return false;
   return (await Notification.requestPermission()) === "granted";
-}
-
-/** Tauri core invoke, present only inside the desktop app */
-function tauriInvoke():
-  | ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>)
-  | undefined {
-  return (
-    window as {
-      __TAURI__?: {
-        core?: {
-          invoke?: (
-            cmd: string,
-            args?: Record<string, unknown>,
-          ) => Promise<unknown>;
-        };
-      };
-    }
-  ).__TAURI__?.core?.invoke;
 }
 
 /**

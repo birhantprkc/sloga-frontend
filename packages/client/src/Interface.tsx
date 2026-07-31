@@ -22,9 +22,10 @@ import { State } from "@revolt/client/Controller";
 import { DiscordImportWorker } from "@revolt/client/DiscordImportWorker";
 import { NotificationsWorker } from "@revolt/client/NotificationsWorker";
 import { StreamerModeWorker } from "@revolt/client/StreamerModeWorker";
-import { IS_POPOUT_WINDOW } from "@revolt/client/popout";
+import { IS_OVERLAY_WINDOW, IS_POPOUT_WINDOW } from "@revolt/client/popout";
 import { useModals } from "@revolt/modal";
 import { Navigate, useBeforeLeave, useLocation } from "@revolt/routing";
+import { OverlayBridgeWorker } from "@revolt/rtc/overlay/OverlayBridgeWorker";
 import { useState } from "@revolt/state";
 import { LAYOUT_SECTIONS } from "@revolt/state/stores/Layout";
 import { streamerModeActive } from "@revolt/state/streamer";
@@ -48,6 +49,14 @@ const Interface = (props: { children: JSX.Element }) => {
   // second set of workers over a web-mode client.
   if (IS_POPOUT_WINDOW) {
     return <Navigate href="/friends-popout" />;
+  }
+
+  // Same bounce for the in-game overlay window, and belt-and-suspenders:
+  // MountContext has already short-circuited the entire provider stack for
+  // it, so `Interface` cannot actually render here — every hook below would
+  // be missing its provider if it did.
+  if (IS_OVERLAY_WINDOW) {
+    return <Navigate href="/voice-overlay" />;
   }
 
   const state = useState();
@@ -174,6 +183,11 @@ const Interface = (props: { children: JSX.Element }) => {
         <ActivityWorker />
         <StreamerModeWorker />
         <ApkUpdateWorker />
+        {/* Publishes the in-game overlay's roster/speaking state to the
+            overlay window and owns that window's lifetime. Main window only
+            — this is the window that owns the LiveKit Room, and
+            `isSpeaking` has no other source. */}
+        <OverlayBridgeWorker />
         {/* Owns the Discord-import job for the session: the modal may be
             dismissed (or the tab reloaded) while the import runs. */}
         <DiscordImportWorker />

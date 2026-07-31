@@ -18,6 +18,7 @@ import { styled } from "styled-system/jsx";
 import { UserContextMenu } from "@revolt/app";
 import { useClient, useUser } from "@revolt/client";
 import { IS_POPOUT_WINDOW } from "@revolt/client/popout";
+import { tauriInvoke } from "@revolt/common";
 import { useModals } from "@revolt/modal";
 import { useState } from "@revolt/state";
 import {
@@ -62,23 +63,6 @@ const Base = styled("div", {
     },
   },
 });
-
-/**
- * Tauri invoke, when running inside the Windows desktop shell.
- */
-function tauriInvoke():
-  | (<T>(cmd: string, args?: Record<string, unknown>) => Promise<T>)
-  | undefined {
-  return (
-    window as {
-      __TAURI__?: {
-        core?: {
-          invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T>;
-        };
-      };
-    }
-  ).__TAURI__?.core?.invoke;
-}
 
 /**
  * Electron (Linux) shell popout surface — the preload exposes it only

@@ -27,6 +27,7 @@ import FlowResend from "@revolt/auth/src/flows/FlowResend";
 import FlowReset from "@revolt/auth/src/flows/FlowReset";
 import FlowVerify from "@revolt/auth/src/flows/FlowVerify";
 import { ClientContext, SoundContext, useClient } from "@revolt/client";
+import { IS_OVERLAY_WINDOW } from "@revolt/client/popout";
 import { completeStreamLink } from "@revolt/client/streamConnections";
 import { DeviceContext } from "@revolt/common";
 import { I18nProvider } from "@revolt/i18n";
@@ -57,10 +58,18 @@ import { FriendsPopout } from "./interface/FriendsPopout";
 import { HomePage } from "./interface/Home";
 import { ServerEvents } from "./interface/ServerEvents";
 import { ServerHome } from "./interface/ServerHome";
+import { VoiceOverlayWindow } from "./interface/VoiceOverlayWindow";
 import { ChannelPage } from "./interface/channels/ChannelPage";
 import "./serviceWorkerInterface";
 
 attachDevtoolsOverlay();
+
+// Stamp the overlay window BEFORE the first paint. The transparency rule in
+// @revolt/ui/styles hangs off this attribute; setting it from an effect would
+// paint one frame of the opaque #root rectangle over the user's game.
+if (IS_OVERLAY_WINDOW) {
+  document.documentElement.dataset.overlay = "1";
+}
 
 /**
  * Redirect PWA start to the last active path
@@ -180,6 +189,26 @@ function BotRedirect() {
 }
 
 function MountContext(props: { children?: JSX.Element }) {
+  // The in-game voice overlay window gets NO provider stack at all. It is a
+  // passive renderer of BroadcastChannel snapshots — no client is ever
+  // constructed, so no WebSocket, no Voice/LiveKit room, no sync worker, no
+  // sounds. Short-circuiting here (rather than gating each provider) is what
+  // makes that a structural guarantee instead of a list of gates to maintain.
+  //
+  // The cost is that `VoiceOverlayWindow` and everything under it must live
+  // without I18nProvider / ModalContext / KeybindContext / SnackbarProvider —
+  // most importantly, NO lingui macros, which throw at runtime and are
+  // invisible to both tsc and the extractor. See @revolt/client/popout.
+  //
+  // `StateContext` and `LoadTheme` sit OUTSIDE the router root and still
+  // mount, which is what keeps the `--md-sys-color-*` variables available to
+  // the overlay's styles.
+  //
+  // Early return is safe despite the rule: `IS_OVERLAY_WINDOW` is frozen at
+  // module init, so there is no reactivity here for a re-render to observe.
+  // eslint-disable-next-line solid/components-return-once
+  if (IS_OVERLAY_WINDOW) return <>{props.children}</>;
+
   const state = useState();
 
   /**
@@ -238,6 +267,13 @@ render(
             <Route path="/*" component={FlowHome} />
           </Route>
           <Route path="/friends-popout" component={FriendsPopout} />
+          {/* Sibling of /friends-popout, OUTSIDE the Interface route: the
+              overlay is not a page of the app, it is a second window that
+              renders one thing. `VoiceOverlayWindow` renders null unless the
+              window booted on this path, so a web user who types the URL
+              gets a blank page and in-app SPA navigation here can never
+              mount a listener nobody is publishing to. */}
+          <Route path="/voice-overlay" component={VoiceOverlayWindow} />
           <Route path="/" component={Interface as never}>
             <Route path="/pwa" component={PWARedirect} />
             <Route path="/dev" component={DevelopmentPage} />

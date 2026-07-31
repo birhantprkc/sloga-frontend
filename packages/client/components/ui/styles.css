@@ -25,6 +25,23 @@ body {
   background: #05090F;
 }
 
+/*
+ * In-game voice overlay window: the shell builds it transparent, but that
+ * only means the OS composites it — whatever the page paints still paints.
+ * THREE layers have to be cleared, not two: `#root` above is a full-viewport
+ * fixed element with its own opaque background, so an html/body-only rule
+ * still leaves a solid rectangle sitting over the game.
+ *
+ * `data-overlay` is stamped on <html> at boot in src/index.tsx (before the
+ * first paint — a later effect would flash the opaque rectangle over the
+ * game for a frame).
+ */
+html[data-overlay="1"],
+html[data-overlay="1"] body,
+html[data-overlay="1"] #root {
+  background: transparent !important;
+}
+
 /* HighlightJs */
 /*!
   Theme: GitHub Dark

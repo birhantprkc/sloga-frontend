@@ -1,6 +1,20 @@
 import { State } from "..";
 
 import { AbstractStore } from ".";
+import {
+  OverlayCornerName,
+  OverlayDisplayModeName,
+  TypeVoiceOverlay,
+  cleanOverlaySettings,
+  defaultOverlaySettings,
+} from "./voiceOverlay";
+
+export { OverlayCornerNames, OverlayDisplayModeNames } from "./voiceOverlay";
+export type {
+  OverlayCornerName,
+  OverlayDisplayModeName,
+  TypeVoiceOverlay,
+} from "./voiceOverlay";
 
 /**
  * Possible noise suppresion states. Browser is browser noise suppresion and enhanced is machine learning suppression via RNNoise.
@@ -133,7 +147,7 @@ export const CameraColorLookIds: CameraColorLookId[] = [
   "vivid",
 ];
 
-export interface TypeVoice {
+export interface TypeVoice extends TypeVoiceOverlay {
   preferredAudioInputDevice?: string;
   preferredAudioOutputDevice?: string;
   preferredVideoDevice?: string;
@@ -179,6 +193,9 @@ export interface TypeVoice {
    * profiles still parse. Do NOT reintroduce a read of this raw field.
    */
   e2eeCallsEnabled: boolean;
+
+  // The six in-game overlay keys come from `TypeVoiceOverlay` (./voiceOverlay)
+  // so their defaults and clamps can be unit-tested without loading the store.
 
   userVolumes: Record<string, number>;
   userMutes: Record<string, boolean>;
@@ -235,6 +252,7 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
       micOn: true,
       // Inert — the accessor always reports true (media E2EE is mandatory).
       e2eeCallsEnabled: true,
+      ...defaultOverlaySettings(),
       userVolumes: {},
       userMutes: {},
       screenShareVolumes: {},
@@ -391,6 +409,8 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
     ) {
       data.cameraColorLookId = input.cameraColorLookId;
     }
+
+    Object.assign(data, cleanOverlaySettings(input));
 
     if (typeof input.inputVolume === "number") {
       data.inputVolume = input.inputVolume;
@@ -674,6 +694,54 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
 
   set cameraColorLookId(value: CameraColorLookId | undefined) {
     this.set("cameraColorLookId", value);
+  }
+
+  get overlayEnabled(): boolean {
+    return this.get().overlayEnabled ?? false;
+  }
+
+  set overlayEnabled(value: boolean) {
+    this.set("overlayEnabled", value);
+  }
+
+  get overlayOpacity(): number {
+    return this.get().overlayOpacity ?? 0.85;
+  }
+
+  set overlayOpacity(value: number) {
+    this.set("overlayOpacity", value);
+  }
+
+  get overlayScale(): number {
+    return this.get().overlayScale ?? 1;
+  }
+
+  set overlayScale(value: number) {
+    this.set("overlayScale", value);
+  }
+
+  get overlayDisplayMode(): OverlayDisplayModeName {
+    return this.get().overlayDisplayMode ?? "avatars-names";
+  }
+
+  set overlayDisplayMode(value: OverlayDisplayModeName) {
+    this.set("overlayDisplayMode", value);
+  }
+
+  get overlayShowLatency(): boolean {
+    return this.get().overlayShowLatency ?? false;
+  }
+
+  set overlayShowLatency(value: boolean) {
+    this.set("overlayShowLatency", value);
+  }
+
+  get overlayCorner(): OverlayCornerName {
+    return this.get().overlayCorner ?? "top-left";
+  }
+
+  set overlayCorner(value: OverlayCornerName) {
+    this.set("overlayCorner", value);
   }
 
   /**

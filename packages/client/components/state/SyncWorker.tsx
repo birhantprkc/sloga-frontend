@@ -3,7 +3,7 @@ import { createEffect, on, onCleanup } from "solid-js";
 import { ProtocolV1 } from "stoat.js/lib/events/v1";
 
 import { useClient, useClientLifecycle } from "@revolt/client";
-import { IS_POPOUT_WINDOW } from "@revolt/client/popout";
+import { IS_OVERLAY_WINDOW, IS_POPOUT_WINDOW } from "@revolt/client/popout";
 
 import { useState } from ".";
 
@@ -15,7 +15,9 @@ export function SyncWorker() {
   // the shared localStorage but must not become a second sync writer (two
   // State instances doing local→remote save would last-writer-win each
   // other) — the main window owns synchronisation.
-  if (IS_POPOUT_WINDOW) return null;
+  // The voice overlay has no client at all (MountContext short-circuits
+  // before this ever mounts) — this is defence in depth for the same reason.
+  if (IS_POPOUT_WINDOW || IS_OVERLAY_WINDOW) return null;
 
   const state = useState();
   const client = useClient();
