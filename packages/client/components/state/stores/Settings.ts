@@ -143,6 +143,12 @@ interface SettingsDefinition {
   "captions:speak": boolean;
 
   /**
+   * Spoken language for on-device call transcription (ISO-639-1); empty lets
+   * the model detect it
+   */
+  "transcription:language": string;
+
+  /**
    * Streamer Mode: master toggle
    */
   "streamer:enabled": boolean;
@@ -212,6 +218,7 @@ const EXPECTED_TYPES: { [K in keyof SettingsDefinition]: ValueType<K> } = {
   "captions:target": "string",
   "captions:spoken": "string",
   "captions:speak": "boolean",
+  "transcription:language": "string",
   "streamer:enabled": "boolean",
   "streamer:auto_detect": "boolean",
   "streamer:hide_personal": "boolean",
@@ -244,6 +251,7 @@ const DEFAULT_VALUES: TypeSettings = {
   "captions:target": "en",
   "captions:spoken": "",
   "captions:speak": false,
+  "transcription:language": "",
   "streamer:enabled": false,
   "streamer:auto_detect": true,
   "streamer:hide_personal": true,
@@ -300,6 +308,7 @@ export class Settings extends AbstractStore<"settings", TypeSettings> {
       "captions:target": "en",
       "captions:spoken": "",
       "captions:speak": false,
+      "transcription:language": "",
       "streamer:enabled": false,
       "streamer:auto_detect": true,
       "streamer:hide_personal": true,

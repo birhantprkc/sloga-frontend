@@ -105,6 +105,12 @@ import {
 import { VoiceCallCardContext } from "@revolt/ui/components/features/voice/callCard/VoiceCallCard";
 import { ReactiveMap } from "@solid-primitives/map";
 import { CaptureClaim } from "./captureClaim";
+import { CallTranscriber } from "./transcription/callTranscriber";
+import { TranscriptStore } from "./transcription/transcriptStore";
+import {
+  getTranscriptionEngine,
+  transcriptionSupported,
+} from "./transcription/transcriptionEngine";
 import { watchLocalUserId } from "./localUserIdentity";
 import { RemoteControl } from "./remoteControl";
 
@@ -490,6 +496,29 @@ class Voice {
     this.#claimRecording(channelId, claimed),
   );
 
+  // --- On-device call transcription -----------------------------------
+  /** Whether THIS client is transcribing. Set only once the claim is held. */
+  transcribing: Accessor<boolean>;
+  #setTranscribing: Setter<boolean>;
+  /** In-flight start/stop, to keep the button from double-firing. */
+  transcriptionBusy: Accessor<boolean>;
+  #setTranscriptionBusy: Setter<boolean>;
+  /** Last transcription failure, shown on the button. */
+  transcriptionError: Accessor<string | undefined>;
+  #setTranscriptionError: Setter<string | undefined>;
+  /** Model download progress, 0..1; undefined when not loading. */
+  transcriptionLoading: Accessor<number | undefined>;
+  #setTranscriptionLoading: Setter<number | undefined>;
+  #transcriber: CallTranscriber | undefined;
+  /**
+   * The transcript itself.
+   *
+   * Lives on the Voice instance, NOT on the transcriber, because it has to
+   * outlive both the session and the call — see `transcriptStore.ts`. A call
+   * that ends unexpectedly must leave the words exportable.
+   */
+  readonly transcript = new TranscriptStore();
+
   /**
    * The single publish-gate reason SET (FE-3/R2-1/R2-7). Local upstream
    * publishing flows ONLY when this is empty; the session adds/removes its
@@ -609,6 +638,25 @@ class Voice {
     }>();
     this.recordingNotice = recordingNotice;
     this.#setRecordingNotice = setRecordingNotice;
+
+    const [transcribing, setTranscribing] = createSignal(false);
+    this.transcribing = transcribing;
+    this.#setTranscribing = setTranscribing;
+
+    const [transcriptionBusy, setTranscriptionBusy] = createSignal(false);
+    this.transcriptionBusy = transcriptionBusy;
+    this.#setTranscriptionBusy = setTranscriptionBusy;
+
+    const [transcriptionError, setTranscriptionError] = createSignal<string>();
+    this.transcriptionError = transcriptionError;
+    this.#setTranscriptionError = setTranscriptionError;
+
+    // undefined = not loading. 0..1 while the model downloads, which is the
+    // one part of starting that takes long enough to need a progress bar.
+    const [transcriptionLoading, setTranscriptionLoading] =
+      createSignal<number>();
+    this.transcriptionLoading = transcriptionLoading;
+    this.#setTranscriptionLoading = setTranscriptionLoading;
 
     const [callNonEnrolled, setCallNonEnrolled] = createSignal<
       readonly string[]
@@ -1438,6 +1486,15 @@ class Voice {
       // The `disconnect` cause also skips the retraction call: voice-state
       // teardown clears the flag server-side, and the channel is about to go.
       if (this.#recorder) void this.#stopRecording("disconnect");
+      // Same shape as the recorder: capture stops in this synchronous turn,
+      // and the model finishes whatever it already holds afterwards. The
+      // transcript itself is NOT cleared — a call that drops must still leave
+      // the words exportable.
+      if (this.#transcriber) void this.#stopTranscribing("disconnect");
+      this.transcript.clearSpeaking();
+      this.#setTranscribing(false);
+      this.#setTranscriptionError(undefined);
+      this.#setTranscriptionLoading(undefined);
       // Synchronously, and AFTER the stop above so the finalise still reads the
       // generation it started with. This is what makes every in-flight claim
       // stand down: a capture whose start is still resolving (a save dialog
@@ -1982,6 +2039,143 @@ class Voice {
           console.error("[rtc] failed to clear the recording flag", error);
         });
     }
+  }
+
+  /**
+   * Start or stop transcribing this call on this machine.
+   *
+   * **The order is warm → claim → capture, and it is not negotiable.**
+   *
+   * Loading the model can take half a minute on a cold cache. That happens
+   * FIRST, before any claim, because a progress bar is not a reason to show
+   * everyone in the call a recording banner for something that may never
+   * start. Connecting the taps is capture — decrypted audio landing in
+   * buffers, whether or not the model has seen it yet — so the claim goes out
+   * before that and the taps only follow once the room has been told.
+   *
+   * Every step re-checks the generation it started with. A model download can
+   * easily outlive the call it was started in, and without that check it would
+   * raise a flag on a channel the user has already left, or on the next call.
+   */
+  async toggleTranscription(options: { language?: string } = {}): Promise<void> {
+    if (this.transcriptionBusy()) return;
+
+    const room = this.room();
+    const channel = this.channel();
+    if (!room || !channel) return;
+
+    const generation = this.#captureClaim.generation;
+
+    if (this.transcribing()) {
+      this.#setTranscriptionBusy(true);
+      try {
+        await this.#stopTranscribing("user");
+      } finally {
+        this.#setTranscriptionBusy(false);
+      }
+      return;
+    }
+
+    if (!transcriptionSupported()) {
+      this.#setTranscriptionError(
+        "Transcription isn't supported on this device.",
+      );
+      return;
+    }
+
+    this.#setTranscriptionBusy(true);
+    this.#setTranscriptionError(undefined);
+
+    try {
+      // 1. Warm the model. No claim, no taps, no capture — nothing has been
+      //    read and nobody has been told anything yet.
+      const engine = getTranscriptionEngine();
+      this.#setTranscriptionLoading(0);
+      try {
+        await engine.load((fraction) => {
+          if (generation === this.#captureClaim.generation) {
+            this.#setTranscriptionLoading(fraction);
+          }
+        });
+      } finally {
+        this.#setTranscriptionLoading(undefined);
+      }
+
+      if (generation !== this.#captureClaim.generation) return;
+
+      // 2. Disclosure. Only now does the room learn about it.
+      const disclosed = await this.#captureClaim.acquire(
+        "transcription",
+        channel.id,
+        generation,
+      );
+      if (!disclosed) return;
+
+      // 3. Capture.
+      const transcriber = new CallTranscriber(
+        room,
+        engine,
+        this.transcript,
+        // Passed in rather than read here: Voice holds the voice settings, not
+        // the settings store, and the caller already has it.
+        { language: options.language },
+        (message) => this.#setTranscriptionError(message),
+      );
+
+      try {
+        await transcriber.start();
+      } catch (error) {
+        // Retract this feature's share of the claim. If a recording is also
+        // running the flag stays up, which is correct — it is still true.
+        await this.#captureClaim
+          .release("transcription", channel.id, generation)
+          .catch(() => undefined);
+        throw error;
+      }
+
+      this.#transcriber = transcriber;
+      this.#setTranscribing(true);
+    } catch (error) {
+      this.#setTranscriptionError(
+        error instanceof Error
+          ? error.message
+          : "Couldn't start transcribing this call.",
+      );
+      console.error("[rtc] transcription toggle failed", error);
+    } finally {
+      this.#setTranscriptionBusy(false);
+    }
+  }
+
+  /**
+   * Stop transcribing and clear the claim.
+   *
+   * The transcript is deliberately left alone — it is the product of the
+   * feature and must survive until the user exports or discards it.
+   */
+  async #stopTranscribing(
+    cause: "user" | "auto" | "disconnect",
+  ): Promise<void> {
+    const transcriber = this.#transcriber;
+    this.#transcriber = undefined;
+    this.#setTranscribing(false);
+
+    const generation = this.#captureClaim.generation;
+    const channelId = this.channel()?.id;
+
+    // Capture ends synchronously inside stop(); the returned promise is the
+    // model finishing what it already has.
+    const drained = transcriber?.stop();
+
+    if (channelId && cause !== "disconnect") {
+      await this.#captureClaim
+        .release("transcription", channelId, generation)
+        .catch((error) => {
+          console.error("[rtc] failed to clear the recording flag", error);
+        });
+    }
+
+    await drained?.catch(() => undefined);
   }
 
   /**
