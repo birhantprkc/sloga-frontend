@@ -1,7 +1,12 @@
 import { useLingui } from "@lingui-solid/solid/macro";
 import { createResizeObserver } from "@solid-primitives/resize-observer";
 import { createEffect, createSignal, For, onMount, Show } from "solid-js";
-import { TrackLoop } from "solid-livekit-components";
+import {
+  type TrackReferenceOrPlaceholder,
+  TrackLoop,
+} from "solid-livekit-components";
+
+import { Track } from "livekit-client";
 import { styled } from "styled-system/jsx";
 
 import { InRoom, useVoice } from "@revolt/rtc";
@@ -155,7 +160,34 @@ const TILE_MIN_WIDTH = "250px",
   /** Width of the side column of other participants in the focus layout. */
   SIDEBAR_WIDTH = "min(28%, 260px)",
   /** Card width it takes to earn a side column instead of a bottom strip. */
-  SIDEBAR_MIN_CARD_WIDTH = 560;
+  SIDEBAR_MIN_CARD_WIDTH = 560,
+  /**
+   * Never more than three tiles across while they are big. It is a cap on the
+   * arrangement we AIM for, not a hard one: the tiles are laid out by flex, so
+   * once a crowd has shrunk them well under a third of the card the browser
+   * packs more than three onto a row — which is what you want at that size.
+   */
+  GRID_MAX_COLUMNS = 3,
+  /**
+   * Smallest a tile may shrink to while filling the card. Past this the grid
+   * scrolls instead of shrinking further — a wall of thumbnails too small to
+   * make a face out in is worse than a scroll bar.
+   */
+  GRID_MIN_TILE_WIDTH = 160,
+  /**
+   * `var(--gap-md)` in px. Only used to CHOOSE an arrangement — the width
+   * handed to the tiles is a `min()` the browser evaluates against the real
+   * token, so this only has to be close enough to compare layouts.
+   */
+  GRID_GAP = 8,
+  /**
+   * How much bigger the tiles have to come out before a narrower arrangement
+   * is taken. Two people in a landscape card is near enough a tie between
+   * side-by-side and stacked (a 1080x640 card: 532px vs 555px), and stacking
+   * two faces down the middle of a wide frame is not what "fill the window"
+   * means to anyone looking at it.
+   */
+  GRID_NARROWER_MARGIN = 1.05;
 
 /**
  * Show a grid of participants
@@ -170,6 +202,28 @@ function Participants() {
   let callRef: HTMLDivElement | undefined;
 
   const [callWidth, setCallWidth] = createSignal(0);
+  const [callHeight, setCallHeight] = createSignal(0);
+
+  /** A real, unmuted feed rather than a camera-off placeholder. */
+  const isLiveVideo = (t: TrackReferenceOrPlaceholder) =>
+    "publication" in t && !!t.publication && !t.publication.isMuted;
+
+  /**
+   * The tracks that actually get a tile. Everyone in the call carries a camera
+   * placeholder, but ParticipantTile drops a muted screen share — counting
+   * those would size the grid around a tile that never renders.
+   */
+  const gridTracks = () =>
+    voice
+      .vidTracks()
+      .filter((t) => t.source !== Track.Source.ScreenShare || isLiveVideo(t));
+
+  /**
+   * Fill the card with the tiles instead of pinning them to TILE_MIN_WIDTH:
+   * nobody focused (both focus layouts size their own tiles) and at least one
+   * live feed worth making big.
+   */
+  const fill = () => !voice.focusId() && gridTracks().some(isLiveVideo);
 
   /**
    * Focus layout: everyone else goes into a vertical column down the left and
@@ -193,13 +247,64 @@ function Participants() {
     !voice.remoteControl.controlling() &&
     callWidth() >= SIDEBAR_MIN_CARD_WIDTH;
 
+  /**
+   * Width of one tile, as a CSS length the tile recipe applies.
+   *
+   * With a camera or share live and nobody focused the tiles FILL the card:
+   * every arrangement from three columns down to one is tried and whichever
+   * makes the tiles biggest wins, bounded by the card's height so all the rows
+   * fit without scrolling. That lands on 2x2 for four people rather than 3+1,
+   * and on three columns of shrinking tiles from five up.
+   *
+   * A voice-only call keeps the fixed 250px tiles: those are an avatar on a
+   * flat background, and blowing one up to half the card only makes the call
+   * look emptier.
+   *
+   * The arrangement is picked here (it needs numbers), but the width itself is
+   * handed over as a `min()` over `100%`/`--vc-h` so the browser does the
+   * exact arithmetic against the real gap token. The 1px taken off the column
+   * term is anti-rounding slack — a width that comes to exactly 100%/3 can
+   * still wrap a tile onto its own line.
+   */
   const tileWidth = () => {
-    if (!voice.focusId()) return TILE_MIN_WIDTH;
+    if (voice.focusId()) {
+      const vidWidth = Math.round(
+        100 / (voice.vidTracks().length + testTrackCount),
+      );
+      return `max(${TILE_MIN_WIDTH}, ${vidWidth}% - var(--gap-md))`;
+    }
 
-    const vidWidth = Math.round(
-      100 / (voice.vidTracks().length + testTrackCount),
+    const count = gridTracks().length + testTrackCount;
+    if (!fill() || !count || !callWidth() || !callHeight())
+      return TILE_MIN_WIDTH;
+
+    let columns = 1,
+      rows = count,
+      best = 0;
+
+    // Widest first, so a narrower arrangement has to actually beat it.
+    for (let c = Math.min(count, GRID_MAX_COLUMNS); c >= 1; c--) {
+      const r = Math.ceil(count / c);
+      const width = Math.min(
+        (callWidth() - (c - 1) * GRID_GAP) / c,
+        Math.max(
+          GRID_MIN_TILE_WIDTH,
+          ((callHeight() - (r - 1) * GRID_GAP) / r) * (16 / 9),
+        ),
+      );
+
+      if (width > best * GRID_NARROWER_MARGIN) {
+        best = width;
+        columns = c;
+        rows = r;
+      }
+    }
+
+    const gaps = (n: number) => (n > 1 ? ` - ${n - 1} * var(--gap-md)` : "");
+    return (
+      `min((100%${gaps(columns)} - 1px) / ${columns}, ` +
+      `max(${GRID_MIN_TILE_WIDTH}px, (var(--vc-h)${gaps(rows)}) * 16 / 9 / ${rows}))`
     );
-    return `max(${TILE_MIN_WIDTH}, ${vidWidth}% - var(--gap-md))`;
   };
 
   // Clear out any focus when the track that was focused is no longer available;
@@ -217,6 +322,7 @@ function Participants() {
         el.style.setProperty("--vc-w", `${width}px`);
         el.style.setProperty("--vc-h", `${height}px`);
         setCallWidth(width);
+        setCallHeight(height);
       }
     });
   });
@@ -266,6 +372,7 @@ function Participants() {
              function of which one is written first in the file. */
           focus={!!voice.focusId() && !sidebar()}
           sidebar={sidebar()}
+          fill={fill()}
           show={voice.showBar()}
           class={
             sidebar()
@@ -582,6 +689,21 @@ const Grid = styled("div", {
           // Tiles keep their 16:9 box and the column scrolls; without this
           // they would squash to share the card's height between them.
           flexShrink: 0,
+        },
+      },
+    },
+    /**
+     * Filling the card (no focus, someone's camera or share is live). The tile
+     * width computed in `tileWidth` is doing all the work, so the fullscreen
+     * tile's `minWidth: 20%` floor has to go: with enough people on screen it
+     * would otherwise widen the tiles back out and fit five to a row instead
+     * of three. Never set together with `focus`/`sidebar`, which own the tile
+     * size in their own layouts.
+     */
+    fill: {
+      true: {
+        "& .vc_tile": {
+          minWidth: 0,
         },
       },
     },
