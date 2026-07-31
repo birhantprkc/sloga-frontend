@@ -6456,3 +6456,19 @@ msgstr "Your suspension has expired — try logging in again."
 #: components/i18n/errors.ts
 msgid "Your user has already been created? Try logging in again or refreshing the app."
 msgstr "Your user has already been created? Try logging in again or refreshing the app."
+
+#: src/interface/ServerEvents.tsx
+msgid "Voice channel"
+msgstr "Voice channel"
+
+#: src/interface/ServerEvents.tsx
+msgid "Join channel"
+msgstr "Join channel"
+
+#: src/interface/ServerEvents.tsx
+msgid "Open channel"
+msgstr "Open channel"
+
+#: src/interface/ServerEvents.tsx
+msgid "Attendees can join this channel from the event when it starts. Only members who can see the channel will see the event."
+msgstr "Attendees can join this channel from the event when it starts. Only members who can see the channel will see the event."

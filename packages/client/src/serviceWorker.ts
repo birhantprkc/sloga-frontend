@@ -15,6 +15,11 @@ interface StoatPushNotification {
   icon?: string;
   channel?: ChannelPartial;
   url?: string;
+  /** Calendar pushes (invited / cancelled / reminder) carry ids, not a url. */
+  kind?: string;
+  event_id?: string;
+  server_id?: string;
+  channel_id?: string;
 }
 
 self.addEventListener("message", (event) => {
@@ -44,6 +49,16 @@ self.addEventListener("push", (event) => {
     } else {
       notification.title = "Sloga";
     }
+  }
+
+  // Calendar pushes deep-link: to the linked channel when one is set (e.g. the
+  // voice channel a reminder invites you to join), else to the server's events
+  // page.
+  if (!notification.url && notification.server_id && notification.event_id) {
+    const path = notification.channel_id
+      ? `/server/${notification.server_id}/channel/${notification.channel_id}`
+      : `/server/${notification.server_id}/events`;
+    notification.url = new URL(path, self.registration.scope).toString();
   }
 
   notification.url ||= self.registration.scope;

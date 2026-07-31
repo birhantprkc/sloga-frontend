@@ -39,6 +39,7 @@ import { styled } from "styled-system/jsx";
 import { SOFTRES_CREATION_ENABLED } from "@revolt/app";
 import { useClient } from "@revolt/client";
 import { useModals } from "@revolt/modal";
+import { useVoice } from "@revolt/rtc";
 import { useNavigate, useParams } from "@revolt/routing";
 import { Avatar, Button, Column, IconButton, Row, typography } from "@revolt/ui";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
@@ -233,12 +234,16 @@ export const ServerEvents: Component = () => {
 
   // ------------------------------------------------------------------ detail
   const [openEvent, setOpenEvent] = createSignal<CalendarEvent | undefined>();
+  // The tapped occurrence's start — the Join-channel window anchors on THIS
+  // occurrence, not the series start (a week-5 tap must not window on week 1).
+  const [openOccStart, setOpenOccStart] = createSignal<number | undefined>();
   const [attendees, setAttendees] = createSignal<EventRsvpData[]>([]);
   const [attendeesLoading, setAttendeesLoading] = createSignal(false);
 
-  async function openDetail(event: CalendarEvent) {
+  async function openDetail(event: CalendarEvent, occStart?: number) {
     setShowCreate(false);
     setOpenEvent(event);
+    setOpenOccStart(occStart);
     setAttendees([]);
     // Batch member sync so attendee rows resolve names/avatars without per-row fetch.
     server()?.syncMembers().catch(() => {});
@@ -617,6 +622,7 @@ export const ServerEvents: Component = () => {
                 <Match when={openEvent()}>
                   <EventDetail
                     event={openEvent()!}
+                    occStart={openOccStart()}
                     attendees={attendees()}
                     attendeesLoading={attendeesLoading()}
                     hasMore={hasMoreAttendees()}
@@ -667,7 +673,7 @@ function DayView(props: {
   occurrences: Occurrence[];
   upcoming: Occurrence[];
   loading: boolean;
-  onOpen: (event: CalendarEvent) => void;
+  onOpen: (event: CalendarEvent, occStart: number) => void;
   onJump: (start: number) => void;
 }) {
   const { t } = useLingui();
@@ -688,7 +694,10 @@ function DayView(props: {
           <Column gap="sm" style={{ padding: "8px 16px" }}>
             <For each={props.occurrences}>
               {(occ) => (
-                <EventCard occurrence={occ} onOpen={() => props.onOpen(occ.event)} />
+                <EventCard
+                  occurrence={occ}
+                  onOpen={() => props.onOpen(occ.event, occ.start)}
+                />
               )}
             </For>
           </Column>
@@ -930,7 +939,12 @@ function SoftResSection(props: {
 
   const sendableChannel = () => {
     const channel = props.event.channel;
-    return channel?.havePermission("SendMessage") ? channel : undefined;
+    // Text channels only: a voice-channel event (that grants SendMessage) must
+    // never become the posting target for a new soft-res sheet.
+    return channel?.type === "TextChannel" &&
+      channel.havePermission("SendMessage")
+      ? channel
+      : undefined;
   };
 
   return (
@@ -1000,6 +1014,8 @@ function SoftResSection(props: {
 
 function EventDetail(props: {
   event: CalendarEvent;
+  /** Start (ms epoch) of the tapped occurrence — anchors the Join window. */
+  occStart?: number;
   attendees: EventRsvpData[];
   attendeesLoading: boolean;
   hasMore: boolean;
@@ -1020,7 +1036,67 @@ function EventDetail(props: {
 }) {
   const { t } = useLingui();
   const { showError } = useModals();
+  const client = useClient();
+  const voice = useVoice();
+  const navigate = useNavigate();
   const counts = () => props.event.counts;
+
+  // ----- Join channel (voice-channel events) -------------------------------
+  const linkedChannel = () => props.event.channel;
+  const voiceChannel = () => {
+    const channel = linkedChannel();
+    return channel?.isVoice ? channel : undefined;
+  };
+
+  // Reactive clock so the Join button appears when the window opens without a
+  // refresh (same idiom as the soft-res lock tick above).
+  const [joinNow, setJoinNow] = createSignal(Date.now());
+  const joinTimer = setInterval(() => setJoinNow(Date.now()), 30_000);
+  onCleanup(() => clearInterval(joinTimer));
+
+  /**
+   * The Join window for the occurrence being viewed: 30 min before its start
+   * (matching the reminder lead) until its end. End-less events keep the button
+   * for an hour past start; all-day events span their calendar day in the
+   * EVENT's timezone (en-CA bucket — same as the grid).
+   */
+  const joinWindowOpen = () => {
+    const start = props.occStart ?? props.event.startAt;
+    if (props.event.allDay) {
+      const dayOf = (instant: number) =>
+        new Intl.DateTimeFormat("en-CA", {
+          timeZone: props.event.timezone,
+        }).format(instant);
+      return dayOf(start) === dayOf(joinNow());
+    }
+    const LEAD_MS = 30 * 60 * 1000;
+    const duration =
+      props.event.endAt !== undefined ? props.event.endAt - props.event.startAt : 0;
+    const windowEnd = start + (duration > 0 ? duration : 60 * 60 * 1000);
+    return joinNow() >= start - LEAD_MS && joinNow() <= windowEnd;
+  };
+
+  // Going attendees and the creator (who has no RSVP row) get the button;
+  // Connect is checked as an affordance only — the voice token route enforces.
+  const canJoin = () => {
+    const channel = voiceChannel();
+    if (!channel || props.event.cancelled) return false;
+    if (!channel.havePermission("Connect")) return false;
+    const isCreator = props.event.creatorId === client().user?.id;
+    if (props.event.myRsvp !== "Going" && !isCreator) return false;
+    return joinWindowOpen();
+  };
+
+  async function joinChannel() {
+    const channel = voiceChannel();
+    if (!channel) return;
+    try {
+      if (!voice.showCard(channel)) await voice.connect(channel);
+      navigate(`/server/${props.server.id}/channel/${channel.id}`);
+    } catch (error) {
+      showError(error);
+    }
+  }
 
   // Invite-more picker (manage only). Roles are matched client-side against the
   // already-cached role map; a role row invites its CURRENT holders immediately
@@ -1101,6 +1177,18 @@ function EventDetail(props: {
           <Symbol size={14}>location_on</Symbol> {props.event.location}
         </Text>
       </Show>
+      <Show when={linkedChannel()}>
+        {(channel) => (
+          <ChannelLink
+            onClick={() =>
+              navigate(`/server/${props.server.id}/channel/${channel().id}`)
+            }
+          >
+            <Symbol size={14}>{channel().isVoice ? "volume_up" : "tag"}</Symbol>{" "}
+            {channel().name}
+          </ChannelLink>
+        )}
+      </Show>
       <Show when={props.event.description}>
         <Text class="body" size="medium">
           {props.event.description}
@@ -1117,6 +1205,20 @@ function EventDetail(props: {
             {(file) => <AttachmentItem file={file} />}
           </For>
         </AttachmentList>
+      </Show>
+
+      {/* Join the linked voice channel while the occurrence is live. Rendered
+          OUTSIDE the RSVP gate: the creator has no RSVP row but must see it. */}
+      <Show when={canJoin()}>
+        <RsvpBar>
+          <Button variant="filled" onPress={joinChannel}>
+            <Symbol size={18}>call</Symbol>
+            &nbsp;
+            <Show when={!voice.showCard(voiceChannel()!)} fallback={<Trans>Open channel</Trans>}>
+              <Trans>Join channel</Trans>
+            </Show>
+          </Button>
+        </RsvpBar>
       </Show>
 
       {/* Caller RSVP control */}
@@ -1415,6 +1517,7 @@ function CreateForm(props: {
     allDay: ev?.allDay ?? false,
     description: ev?.description ?? "",
     location: ev?.location ?? "",
+    channelId: ev?.channelId ?? "",
     freq: (ev?.recurrence?.freq ?? "None") as Frequency | "None",
     interval: ev?.recurrence?.interval ?? 1,
     weekdays: [...(ev?.recurrence?.by_weekday ?? [])],
@@ -1435,6 +1538,21 @@ function CreateForm(props: {
   const [allDay, setAllDay] = createSignal(initial.allDay);
   const [description, setDescription] = createSignal(initial.description);
   const [location, setLocation] = createSignal(initial.location);
+  const [channelId, setChannelId] = createSignal(initial.channelId);
+
+  // The picker offers voice channels (this is "where the event happens"; the
+  // Join button in the detail view targets it) …
+  const voiceChannels = createMemo(() =>
+    props.server.channels.filter((c) => c.isVoice),
+  );
+  // …but the event's CURRENT channel may be a text channel (soft-res events,
+  // legacy imports) or one this editor cannot resolve — keep it selectable so
+  // opening the edit form never silently clobbers it.
+  const currentExtraChannel = () => {
+    const id = initial.channelId;
+    if (!id || voiceChannels().some((c) => c.id === id)) return undefined;
+    return { id, name: client().channels.get(id)?.name ?? id };
+  };
 
   const [freq, setFreq] = createSignal<Frequency | "None">(initial.freq);
   const [interval, setInterval] = createSignal(initial.interval);
@@ -1597,6 +1715,10 @@ function CreateForm(props: {
       data.recurrence = buildRecurrence();
     }
 
+    if (channelId()) {
+      data.channel = channelId();
+    }
+
     if (newFiles().length) {
       data.attachments = newFiles().map((f) => f.id);
     }
@@ -1640,6 +1762,12 @@ function CreateForm(props: {
     if (location().trim() !== initial.location) {
       if (location().trim()) diff.location = location().trim();
       else remove.push("Location");
+    }
+    if (channelId() !== initial.channelId) {
+      // Moving to a channel some attendees cannot view drops their RSVPs
+      // server-side (they could never open or escape the event otherwise).
+      if (channelId()) diff.channel = channelId();
+      else remove.push("Channel");
     }
 
     if (scheduleDirty()) {
@@ -1744,6 +1872,32 @@ function CreateForm(props: {
         value={location()}
         onInput={(e) => setLocation(e.currentTarget.value)}
       />
+
+      {/* Voice channel the event happens in (optional) */}
+      <Text class="label" size="small">
+        <Trans>Voice channel</Trans>
+      </Text>
+      <ChannelSelect
+        value={channelId()}
+        onChange={(e) => setChannelId(e.currentTarget.value)}
+      >
+        <option value="">{t`None`}</option>
+        <Show when={currentExtraChannel()}>
+          {(extra) => <option value={extra().id}>#{extra().name}</option>}
+        </Show>
+        <For each={voiceChannels()}>
+          {(channel) => <option value={channel.id}>{channel.name}</option>}
+        </For>
+      </ChannelSelect>
+      <Show when={channelId()}>
+        <SmallMuted>
+          <Trans>
+            Attendees can join this channel from the event when it starts. Only
+            members who can see the channel will see the event.
+          </Trans>
+        </SmallMuted>
+      </Show>
+
       <FormInput
         type="text"
         placeholder={t`Description (optional)`}
@@ -2441,6 +2595,22 @@ const SearchResults = styled("div", {
     border: "1px solid var(--md-sys-color-outline-variant)",
     maxHeight: "160px",
     overflowY: "auto",
+  },
+});
+
+const ChannelLink = styled("button", {
+  base: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    padding: 0,
+    border: "none",
+    background: "transparent",
+    color: "var(--md-sys-color-on-surface)",
+    cursor: "pointer",
+    fontSize: "0.85rem",
+    alignSelf: "start",
+    "&:hover": { textDecoration: "underline" },
   },
 });
 
