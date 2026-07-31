@@ -1,5 +1,11 @@
 import { Room, RoomEvent, Track } from "livekit-client";
 
+// Explicit `.ts`, unlike most imports here: this module is loaded directly by
+// `node --test`, whose ESM resolver does not guess extensions. tsc allows it
+// (`allowImportingTsExtensions`) and vite resolves it — dropping the extension
+// compiles and builds fine but breaks the specs.
+import { captureFilename } from "./captureFilename.ts";
+
 /**
  * Local call recording (call-recording plan §1).
  *
@@ -539,27 +545,16 @@ function extensionFor(mimeType: string): string {
  * Build the filename for a finished recording: channel name, then a local
  * timestamp so several recordings of the same channel sort chronologically
  * and never collide.
+ *
+ * The naming itself is shared with the transcript exporter — a recording and
+ * its transcript should land side by side.
  */
 export function recordingFilename(
   channelName: string | undefined,
   startedAt: number,
   mimeType: string,
 ): string {
-  const stamp = new Date(startedAt);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const date =
-    `${stamp.getFullYear()}-${pad(stamp.getMonth() + 1)}-${pad(stamp.getDate())}` +
-    `-${pad(stamp.getHours())}${pad(stamp.getMinutes())}`;
-
-  // Keep the channel name recognisable but filesystem-safe on every platform:
-  // Windows rejects \ / : * ? " < > | outright.
-  const safeName = (channelName ?? "call")
-    .replace(/[\\/:*?"<>|]/g, "")
-    .replace(/\s+/g, "-")
-    .slice(0, 48)
-    .replace(/^-+|-+$/g, "");
-
-  return `${safeName || "call"}-${date}.${extensionFor(mimeType)}`;
+  return captureFilename(channelName, startedAt, extensionFor(mimeType));
 }
 
 /**
