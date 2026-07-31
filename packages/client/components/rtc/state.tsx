@@ -105,6 +105,8 @@ import {
 import { VoiceCallCardContext } from "@revolt/ui/components/features/voice/callCard/VoiceCallCard";
 import { ReactiveMap } from "@solid-primitives/map";
 import { CaptureClaim } from "./captureClaim";
+import { watchLocalUserId } from "./localUserIdentity";
+import { RemoteControl } from "./remoteControl";
 import { CallTranscriber } from "./transcription/callTranscriber";
 import {
   type TranscriptFormat,
@@ -117,8 +119,6 @@ import {
   getTranscriptionEngine,
   transcriptionSupported,
 } from "./transcription/transcriptionEngine";
-import { watchLocalUserId } from "./localUserIdentity";
-import { RemoteControl } from "./remoteControl";
 
 import {
   type RecordingTarget,

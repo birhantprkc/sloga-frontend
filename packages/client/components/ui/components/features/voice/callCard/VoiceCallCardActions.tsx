@@ -13,9 +13,9 @@ import { Symbol } from "@revolt/ui/components/utils/Symbol";
 import { VoiceDeviceSelector } from "./VoiceDeviceSelector";
 import { VoiceGiveControlButton } from "./VoiceGiveControlButton";
 import { VoiceRecordButton } from "./VoiceRecordButton";
-import { VoiceTranscribeButton } from "./VoiceTranscribeButton";
 import { VoiceSoundboardButton } from "./VoiceSoundboardButton";
 import { VoiceStatsOverlay } from "./VoiceStatsOverlay";
+import { VoiceTranscribeButton } from "./VoiceTranscribeButton";
 
 export function VoiceCallCardActions(props: { size: "xs" | "sm" }) {
   const voice = useVoice();
