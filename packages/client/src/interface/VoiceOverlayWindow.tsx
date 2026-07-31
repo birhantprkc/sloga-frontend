@@ -15,7 +15,14 @@
  * the shell to close at 30 s. (A full process kill takes this window with it,
  * which is why the timers are not about that case.)
  */
-import { createSignal, onCleanup, onMount, Show } from "solid-js";
+import {
+  createEffect,
+  createSignal,
+  on,
+  onCleanup,
+  onMount,
+  Show,
+} from "solid-js";
 
 import { IS_OVERLAY_WINDOW } from "@revolt/client/popout";
 import { OverlayRoster } from "@revolt/rtc/overlay/OverlayRoster";
@@ -124,25 +131,47 @@ export function VoiceOverlayWindow() {
     // transparent window stays at whatever size it was built at, and a
     // click-through window larger than its content is invisible but still
     // covers screen area that the corner arithmetic thinks is in use.
+    //
+    // `setBounds` is also the ONLY way the corner reaches the shell — neither
+    // shell keeps a copy of it — so this is the one call that has to fire for
+    // both reasons, not just when the content resizes. See the effect below.
+    const pushBounds = () => {
+      if (!root) return;
+      const rect = root.getBoundingClientRect();
+      // Round up: a fractional height truncated down clips the last row's
+      // descenders.
+      shell?.setBounds({
+        width: Math.ceil(rect.width),
+        height: Math.ceil(rect.height),
+        corner: config().corner,
+      });
+    };
+
     let resizeTimer: ReturnType<typeof setTimeout> | undefined;
     const observer =
       typeof ResizeObserver === "function" && root
         ? new ResizeObserver(() => {
             if (resizeTimer) clearTimeout(resizeTimer);
-            resizeTimer = setTimeout(() => {
-              if (!root) return;
-              const rect = root.getBoundingClientRect();
-              // Round up: a fractional height truncated down clips the last
-              // row's descenders.
-              shell?.setBounds({
-                width: Math.ceil(rect.width),
-                height: Math.ceil(rect.height),
-                corner: config().corner,
-              });
-            }, RESIZE_DEBOUNCE_MS);
+            resizeTimer = setTimeout(pushBounds, RESIZE_DEBOUNCE_MS);
           })
         : undefined;
     if (observer && root) observer.observe(root);
+
+    // A corner change MOVES the window without resizing it, so the
+    // ResizeObserver never fires for one and nothing would ever tell the
+    // shell. Measured on the Tauri shell before this existed: switching
+    // corners mid-call did nothing at all, and the overlay only jumped to the
+    // new corner later, when some unrelated change (a scale nudge, someone
+    // joining) happened to alter the content size and drag the current corner
+    // along with it. `defer` because the observer already pushes the initial
+    // bounds on observe.
+    createEffect(
+      on(
+        () => config().corner,
+        () => pushBounds(),
+        { defer: true },
+      ),
+    );
 
     onCleanup(() => {
       unsubscribe?.();
