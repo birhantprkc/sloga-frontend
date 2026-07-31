@@ -2341,10 +2341,30 @@ class Voice {
       if (response.status === 403) {
         throw new Error("You don't have permission to record this call.");
       }
+
+      // The route's 400s are specific and actionable, and a bare status code
+      // is not: "(400)" told a user nothing when their voice state had been
+      // taken over by a second session and the server correctly refused the
+      // claim. Only a participant may claim to be capturing — that rule is
+      // what stops someone faking a recording warning for a call they are not
+      // in — so the honest message is that they are no longer in the call.
+      const reason = await response
+        .clone()
+        .json()
+        .then((body: { type?: string }) => body?.type)
+        .catch(() => undefined);
+
+      if (reason === "NotInVoiceChannel") {
+        throw new Error("You're not in this call any more.");
+      }
+      if (reason === "NotAVoiceChannel") {
+        throw new Error("This channel isn't a call.");
+      }
+
       throw new Error(
         recording
-          ? `Couldn't tell the call about the recording (${response.status}).`
-          : `Couldn't clear the recording indicator (${response.status}).`,
+          ? `Couldn't tell the call about the recording (${reason ?? response.status}).`
+          : `Couldn't clear the recording indicator (${reason ?? response.status}).`,
       );
     }
   }
