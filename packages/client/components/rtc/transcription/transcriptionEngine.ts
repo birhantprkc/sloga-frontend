@@ -38,6 +38,35 @@
 
 import { cleanTranscript } from "./transcriptText.ts";
 
+/**
+ * 🔴 **NOT WORKING IN A BROWSER YET — do not treat this as shippable.**
+ *
+ * Verified in the dev server 2026-07-31. The model downloads correctly from
+ * our own origin and the Node path transcribes real speech, but no browser
+ * session has ever been created:
+ *
+ * - With `@huggingface/transformers` 4.2.0 (onnxruntime-web 1.26.0-dev) every
+ *   attempt dies in an ORT graph-optimisation pass: `qdq_actions.cc:137
+ *   TransposeDQWeightsForMatMulNBits Missing required scale`. Reproduced on
+ *   q8, int8, uint8 AND unquantised fp32 weights, and with the optimiser set
+ *   to disabled, basic, and on the WebGPU provider — nine combinations, one
+ *   error. The identical files load fine under onnxruntime-node 1.24.3, so it
+ *   is the web runtime, not the model.
+ * - Pinned back to 3.8.1 (onnxruntime-web 1.22) that error is GONE, which
+ *   confirms the diagnosis, but the runtime then reports `both async and sync
+ *   fetching of the wasm failed`. The `.wasm` and its loader both serve 200
+ *   from {@link ORT_WASM_BASE}, and the failing request is made from inside a
+ *   worker, so it is a loader-path problem rather than a missing file.
+ *
+ * Next step is most likely to stop hand-vendoring the ORT runtime and let vite
+ * emit it as a bundled asset (`?url` import), which makes the path vite's
+ * problem and stays same-origin either way.
+ *
+ * Everything else in this file is exercised and correct; only session creation
+ * is blocked. The button will surface the failure rather than pretending, but
+ * this must not reach a build until a session has actually been created.
+ */
+
 /** Where the vendored model and the ONNX runtime are served from, same-origin. */
 const MODEL_BASE = "/models/";
 const ORT_WASM_BASE = "/models/ort/";

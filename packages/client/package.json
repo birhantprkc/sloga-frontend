@@ -75,7 +75,7 @@
     "@fontsource/space-mono": "^5.2.8",
     "@fontsource/ubuntu": "^5.2.7",
     "@fontsource/ubuntu-mono": "^5.2.7",
-    "@huggingface/transformers": "^4.2.0",
+    "@huggingface/transformers": "^3.8.1",
     "@lezer/highlight": "^1.2.1",
     "@lingui-solid/solid": "^5.1.4",
     "@livekit/components-core": "^0.9.3",
