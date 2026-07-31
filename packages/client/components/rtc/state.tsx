@@ -104,6 +104,7 @@ import {
 } from "@revolt/state/stores/Voice";
 import { VoiceCallCardContext } from "@revolt/ui/components/features/voice/callCard/VoiceCallCard";
 import { ReactiveMap } from "@solid-primitives/map";
+import { CaptureClaim } from "./captureClaim";
 import { watchLocalUserId } from "./localUserIdentity";
 import { RemoteControl } from "./remoteControl";
 
@@ -475,6 +476,19 @@ class Voice {
    */
   #recordingDismissed = new ReactiveMap<string, true>();
   #recorder: CallRecorder | undefined;
+
+  /**
+   * The only path to the `recording` voice-state flag.
+   *
+   * The flag is shared: the recorder raises it, and so will the on-device
+   * transcriber. It is refcounted, serialised and generation-checked there so
+   * that stopping one capture cannot retract the disclosure another one is
+   * still relying on — see `captureClaim.ts` for the races each rule closes.
+   * Nothing in this file may PUT or DELETE the flag directly.
+   */
+  #captureClaim = new CaptureClaim((channelId, claimed) =>
+    this.#claimRecording(channelId, claimed),
+  );
 
   /**
    * The single publish-gate reason SET (FE-3/R2-1/R2-7). Local upstream
@@ -1424,6 +1438,12 @@ class Voice {
       // The `disconnect` cause also skips the retraction call: voice-state
       // teardown clears the flag server-side, and the channel is about to go.
       if (this.#recorder) void this.#stopRecording("disconnect");
+      // Synchronously, and AFTER the stop above so the finalise still reads the
+      // generation it started with. This is what makes every in-flight claim
+      // stand down: a capture whose start is still resolving (a save dialog
+      // left open, a model still loading) must not raise a flag on the call the
+      // user has just left, or on the next one.
+      this.#captureClaim.reset();
       this.#recordingDismissed.clear();
       this.#setRecordingError(undefined);
 
@@ -1762,6 +1782,11 @@ class Voice {
     const channel = this.channel();
     if (!room || !channel) return;
 
+    // Pin the call this toggle belongs to. The save dialog can sit open for as
+    // long as the user likes, so by the time anything below resumes the call
+    // may be over — or replaced by a different one.
+    const generation = this.#captureClaim.generation;
+
     if (this.recording()) {
       this.#setRecordingBusy(true);
       this.#setRecordingError(undefined);
@@ -1817,7 +1842,19 @@ class Voice {
     try {
       // Disclosure precedes capture: the claim goes out BEFORE the recorder
       // starts, and is retracted if the recorder fails to start.
-      await this.#claimRecording(channel.id, true);
+      //
+      // A false result means the call ended while the dialog or the claim was
+      // open. Nothing was claimed and nothing may be captured, so give up
+      // quietly — there is no failure to report to someone who has left.
+      const disclosed = await this.#captureClaim.acquire(
+        "recording",
+        channel.id,
+        generation,
+      );
+      if (!disclosed) {
+        await target?.abort().catch(() => undefined);
+        return;
+      }
 
       const recorder = new CallRecorder(
         room,
@@ -1833,7 +1870,14 @@ class Voice {
       } catch (error) {
         // Retract rather than leave the call warned about a recording that
         // never began, and release the file handle we opened.
-        await this.#claimRecording(channel.id, false).catch(() => undefined);
+        //
+        // This releases only the RECORDER's share of the claim. If another
+        // capture is running, the flag stays up — retracting it here would
+        // clear everyone's banner while that capture is still reading audio,
+        // which is the one failure this feature exists to prevent.
+        await this.#captureClaim
+          .release("recording", channel.id, generation)
+          .catch(() => undefined);
         await target?.abort().catch(() => undefined);
         throw error;
       }
@@ -1863,6 +1907,8 @@ class Voice {
     this.#recorder = undefined;
     this.#setRecording(false);
 
+    // Pinned before finalising, which can take a moment on a large file.
+    const generation = this.#captureClaim.generation;
     const channelId = this.channel()?.id;
     const channelName = this.channel()?.name;
 
@@ -1924,11 +1970,17 @@ class Voice {
     }
 
     // On disconnect the server clears the flag with the voice state, so the
-    // retraction is redundant there — and the channel may already be gone.
+    // retraction is redundant there — and the channel may already be gone. The
+    // claim would stand down on the stale generation by itself; the explicit
+    // cause keeps that from depending on teardown ordering.
+    //
+    // Note this only lowers the flag if nothing else is capturing.
     if (channelId && cause !== "disconnect") {
-      await this.#claimRecording(channelId, false).catch((error) => {
-        console.error("[rtc] failed to clear the recording flag", error);
-      });
+      await this.#captureClaim
+        .release("recording", channelId, generation)
+        .catch((error) => {
+          console.error("[rtc] failed to clear the recording flag", error);
+        });
     }
   }
 
