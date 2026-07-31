@@ -6550,3 +6550,65 @@ msgstr "Wayland session detected — the overlay may not stay above games on thi
 #: components/app/interface/settings/user/voice/OverlaySettings.tsx
 msgid "What the overlay shows"
 msgstr "What the overlay shows"
+
+#: components/ui/components/features/voice/callCard/VoiceTranscriptPanel.tsx
+msgid "Copy"
+msgstr "Copy"
+
+#: components/ui/components/features/voice/callCard/VoiceTranscriptPanel.tsx
+msgid "Copy the transcript to the clipboard"
+msgstr "Copy the transcript to the clipboard"
+
+#: components/ui/components/features/voice/callCard/VoiceTranscriptPanel.tsx
+msgid "Discard"
+msgstr "Discard"
+
+#. placeholder {0}: Math.round(progress * 100)
+#: components/ui/components/features/voice/callCard/VoiceTranscribeButton.tsx
+msgid "Downloading the speech model… {0}%"
+msgstr "Downloading the speech model… {0}%"
+
+#: components/ui/components/features/voice/callCard/VoiceTranscriptPanel.tsx
+msgid "Nothing has been transcribed yet."
+msgstr "Nothing has been transcribed yet."
+
+#: components/ui/components/features/voice/callCard/VoiceTranscriptPanel.tsx
+msgid "Save the transcript as a text file"
+msgstr "Save the transcript as a text file"
+
+#: components/ui/components/features/voice/callCard/VoiceTranscriptPanel.tsx
+msgid "Save the transcript as subtitles"
+msgstr "Save the transcript as subtitles"
+
+#: components/ui/components/features/voice/callCard/VoiceTranscribeButton.tsx
+msgid "Stop transcribing"
+msgstr "Stop transcribing"
+
+#: components/ui/components/features/voice/callCard/VoiceTranscriptPanel.tsx
+msgid "Throw this transcript away"
+msgstr "Throw this transcript away"
+
+#: components/ui/components/features/voice/callCard/VoiceTranscriptPanel.tsx
+msgid "Transcribing"
+msgstr "Transcribing"
+
+#: components/ui/components/features/voice/callCard/VoiceTranscriptPanel.tsx
+msgid "Transcript"
+msgstr "Transcript"
+
+#: components/ui/components/features/voice/callCard/VoiceTranscribeButton.tsx
+msgid "Transcription isn't supported on this device"
+msgstr "Transcription isn't supported on this device"
+
+#: components/ui/components/features/voice/callCard/VoiceTranscribeButton.tsx
+msgid "Write down what's said, on this device — everyone in the call will be told"
+msgstr "Write down what's said, on this device — everyone in the call will be told"
+
+#: components/app/interface/settings/user/Language.tsx
+msgid "Call transcription language"
+msgstr "Call transcription language"
+
+#: components/app/interface/settings/user/Language.tsx
+#: components/app/interface/settings/user/Language.tsx
+msgid "Detect automatically"
+msgstr "Detect automatically"

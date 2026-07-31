@@ -26,6 +26,7 @@ import MdLanguage from "@material-design-icons/svg/outlined/language.svg?compone
 import MdMic from "@material-design-icons/svg/outlined/mic.svg?component-solid";
 import MdRecordVoiceOver from "@material-design-icons/svg/outlined/record_voice_over.svg?component-solid";
 import MdSchedule from "@material-design-icons/svg/outlined/schedule.svg?component-solid";
+import MdSubtitles from "@material-design-icons/svg/outlined/subtitles.svg?component-solid";
 import MdTranslate from "@material-design-icons/svg/outlined/translate.svg?component-solid";
 import MdVolumeUp from "@material-design-icons/svg/outlined/volume_up.svg?component-solid";
 
@@ -52,6 +53,9 @@ export function LanguageSettings() {
         <PickCaptionLanguage />
         <PickSpokenLanguage />
         <ToggleSpeakCaptions />
+      </CategoryButton.Group>
+      <CategoryButton.Group>
+        <PickTranscriptionLanguage />
       </CategoryButton.Group>
     </Column>
   );
@@ -307,6 +311,51 @@ function PickSpokenLanguage() {
 }
 
 /**
+ * Pick the language spoken in calls, for on-device transcription.
+ *
+ * A hint, not a filter: Whisper detects the language by itself, but telling it
+ * up front is both faster and more accurate — and it stops a stray foreign
+ * word mid-sentence from flipping the model into transcribing the rest of an
+ * utterance as a different language.
+ *
+ * Separate from the caption spoken-language setting on purpose. That one
+ * describes what YOU say, because captions transcribe only your own
+ * microphone. This one describes the call, because transcription hears
+ * everybody.
+ */
+function PickTranscriptionLanguage() {
+  const state = useState();
+  const { t } = useLingui();
+
+  const options: Record<string, CategorySelectOption> = {
+    "": {
+      title: t`Detect automatically`,
+      shortDesc: t`Detect automatically`,
+    },
+  };
+  for (const [code, name] of TRANSLATE_LANGUAGES) {
+    options[code] = {
+      title: name,
+      shortDesc: name,
+    };
+  }
+
+  return (
+    <CategoryButton.Select
+      icon={<MdSubtitles {...iconSize(22)} />}
+      title={<Trans>Call transcription language</Trans>}
+      value={
+        (state.settings.getValue("transcription:language") as string) ?? ""
+      }
+      options={options}
+      onUpdate={(code) =>
+        state.settings.setValue("transcription:language", code as string)
+      }
+    />
+  );
+}
+
+/**
  * Toggle reading translated call captions aloud (on-device TTS)
  */
 function ToggleSpeakCaptions() {
@@ -437,4 +486,3 @@ function PickTimeFormat() {
 //     </Switch>
 //   );
 // }
-
