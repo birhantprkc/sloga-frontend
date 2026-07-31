@@ -51,13 +51,14 @@ self.addEventListener("push", (event) => {
     }
   }
 
-  // Calendar pushes deep-link: to the linked channel when one is set (e.g. the
-  // voice channel a reminder invites you to join), else to the server's events
-  // page.
+  // Calendar pushes deep-link. Only REMINDERS go to the linked channel (the
+  // voice channel to join); invites and cancellations land on the events page,
+  // where the RSVP affordances live.
   if (!notification.url && notification.server_id && notification.event_id) {
-    const path = notification.channel_id
-      ? `/server/${notification.server_id}/channel/${notification.channel_id}`
-      : `/server/${notification.server_id}/events`;
+    const path =
+      notification.channel_id && notification.kind === "reminder"
+        ? `/server/${notification.server_id}/channel/${notification.channel_id}`
+        : `/server/${notification.server_id}/events`;
     notification.url = new URL(path, self.registration.scope).toString();
   }
 

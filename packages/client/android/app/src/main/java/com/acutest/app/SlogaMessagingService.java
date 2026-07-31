@@ -143,17 +143,30 @@ public class SlogaMessagingService extends FirebaseMessagingService {
                 String eventTitle = data.get("title");
                 String serverId = data.get("server_id");
                 String eventId = data.get("event_id");
+                String channelId = data.get("channel_id");
+                String offsetMs = data.get("offset_ms");
                 String title;
                 String body;
                 String channel;
+                // Reminders land in the linked channel (the voice channel to
+                // join); invites/cancellations land on the events page, where
+                // the RSVP affordances live. Mirrors the web service worker.
+                String path = serverId != null ? "/server/" + serverId + "/events" : null;
                 if ("cancelled".equals(kind)) {
                     title = "Event cancelled";
                     body = (eventTitle != null ? eventTitle : "An event") + " was cancelled";
                     channel = CHANNEL_SOCIAL;
                 } else if ("reminder".equals(kind)) {
-                    title = "Upcoming event";
-                    body = (eventTitle != null ? eventTitle : "An event") + " is starting soon";
+                    // offset 0 = the at-start firing (explicit on the wire; never
+                    // inferred from clocks) — mirrors the server-side render().
+                    boolean started = "0".equals(offsetMs);
+                    title = started ? "Event started" : "Upcoming event";
+                    body = (eventTitle != null ? eventTitle : "An event")
+                            + (started ? " has started" : " is starting soon");
                     channel = CHANNEL_MESSAGES; // time-sensitive -> high importance
+                    if (serverId != null && channelId != null) {
+                        path = "/server/" + serverId + "/channel/" + channelId;
+                    }
                 } else { // "invited" (or an unknown future kind)
                     title = "Event invitation";
                     body = "You're invited to " + (eventTitle != null ? eventTitle : "an event");
@@ -163,7 +176,7 @@ public class SlogaMessagingService extends FirebaseMessagingService {
                         channel,
                         eventId != null ? eventId.hashCode() : 6,
                         title, body, null,
-                        serverId != null ? "/server/" + serverId : null);
+                        path);
                 break;
             }
         }

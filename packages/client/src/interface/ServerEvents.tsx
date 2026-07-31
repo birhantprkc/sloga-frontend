@@ -196,6 +196,12 @@ export const ServerEvents: Component = () => {
   const refreshDetailDebounced = debounced(() => refreshDetail(), 200);
 
   const onGridEvent = (event: CalendarEvent) => {
+    // The SDK drops events whose channel we can no longer resolve (a move out
+    // of our visibility) — close a detail pane left open on one, or its stale
+    // snapshot would keep offering RSVP buttons that all 404.
+    if (openEvent()?.id === event.id && !event.$exists) {
+      setOpenEvent(undefined);
+    }
     if (event.serverId === server()?.id) refetchGrid();
   };
   const onRsvp = (event: CalendarEvent) => {
@@ -1087,11 +1093,16 @@ function EventDetail(props: {
     return joinWindowOpen();
   };
 
+  // Actually-connected-to-THIS-channel — NOT `showCard`, which is also true for
+  // any voice-enabled text channel and whenever the call has other participants.
+  const connectedHere = () =>
+    voice.state() === "CONNECTED" && voice.channel()?.id === voiceChannel()?.id;
+
   async function joinChannel() {
     const channel = voiceChannel();
     if (!channel) return;
     try {
-      if (!voice.showCard(channel)) await voice.connect(channel);
+      if (!connectedHere()) await voice.connect(channel);
       navigate(`/server/${props.server.id}/channel/${channel.id}`);
     } catch (error) {
       showError(error);
@@ -1214,7 +1225,7 @@ function EventDetail(props: {
           <Button variant="filled" onPress={joinChannel}>
             <Symbol size={18}>call</Symbol>
             &nbsp;
-            <Show when={!voice.showCard(voiceChannel()!)} fallback={<Trans>Open channel</Trans>}>
+            <Show when={!connectedHere()} fallback={<Trans>Open channel</Trans>}>
               <Trans>Join channel</Trans>
             </Show>
           </Button>
