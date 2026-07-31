@@ -517,6 +517,17 @@ class Voice {
   #setTranscriptionLoading: Setter<number | undefined>;
   #transcriber: CallTranscriber | undefined;
   /**
+   * A stopped session still finishing text for audio it already captured.
+   *
+   * Kept because export must wait on it: stop hands the button back straight
+   * away, so an export can easily begin while the tail is still being
+   * transcribed, and writing then would silently truncate the file.
+   */
+  #draining: Promise<void> | undefined;
+  /** Utterances the model still owes, for the panel's "finishing N". */
+  transcriptionPending: Accessor<number>;
+  #setTranscriptionPending: Setter<number>;
+  /**
    * The transcript itself.
    *
    * Lives on the Voice instance, NOT on the transcriber, because it has to
@@ -663,6 +674,10 @@ class Voice {
       createSignal<number>();
     this.transcriptionLoading = transcriptionLoading;
     this.#setTranscriptionLoading = setTranscriptionLoading;
+
+    const [transcriptionPending, setTranscriptionPending] = createSignal(0);
+    this.transcriptionPending = transcriptionPending;
+    this.#setTranscriptionPending = setTranscriptionPending;
 
     const [callNonEnrolled, setCallNonEnrolled] = createSignal<
       readonly string[]
@@ -2080,12 +2095,15 @@ class Voice {
     const generation = this.#captureClaim.generation;
 
     if (this.transcribing()) {
-      this.#setTranscriptionBusy(true);
-      try {
-        await this.#stopTranscribing("user");
-      } finally {
-        this.#setTranscriptionBusy(false);
-      }
+      // NOT awaited, and the busy flag is deliberately not held.
+      //
+      // Capture ends synchronously inside `#stopTranscribing`; everything the
+      // promise is still waiting on is the model finishing text for audio that
+      // was already captured. Holding the button disabled through that made
+      // stop look broken during a long backlog — reported from a real
+      // two-party call. The button frees immediately; the panel reports the
+      // remaining work as "finishing N".
+      void this.#stopTranscribing("user");
       return;
     }
 
@@ -2133,6 +2151,7 @@ class Voice {
         // the settings store, and the caller already has it.
         { language: options.language },
         (message) => this.#setTranscriptionError(message),
+        (count) => this.#setTranscriptionPending(count),
       );
 
       try {
@@ -2177,8 +2196,13 @@ class Voice {
     const channelId = this.channel()?.id;
 
     // Capture ends synchronously inside stop(); the returned promise is the
-    // model finishing what it already has.
+    // model finishing what it already has. Held so that an export started
+    // after stop still waits for the tail rather than writing a truncated file.
     const drained = transcriber?.stop();
+    this.#draining = drained;
+    void drained?.finally(() => {
+      if (this.#draining === drained) this.#draining = undefined;
+    });
 
     if (channelId && cause !== "disconnect") {
       await this.#captureClaim
@@ -2224,7 +2248,7 @@ class Voice {
     }
 
     // PHASE 2 — let the queue drain, THEN write.
-    await this.#transcriber?.stop().catch(() => undefined);
+    await this.#settleTranscription();
 
     const text = this.#renderTranscript(format, names, startedAt, channelName);
 
@@ -2252,7 +2276,7 @@ class Voice {
    * actually want, since a transcript usually ends up pasted somewhere.
    */
   async copyTranscript(names: Map<string, string>): Promise<void> {
-    await this.#transcriber?.stop().catch(() => undefined);
+    await this.#settleTranscription();
     const startedAt = this.transcript.startedAt ?? Date.now();
     const text = this.#renderTranscript(
       "txt",
@@ -2266,6 +2290,23 @@ class Voice {
       console.error("[rtc] failed to copy the transcript", error);
       this.#setTranscriptionError("Couldn't copy the transcript.");
     }
+  }
+
+  /**
+   * Wait until nothing more is going to be added to the transcript.
+   *
+   * Two cases, and both have to be covered or an export writes a file that is
+   * missing the last thing anyone said: a session still RUNNING (stop it, then
+   * wait), and one already stopped whose backlog is still being transcribed in
+   * the background. Both are bounded — see `CallTranscriber`'s drain timeout.
+   */
+  async #settleTranscription(): Promise<void> {
+    const running = this.#transcriber;
+    if (running) {
+      await this.#stopTranscribing("user").catch(() => undefined);
+      return;
+    }
+    await this.#draining?.catch(() => undefined);
   }
 
   #renderTranscript(

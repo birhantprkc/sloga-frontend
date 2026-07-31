@@ -64,6 +64,15 @@ export function VoiceTranscriptPanel() {
             <Show when={voice.transcribing()}>
               <LiveDot title={t`Transcribing`} />
             </Show>
+            {/* Without this, a backlog after Stop is indistinguishable from a
+                stop that did nothing — lines keep appearing and the user
+                presses again. Capture has already ended here; this is only
+                text still being written. */}
+            <Show when={!voice.transcribing() && voice.transcriptionPending()}>
+              <Pending>
+                <Trans>Finishing {voice.transcriptionPending()}…</Trans>
+              </Pending>
+            </Show>
           </Header>
 
           <Lines>
@@ -167,6 +176,13 @@ const LiveDot = styled("span", {
     background: "var(--md-sys-color-error)",
     animation: "voiceRecordingPulse 2s ease-in-out infinite",
     "@media (prefers-reduced-motion: reduce)": { animation: "none" },
+  },
+});
+
+const Pending = styled("span", {
+  base: {
+    fontSize: "0.75rem",
+    color: "var(--md-sys-color-on-surface-variant)",
   },
 });
 
