@@ -76,6 +76,12 @@ import type {
 } from "@revolt/client";
 
 import {
+  type AdmitAbort,
+  admitAbortIsBenign,
+  admitAbortIsRetryable,
+  enrolmentVerdict,
+} from "./mlsAdmitPolicy";
+import {
   type CallMode,
   type CallModeEvent,
   callModeTransition,
@@ -119,6 +125,27 @@ const NEGOTIATING_FAILSAFE_MS = 5_000;
  *  (LOW-2) — beyond this the probe shares the DS's unreachability and the
  *  availability escape applies. */
 const MAX_FAILSAFE_REARMS = 2;
+/**
+ * Backoff before an admitter re-drives a join request whose attempt aborted
+ * transiently. The joiner re-broadcasts only `MAX_JOINER_RETRIES` times over
+ * ~40 s and then stops, so past that window the admitter is the ONLY side that
+ * can still close the gap — see `admitAbortIsRetryable`.
+ */
+const ADMIT_RETRY_MS = 5_000;
+/** Bounded re-drives of one join request before the admitter gives up (loud
+ *  via the roster reconcile, which keeps reporting the non-enrolled peer). */
+const MAX_ADMIT_RETRIES = 6;
+/**
+ * Backstop deadline for the joiner's "am I actually in the group?" assertion
+ * (`#assertSelfEnrolled`). Generous on purpose: it must outlast the whole
+ * bounded ladder — enrol + create/join + `MAX_JOINER_RETRIES` Welcome waits +
+ * a re-establish — so that when it fires, waiting really has been exhausted
+ * and the verdict is not a false alarm. The precise give-up points latch
+ * sooner; this only catches a path that reaches neither.
+ */
+const SELF_ENROLMENT_DEADLINE_MS = 90_000;
+/** Re-check interval for the self-enrolment assertion while still pending. */
+const SELF_ENROLMENT_RECHECK_MS = 10_000;
 
 // ---- Rotation seam (step 4; plan §1.5 / §4.4) ------------------------------
 
@@ -909,6 +936,29 @@ export class MlsCallSession {
   /** R-1/R-2 metrics recorder (step 8) — off the correctness path. */
   #metrics = new MlsMetrics();
 
+  // --- Admit re-drive + joiner self-enrolment assertion ----------------------
+  /**
+   * Join requests this member accepted but has not yet turned into a committed
+   * Add, keyed `user_id:device_id`. Populated whenever an admit attempt aborts
+   * transiently, drained by `#redriveAdmits`. Exists because the joiner stops
+   * re-broadcasting after `MAX_JOINER_RETRIES` — without this the FIRST
+   * transient abort strands the joiner outside the group for the whole call.
+   */
+  #pendingAdmits = new Map<
+    string,
+    { request: MlsJoinRequest; attempts: number }
+  >();
+  /** Self-rescheduling re-drive tick for `#pendingAdmits` (null when idle). */
+  #admitRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Set once our OWN device was seen in a group's VERIFIED roster. */
+  #enrolmentProven = false;
+  /** Whether the self-enrolment alarm has already fired (latch once). */
+  #enrolmentAlarmed = false;
+  /** Deadline after which an unproven enrolment is reported (see below). */
+  #enrolmentDeadline = 0;
+  /** The single in-flight enrolment re-check tick (null when idle). */
+  #enrolmentTimer: ReturnType<typeof setTimeout> | null = null;
+
   constructor(deps: MlsCallSessionDeps) {
     this.#deps = deps;
   }
@@ -956,6 +1006,7 @@ export class MlsCallSession {
     if (this.#state !== "starting") return;
     this.#unregisterSink = this.#deps.bridge.registerMlsSink(this.#onSink);
     this.#armNegotiatingFailsafe();
+    this.#armEnrolmentAssertion();
     try {
       await this.#ensureKeyPackages();
       if (this.#terminal()) return;
@@ -996,6 +1047,117 @@ export class MlsCallSession {
       void this.#media?.resumePublishing?.("negotiating");
     }, NEGOTIATING_FAILSAFE_MS);
     this.#timers.add(timer);
+  }
+
+  // ---- Joiner self-enrolment assertion --------------------------------------
+
+  /**
+   * "Am I actually in the group?" — the JOINER-side check.
+   *
+   * The member that owns a group already detects the failure: its roster
+   * reconcile finds a participant present in the SFU but absent from the MLS
+   * roster and raises the mixed-call banner. A joiner had no equivalent, and
+   * the asymmetry was silent in the dangerous direction:
+   *
+   *  - `#startReconcile` (which computes the non-enrolled set) is started ONLY
+   *    by `#toActive`, and a joiner reaches `#toActive` ONLY via a Welcome. A
+   *    join that never completes therefore never even computes the banner.
+   *  - The lifecycle states that DO record the failure (`resecuring`, `failed`)
+   *    reach the UI through `#deps.onStateChange`, which `state.tsx` never
+   *    passes, and through `chipState`'s NON-reactive `session.state()` read,
+   *    which nothing re-runs. Both are dead ends.
+   *
+   * So a user who let the other party start the call was shown no banner, no
+   * chip and no log while media was NOT end-to-end encrypted. This assertion
+   * closes that: positive proof of our own leaf in a natively-VERIFIED roster,
+   * or a loud report through `#latchLoud` — the ONE failure channel `state.tsx`
+   * actually observes (`onEncryptionState` → `callEncryptionError` →
+   * `chipState({latchedError})` → NOT-ENCRYPTED).
+   */
+  #armEnrolmentAssertion(): void {
+    this.#enrolmentDeadline = Date.now() + SELF_ENROLMENT_DEADLINE_MS;
+    this.#scheduleEnrolmentCheck();
+  }
+
+  /** Single-flight: a re-establish re-arms the assertion, never stacks it. */
+  #scheduleEnrolmentCheck(): void {
+    if (this.#enrolmentTimer) {
+      clearTimeout(this.#enrolmentTimer);
+      this.#timers.delete(this.#enrolmentTimer);
+      this.#enrolmentTimer = null;
+    }
+    if (this.#enrolmentProven || this.#enrolmentAlarmed || this.#terminal()) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      this.#enrolmentTimer = null;
+      this.#timers.delete(timer);
+      void this.#assertSelfEnrolled(false);
+    }, SELF_ENROLMENT_RECHECK_MS);
+    this.#enrolmentTimer = timer;
+    this.#timers.add(timer);
+  }
+
+  /**
+   * Run one enrolment check. `ladderExhausted` is asserted by the callers that
+   * KNOW waiting is over (join retries spent, re-establish cap reached); the
+   * periodic tick passes false and lets the deadline decide.
+   */
+  async #assertSelfEnrolled(ladderExhausted: boolean): Promise<void> {
+    if (this.#enrolmentProven || this.#enrolmentAlarmed) return;
+    if (this.#state === "closed") return;
+
+    const selfInRoster = await this.#selfInRoster();
+    const verdict = enrolmentVerdict({
+      selfInRoster,
+      ladderExhausted: ladderExhausted || Date.now() >= this.#enrolmentDeadline,
+      // A plain voice call (feature off) and a cap-refused joiner are BOTH
+      // states where having no group is correct and already reported by their
+      // own path — never raise a second, wrong alarm for them.
+      terminal:
+        this.#terminal() ||
+        this.#callMode.kind === "off" ||
+        this.#callMode.kind === "call_full",
+    });
+
+    if (verdict === "enrolled") {
+      if (selfInRoster) this.#enrolmentProven = true;
+      return;
+    }
+    if (verdict === "pending") {
+      this.#scheduleEnrolmentCheck();
+      return;
+    }
+
+    this.#enrolmentAlarmed = true;
+    const error = new Error(
+      `MLS call join never completed: this device (${this.#deps.deviceId}) is ` +
+        `not in the call's encryption group${
+          this.#groupId ? ` (${this.#groupId})` : ""
+        } — media is NOT end-to-end encrypted.`,
+    );
+    console.error("[mls] self-enrolment assertion failed", error);
+    // Loud through the channel state.tsx observes — NOT #setState alone.
+    this.#latchLoud(error);
+    this.#toResecuring("self-enrolment assertion failed");
+  }
+
+  /** Whether OUR OWN device sits in `#groupId`'s natively-verified roster. */
+  async #selfInRoster(): Promise<boolean> {
+    const groupId = this.#groupId;
+    if (!groupId) return false;
+    try {
+      const state = await this.#deps.bridge.callState(groupId);
+      return state.members.some(
+        (m) =>
+          m.user_id === this.#deps.userId &&
+          m.device_id === this.#deps.deviceId,
+      );
+    } catch {
+      // Unreadable native state is NOT proof of enrolment — fail closed and
+      // let the caller treat it as still-unproven.
+      return false;
+    }
   }
 
   /**
@@ -1238,8 +1400,12 @@ export class MlsCallSession {
       if (welcomed) return;
     }
 
-    // Retries exhausted — loud RE-SECURING, never plaintext (§1.4).
+    // Retries exhausted — loud RE-SECURING, never plaintext (§1.4). The
+    // ladder is now definitively spent, so run the self-enrolment assertion
+    // immediately rather than waiting out the backstop deadline: this is the
+    // precise moment we know the join did not happen.
     this.#toResecuring("join timed out after retries");
+    await this.#assertSelfEnrolled(true);
   }
 
   #waitForWelcome(timeoutMs: number): Promise<boolean> {
@@ -1286,23 +1452,30 @@ export class MlsCallSession {
     request: MlsJoinRequest,
     rejoin: boolean,
   ): Promise<void> {
-    if (this.#state !== "active" || request.group_id !== this.#groupId) return;
-
-    switch (
-      joinRequestAction({
-        rejoin,
-        isSelf: request.user_id === this.#deps.userId,
-      })
-    ) {
-      case "ignore":
-        return;
-      case "serve_rejoin":
-        return this.#serveRejoin(request);
-      case "schedule_admit":
-        break; // fall through to the admit scheduling below
-    }
+    // Classify FIRST (the policy is pure and needs no session state): our own
+    // fan-out echo must never enter the retry ledger below, and a rejoin serve
+    // has its own path. Only a real `schedule_admit` is ledgered.
+    const action = joinRequestAction({
+      rejoin,
+      isSelf: request.user_id === this.#deps.userId,
+    });
+    if (action === "ignore") return;
 
     const key = `${request.user_id}:${request.device_id}`;
+
+    // These two used to drop the request outright. Both are transient — the
+    // session may still be establishing, or a re-establish may be swapping the
+    // group underneath us — and the joiner's own retries expire long before a
+    // slow ladder finishes, so route them through the retry ledger instead.
+    if (this.#state !== "active") {
+      return this.#abortAdmit(key, request, "not_active");
+    }
+    if (request.group_id !== this.#groupId) {
+      return this.#abortAdmit(key, request, "other_group");
+    }
+
+    if (action === "serve_rejoin") return this.#serveRejoin(request);
+
     if (this.#scheduledAdmits.has(key)) return; // already scheduled
     // D11 (6.4 gate LOW-1): RESERVE the dedup key BEFORE the awaits (mirrors
     // #serveRejoin) so a duplicate join request arriving during the reconcile
@@ -1317,13 +1490,14 @@ export class MlsCallSession {
     // so a rejected reconcile doesn't ORPHAN the reserved key (audit final LOW).
     try {
       await this.#reconcileRoster([request.user_id]);
-    } catch {
-      this.#scheduledAdmits.delete(key);
-      return;
+    } catch (error) {
+      return this.#abortAdmit(key, request, "state_unavailable", error);
     }
-    if (this.#state !== "active" || request.group_id !== this.#groupId) {
-      this.#scheduledAdmits.delete(key);
-      return;
+    if (this.#state !== "active") {
+      return this.#abortAdmit(key, request, "not_active");
+    }
+    if (request.group_id !== this.#groupId) {
+      return this.#abortAdmit(key, request, "other_group");
     }
 
     // Stagger by our leaf index (roster order): the low leaf admits first, the
@@ -1337,13 +1511,13 @@ export class MlsCallSession {
           m.user_id === this.#deps.userId &&
           m.device_id === this.#deps.deviceId,
       );
-    } catch {
-      this.#scheduledAdmits.delete(key);
-      return;
+    } catch (error) {
+      return this.#abortAdmit(key, request, "state_unavailable", error);
     }
     if (leaf < 0) {
-      this.#scheduledAdmits.delete(key); // we are not a member of this group
-      return;
+      // We are not in this group's roster, so we cannot issue an Add. Retryable
+      // (a Welcome may still be in flight) — never a silent drop.
+      return this.#abortAdmit(key, request, "not_a_member");
     }
 
     const timer = setTimeout(() => {
@@ -1352,6 +1526,79 @@ export class MlsCallSession {
       void this.#tryAdmit(request);
     }, leafStaggerDelayMs(leaf));
     this.#scheduledAdmits.set(key, timer);
+    this.#timers.add(timer);
+  }
+
+  /**
+   * Record why one admit attempt stopped, and re-drive it if it can still
+   * succeed.
+   *
+   * Every exit on this path used to be a bare `return`: no log, no retry, no
+   * state change. That is how a call sat at epoch 0 with a pending join intent
+   * for an hour while both clients believed the group was fine. The joiner
+   * stops re-broadcasting after ~40 s, so a transient abort past that window
+   * can only be recovered from HERE.
+   */
+  #abortAdmit(
+    key: string,
+    request: MlsJoinRequest,
+    abort: AdmitAbort,
+    error?: unknown,
+  ): void {
+    this.#scheduledAdmits.delete(key);
+
+    if (!admitAbortIsRetryable(abort)) {
+      this.#pendingAdmits.delete(key);
+      if (!admitAbortIsBenign(abort)) {
+        console.warn(
+          `[mls] admit of ${key} abandoned (${abort}) — that participant is ` +
+            `NOT in the encryption group`,
+          error,
+        );
+      }
+      return;
+    }
+
+    const entry = this.#pendingAdmits.get(key) ?? { request, attempts: 0 };
+    entry.request = request; // freshest intent wins (a re-broadcast supersedes)
+    entry.attempts++;
+    if (entry.attempts > MAX_ADMIT_RETRIES) {
+      this.#pendingAdmits.delete(key);
+      console.error(
+        `[mls] admit of ${key} gave up after ${MAX_ADMIT_RETRIES} attempts ` +
+          `(last: ${abort}) — that participant is NOT in the encryption group`,
+        error,
+      );
+      // No downgrade is raised here: the roster reconcile already reports this
+      // peer as non-enrolled every tick, which is the honest, live signal.
+      return;
+    }
+
+    this.#pendingAdmits.set(key, entry);
+    console.warn(
+      `[mls] admit of ${key} aborted (${abort}), retry ` +
+        `${entry.attempts}/${MAX_ADMIT_RETRIES} in ${ADMIT_RETRY_MS}ms`,
+      error,
+    );
+    this.#scheduleAdmitRedrive();
+  }
+
+  /** Single-flight tick that re-drives every pending admit. */
+  #scheduleAdmitRedrive(): void {
+    if (this.#admitRetryTimer || this.#terminal()) return;
+    const timer = setTimeout(() => {
+      this.#admitRetryTimer = null;
+      this.#timers.delete(timer);
+      if (this.#terminal()) return;
+      // The ledger is NOT cleared here: an entry survives until the admit
+      // completes (`#tryAdmit` deletes it) or the cap is hit, so `attempts`
+      // keeps counting across re-drives and the bound is real. A re-drive that
+      // aborts again lands back in `#abortAdmit`, which schedules the next tick.
+      for (const entry of [...this.#pendingAdmits.values()]) {
+        void this.#onJoinRequest(entry.request, false);
+      }
+    }, ADMIT_RETRY_MS);
+    this.#admitRetryTimer = timer;
     this.#timers.add(timer);
   }
 
@@ -1460,7 +1707,13 @@ export class MlsCallSession {
   }
 
   async #tryAdmit(request: MlsJoinRequest): Promise<void> {
-    if (this.#state !== "active" || request.group_id !== this.#groupId) return;
+    const key = `${request.user_id}:${request.device_id}`;
+    if (this.#state !== "active") {
+      return this.#abortAdmit(key, request, "not_active");
+    }
+    if (request.group_id !== this.#groupId) {
+      return this.#abortAdmit(key, request, "other_group");
+    }
 
     // Still outstanding? A racing admitter's Add may have already won. Also the
     // cap gate: the call stays E2EE and the overflow joiner is refused
@@ -1474,31 +1727,57 @@ export class MlsCallSession {
             m.user_id === request.user_id && m.device_id === request.device_id,
         )
       ) {
-        return; // already admitted — nothing to do
+        // Already admitted — terminal and benign; clears the ledger.
+        return this.#abortAdmit(key, request, "already_member");
       }
       if (state.members.length >= MAX_E2EE_CALL_MEMBERS) {
         console.warn(
           `[mls] refusing admission: E2EE call at cap ${MAX_E2EE_CALL_MEMBERS}`,
         );
-        return; // call full for E2EE — do not admit
+        return this.#abortAdmit(key, request, "call_full");
       }
-    } catch {
-      return;
+    } catch (error) {
+      return this.#abortAdmit(key, request, "state_unavailable", error);
     }
 
-    const claimRes = await this.#deps.bridge.mlsClaimKeyPackage({
-      device_id: this.#deps.deviceId,
-      group_id: this.#groupId,
-      targets: [{ user_id: request.user_id, device_id: request.device_id }],
-    });
+    let claimRes;
+    try {
+      claimRes = await this.#deps.bridge.mlsClaimKeyPackage({
+        device_id: this.#deps.deviceId,
+        group_id: this.#groupId,
+        targets: [{ user_id: request.user_id, device_id: request.device_id }],
+      });
+    } catch (error) {
+      // A throwing claim (network, ratelimit, closed group) previously
+      // propagated out of the un-awaited `#tryAdmit` as an unhandled rejection
+      // and the joiner was never retried.
+      return this.#abortAdmit(key, request, "claim_failed", error);
+    }
     if (claimRes.kind === "feature_disabled") {
+      this.#abortAdmit(key, request, "feature_disabled");
       this.#toPlaintext();
       return;
     }
-    if (claimRes.kind !== "ok") return;
+    if (claimRes.kind !== "ok") {
+      return this.#abortAdmit(key, request, "claim_failed", claimRes.kind);
+    }
 
     const claimed = claimedFromResult(claimRes.body.results[0]);
-    if (!claimed) return; // Exhausted / NotFound → the joiner republishes + retries
+    if (!claimed) {
+      // Exhausted / NotFound → the joiner republishes; re-drive so we notice.
+      return this.#abortAdmit(
+        key,
+        request,
+        "claim_failed",
+        claimRes.body.results[0]?.status,
+      );
+    }
+
+    // The attempt now owns a consumed KeyPackage and reaches the DS. Whatever
+    // `#stageAndSubmit` decides (won / lost-and-rebased / loud) is reported by
+    // its own paths, so the ledger entry is retired here rather than spending
+    // another one-time KeyPackage on a blind re-drive.
+    this.#pendingAdmits.delete(key);
 
     // callAdmit re-verifies the binding signature natively and stages the Add
     // (with Welcome). Submit it under the H1 lock.
@@ -2042,6 +2321,18 @@ export class MlsCallSession {
     for (const timer of this.#scheduledAdmits.values())
       if (timer) clearTimeout(timer);
     this.#scheduledAdmits.clear();
+    this.#pendingAdmits.clear(); // requests are group-scoped
+    if (this.#admitRetryTimer) {
+      clearTimeout(this.#admitRetryTimer);
+      this.#timers.delete(this.#admitRetryTimer);
+      this.#admitRetryTimer = null;
+    }
+    // Enrolment is proven PER GROUP: a fresh group means we must prove our own
+    // leaf again, with a fresh deadline for the new ladder. The alarm latch is
+    // deliberately NOT cleared — once the user has been told the call was not
+    // encrypted, that stays told.
+    this.#enrolmentProven = false;
+    this.#armEnrolmentAssertion();
     // A group re-establish is a fresh crypto context (new epoch-0 keys): drop
     // the rotation memos/timers so the next group's first key installs
     // immediately and no stale Add-grace can fire against it.
@@ -3026,6 +3317,11 @@ export class MlsCallSession {
   #toActive(): void {
     this.#reestablishes = 0;
     this.#setState("active");
+    // Opportunistically PROVE enrolment rather than assume it: reaching
+    // "active" is exactly the belief that was wrong in the silent failure, so
+    // the proof is our own leaf in the natively-verified roster. Never alarms
+    // here — the ladder is not exhausted, so an unproven check just reschedules.
+    void this.#assertSelfEnrolled(false);
     // Begin reconciling the SFU set against the MLS roster (step 5) + the
     // lowest-leaf heartbeat (step 6). Idempotent — a re-establish restarts fresh
     // loops; both no-op before `bindMedia` / on feature-off.
@@ -3048,6 +3344,12 @@ export class MlsCallSession {
     console.error("[mls] loud failure", error);
     this.#lastError = error;
     this.#setState("failed");
+    // A terminal session failure MUST reach the UI. `#setState` alone does not:
+    // `onStateChange` is optional and state.tsx does not pass it, and
+    // `chipState` reads `session.state()` non-reactively so a flip to "failed"
+    // re-renders nothing. `#latchLoud` is the wired path (onEncryptionState →
+    // callEncryptionError → NOT-ENCRYPTED chip); it self-dedups.
+    this.#latchLoud(error);
   }
 
   #setState(state: MlsSessionState): void {
