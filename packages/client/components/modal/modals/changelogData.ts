@@ -9,6 +9,24 @@ import type { ChangelogResponse } from "./Changelog";
  */
 export const CHANGELOGS: ChangelogResponse[] = [
   {
+    id: "sloga-2026-08-02",
+    title: "Patch Notes",
+    published_at: "2026-08-02T23:45:00.000Z",
+    markdown_content: `## v0.19.0 — Slogaball
+
+### 🎮 Play while you wait
+- **Alone in a call?** Waiting for the rest of the group to hop on, or for someone to pick up? A little pill appears: **Play while you wait?** Click it.
+- **Slogaball** — aim from the top, drop the ball, watch it bounce. Clear the amber pegs to win, and catch the ball in the sweeping bucket for a free shot. Ten balls a round.
+- **Your best score sticks around** — kept on your device and nowhere else. The whole game runs locally; nothing about it ever touches the server.
+- **The instant someone joins, it gets out of the way** — it pauses and tucks itself away on its own, no fumbling to close anything mid-hello. Left waiting again? It resumes right where you parked it.
+- Mute, deafen and leave stay visible and clickable the whole time — the game never sits over your call controls.
+- A nod to a certain peg-and-ball classic people played in raid groups while the last stragglers logged on. If you know, you know.
+
+- On the web now. Reading this in the desktop or Android app? Your version already has it.
+
+*Sloga — Hop on.*`,
+  },
+  {
     id: "sloga-2026-07-30",
     title: "Patch Notes",
     published_at: "2026-07-30T16:00:00.000Z",
