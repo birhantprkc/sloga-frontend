@@ -22,6 +22,7 @@ import {
 } from "../../rtc/overlay/protocol.ts";
 
 import {
+  OVERLAY_OPACITY_MIN,
   OverlayCornerNames,
   OverlayDisplayModeNames,
   cleanOverlaySettings,
@@ -80,13 +81,16 @@ describe("cleanOverlaySettings — opacity", () => {
   });
 
   it("clamps below the floor rather than rejecting", () => {
+    // Against the constant, not a literal: this test hardcoded 0.2 and was
+    // the only thing that failed when the floor moved to 0.1, which is a
+    // test asserting a number rather than the behaviour it is named for.
     assert.equal(
       cleanOverlaySettings({ overlayOpacity: 0 }).overlayOpacity,
-      0.2,
+      OVERLAY_OPACITY_MIN,
     );
     assert.equal(
       cleanOverlaySettings({ overlayOpacity: -5 }).overlayOpacity,
-      0.2,
+      OVERLAY_OPACITY_MIN,
     );
   });
 

@@ -37,27 +37,39 @@ export const OVERLAY_DISPLAY_MODES: OverlayDisplayMode[] = [
   "names",
 ];
 
+/**
+ * Where the overlay anchors. Still called `corner` on the wire — the two
+ * mid-edge anchors were added after the field was named, and renaming it
+ * would break nothing but buy nothing either.
+ */
 export type OverlayCorner =
   | "top-left"
   | "top-right"
+  | "middle-left"
+  | "middle-right"
   | "bottom-left"
   | "bottom-right";
 
 export const OVERLAY_CORNERS: OverlayCorner[] = [
   "top-left",
   "top-right",
+  "middle-left",
+  "middle-right",
   "bottom-left",
   "bottom-right",
 ];
 
 /** Bounds of the user-facing settings, enforced by the store's `clean()`. */
-export const OVERLAY_OPACITY_MIN = 0.2;
+// 0.1, not 0.2: at 20% a light roster over dark game footage still reads as
+// solid, because perceived contrast against a dark background falls off far
+// more slowly than alpha does. Asked for after the first live game test.
+export const OVERLAY_OPACITY_MIN = 0.1;
 export const OVERLAY_OPACITY_MAX = 1;
 export const OVERLAY_SCALE_MIN = 0.6;
 export const OVERLAY_SCALE_MAX = 2;
 
 export type OverlayConfig = {
-  /** 0.2–1 */
+  /** 0.1–1 */
   opacity: number;
   /** 0.6–2 */
   scale: number;

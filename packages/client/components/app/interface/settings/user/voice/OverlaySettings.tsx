@@ -3,6 +3,10 @@ import { Show } from "solid-js";
 import { Trans } from "@lingui-solid/solid/macro";
 
 import {
+  OVERLAY_OPACITY_MAX,
+  OVERLAY_OPACITY_MIN,
+} from "@revolt/rtc/overlay/protocol";
+import {
   overlaySessionType,
   overlayShellAvailable,
 } from "@revolt/rtc/overlay/shell";
@@ -70,10 +74,12 @@ export function OverlaySettings() {
           />
           <CategoryButton.Select
             icon="blank"
-            title={<Trans>Screen corner</Trans>}
+            title={<Trans>Screen position</Trans>}
             options={{
               "top-left": { title: <Trans>Top left</Trans> },
               "top-right": { title: <Trans>Top right</Trans> },
+              "middle-left": { title: <Trans>Middle left</Trans> },
+              "middle-right": { title: <Trans>Middle right</Trans> },
               "bottom-left": { title: <Trans>Bottom left</Trans> },
               "bottom-right": { title: <Trans>Bottom right</Trans> },
             }}
@@ -108,8 +114,11 @@ export function OverlaySettings() {
                   </Trans>
                 </Text>
                 <Slider
-                  min={20}
-                  max={100}
+                  // From the constant, not a literal: this hardcoded 20 was
+                  // the reason the floor could move in the store and leave the
+                  // slider refusing to go there.
+                  min={OVERLAY_OPACITY_MIN * 100}
+                  max={OVERLAY_OPACITY_MAX * 100}
                   step={5}
                   value={Math.round(voice.overlayOpacity * 100)}
                   onInput={(e) =>

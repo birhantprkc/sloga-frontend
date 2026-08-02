@@ -6515,8 +6515,16 @@ msgid "Round-trip time for your own microphone stream. Shows a dash while your m
 msgstr "Round-trip time for your own microphone stream. Shows a dash while your mic is not transmitting."
 
 #: components/app/interface/settings/user/voice/OverlaySettings.tsx
-msgid "Screen corner"
-msgstr "Screen corner"
+msgid "Middle left"
+msgstr "Middle left"
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Middle right"
+msgstr "Middle right"
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Screen position"
+msgstr "Screen position"
 
 #: components/app/interface/settings/user/voice/OverlaySettings.tsx
 msgid "Show latency"

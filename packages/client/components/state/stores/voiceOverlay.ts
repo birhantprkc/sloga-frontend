@@ -9,8 +9,10 @@
  *    `node --test`. This module has no imports at all, so the clamps can be
  *    specified directly rather than through a running store.
  * 2. **The bounds live in one place.** The settings sliders, the store's
- *    `clean()` and the overlay renderer all have to agree about 0.2–1 and
- *    0.6–2; three copies of a range is three chances to drift.
+ *    `clean()` and the overlay renderer all have to agree about 0.1–1 and
+ *    0.6–2; three copies of a range is three chances to drift. (The opacity
+ *    slider used to hardcode its own `min` and did exactly that when the
+ *    floor moved from 0.2 to 0.1 — it reads the constant now.)
  *
  * The enum lists are duplicated from `@revolt/rtc/overlay/protocol` rather
  * than imported, matching how the face-filter ids are handled: the rtc module
@@ -29,17 +31,21 @@ export const OverlayDisplayModeNames: OverlayDisplayModeName[] = [
 export type OverlayCornerName =
   | "top-left"
   | "top-right"
+  | "middle-left"
+  | "middle-right"
   | "bottom-left"
   | "bottom-right";
 
 export const OverlayCornerNames: OverlayCornerName[] = [
   "top-left",
   "top-right",
+  "middle-left",
+  "middle-right",
   "bottom-left",
   "bottom-right",
 ];
 
-export const OVERLAY_OPACITY_MIN = 0.2;
+export const OVERLAY_OPACITY_MIN = 0.1;
 export const OVERLAY_OPACITY_MAX = 1;
 export const OVERLAY_SCALE_MIN = 0.6;
 export const OVERLAY_SCALE_MAX = 2;
@@ -53,7 +59,7 @@ export const OVERLAY_SCALE_MAX = 2;
  */
 export interface TypeVoiceOverlay {
   overlayEnabled: boolean;
-  /** 0.2–1 */
+  /** 0.1–1 */
   overlayOpacity: number;
   /** 0.6–2 */
   overlayScale: number;
