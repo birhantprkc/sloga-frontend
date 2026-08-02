@@ -4334,6 +4334,19 @@ export class E2EEBridge implements E2EEAdapter {
   }
 
   /**
+   * Claimed `user:device` leaf identities for a group, UNVERIFIED.
+   *
+   * Signalling ONLY: it exists because acceptance is whole-roster, so one
+   * unpinned leaf fails `callState` without naming the device it is missing.
+   * Use it to decide which signed device listings to reconcile — never as an
+   * identity claim. Every trust decision still runs through the native leaf
+   * verification, and pinning is separately gated.
+   */
+  callRosterIdentities(groupId: string): Promise<string[]> {
+    return this.#invoke("e2ee_call_roster_identities", { groupId });
+  }
+
+  /**
    * **THE documented §7.2 egress.** Per-sender, per-epoch 32-byte HKDF frame
    * key MATERIAL (+ the previous epoch during rotation overlap) for the
    * LiveKit worker. Handed straight to `MlsKeyProvider` — memory-only, never

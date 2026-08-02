@@ -1457,6 +1457,28 @@ export class MlsCallSession {
       add(userId, deviceId);
     }
 
+    // The SFU roster is NOT the group roster, and acceptance is whole-roster:
+    // one unpinned leaf makes the whole verify fail. A leaf whose SFU
+    // connection dropped lingers in the group for up to the ghost-divergence
+    // window, and a member LiveKit has not surfaced yet is missing from the
+    // SFU set entirely — either is enough to make a Welcome unprocessable.
+    // These claims are unverified by construction and are used ONLY to decide
+    // which signed listings to fetch; the pin itself is separately gated.
+    if (this.#groupId) {
+      try {
+        for (const identity of await this.#deps.bridge.callRosterIdentities(
+          this.#groupId,
+        )) {
+          const [userId, deviceId] = identity.split(":");
+          add(userId, deviceId);
+        }
+      } catch {
+        // No group yet (joiner before its Welcome) or unreadable — the SFU
+        // set still covers the common case. Fail open here is safe: this
+        // only ever WIDENS the set of listings we reconcile.
+      }
+    }
+
     if (!byUser.size) return;
     await this.#deps.bridge.reconcileCallRoster(
       [...byUser].map(([userId, deviceIds]) => ({
@@ -1642,14 +1664,25 @@ export class MlsCallSession {
     // verifies after a reconcile; a forged relay never does. NEVER stage a
     // Remove on the server relay alone. Wrap the reconcile so a rejected IPC
     // round-trip doesn't ORPHAN the reserved key (audit final LOW).
+    // Both failures used to drop the key and return with no ledger, no retry
+    // and no log — so one transient listing fetch meant the stale leaf was
+    // never removed and the rejoining device could NEVER re-enter the group,
+    // silently and permanently. Both are retryable, and they are distinct: a
+    // reconcile can fail for network reasons, whereas an intent that will not
+    // verify may simply be missing the pin the reconcile just created.
     try {
       await this.#reconcileRoster([
         { userId: request.user_id, deviceId: request.device_id },
       ]);
+    } catch (error) {
+      return this.#abortAdmit(key, request, "state_unavailable", error);
+    }
+    try {
       await this.#deps.bridge.callVerifyJoinIntent(request);
-    } catch {
-      this.#scheduledAdmits.delete(key);
-      return; // unverifiable — refuse to serve (fail closed, quiet)
+    } catch (error) {
+      // Fail closed — we still refuse to serve THIS attempt — but ledger it
+      // so a later attempt can succeed once the identity is pinned.
+      return this.#abortAdmit(key, request, "leaf_unverifiable", error);
     }
     if (this.#state !== "active" || request.group_id !== this.#groupId) {
       this.#scheduledAdmits.delete(key);
@@ -1893,6 +1926,19 @@ export class MlsCallSession {
           onTargetRefused(error);
           return;
         }
+        // A poisoned epoch is not a session failure, it is a group that must
+        // be replaced. Native reports it for any commit built against a
+        // poisoned row, and a scheduled ghost-remove or heartbeat can easily
+        // fire between the drain poisoning the group and the successor
+        // transition running. Failing here instead would drop every later
+        // join request via the `#state !== "active"` guard — the same wedge
+        // shape the admit path already closes.
+        if (
+          (error as { type?: string } | null)?.type === "mls_poisoned_epoch"
+        ) {
+          this.#scheduleGroupAction(() => this.#poisonedSuccessor());
+          return;
+        }
         this.#onLoud(error);
         return;
       }
@@ -1940,7 +1986,22 @@ export class MlsCallSession {
           break;
       }
     } catch (error) {
-      this.#onLoud(error);
+      // Everything past the build is post-submit bookkeeping: `callCommitWon`,
+      // the inline rebase and its gap refetch. Those fail for transient
+      // reasons — an epoch mismatch we can re-derive, a network throw — and a
+      // terminal `failed` here would drop every later join request via the
+      // `#state !== "active"` guard, turning one dropped request into a call
+      // with no further E2EE admission. Re-secure and retry instead; the
+      // escalation ladder still ends loud if it cannot converge.
+      const type = (error as { type?: string } | null)?.type;
+      if (type === "mls_poisoned_epoch") {
+        this.#scheduleGroupAction(() => this.#poisonedSuccessor());
+      } else {
+        console.error("[mls] commit staging failed, re-securing", error);
+        await this.#safeCommitLost();
+        this.#toResecuring("commit staging failed");
+        this.#scheduleReestablish("commit staging failed");
+      }
     } finally {
       release();
     }
@@ -2213,7 +2274,20 @@ export class MlsCallSession {
         this.#seen.add(envelope.id);
         this.#retries.delete(envelope.id);
         this.#deps.bridge.ackEnvelopes([envelope.id]);
-        if (disp.kind === "error") this.#onLoud(disp.error);
+        // Do NOT fail the session here. The mailbox is server-ordered, so a
+        // single crafted envelope carrying an unrecognised error type would
+        // otherwise reach the retry cap and take the whole call down —
+        // dropping every subsequent join request via the `#state !== "active"`
+        // guard. Dropping the ENVELOPE is the containment; the sender is one
+        // peer, not the session. If this actually broke our own group state,
+        // the roster reconcile and `#assertSelfEnrolled` still surface it.
+        if (disp.kind === "error") {
+          console.error(
+            "[mls] dropping an envelope we cannot classify; the session " +
+              "stays active and enrolment is re-checked by the reconcile",
+            disp.error,
+          );
+        }
         return;
       }
     }
