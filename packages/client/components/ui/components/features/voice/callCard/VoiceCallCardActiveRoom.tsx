@@ -14,6 +14,7 @@ import { IconButton } from "@revolt/ui/components/design";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 import { scrollableStyles } from "@revolt/ui/directives";
 
+import { MinigameChip } from "../minigame/MinigameChip";
 import { ParticipantTile, tile } from "./ParticipantTile";
 import { VoiceCallCardActions } from "./VoiceCallCardActions";
 import {
@@ -397,6 +398,11 @@ function Participants() {
           </For>
         </Grid>
       </InRoom>
+      {/* "Play while you wait": only offered while ALONE in the call, and its
+          overlay covers the participant AREA only — inside this relative
+          container on purpose, so the controls bar below stays clickable
+          mid-game and the card-level banners (z5/z6) stay on top. */}
+      <MinigameChip />
     </Call>
   );
 }

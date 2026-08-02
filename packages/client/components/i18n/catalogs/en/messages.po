@@ -6620,3 +6620,27 @@ msgstr "Call transcription language"
 #: components/app/interface/settings/user/Language.tsx
 msgid "Detect automatically"
 msgstr "Detect automatically"
+
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Play while you wait?"
+msgstr "Play while you wait?"
+
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Slogaball minigame"
+msgstr "Slogaball minigame"
+
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Out of balls!"
+msgstr "Out of balls!"
+
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Field cleared!"
+msgstr "Field cleared!"
+
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Click to play again"
+msgstr "Click to play again"
+
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Free ball!"
+msgstr "Free ball!"

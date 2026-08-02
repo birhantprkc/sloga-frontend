@@ -201,6 +201,24 @@ export default {
       (import.meta.env.VITE_CFG_ENABLE_CALL_TRANSCRIPTION as string) ?? ""
     ).toLowerCase() == "true",
   /**
+   * Enable the "play while you wait" call minigame (Slogaball).
+   *
+   * DEFAULT OFF, same posture as transcription above: nothing in a call card
+   * lights up in a public build just because its bundle arrived. Unlike
+   * transcription there is no platform reason — the game is one lazy chunk,
+   * canvas-drawn, zero shipped assets, so a bundled desktop/Android dist can
+   * run it fine — the flag is purely the release decision.
+   *
+   * Read in `minigameChipVisible()` (the policy the chip, the overlay and the
+   * lazy engine chunk all sit behind), so one flag darkens the lot.
+   *
+   * Set `VITE_CFG_ENABLE_CALL_MINIGAME=true` for builds that should have it.
+   */
+  ENABLE_CALL_MINIGAME:
+    (
+      (import.meta.env.VITE_CFG_ENABLE_CALL_MINIGAME as string) ?? ""
+    ).toLowerCase() == "true",
+  /**
    * Session ID to set during development.
    */
   DEVELOPMENT_SESSION_ID: import.meta.env.DEV
