@@ -4,6 +4,7 @@ import { css } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 
 import { useVoice } from "@revolt/rtc";
+import { readRttMs } from "@revolt/rtc/rtt";
 import { IconButton } from "@revolt/ui/components/design";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
@@ -40,7 +41,14 @@ export function VoiceStatsOverlay(props: { size: "xs" | "sm" }) {
         .getTrackPublication("microphone")
         ?.track?.getRTCStatsReport?.();
 
-      let rtt: number | null = null;
+      // RTT comes from the ICE candidate pair, NOT from
+      // `remote-inbound-rtp.roundTripTime`, which is what this used to read
+      // and which is derived from RTCP receiver reports — on an audio-only
+      // call those are sparse enough that the figure goes stale and reads in
+      // the thousands of milliseconds on a perfectly healthy call (measured
+      // live, 6293 ms, 2026-08-01). Jitter and packet loss legitimately come
+      // from the RTCP report and stay where they are.
+      const rtt: number | null = readRttMs(reports) ?? null;
       let jitter: number | null = null;
       let packetsLost: number | null = null;
       let bytes = 0;
@@ -49,7 +57,6 @@ export function VoiceStatsOverlay(props: { size: "xs" | "sm" }) {
         reports.forEach((report: RTCStats) => {
           const r = report as any;
           if (r.type === "remote-inbound-rtp") {
-            if (typeof r.roundTripTime === "number") rtt = Math.round(r.roundTripTime * 1000);
             if (typeof r.jitter === "number") jitter = Math.round(r.jitter * 1000);
             if (typeof r.packetsLost === "number") packetsLost = r.packetsLost;
           }

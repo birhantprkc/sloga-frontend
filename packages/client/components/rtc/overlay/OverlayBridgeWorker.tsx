@@ -30,6 +30,7 @@ import { userInformation } from "@revolt/markdown/users";
 import { useState } from "@revolt/state";
 import { participantUserId } from "@revolt/ui/components/features/voice/participantIdentity";
 
+import { readRttMs } from "../rtt";
 import { useVoice } from "../state";
 
 import { openOverlayBridge } from "./bridge";
@@ -250,9 +251,11 @@ export function OverlayBridgeWorker() {
         .on(RoomEvent.ParticipantDisconnected, bump);
     }
 
-    // RTT, only when the readout is on. Inherited caveat, knowingly: this
-    // reflects LOCAL OUTBOUND AUDIO only, and yields nothing at all when the
-    // mic is not published — the overlay shows "—" then rather than a zero.
+    // RTT, only when the readout is on. The figure comes from the ICE
+    // candidate pair (see `readRttMs`) — the RTCP-derived one this used to
+    // read showed 6293 ms on a healthy call in the first live game test.
+    // Still sampled off the mic publication, so it yields nothing at all when
+    // the mic is not published and the overlay shows "—" rather than a zero.
     const rttPoll = setInterval(() => {
       if (!state.voice.overlayShowLatency || !inCall()) return;
       const current = voice.room();
@@ -262,20 +265,7 @@ export function OverlayBridgeWorker() {
         // tsc errors and there is no reason to add a second one.
         .getTrackPublication(Track.Source.Microphone)
         ?.track?.getRTCStatsReport?.()
-        .then((reports) => {
-          if (!reports) return;
-          let value: number | undefined;
-          reports.forEach((report: RTCStats) => {
-            const entry = report as RTCStats & { roundTripTime?: number };
-            if (
-              entry.type === "remote-inbound-rtp" &&
-              typeof entry.roundTripTime === "number"
-            ) {
-              value = Math.round(entry.roundTripTime * 1000);
-            }
-          });
-          setRttMs(value);
-        })
+        .then((reports) => setRttMs(readRttMs(reports)))
         .catch(() => setRttMs(undefined));
     }, RTT_POLL_MS);
 
