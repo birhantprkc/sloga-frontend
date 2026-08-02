@@ -62,6 +62,33 @@ cp -f "$ASSETS/ort"/ort-wasm-simd-threaded.jsep.wasm \
 # into this target, leave it behind rather than shipping a stale copy.
 rm -f "$DEST/ort/ort-wasm-simd-threaded.wasm" "$DEST/ort/ort-wasm-simd-threaded.mjs"
 
+# Vite emits a SECOND copy of the same runtime into `assets/`, ~21MB, because
+# the ONNX runtime names its own `.wasm` through `new URL(..., import.meta.url)`
+# and the bundler follows that. Nothing ever fetches it: the engine sets
+# `wasmPaths` to `/models/ort/` before loading anything, and the only reference
+# to the bundled copy sits behind ORT's `!wasm.wasmPaths` guard on the proxy-
+# worker path, which is doubly dead here because `wasm.proxy` is false.
+#
+# Proven rather than reasoned. A copy of the built dist with this file deleted
+# and `/models/` staged — a shell, in other words — loaded the model, created
+# the ORT session and transcribed, and the server's own request log showed the
+# runtime fetched from `/models/ort/` and NOT ONE request under `/assets/` for
+# a `.wasm`. The server had no SPA fallback, so a stray fetch would have been a
+# hard 404 rather than a silently mis-typed index.html.
+#
+# 🔴 This is safe only while the engine pins `wasmPaths`. If that override is
+# ever dropped, ORT falls back to exactly this file and the shells break while
+# the web stays fine — so keep the two changes together.
+#
+# Only the shells' copy is trimmed. `packages/client/dist` keeps its copy: the
+# web never downloads it either, and rebuilding the dist to drop it would risk
+# the live bundle for disk that no user pays for.
+echo "==> dropping the unreferenced bundled runtime from assets/"
+before="$(du -sk "$TARGET" | cut -f1)"
+rm -f "$TARGET"/assets/ort-wasm*.wasm
+after="$(du -sk "$TARGET" | cut -f1)"
+printf '  %-46s %s\n' "reclaimed" "$(( (before - after) / 1024 ))MB"
+
 echo "==> staged"
 printf '  %-46s %s\n' "whisper-tiny" "$(du -sh "$DEST/whisper-tiny" | cut -f1)"
 printf '  %-46s %s\n' "ort" "$(du -sh "$DEST/ort" | cut -f1)"
