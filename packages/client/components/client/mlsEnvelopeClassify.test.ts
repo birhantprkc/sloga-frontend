@@ -1,9 +1,11 @@
 // Unit spec for the native-rejection → disposition policy — run with Node's
 // built-in runner:
 //   node --test components/client/mlsEnvelopeClassify.test.ts   (Node >=23.6 strips types)
-// Focus (gate MED-5): `mls_leaf_rejected` is an ALLOW-LIST — ONLY
-// `binding_unverified` (with both ids) recovers via `needs_identity`;
-// `unknown_identity`, every hostile reason, and any FUTURE/missing reason are
+// Focus (gate MED-5): `mls_leaf_rejected` is an ALLOW-LIST — only reasons a
+// device reconcile can REPAIR recover via `needs_identity`, and both ids must
+// be present. That is `binding_unverified` and, since the call plane gained
+// the ability to pin a brand-new device from its signed listing,
+// `unknown_identity`. Every hostile reason and any FUTURE/missing reason stay
 // terminal loud drops. The default-closed property is asserted here, not just
 // by code comment.
 import assert from "node:assert/strict";
@@ -57,9 +59,24 @@ test("binding_unverified MISSING user_id or device_id → terminal loud drop (no
   );
 });
 
-test("unknown_identity → terminal loud drop (a reconcile cannot pin a brand-new device)", () => {
+test("unknown_identity WITH both ids → needs_identity (the call plane can now pin a brand-new device from its signed listing)", () => {
   assert.deepEqual(
     classifyEnvelopeError(leafRejected("unknown_identity", "01USER", "dev1")),
+    { kind: "needs_identity", userId: "01USER", deviceId: "dev1", ack: false },
+  );
+});
+
+// The recovery is a RECONCILE for a specific (user, device). Without both ids
+// there is nothing to reconcile, so it must fall through to the terminal drop
+// rather than recover into a no-op — otherwise the envelope is neither acked
+// nor repaired and the drain wedges.
+test("unknown_identity WITHOUT ids → terminal loud drop", () => {
+  assert.deepEqual(
+    classifyEnvelopeError(leafRejected("unknown_identity")),
+    terminalLoudDrop,
+  );
+  assert.deepEqual(
+    classifyEnvelopeError(leafRejected("unknown_identity", "01USER")),
     terminalLoudDrop,
   );
 });

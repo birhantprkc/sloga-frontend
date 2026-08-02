@@ -61,10 +61,11 @@ test("drop → successor when needed, else ack", () => {
   assert.deepEqual(A(drop(false), 0, 0, BOUNDS), { do: "ack" });
 });
 
-test("needs_identity first time → fetch_identity(userId)", () => {
+test("needs_identity first time → fetch_identity(userId, deviceId)", () => {
   assert.deepEqual(A(needsIdentity("01ALICE", "d1"), 0, 0, BOUNDS, false), {
     do: "fetch_identity",
     userId: "01ALICE",
+    deviceId: "d1",
   });
 });
 
@@ -81,6 +82,7 @@ test("needs_identity with FAILED reconciles → fetch_identity until the retry c
   assert.deepEqual(A(needsIdentity("01ALICE", "d1"), BOUNDS.maxRetries - 1, 0, BOUNDS, false), {
     do: "fetch_identity",
     userId: "01ALICE",
+    deviceId: "d1",
   });
   const action = A(needsIdentity("01ALICE", "d1"), BOUNDS.maxRetries, 0, BOUNDS, false);
   assert.equal(action.do, "rejoin_fresh");

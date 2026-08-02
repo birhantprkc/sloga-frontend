@@ -53,18 +53,36 @@ export function classifyEnvelopeError(error: unknown): EnvelopeDisposition {
         ack: true,
       };
     case "mls_leaf_rejected": {
-      // ALLOW-LIST (leaf-verify fix, audit MED-2): ONLY `binding_unverified`
-      // is recoverable — a signed device-listing reconcile upgrades the
-      // curve-only stub and the same envelope reprocesses. `unknown_identity`
-      // (no pin at all — reconcile cannot create one), every hostile reason
-      // (identity_changed / *_mismatch / bad_binding_signature / malformed /
-      // …), and any FUTURE reason default to the terminal loud drop below.
+      // ALLOW-LIST (leaf-verify fix, audit MED-2): only reasons a device
+      // reconcile can actually REPAIR are recoverable.
+      //
+      // `binding_unverified` — a signed device-listing reconcile upgrades
+      // the curve-only stub and the same envelope reprocesses.
+      //
+      // `unknown_identity` — no pin at all. This was terminal BECAUSE a
+      // reconcile could not create a pin, which is precisely the gap that
+      // made an encrypted call impossible between two devices that had
+      // never exchanged encrypted text. The call plane can now pin such a
+      // device from its signed listing, so the same reconcile-and-
+      // reprocess recovery applies. Without this the pin lands and nothing
+      // retries the envelope that needed it: the admitter recovers while
+      // the JOINER silently acks and discards its own Welcome — a half-fix
+      // that looks like a whole one.
+      //
+      // Every hostile reason (identity_changed / *_mismatch /
+      // bad_binding_signature / malformed / …) and any FUTURE reason still
+      // default to the terminal loud drop below.
       const e = error as {
         user_id?: string;
         device_id?: string;
         reason?: string;
       };
-      if (e.reason === "binding_unverified" && e.user_id && e.device_id) {
+      if (
+        (e.reason === "binding_unverified" ||
+          e.reason === "unknown_identity") &&
+        e.user_id &&
+        e.device_id
+      ) {
         return {
           kind: "needs_identity",
           userId: e.user_id,

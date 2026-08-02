@@ -1437,14 +1437,33 @@ export class MlsCallSession {
    * own leaf is self-authority (`verify_own_leaf`), so self is skipped.
    * Fail-closed: a user we can't verify has its leaf refused later.
    */
-  async #reconcileRoster(extraUserIds: string[] = []): Promise<void> {
-    const ids = new Set(extraUserIds);
+  async #reconcileRoster(
+    extra: { userId: string; deviceId: string }[] = [],
+  ): Promise<void> {
+    const byUser = new Map<string, Set<string>>();
+    const add = (userId: string, deviceId?: string) => {
+      if (!userId || userId === this.#deps.userId) return;
+      const devices = byUser.get(userId) ?? new Set<string>();
+      if (deviceId) devices.add(deviceId);
+      byUser.set(userId, devices);
+    };
+
+    for (const entry of extra) add(entry.userId, entry.deviceId);
+    // SFU identities are `user:device`. The device half used to be dropped
+    // here; it is what lets the pin be scoped to the devices actually in
+    // this call rather than everything the server lists for that user.
     for (const identity of this.#media?.sfuParticipants() ?? []) {
-      ids.add(identity.split(":")[0]);
+      const [userId, deviceId] = identity.split(":");
+      add(userId, deviceId);
     }
-    ids.delete(this.#deps.userId);
-    if (!ids.size) return;
-    await this.#deps.bridge.reconcileCallRoster([...ids]);
+
+    if (!byUser.size) return;
+    await this.#deps.bridge.reconcileCallRoster(
+      [...byUser].map(([userId, deviceIds]) => ({
+        userId,
+        deviceIds: [...deviceIds],
+      })),
+    );
   }
 
   // ---- Admit scheduler (existing member admitting a joiner) -----------------
@@ -1490,7 +1509,9 @@ export class MlsCallSession {
     // instead of failing loud (admitter) / poisoning (existing member). Wrap
     // so a rejected reconcile doesn't ORPHAN the reserved key (audit final LOW).
     try {
-      await this.#reconcileRoster([request.user_id]);
+      await this.#reconcileRoster([
+        { userId: request.user_id, deviceId: request.device_id },
+      ]);
     } catch (error) {
       return this.#abortAdmit(key, request, "state_unavailable", error);
     }
@@ -1622,7 +1643,9 @@ export class MlsCallSession {
     // Remove on the server relay alone. Wrap the reconcile so a rejected IPC
     // round-trip doesn't ORPHAN the reserved key (audit final LOW).
     try {
-      await this.#reconcileRoster([request.user_id]);
+      await this.#reconcileRoster([
+        { userId: request.user_id, deviceId: request.device_id },
+      ]);
       await this.#deps.bridge.callVerifyJoinIntent(request);
     } catch {
       this.#scheduledAdmits.delete(key);
@@ -2128,7 +2151,9 @@ export class MlsCallSession {
             return;
           }
           try {
-            await this.#deps.bridge.reconcileCallRoster([action.userId]);
+            await this.#deps.bridge.reconcileCallRoster([
+              { userId: action.userId, deviceIds: [action.deviceId] },
+            ]);
             // Progress budget: only a COMPLETED reconcile counts — the escalation
             // to rejoin-fresh must mean "reconciled, leaf STILL unverifiable",
             // never "the reconcile never ran". A transient failure instead

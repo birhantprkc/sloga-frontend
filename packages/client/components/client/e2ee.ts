@@ -1689,7 +1689,7 @@ export class E2EEBridge implements E2EEAdapter {
    */
   async #reconcileDevices(
     userId: string,
-  ): Promise<{ new_devices: string[] } | null> {
+  ): Promise<{ new_devices: string[]; listing: unknown[] } | null> {
     await this.#ensureBootStatus();
     if (!this.status.get("state")?.enabled) return null;
 
@@ -1744,7 +1744,10 @@ export class E2EEBridge implements E2EEAdapter {
         })
         .catch(() => {});
     }
-    return report;
+    // The listing rides out with the report so the call plane can pin from
+    // the EXACT bytes this reconcile saw. Re-fetching would open a window
+    // where the two calls disagree about what the server said.
+    return { ...report, listing: devices };
   }
 
   /**
@@ -1754,18 +1757,64 @@ export class E2EEBridge implements E2EEAdapter {
    * `groupReconcile`'s per-member device step. De-duplicated + concurrent;
    * fail-closed PER USER: one we can't fetch (or whose listing doesn't cover a
    * device) stays unverified and its leaf is refused loudly later, never
-   * trusted. Only upgrades an existing curve-only stub / re-affirms a pin — a
-   * brand-new unpinned device stays UnknownIdentity (needs a bundle fetch,
-   * deferred).
+   * trusted.
+   *
+   * Reconcile alone can only UPGRADE a curve-only stub or re-affirm an
+   * existing pin, so a brand-new unpinned device used to stay
+   * UnknownIdentity — which meant two devices that had never exchanged
+   * encrypted TEXT could not hold an encrypted call at all. Each roster
+   * entry therefore names the specific `deviceIds` the call actually
+   * involves, and those get pinned from the same signed listing this
+   * reconcile just read. Devices the call did not name are never pinned:
+   * the listing is server-supplied and may carry anything.
+   *
+   * Returns the users for whom a device was newly pinned, so the caller can
+   * surface it. Gated on what the native op actually WROTE — never on
+   * `new_devices`, which also reports re-presented revoked devices.
    */
-  async reconcileCallRoster(userIds: string[]): Promise<void> {
-    await Promise.all(
-      [...new Set(userIds)].map((id) =>
-        this.#reconcileDevices(id).catch(() => {
-          /* unfetchable / unverifiable stays unverified — fail closed */
-        }),
+  async reconcileCallRoster(
+    roster: { userId: string; deviceIds: string[] }[],
+  ): Promise<string[]> {
+    const byUser = new Map<string, Set<string>>();
+    for (const entry of roster) {
+      const devices = byUser.get(entry.userId) ?? new Set<string>();
+      for (const id of entry.deviceIds) devices.add(id);
+      byUser.set(entry.userId, devices);
+    }
+
+    const selfUserId = this.#client.user?.id;
+    const pinnedUsers = await Promise.all(
+      [...byUser].map(([userId, deviceIds]) =>
+        this.#reconcileDevices(userId)
+          .then(async (report) => {
+            // Own devices are pinned only from a self bundle — own-device
+            // fan-out reaches every active pin of ours, so a listing pin
+            // here would silently widen the audience for every DM we send.
+            // (Native refuses this too; both guards are deliberate.)
+            if (!report || !selfUserId || userId === selfUserId) return null;
+
+            const targets = [...deviceIds];
+            if (!targets.length) return null;
+
+            const pinned = await this.#invoke<string[]>(
+              "e2ee_pin_call_identities",
+              {
+                selfUserId,
+                userId,
+                targets,
+                devices: report.listing,
+              },
+            );
+            return pinned.length ? userId : null;
+          })
+          .catch(() => {
+            /* unfetchable / unverifiable stays unverified — fail closed */
+            return null;
+          }),
       ),
     );
+
+    return pinnedUsers.filter((id): id is string => id !== null);
   }
 
   /**

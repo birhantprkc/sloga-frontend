@@ -23,7 +23,9 @@ export type DrainAction =
   | { do: "successor" }
   // Leaf-verify fix: reconcile this user's signed device listing OFF the lock,
   // then re-feed the SAME envelope (no ack, off #seen) — audit MED-3.
-  | { do: "fetch_identity"; userId: string }
+  // `deviceId` scopes any resulting pin to the device this envelope actually
+  // needs; the listing is server-supplied and may name others.
+  | { do: "fetch_identity"; userId: string; deviceId: string }
   // Leaf-verify fix, audit MED-1: reconcile made no progress (same user
   // rejected again) — a bare ack-drop would wedge the joiner (the admitter
   // already has it in-roster and never re-sends a Welcome), so discard local
@@ -80,7 +82,11 @@ export function drainAction(
           reason: `identity reconcile for ${disp.userId} unreachable`,
         };
       }
-      return { do: "fetch_identity", userId: disp.userId };
+      return {
+        do: "fetch_identity",
+        userId: disp.userId,
+        deviceId: disp.deviceId,
+      };
     case "error":
       return retries >= bounds.maxRetries
         ? { do: "ack_drop_poison" }
