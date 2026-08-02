@@ -459,7 +459,7 @@ export function VoiceGiveControlPanel() {
               </Heading>
               <Muted>{session().controllerName}</Muted>
               <Muted>
-                <Trans>Stop at any time with Ctrl+Shift+Alt+End.</Trans>
+                <Trans>Stop at any time with Ctrl+Shift+Alt+Q.</Trans>
               </Muted>
             </Match>
           </Switch>
@@ -512,7 +512,7 @@ export function VoiceGiveControlPanel() {
           </Show>
           <Show when={rc.status()?.hook?.hotkey_registered === false}>
             <Warning>
-              {t`Another program is using Ctrl+Shift+Alt+End, so that shortcut may not stop the session. Use the Stop button.`}
+              {t`Another program is using Ctrl+Shift+Alt+Q, so that shortcut may not stop the session. Use the Stop button.`}
             </Warning>
           </Show>
         </Sheet>

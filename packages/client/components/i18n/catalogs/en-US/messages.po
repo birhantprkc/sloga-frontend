@@ -707,7 +707,7 @@ msgid "Announcement channels can be followed by other servers, and their message
 msgstr ""
 
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
-msgid "Another program is using Ctrl+Shift+Alt+End, so that shortcut may not stop the session. Use the Stop button."
+msgid "Another program is using Ctrl+Shift+Alt+Q, so that shortcut may not stop the session. Use the Stop button."
 msgstr ""
 
 #: components/app/interface/settings/channel/Overview.tsx
@@ -5174,7 +5174,7 @@ msgid "Stop"
 msgstr ""
 
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
-msgid "Stop at any time with Ctrl+Shift+Alt+End."
+msgid "Stop at any time with Ctrl+Shift+Alt+Q."
 msgstr ""
 
 #: components/app/interface/settings/channel/Overview.tsx

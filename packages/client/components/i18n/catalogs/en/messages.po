@@ -707,8 +707,8 @@ msgid "Announcement channels can be followed by other servers, and their message
 msgstr "Announcement channels can be followed by other servers, and their messages published into those servers' channels."
 
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
-msgid "Another program is using Ctrl+Shift+Alt+End, so that shortcut may not stop the session. Use the Stop button."
-msgstr "Another program is using Ctrl+Shift+Alt+End, so that shortcut may not stop the session. Use the Stop button."
+msgid "Another program is using Ctrl+Shift+Alt+Q, so that shortcut may not stop the session. Use the Stop button."
+msgstr "Another program is using Ctrl+Shift+Alt+Q, so that shortcut may not stop the session. Use the Stop button."
 
 #: components/app/interface/settings/channel/Overview.tsx
 msgid "Another server"
@@ -5186,8 +5186,8 @@ msgid "Stop"
 msgstr "Stop"
 
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
-msgid "Stop at any time with Ctrl+Shift+Alt+End."
-msgstr "Stop at any time with Ctrl+Shift+Alt+End."
+msgid "Stop at any time with Ctrl+Shift+Alt+Q."
+msgstr "Stop at any time with Ctrl+Shift+Alt+Q."
 
 #: components/app/interface/settings/channel/Overview.tsx
 msgid "Stop being an Announcement Channel"

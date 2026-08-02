@@ -43,13 +43,18 @@ export function RemoteControlOverlays() {
   // It calls the native `rc_panic_local` rather than keeping the revoke in
   // renderer state: renderer state is what a compromised renderer controls,
   // and a kill switch is the last thing that should live there.
+  //
+  // Match `key` OR `code`: `key` follows the keyboard layout (agreeing with
+  // the native VK-based paths) but held modifiers can remap it; `code` is
+  // the physical QWERTY-Q position. Firing on either is fail-safe — this
+  // handler can only ever stop control.
   onMount(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (
         event.ctrlKey &&
         event.shiftKey &&
         event.altKey &&
-        event.code === "End"
+        (event.code === "KeyQ" || event.key.toLowerCase() === "q")
       ) {
         event.preventDefault();
         void rc.panic();
