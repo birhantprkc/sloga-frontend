@@ -132,7 +132,15 @@ export class CallTranscriber {
   #segmenterFor(identity: string): VadSegmenter {
     let segmenter = this.#segmenters.get(identity);
     if (!segmenter) {
-      segmenter = new VadSegmenter();
+      // Anchor this speaker's clock to where the transcript already is. A
+      // segmenter counts from its own first sample, so somebody who joins
+      // mid-transcription would otherwise time their speech from zero and sort
+      // to the top, scrambling the conversation. Everyone present at the start
+      // gets ~0 here, which is why a two-party call reads correctly and only a
+      // late arrival exposes it.
+      segmenter = new VadSegmenter({
+        originMs: Math.max(0, Date.now() - this.#startedAt),
+      });
       this.#segmenters.set(identity, segmenter);
     }
     return segmenter;

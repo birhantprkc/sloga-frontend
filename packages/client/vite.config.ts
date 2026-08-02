@@ -47,7 +47,12 @@ export default defineConfig({
         // vite-plugin-pwa THROWS (fails the build) on any globbed asset over it.
         // These are self-hosted, lazily fetched by @livekit/track-processors at
         // runtime — never precache them. Excludes the model too for good measure.
-        globIgnores: ["**/mediapipe/**"],
+        // ONNX Runtime's wasm is pulled into the bundle by the transformers.js
+        // import graph (21.6MB for the jsep build), and vite-plugin-pwa FAILS
+        // THE BUILD on any globbed asset over the cap rather than skipping it.
+        // Never precache it: transcription fetches its runtime from `/models/`
+        // at toggle time, so the bundled copy is never even loaded.
+        globIgnores: ["**/mediapipe/**", "**/ort-wasm*", "**/*.wasm"],
       },
       devOptions: {
         enabled: true,

@@ -40,6 +40,18 @@ export interface VadOptions {
   minSpeechMs: number;
   /** Mean voiced RMS below this is discarded — breath, hum, keyboard. */
   minSegmentRms: number;
+  /**
+   * Milliseconds already elapsed in the transcript when this segmenter was
+   * created, added to every timestamp it emits.
+   *
+   * One segmenter per speaker, each counting frames from its own first sample
+   * — so without this, a participant who joins after transcription has already
+   * started would time their speech from zero and sort to the TOP of the
+   * transcript, scrambling the conversation. Everyone present at the start
+   * gets 0 and is unaffected, which is why a two-party call reads correctly
+   * and only a late arrival exposes it.
+   */
+  originMs: number;
 }
 
 /**
@@ -56,6 +68,7 @@ export const DEFAULT_VAD_OPTIONS: VadOptions = {
   maxSegmentMs: 15_000,
   minSpeechMs: 320,
   minSegmentRms: 0.014,
+  originMs: 0,
 };
 
 /** 20 ms — short enough to place a cut precisely, long enough for stable RMS. */
@@ -259,8 +272,9 @@ export class VadSegmenter {
     kept.forEach((f, i) => pcm.set(f.samples, i * this.#frameSamples));
 
     return {
-      startMs: this.#currentStart * FRAME_MS,
-      endMs: (this.#currentStart + kept.length) * FRAME_MS,
+      startMs: this.#options.originMs + this.#currentStart * FRAME_MS,
+      endMs:
+        this.#options.originMs + (this.#currentStart + kept.length) * FRAME_MS,
       speechMs: voiced.length * FRAME_MS,
       pcm,
     };

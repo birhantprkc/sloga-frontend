@@ -180,6 +180,39 @@ test("the returned audio matches the segment's own timing", () => {
   assert.equal(segment.pcm.length, expected);
 });
 
+test("a late arrival's speech is timed from when they joined, not from zero", () => {
+  // One segmenter per speaker, each counting from its own first sample. Without
+  // an origin, someone who joins 40s into a transcript times their first word
+  // at ~0 and sorts to the TOP, scrambling the conversation. Everyone present
+  // at the start gets origin 0, which is why a two-party call reads correctly
+  // and only a late arrival exposes this.
+  const audio = concat(silence(200), speech(900), silence(900));
+
+  const fromStart = new VadSegmenter().push(audio);
+  const lateJoiner = new VadSegmenter({ originMs: 40_000 }).push(audio);
+
+  assert.equal(fromStart.length, 1);
+  assert.equal(lateJoiner.length, 1);
+  assert.equal(lateJoiner[0].startMs, fromStart[0].startMs + 40_000);
+  assert.equal(lateJoiner[0].endMs, fromStart[0].endMs + 40_000);
+  // The audio itself is untouched — only where it sits on the timeline moved.
+  assert.equal(lateJoiner[0].speechMs, fromStart[0].speechMs);
+  assert.equal(lateJoiner[0].pcm.length, fromStart[0].pcm.length);
+});
+
+test("the origin also applies to a flushed final utterance", () => {
+  // A late joiner who leaves mid-sentence must not have their last words
+  // relocated to the start of the transcript either.
+  const vad = new VadSegmenter({ originMs: 12_000 });
+  vad.push(speech(900));
+  const [segment] = vad.flush();
+
+  assert.ok(
+    segment.startMs >= 12_000,
+    `expected the flush to carry the origin, got ${segment.startMs}`,
+  );
+});
+
 test("a quieter mic still transcribes when the threshold is lowered", () => {
   // The gates are defaults, not laws: the seam has to stay tunable for a
   // shell whose capture chain is quieter than Chrome's. A sine's RMS is
