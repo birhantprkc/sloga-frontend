@@ -80,6 +80,7 @@ import {
   admitAbortIsBenign,
   admitAbortIsRetryable,
   enrolmentVerdict,
+  isAdmitTargetRefusal,
 } from "./mlsAdmitPolicy";
 import {
   type CallMode,
@@ -1740,6 +1741,19 @@ export class MlsCallSession {
       return this.#abortAdmit(key, request, "state_unavailable", error);
     }
 
+    // Pre-verify the joiner against OUR pins BEFORE spending anything on it.
+    // `callVerifyJoinIntent` is read-only native and checks the very pin
+    // (`peer_identities`) whose absence makes `callAdmit` throw
+    // `mls_leaf_rejected/unknown_identity` — the production failure. Doing it
+    // here means an unpinned device costs us no one-time KeyPackage and no
+    // claim-ratelimit slot, so the bounded re-drive is genuinely cheap and can
+    // pick the joiner up the moment a pin lands.
+    try {
+      await this.#deps.bridge.callVerifyJoinIntent(request);
+    } catch (error) {
+      return this.#abortAdmit(key, request, "leaf_unverifiable", error);
+    }
+
     let claimRes;
     try {
       claimRes = await this.#deps.bridge.mlsClaimKeyPackage({
@@ -1780,10 +1794,14 @@ export class MlsCallSession {
     this.#pendingAdmits.delete(key);
 
     // callAdmit re-verifies the binding signature natively and stages the Add
-    // (with Welcome). Submit it under the H1 lock.
+    // (with Welcome). Submit it under the H1 lock. `onTargetRefused` keeps a
+    // leaf we cannot verify from failing OUR session — the pre-check above
+    // catches the common case, this covers a refusal that only the claimed
+    // KeyPackage's own credential can reveal.
     await this.#stageAndSubmit(
       () => this.#deps.bridge.callAdmit(request, claimed),
       "admit",
+      (error) => this.#abortAdmit(key, request, "leaf_unverifiable", error),
     );
   }
 
@@ -1799,6 +1817,14 @@ export class MlsCallSession {
   async #stageAndSubmit(
     build: () => Promise<MlsSubmitCommit>,
     kind: StagedCommit["kind"],
+    /**
+     * Admit path only: handle a refusal of the admit TARGET (a leaf we cannot
+     * verify) instead of failing this session. Without it, `#onLoud` sets the
+     * state to `failed` and the `#state !== "active"` guard then drops every
+     * later join request — one unverifiable device disabling E2EE admission
+     * for the whole call, which is the production wedge this closes.
+     */
+    onTargetRefused?: (error: unknown) => void,
   ): Promise<void> {
     if (!this.#groupId || this.#terminal()) return;
     const groupId = this.#groupId;
@@ -1830,6 +1856,18 @@ export class MlsCallSession {
           kind === "admit" &&
           (error as { type?: string } | null)?.type === "mls_call_full"
         ) {
+          return;
+        }
+        // A leaf we cannot verify refuses THAT joiner, not our session. Our own
+        // media stays fully E2EE; the unadmitted peer keeps surfacing through
+        // the roster reconcile as non-enrolled, which is the honest signal.
+        if (onTargetRefused && isAdmitTargetRefusal(error)) {
+          console.error(
+            "[mls] refusing to admit: the joiner's leaf failed verification " +
+              "against our pinned identity for that device",
+            error,
+          );
+          onTargetRefused(error);
           return;
         }
         this.#onLoud(error);

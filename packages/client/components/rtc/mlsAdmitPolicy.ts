@@ -29,8 +29,30 @@ export type AdmitAbort =
   | "call_full"
   /** The DS refused the claim, or the target has no KeyPackage left. */
   | "claim_failed"
+  /**
+   * We hold no usable pin for the joiner's device, so its leaf cannot be
+   * verified (native `mls_leaf_rejected`, typically `unknown_identity`).
+   */
+  | "leaf_unverifiable"
   /** Media E2EE is switched off server-side — this is a plain voice call. */
   | "feature_disabled";
+
+/**
+ * Whether a staged-commit build error is a refusal of ONE admit TARGET rather
+ * than a failure of our own session.
+ *
+ * This distinction is the fix for the observed production wedge: a joiner whose
+ * device we have never pinned makes `callAdmit` throw `mls_leaf_rejected`, that
+ * went to `#onLoud`, `#onLoud` set the session state to `failed` — and from
+ * then on EVERY join request was dropped by the `#state !== "active"` guard. So
+ * one unverifiable device permanently disabled E2EE admission for the whole
+ * call. The admitter's own media stays fully encrypted throughout; the correct
+ * response is to refuse that ONE joiner (who then shows up as non-enrolled via
+ * the roster reconcile, which is the honest signal) and stay active.
+ */
+export function isAdmitTargetRefusal(error: unknown): boolean {
+  return (error as { type?: string } | null)?.type === "mls_leaf_rejected";
+}
 
 /**
  * Whether the abort may resolve on its own, so the request is worth re-trying.
@@ -47,6 +69,11 @@ export function admitAbortIsRetryable(abort: AdmitAbort): boolean {
     case "state_unavailable":
     case "not_a_member":
     case "claim_failed":
+    case "leaf_unverifiable":
+      // `leaf_unverifiable` is retryable because the pin set is NOT static: a
+      // device-list event, a DM open, or a roster reconcile can pin the device
+      // mid-call, and each re-drive re-runs `#reconcileRoster` first. Cheap,
+      // now that the pre-check catches it before any KeyPackage is claimed.
       return true;
     case "already_member":
     case "call_full":

@@ -11,6 +11,7 @@ import {
   admitAbortIsBenign,
   admitAbortIsRetryable,
   enrolmentVerdict,
+  isAdmitTargetRefusal,
 } from "./mlsAdmitPolicy.ts";
 
 const ALL: AdmitAbort[] = [
@@ -18,6 +19,7 @@ const ALL: AdmitAbort[] = [
   "other_group",
   "state_unavailable",
   "not_a_member",
+  "leaf_unverifiable",
   "already_member",
   "call_full",
   "claim_failed",
@@ -42,9 +44,48 @@ test("the transient aborts that stranded the joiner are ALL retryable", () => {
     "state_unavailable",
     "not_a_member",
     "claim_failed",
+    "leaf_unverifiable",
   ] as const) {
     assert.equal(admitAbortIsRetryable(abort), true, abort);
   }
+});
+
+test("mls_leaf_rejected is a TARGET refusal, not a session failure", () => {
+  // The production wedge: this error reached `#onLoud`, which set the session
+  // to `failed`, after which the `#state !== "active"` guard dropped EVERY
+  // later join request — one unverifiable device disabling E2EE admission for
+  // the whole call.
+  assert.equal(
+    isAdmitTargetRefusal({
+      type: "mls_leaf_rejected",
+      reason: "unknown_identity",
+      user_id: "01KWFKG47HBFTEEN6XPPS8H3HN",
+      device_id: "68410341a7718dfa88e5517924f2d10f",
+    }),
+    true,
+  );
+});
+
+test("genuine session failures are NOT treated as target refusals", () => {
+  for (const error of [
+    { type: "mls_group_not_found" },
+    { type: "mls_poisoned_epoch" },
+    { type: "storage" },
+    new Error("boom"),
+    null,
+    undefined,
+    "mls_leaf_rejected", // a bare string is not the structured native error
+  ]) {
+    assert.equal(isAdmitTargetRefusal(error), false, String(error));
+  }
+});
+
+test("a refused target is retryable but never benign", () => {
+  // Retryable: a pin can land mid-call (device-list event, DM open, roster
+  // reconcile) and the re-drive re-runs the reconcile first.
+  assert.equal(admitAbortIsRetryable("leaf_unverifiable"), true);
+  // Not benign: that participant genuinely is NOT in the encryption group.
+  assert.equal(admitAbortIsBenign("leaf_unverifiable"), false);
 });
 
 test("terminal aborts do not retry", () => {
@@ -68,6 +109,7 @@ test("only self-reporting refusals are benign", () => {
     "state_unavailable",
     "not_a_member",
     "claim_failed",
+    "leaf_unverifiable",
   ] as const) {
     assert.equal(admitAbortIsBenign(abort), false, abort);
   }
