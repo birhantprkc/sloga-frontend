@@ -175,6 +175,32 @@ export default {
       (import.meta.env.VITE_CFG_ENABLE_REMOTE_CONTROL as string) ?? ""
     ).toLowerCase() == "true",
   /**
+   * Enable on-device call transcription (the Transcribe button and its panel).
+   *
+   * DEFAULT OFF, opt-in, for the reason recording taught us: call recording
+   * shipped with no build-time gate at all and went live lit to every web user
+   * the moment its bundle was swapped, with rollback meaning a dist swap rather
+   * than a flag. This one has more reason to be gated, not less — the first
+   * press downloads ~44MB of speech model, inference runs continuously on the
+   * user's own machine for the length of the call, and the transcript is a
+   * durable artifact of what people said.
+   *
+   * It also fails in the desktop and Android shells today: they serve a bundled
+   * dist, so `/models/` has nothing behind it and the button would appear and
+   * then error. Until the assets ship with those installers, this flag is what
+   * keeps it out of them.
+   *
+   * Read at `transcriptionSupported()` so one flag darkens the button, the
+   * panel and the engine together.
+   *
+   * Set `VITE_CFG_ENABLE_CALL_TRANSCRIPTION=true` for builds that should have
+   * it.
+   */
+  ENABLE_CALL_TRANSCRIPTION:
+    (
+      (import.meta.env.VITE_CFG_ENABLE_CALL_TRANSCRIPTION as string) ?? ""
+    ).toLowerCase() == "true",
+  /**
    * Session ID to set during development.
    */
   DEVELOPMENT_SESSION_ID: import.meta.env.DEV

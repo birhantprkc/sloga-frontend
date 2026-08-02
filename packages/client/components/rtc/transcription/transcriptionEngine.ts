@@ -36,6 +36,8 @@
  * every start.
  */
 
+import { CONFIGURATION } from "@revolt/common";
+
 import { cleanTranscript } from "./transcriptText.ts";
 
 /**
@@ -110,6 +112,14 @@ export interface TranscriptionEngine {
  * silently does nothing.
  */
 export function transcriptionSupported(): boolean {
+  // The build-time gate comes FIRST, and this is the single choke point the
+  // button, the panel and the engine all pass through — see
+  // `CONFIGURATION.ENABLE_CALL_TRANSCRIPTION` for why it defaults off. In
+  // particular the desktop and Android shells serve a bundled dist with
+  // nothing behind `/models/`, so without the flag the button would appear
+  // there and fail on press.
+  if (!CONFIGURATION.ENABLE_CALL_TRANSCRIPTION) return false;
+
   return (
     typeof WebAssembly === "object" &&
     typeof AudioContext !== "undefined" &&
