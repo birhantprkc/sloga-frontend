@@ -9,6 +9,35 @@ import type { ChangelogResponse } from "./Changelog";
  */
 export const CHANGELOGS: ChangelogResponse[] = [
   {
+    id: "sloga-2026-08-03",
+    title: "Patch Notes",
+    published_at: "2026-08-03T20:00:00.000Z",
+    markdown_content: `## v0.20.0 — Call transcripts, on your device
+
+### 📝 Transcribe a call
+- **A transcribe button in DM, group and voice-channel calls.** A live panel shows who said what as they say it, and when you're done you can copy the text or save it as **.txt** or **.vtt** subtitles.
+- **Everything runs on your own device.** The speech model is fetched once and the audio never goes anywhere — it can't: calls are end-to-end encrypted, so there is no server copy to transcribe. Only someone in the call can transcribe it.
+- **Everyone in the call is told**, the same way as recording — a banner while it runs, a message in the channel, and a warning for anyone joining mid-way.
+- The transcript sticks around after the call ends, so you can still copy or export it once everyone's hung up.
+- On the web, Windows desktop and Android. Not on the Linux app just yet.
+
+### 🚪 Sign out, properly
+- **Sign out lives in your user menu now** as well as Settings — and both ask you first, so a stray click can't dump you back to the login screen.
+
+### 📅 Events
+- **Events with a voice channel show a Join button** — one click puts you in the right channel when it's time, no hunting through the sidebar.
+
+### 📞 Calls
+- **Camera tiles fill their card** instead of floating in a letterbox — faces, not bars.
+- **Starting a screen share now focuses it for you too**, not just for everyone else watching.
+- Fixed a case where an **encrypted call could refuse to connect** for a device that had never messaged the other side — it now sorts itself out instead of failing until a restart.
+
+### 📱 Phones
+- **Sideways works now.** Landscape on a phone had been getting a cramped desktop layout — and on iPhones a white strip down the side. Both fixed.
+
+*Sloga — Hop on.*`,
+  },
+  {
     id: "sloga-2026-08-02",
     title: "Patch Notes",
     published_at: "2026-08-02T23:45:00.000Z",
