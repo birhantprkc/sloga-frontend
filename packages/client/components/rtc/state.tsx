@@ -2933,15 +2933,20 @@ class Voice {
    * around underneath them:
    * - each share gets exactly ONE chance (ids remembered until the share
    *   ends), so un-focusing it is respected for as long as it runs;
-   * - a viewer already watching another share is never yanked to the new one;
-   * - the sharer's OWN screen is skipped — their card would show their card.
+   * - a viewer already watching another share is never yanked to the new one.
+   *
+   * The sharer's OWN screen is focused too (operator decision 2026-08-02, taken
+   * while watching the default layout in a live call). It does recurse — their
+   * card shows their card — but that recursion is already on screen in the
+   * unfocused tile, and leaving the share small while two avatar tiles take the
+   * frame was the worse trade. One chance per share id still applies, so a
+   * sharer who un-focuses their own screen keeps it that way.
    */
   #watchScreenShareFocus() {
     createEffect(() => {
       const shares = this.vidTracks().filter(
         (t) =>
           t.source === Track.Source.ScreenShare &&
-          !t.participant.isLocal &&
           "publication" in t &&
           t.publication,
       );
