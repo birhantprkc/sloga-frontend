@@ -171,6 +171,15 @@ export function RemoteControlOverlays() {
    */
   function ControllerPanel() {
     const [showCode, setShowCode] = createSignal(false);
+    // Once input is flowing, everything below the heading is onboarding the
+    // controller has already read, and it sits on top of the very screen they
+    // are supposed to be watching. Collapse to a compact bar and put the exit
+    // FIRST; `Details` brings the full stack back.
+    //
+    // Only the ACTIVE phase collapses. `waiting` is pre-consent — the reader
+    // has not acted yet and may still back out — so it keeps every word.
+    const [expanded, setExpanded] = createSignal(false);
+    const compact = (phase: string) => phase === "active" && !expanded();
     return (
       <Show when={rc.controlling()}>
         {(session) => (
@@ -191,19 +200,46 @@ export function RemoteControlOverlays() {
                 <Heading>
                   <Trans>Your input is being sent</Trans>
                 </Heading>
-                <Muted>
-                  <Trans>
-                    Watch their screen to see whether it is landing. Their
-                    computer can silently ignore input on system prompts and on
-                    windows with higher privileges, and they can take control
-                    back at any time.
-                  </Trans>
-                </Muted>
+                <Show when={!compact(session().phase)}>
+                  <Muted>
+                    <Trans>
+                      Watch their screen to see whether it is landing. Their
+                      computer can silently ignore input on system prompts and
+                      on windows with higher privileges, and they can take
+                      control back at any time.
+                    </Trans>
+                  </Muted>
+                </Show>
               </Match>
             </Switch>
             <Muted>{session().sharerName}</Muted>
 
-            {/* §1.8d — SIZE THE TILE FROM HERE, because you cannot size it
+            {/* Exit FIRST once control is live. The old order buried
+                `Release control` under the resize row, the click-through
+                note, Verify and the full claim — so the one control that
+                stops the session was the furthest thing from the reader,
+                on a panel that covers the screen they are watching. */}
+            <Show when={compact(session().phase)}>
+              <Row>
+                <Button
+                  size="sm"
+                  variant="_error"
+                  onPress={() => rc.endControlling("controller_released")}
+                >
+                  <Trans>Release control</Trans>
+                </Button>
+                <Button
+                  size="sm"
+                  variant="text"
+                  onPress={() => setExpanded(true)}
+                >
+                  <Trans>Details</Trans>
+                </Button>
+              </Row>
+            </Show>
+
+            <Show when={!compact(session().phase)}>
+              {/* §1.8d — SIZE THE TILE FROM HERE, because you cannot size it
                 from the tile.
 
                 The capture `Surface` is `zIndex: 20` over the whole tile so
@@ -227,66 +263,82 @@ export function RemoteControlOverlays() {
                 (false)` drops immersive on its way out, so one call restores
                 both. Message ids are reused from those buttons deliberately:
                 `lingui extract` does not run in this tree. */}
-            <Row>
-              <Show
-                when={voice.immersive()}
-                fallback={
+              <Row>
+                <Show
+                  when={voice.immersive()}
+                  fallback={
+                    <Button
+                      size="sm"
+                      variant="tonal"
+                      onPress={() => {
+                        voice.toggleFullscreen(true);
+                        voice.toggleImmersive(true);
+                      }}
+                    >
+                      <Trans>Maximize & hide participants</Trans>
+                    </Button>
+                  }
+                >
                   <Button
                     size="sm"
                     variant="tonal"
-                    onPress={() => {
-                      voice.toggleFullscreen(true);
-                      voice.toggleImmersive(true);
-                    }}
+                    onPress={() => voice.toggleFullscreen(false)}
                   >
-                    <Trans>Maximize & hide participants</Trans>
+                    <Trans>Exit theater mode</Trans>
                   </Button>
-                }
-              >
+                </Show>
+              </Row>
+              <Muted>
+                <Trans>
+                  Clicks on the shared screen go to their computer, so Sloga's
+                  own buttons over the video will not respond. Resize from here
+                  instead.
+                </Trans>
+              </Muted>
+
+              <Show when={session().sas}>
                 <Button
                   size="sm"
-                  variant="tonal"
-                  onPress={() => voice.toggleFullscreen(false)}
+                  variant="text"
+                  onPress={() => setShowCode((was) => !was)}
                 >
-                  <Trans>Exit theater mode</Trans>
+                  <Trans>Verify</Trans>
                 </Button>
+                <Show when={showCode()}>
+                  <Code>{session().sas}</Code>
+                  <Muted>
+                    <Trans>
+                      Read this aloud. If it does not match the code on their
+                      screen, stop — someone may be intercepting the connection.
+                    </Trans>
+                  </Muted>
+                </Show>
               </Show>
-            </Row>
-            <Muted>
-              <Trans>
-                Clicks on the shared screen go to their computer, so Sloga's own
-                buttons over the video will not respond. Resize from here
-                instead.
-              </Trans>
-            </Muted>
 
-            <Show when={session().sas}>
-              <Button
-                size="sm"
-                variant="text"
-                onPress={() => setShowCode((was) => !was)}
-              >
-                <Trans>Verify</Trans>
-              </Button>
-              <Show when={showCode()}>
-                <Code>{session().sas}</Code>
-                <Muted>
-                  <Trans>
-                    Read this aloud. If it does not match the code on their
-                    screen, stop — someone may be intercepting the connection.
-                  </Trans>
-                </Muted>
-              </Show>
+              <Claim>{REMOTE_CONTROL_CLAIM}</Claim>
+              <Row>
+                <Button
+                  size="sm"
+                  variant="_error"
+                  onPress={() => rc.endControlling("controller_released")}
+                >
+                  <Trans>Release control</Trans>
+                </Button>
+                {/* "Hide" and "Details" are both EXISTING msgids, reused
+                    deliberately. A new one needs a sorted insertion into
+                    en + en-US `.po` and `lingui extract` is destructive in
+                    this tree — not worth it for a disclosure toggle. */}
+                <Show when={session().phase === "active"}>
+                  <Button
+                    size="sm"
+                    variant="text"
+                    onPress={() => setExpanded(false)}
+                  >
+                    <Trans>Hide</Trans>
+                  </Button>
+                </Show>
+              </Row>
             </Show>
-
-            <Claim>{REMOTE_CONTROL_CLAIM}</Claim>
-            <Button
-              size="sm"
-              variant="_error"
-              onPress={() => rc.endControlling("controller_released")}
-            >
-              <Trans>Release control</Trans>
-            </Button>
           </Sheet>
         )}
       </Show>
