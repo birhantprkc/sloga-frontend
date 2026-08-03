@@ -10,6 +10,16 @@
   box-sizing: border-box;
 }
 
+/* iOS Safari paints its own canvas (overscroll, keyboard-scroll gap) from
+ * <html>, not <body> — and mdui.css ships `.mdui-theme-light, :root` with
+ * Material's LIGHT background (#FEF7FF), which is exactly the white strip
+ * that shows through around the app on iPhones. `html:root` outweighs it
+ * (0,1,1 vs 0,1,0) no matter the stylesheet order. Hardcoded to match the
+ * body/#root base below. */
+html:root {
+  background: #05090F;
+}
+
 body {
   margin: 0;
   background: #05090F;
@@ -23,6 +33,21 @@ body {
   right: env(safe-area-inset-right);
   bottom: env(safe-area-inset-bottom);
   background: #05090F;
+}
+
+/*
+ * iOS Safari ignores `interactive-widget=resizes-content`: the keyboard
+ * overlays the page instead of resizing it, then Safari scrolls the layout
+ * viewport to chase the focused input, which drags this fixed #root around.
+ * src/iosViewport.ts stamps `data-ios-keyboard` and `--ios-vvh` (the visual
+ * viewport height) while the keyboard is up; sizing #root to the visible
+ * area keeps the composer above the keyboard and leaves Safari nothing to
+ * scroll. Bottom inset is dropped on purpose — the keyboard covers the home
+ * indicator region anyway.
+ */
+html[data-ios-keyboard] #root {
+  bottom: auto;
+  height: calc(var(--ios-vvh) - env(safe-area-inset-top));
 }
 
 /*

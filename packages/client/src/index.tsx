@@ -60,6 +60,7 @@ import { ServerEvents } from "./interface/ServerEvents";
 import { ServerHome } from "./interface/ServerHome";
 import { VoiceOverlayWindow } from "./interface/VoiceOverlayWindow";
 import { ChannelPage } from "./interface/channels/ChannelPage";
+import { mountIosViewportFix } from "./iosViewport";
 import "./serviceWorkerInterface";
 
 attachDevtoolsOverlay();
@@ -70,6 +71,10 @@ attachDevtoolsOverlay();
 if (IS_OVERLAY_WINDOW) {
   document.documentElement.dataset.overlay = "1";
 }
+
+// iOS Safari: keep #root sized to the visual viewport while the software
+// keyboard is up (no-op everywhere else) — see src/iosViewport.ts.
+mountIosViewportFix();
 
 /**
  * Redirect PWA start to the last active path
