@@ -133,3 +133,113 @@ export function classifyKey(event: {
   if (event.ctrlKey || event.altKey || event.metaKey) return "scan";
   return "text";
 }
+
+/**
+ * The panic combo, Ctrl+Shift+Alt+Q — ONE predicate for every renderer-side
+ * check.
+ *
+ * The capture surface's forwarding suppression and `RemoteControlOverlays`'
+ * panic handler used to each hard-code the combo, and the 2026-08-02 rebind
+ * (End → Q) updated only one of them: the suppression kept matching the dead
+ * key, so a controller's panic press was also forwarded to the sharer as a
+ * scan chord. Matching `key` OR `code` is fail-safe in both callers — this
+ * combo can only ever stop control.
+ */
+export function isPanicCombo(event: {
+  code: string;
+  key: string;
+  ctrlKey: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+}): boolean {
+  return (
+    event.ctrlKey &&
+    event.shiftKey &&
+    event.altKey &&
+    (event.code === "KeyQ" || event.key.toLowerCase() === "q")
+  );
+}
+
+/**
+ * Would a keystroke landing on `target` type into a LOCAL editable? The
+ * capture surface suspends forwarding while one has focus — a controller who
+ * clicked into their own composer must type into it, not silently into
+ * whatever has focus on the sharer's machine.
+ *
+ * Duck-typed rather than `instanceof` so it stays Node-testable and survives
+ * shadow DOM: callers pass `event.composedPath()[0]`, never `event.target`,
+ * because mdui fields live in shadow roots and the plain target is the host
+ * element (see the recorded retargeting rule).
+ *
+ * A disabled or read-only field takes no text, so focus there keeps
+ * forwarding — same as a button.
+ */
+export function isEditableTarget(target: unknown): boolean {
+  if (!target || typeof target !== "object") return false;
+  const el = target as {
+    tagName?: string;
+    isContentEditable?: boolean;
+    disabled?: boolean;
+    readOnly?: boolean;
+    type?: string;
+  };
+  if (el.isContentEditable) return true;
+  if (el.disabled || el.readOnly) return false;
+  if (el.tagName === "TEXTAREA") return true;
+  if (el.tagName === "INPUT") {
+    // Only types that accept keystrokes as text. A checkbox or button input
+    // takes no typing worth keeping local, and suspending forwarding for one
+    // would drop keys on a control the user only clicked.
+    const type = (el.type || "text").toLowerCase();
+    return [
+      "text",
+      "search",
+      "url",
+      "tel",
+      "email",
+      "password",
+      "number",
+      "date",
+      "datetime-local",
+      "month",
+      "week",
+      "time",
+    ].includes(type);
+  }
+  return false;
+}
+
+/**
+ * Map a renderer teardown reason onto the server's fixed audit-cause
+ * vocabulary for the release DELETE, or `undefined` for "let the server
+ * default by role".
+ *
+ * The route collapsed every client-initiated teardown into `released`, which
+ * the live matrix found conflates five materially different events (sharer
+ * revoke, controller release, panic, connection loss, process kill). The
+ * server never echoes these strings raw — it re-maps them against its own
+ * allowlist — so this is client-INFORMED, server-controlled.
+ */
+export function releaseCause(reason: string): string | undefined {
+  switch (reason) {
+    case "panic":
+    case "panic_key":
+    case "panic_combo":
+      return "panic";
+    // The controller's input stream died under the session — the network
+    // dropped, the feed decoded garbage, or the client disconnected.
+    case "reliable_stream_gap":
+    case "payload_decode_failed":
+    case "disconnected":
+      return "connection_lost";
+    // Native watchdog verdicts worth recording verbatim.
+    case "anti_cheat":
+    case "indicator_hidden":
+    case "max_lifetime":
+    case "display_topology_changed":
+    case "calibration_rejected":
+      return reason;
+    default:
+      return undefined;
+  }
+}

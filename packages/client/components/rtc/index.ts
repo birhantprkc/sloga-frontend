@@ -15,6 +15,8 @@ export {
   REMOTE_CONTROL_TRUST_NOTE,
   RemoteControl,
   classifyKey,
+  isEditableTarget,
+  isPanicCombo,
   normalizeToContentBox,
   wheelNotches,
 } from "./remoteControl";

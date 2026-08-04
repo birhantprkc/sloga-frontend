@@ -4,6 +4,8 @@ import { styled } from "styled-system/jsx";
 
 import {
   classifyKey,
+  isEditableTarget,
+  isPanicCombo,
   normalizeToContentBox,
   useVoice,
   wheelNotches,
@@ -82,6 +84,21 @@ export function RemoteControlCapture(props: {
    * capture away — see `onLostPointerCapture`.
    */
   let selfReleasingCapture = false;
+  /**
+   * Keyboard forwarding is SUSPENDED: focus is genuinely inside one of the
+   * controller's own editables (their composer, a search field), so
+   * keystrokes stay local. The live matrix found the always-forward design's
+   * failure mode — text aimed at the controller's own chat box delivered
+   * silently into whatever had focus on the sharer's machine, which with a
+   * password is a security problem, and nothing on screen said so.
+   *
+   * Maintained by `focusin` (fires on every focus change, composed, so a
+   * shadow-DOM field still reports) rather than re-derived per keystroke.
+   * Entering suspension releases everything held on the sharer — the user
+   * may be mid-chord, and a modifier left down on someone else's machine
+   * turns their every keystroke into an accelerator.
+   */
+  let suspended = false;
 
   /**
    * Map a client point to normalized `[0,1]` coordinates of the video's
@@ -268,6 +285,26 @@ export function RemoteControlCapture(props: {
     if (document.hidden) releaseAll();
   }
 
+  /**
+   * Focus moved somewhere. Suspend forwarding while it sits in a local
+   * editable; resume the moment it leaves for anything else — the surface, a
+   * button, `body` after a stray blur. Stray focus loss therefore still
+   * forwards (the reason the original design bound to `window` at all); only
+   * a deliberate focus into a field the user can type into keeps keys local.
+   */
+  function onFocusIn(event: FocusEvent) {
+    const target = event.composedPath()[0];
+    if (target === textSink) {
+      suspended = false;
+      rc.setLocalTyping(false);
+      return;
+    }
+    const local = isEditableTarget(target);
+    if (local && !suspended) releaseAll();
+    suspended = local;
+    rc.setLocalTyping(local);
+  }
+
   function onKey(event: KeyboardEvent, down: boolean) {
     // THE PANIC COMBO IS NEVER FORWARDED. On the sharer's machine
     // `RegisterHotKey` withholds it from the focused app entirely, but on the
@@ -277,12 +314,18 @@ export function RemoteControlCapture(props: {
     //
     // Only SUPPRESSED here; the app-level handler in `RemoteControlOverlays`
     // is the one that acts, so the two do not both fire for one press.
-    if (
-      event.ctrlKey &&
-      event.shiftKey &&
-      event.altKey &&
-      event.code === "End"
-    ) {
+    // Shared predicate — the 08-02 rebind left this check on the OLD combo
+    // while the overlays handler moved to Q, which is exactly the drift the
+    // predicate exists to prevent.
+    if (isPanicCombo(event)) {
+      return;
+    }
+
+    // Focus is in one of the controller's OWN editables — the keystroke is
+    // local, and it must both act locally (no preventDefault) and reach
+    // Sloga's own handlers (no stopPropagation). Held keys were released on
+    // the way in, so there is no remote chord to finish.
+    if (suspended) {
       return;
     }
 
@@ -352,6 +395,8 @@ export function RemoteControlCapture(props: {
    * while a session is live, it is remote-bound, not local.
    */
   function onBeforeInput(event: InputEvent) {
+    // Local typing — the text belongs to the controller's own field.
+    if (suspended) return;
     // Mid-composition updates are mutable — the candidate can change until
     // commit — and are not cancelable in Chromium anyway. `compositionend`
     // forwards the final text exactly once.
@@ -370,6 +415,8 @@ export function RemoteControlCapture(props: {
   }
 
   function onCompositionEnd(event: CompositionEvent) {
+    // A composition committed into a local editable stays local.
+    if (suspended) return;
     // The committed composition accumulated in the sink (insertCompositionText
     // is not cancelable) — clear it so the next composition starts clean.
     if (textSink) textSink.value = "";
@@ -406,18 +453,25 @@ export function RemoteControlCapture(props: {
     // The `keybindFilter` suppression covers correctness for Sloga's own
     // keybinds regardless; this is what actually forwards the keystrokes.
     //
-    // RECORDED DECISION (plan §6): this means the controller's keyboard
-    // belongs to the remote machine for as long as this surface is mounted —
-    // they cannot type into their own composer, and that is intended. The
-    // alternative, forwarding only while the surface has focus, drops
-    // keystrokes on every stray focus change with modifiers left held on
-    // someone else's machine, and gives the user no way to tell which mode
-    // they are in. The panic combo and the controller's own push-to-talk key
-    // are the carve-outs; ending control is always reachable by mouse.
+    // RECORDED DECISION, revised after the 08-03 live matrix (supersedes
+    // plan §6's "the keyboard belongs to the remote machine while this
+    // surface is mounted"): forwarding stays window-level — a STRAY focus
+    // change (call chrome click, Solid remount, focus on `body`) still
+    // forwards, which is what the original decision existed to protect —
+    // but focus genuinely inside one of the controller's own editables
+    // suspends it (`onFocusIn`). The matrix observed the old trade's cost:
+    // text typed into the controller's own chat box delivered silently into
+    // an unrelated app on the sharer's machine; swap the message for a
+    // password and it is a credential leak. Entering suspension releases
+    // everything held remotely, so no chord is left down; the mode is
+    // surfaced on the controller panel via `rc.localTyping`. The panic combo
+    // and the controller's own push-to-talk key remain carve-outs; ending
+    // control is always reachable by mouse.
     window.addEventListener("keydown", keydown, true);
     window.addEventListener("keyup", keyup, true);
     window.addEventListener("beforeinput", onBeforeInput as never, true);
     window.addEventListener("compositionend", onCompositionEnd as never, true);
+    window.addEventListener("focusin", onFocusIn);
     // Printables only become `beforeinput` inside an editable — put focus
     // there from the start, not only on the first click.
     textSink?.focus({ preventScroll: true });
@@ -447,10 +501,14 @@ export function RemoteControlCapture(props: {
         onCompositionEnd as never,
         true,
       );
+      window.removeEventListener("focusin", onFocusIn);
       window.removeEventListener("blur", releaseAll);
       document.removeEventListener("visibilitychange", onVisibilityChange);
       surface?.removeEventListener("pointercancel", releaseAll);
       surface?.removeEventListener("lostpointercapture", onLostPointerCapture);
+      // The flag describes THIS surface's suspension; a torn-down capture is
+      // not "typing locally", it is not capturing at all.
+      rc.setLocalTyping(false);
       // THE UNMOUNT IS ITSELF A PAUSE CONDITION, and this covers four
       // separate vectors at once rather than special-casing each: toggling
       // focus swaps the tile between two different `TrackLoop`s, the call

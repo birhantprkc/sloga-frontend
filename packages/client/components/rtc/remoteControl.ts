@@ -99,9 +99,13 @@ export const REMOTE_CONTROL_CLAIM =
 // path aliases — see remoteControlMapping.ts and its spec.
 export {
   classifyKey,
+  isEditableTarget,
+  isPanicCombo,
   normalizeToContentBox,
   wheelNotches,
 } from "./remoteControlMapping";
+
+import { releaseCause } from "./remoteControlMapping";
 
 type Invoke = (command: string, args?: unknown) => Promise<unknown>;
 
@@ -405,6 +409,7 @@ export class RemoteControl {
     [this.status, this.#setStatus] = createSignal<RcStatus | undefined>();
     [this.error, this.#setError] = createSignal<string | undefined>();
     [this.captureActive, this.#setCaptureActive] = createSignal(false);
+    [this.localTyping, this.#setLocalTyping] = createSignal(false);
   }
 
   // -- room binding (LiveKit) -------------------------------------------
@@ -525,6 +530,21 @@ export class RemoteControl {
    */
   readonly captureActive: Accessor<boolean>;
   readonly #setCaptureActive: Setter<boolean>;
+
+  /**
+   * The capture surface is mounted but keyboard forwarding is suspended
+   * because focus sits in one of the controller's OWN editables. A signal so
+   * the controller panel can say so — the live matrix's finding was not just
+   * that local typing went remote, but that NOTHING said which mode the
+   * keyboard was in.
+   */
+  readonly localTyping: Accessor<boolean>;
+  readonly #setLocalTyping: Setter<boolean>;
+
+  /** Reported by the capture surface's `focusin` tracking. */
+  setLocalTyping(value: boolean) {
+    this.#setLocalTyping(value);
+  }
 
   /**
    * Start capturing. Suppresses this client's own keybinds for the duration
@@ -1355,8 +1375,16 @@ export class RemoteControl {
     }
     const ctx = this.#heartbeatCtx;
     if (ctx && sharing.grantId) {
+      // Carry the teardown cause so the audit can say WHY the session ended
+      // — the live matrix found five materially different events (revoke,
+      // panic, connection loss, …) all collapsing into `released` at this
+      // route. `releaseCause` maps onto the server's fixed vocabulary and
+      // returns undefined for "default by role"; the server re-validates
+      // against its own allowlist either way.
+      const cause = releaseCause(reason);
+      const query = cause ? `?cause=${encodeURIComponent(cause)}` : "";
       await fetch(
-        `${ctx.apiBase}/channels/${sharing.channelId}/control/${sharing.grantId}`,
+        `${ctx.apiBase}/channels/${sharing.channelId}/control/${sharing.grantId}${query}`,
         {
           method: "DELETE",
           headers: { [ctx.authHeader[0]]: ctx.authHeader[1] },
@@ -1439,7 +1467,7 @@ export class RemoteControl {
     this.stopCapture(`feed_lost:${reason}`, generation);
   }
 
-  /** The local user's `Ctrl+Shift+Alt+End`, from a focused Sloga window. */
+  /** The local user's `Ctrl+Shift+Alt+Q`, from a focused Sloga window. */
   async panic() {
     const invoke = tauriInvoke();
     // Native anchor first: it revokes inside native rather than in renderer

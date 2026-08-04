@@ -6197,6 +6197,10 @@ msgstr ""
 msgid "You are turning on end-to-end encryption for exactly these {0} people. Check this list against who you expect to be in the group — anyone here will be able to read new messages."
 msgstr ""
 
+#: components/ui/components/features/voice/callCard/RemoteControlOverlays.tsx
+msgid "You are typing locally. Click the shared screen to send keys to their computer."
+msgstr ""
+
 #: src/interface/Home.tsx
 msgid "You can also click the gear icon in the bottom left."
 msgstr ""

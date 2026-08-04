@@ -249,6 +249,23 @@ function Participants() {
     callWidth() >= SIDEBAR_MIN_CARD_WIDTH;
 
   /**
+   * Theater mode WHILE CONTROLLING: the other participants become small
+   * thumbnails floating top-left and the shared screen takes the whole
+   * frame. The live matrix's finding — the default strip kept 20% of the
+   * frame's height along the bottom and the share sat letterboxed beside
+   * dead space — is the worst fit exactly here, where every pixel of the
+   * tile is a remote desktop the controller is aiming a pointer into.
+   *
+   * Out of the flow (absolute) rather than a flex row, so the focus box
+   * grows to the full frame. The thumbnails sit UNDER the capture surface's
+   * `zIndex: 20` and are unclickable while controlling — the same standing
+   * rule as every other overlay the surface covers; sizing and exit live on
+   * the controller panel.
+   */
+  const controlOverlay = () =>
+    voice.immersive() && !!voice.remoteControl.controlling();
+
+  /**
    * Width of one tile, as a CSS length the tile recipe applies.
    *
    * With a camera or share live and nobody focused the tiles FILL the card:
@@ -371,12 +388,13 @@ function Participants() {
              properties to different values, and a recipe merges its variants in
              declaration order — so letting both match would make the layout a
              function of which one is written first in the file. */
-          focus={!!voice.focusId() && !sidebar()}
+          focus={!!voice.focusId() && !sidebar() && !controlOverlay()}
           sidebar={sidebar()}
+          overlay={controlOverlay()}
           fill={fill()}
           show={voice.showBar()}
           class={
-            sidebar()
+            sidebar() || controlOverlay()
               ? scrollableStyles({ direction: "y" })
               : voice.focusId()
                 ? scrollableStyles({ direction: "x" })
@@ -694,6 +712,37 @@ const Grid = styled("div", {
           maxWidth: "none",
           // Tiles keep their 16:9 box and the column scrolls; without this
           // they would squash to share the card's height between them.
+          flexShrink: 0,
+        },
+      },
+    },
+    /**
+     * Theater mode while remote-controlling: small thumbnails pinned
+     * top-left, OUT OF THE FLOW so the focused share takes the entire frame.
+     * `zIndex: 3` — under `ImmersiveControls` (4) and the banner strip (5),
+     * and under the capture surface's 20, so a remote click over a thumbnail
+     * still reaches the shared desktop.
+     */
+    overlay: {
+      true: {
+        position: "absolute",
+        top: "var(--gap-md)",
+        left: "var(--gap-md)",
+        zIndex: 3,
+        flexDirection: "column",
+        flexWrap: "nowrap",
+        alignItems: "flex-start",
+        justifyContent: "flex-start",
+        width: "auto",
+        minHeight: 0,
+        maxHeight: "calc(100% - 2 * var(--gap-md))",
+        gap: "var(--gap-sm)",
+
+        "& .vc_tile": {
+          width: "128px",
+          height: "auto",
+          minWidth: 0,
+          maxWidth: "none",
           flexShrink: 0,
         },
       },

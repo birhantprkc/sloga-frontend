@@ -15,7 +15,7 @@ import { styled } from "styled-system/jsx";
 import { useClient } from "@revolt/client";
 import { CONFIGURATION } from "@revolt/common";
 import { useUser } from "@revolt/markdown/users";
-import { REMOTE_CONTROL_CLAIM, useVoice } from "@revolt/rtc";
+import { REMOTE_CONTROL_CLAIM, isPanicCombo, useVoice } from "@revolt/rtc";
 import { Button } from "@revolt/ui/components/design";
 import { VoiceGiveControlPanel } from "./VoiceGiveControlButton";
 
@@ -44,18 +44,16 @@ export function RemoteControlOverlays() {
   // renderer state: renderer state is what a compromised renderer controls,
   // and a kill switch is the last thing that should live there.
   //
-  // Match `key` OR `code`: `key` follows the keyboard layout (agreeing with
-  // the native VK-based paths) but held modifiers can remap it; `code` is
-  // the physical QWERTY-Q position. Firing on either is fail-safe — this
+  // `isPanicCombo` — the ONE combo predicate, shared with the capture
+  // surface's forwarding suppression so a rebind can never update one and
+  // miss the other again (the 08-02 rebind did exactly that). It matches
+  // `key` OR `code`: `key` follows the keyboard layout (agreeing with the
+  // native VK-based paths) but held modifiers can remap it; `code` is the
+  // physical QWERTY-Q position. Firing on either is fail-safe — this
   // handler can only ever stop control.
   onMount(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (
-        event.ctrlKey &&
-        event.shiftKey &&
-        event.altKey &&
-        (event.code === "KeyQ" || event.key.toLowerCase() === "q")
-      ) {
+      if (isPanicCombo(event)) {
         event.preventDefault();
         void rc.panic();
       }
@@ -94,9 +92,21 @@ export function RemoteControlOverlays() {
           <Show when={rc.offer()}>
             {(offer) => <OfferPrompt offer={offer()} />}
           </Show>
-          <VoiceGiveControlPanel />
           <ControllerPanel />
         </Stack>
+        {/* The SHARER'S panel lives in its own stack, pushed below the strip
+            of screen the native indicator occupies. The indicator (420×62,
+            always-on-top, pinned top-centre of the DISPLAY) landed exactly on
+            top of this panel whenever the app was maximized — two overlapping
+            "who is controlling / how to stop" surfaces, both truncating. The
+            indicator is the trust anchor and cannot move (its watchdog treats
+            "not visible" as a revoke condition), so the renderer panel is the
+            one that yields. The offset covers the maximized case the collision
+            was observed in; an unmaximized window under the indicator is a
+            window arrangement no fixed offset can solve. */}
+        <SharerStack>
+          <VoiceGiveControlPanel />
+        </SharerStack>
       </Portal>
     </Show>
   );
@@ -200,6 +210,20 @@ export function RemoteControlOverlays() {
                 <Heading>
                   <Trans>Your input is being sent</Trans>
                 </Heading>
+                {/* The keyboard-mode signal the live matrix found missing:
+                    while focus sits in one of THIS client's own editables the
+                    capture surface keeps keys local (see `onFocusIn` there),
+                    and without a line saying so, keys "not reaching the other
+                    machine" reads as the feature breaking. Shown in compact
+                    mode too — that is when the user is typing. */}
+                <Show when={rc.localTyping()}>
+                  <Muted>
+                    <Trans>
+                      You are typing locally. Click the shared screen to send
+                      keys to their computer.
+                    </Trans>
+                  </Muted>
+                </Show>
                 <Show when={!compact(session().phase)}>
                   <Muted>
                     <Trans>
@@ -368,6 +392,28 @@ const Stack = styled("div", {
   base: {
     position: "fixed",
     top: "var(--gap-lg)",
+    left: "50%",
+    transform: "translateX(-50%)",
+    zIndex: 200,
+    display: "flex",
+    flexDirection: "column",
+    gap: "var(--gap-md)",
+    alignItems: "center",
+    pointerEvents: "none",
+    "& > *": { pointerEvents: "auto" },
+  },
+});
+
+/**
+ * Same fixed top-centre placement as `Stack`, offset below the native
+ * indicator's band: 62px of window plus its margins. Only the sharer's panel
+ * lives here — the offer prompt and controller panel render on machines with
+ * no indicator, so they keep the top edge.
+ */
+const SharerStack = styled("div", {
+  base: {
+    position: "fixed",
+    top: "calc(var(--gap-lg) + 78px)",
     left: "50%",
     transform: "translateX(-50%)",
     zIndex: 200,

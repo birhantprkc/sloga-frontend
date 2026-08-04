@@ -405,11 +405,20 @@ export function VoiceGiveControlPanel() {
   const { t } = useLingui();
   const rc = voice.remoteControl;
   const [showCode, setShowCode] = createSignal(false);
+  // Once the session is ACTIVE, collapse to a compact bar — the controller
+  // panel's own pattern. Everything dropped in compact mode is carried by
+  // the native indicator (controller name, the panic combo), which is the
+  // authoritative surface anyway; the live matrix found the two overlapping
+  // and saying the same things. `offered` and `calibrating` keep the full
+  // stack — the reader has decisions still to make there.
+  const [expanded, setExpanded] = createSignal(false);
 
   return (
     <Show when={rc.sharing()}>
-      {(session) => (
-        <Sheet>
+      {(session) => {
+        const compact = () => session().phase === "active" && !expanded();
+        return (
+          <Sheet>
           <Switch>
             <Match when={session().phase === "offered"}>
               <Heading>
@@ -457,12 +466,34 @@ export function VoiceGiveControlPanel() {
               <Heading>
                 <Trans>They can control this computer</Trans>
               </Heading>
-              <Muted>{session().controllerName}</Muted>
-              <Muted>
-                <Trans>Stop at any time with Ctrl+Shift+Alt+Q.</Trans>
-              </Muted>
+              {/* Both lines are the indicator's job while compact — it names
+                  the controller and carries the stop affordance. Repeating
+                  them here is what produced two colliding surfaces saying
+                  the same things. */}
+              <Show when={!compact()}>
+                <Muted>{session().controllerName}</Muted>
+                <Muted>
+                  <Trans>Stop at any time with Ctrl+Shift+Alt+Q.</Trans>
+                </Muted>
+              </Show>
             </Match>
           </Switch>
+
+          {/* Exit FIRST, same as the controller panel's compact bar. */}
+          <Show when={compact()}>
+            <Row>
+              <Button
+                size="sm"
+                variant="_error"
+                onPress={() => rc.endSharing("sharer_stopped")}
+              >
+                <Trans>Take back control</Trans>
+              </Button>
+              <Button size="sm" variant="text" onPress={() => setExpanded(true)}>
+                <Trans>Details</Trans>
+              </Button>
+            </Row>
+          </Show>
 
           {/* The Verify affordance. Never on the path to accepting anything,
               and deliberately not a green "verified" state: the authoritative
@@ -479,34 +510,52 @@ export function VoiceGiveControlPanel() {
               SAS — it knows; the renderer does not, and must NOT infer it
               from the express switch, which is exactly the bit a compromised
               renderer would flip. */}
-          <Show when={session().sas}>
-            <Button
-              size="sm"
-              variant="text"
-              onPress={() => setShowCode((v) => !v)}
-            >
-              <Trans>Verify</Trans>
-            </Button>
-            <Show when={showCode()}>
-              <Code>{session().sas}</Code>
-              <Muted>
-                <Trans>
-                  Read this aloud. If it does not match their code, stop the
-                  session. This panel is drawn by the app. If Sloga showed you
-                  this code in a system dialog when you started, that copy is
-                  the one that counts.
-                </Trans>
-              </Muted>
+          <Show when={!compact()}>
+            <Show when={session().sas}>
+              <Button
+                size="sm"
+                variant="text"
+                onPress={() => setShowCode((v) => !v)}
+              >
+                <Trans>Verify</Trans>
+              </Button>
+              <Show when={showCode()}>
+                <Code>{session().sas}</Code>
+                <Muted>
+                  <Trans>
+                    Read this aloud. If it does not match their code, stop the
+                    session. This panel is drawn by the app. If Sloga showed
+                    you this code in a system dialog when you started, that
+                    copy is the one that counts.
+                  </Trans>
+                </Muted>
+              </Show>
             </Show>
+
+            <Row>
+              <Button
+                size="sm"
+                variant="_error"
+                onPress={() => rc.endSharing("sharer_stopped")}
+              >
+                <Trans>Take back control</Trans>
+              </Button>
+              {/* "Hide" is an EXISTING msgid, reused deliberately (the
+                  controller panel's disclosure toggle). */}
+              <Show when={session().phase === "active"}>
+                <Button
+                  size="sm"
+                  variant="text"
+                  onPress={() => setExpanded(false)}
+                >
+                  <Trans>Hide</Trans>
+                </Button>
+              </Show>
+            </Row>
           </Show>
 
-          <Button
-            size="sm"
-            variant="_error"
-            onPress={() => rc.endSharing("sharer_stopped")}
-          >
-            <Trans>Take back control</Trans>
-          </Button>
+          {/* Always visible, compact or not: an error, or a stop shortcut
+              that may not work, is never detail. */}
           <Show when={rc.error()}>
             <Warning>{rc.error()}</Warning>
           </Show>
@@ -516,7 +565,8 @@ export function VoiceGiveControlPanel() {
             </Warning>
           </Show>
         </Sheet>
-      )}
+        );
+      }}
     </Show>
   );
 }

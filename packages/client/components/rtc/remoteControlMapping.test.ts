@@ -13,7 +13,10 @@ import { test } from "node:test";
 
 import {
   classifyKey,
+  isEditableTarget,
+  isPanicCombo,
   normalizeToContentBox,
+  releaseCause,
   wheelNotches,
 } from "./remoteControlMapping.ts";
 
@@ -212,5 +215,108 @@ test("named keys travel as scan codes", () => {
     "Unidentified",
   ]) {
     assert.equal(classifyKey(key(named)), "scan", named);
+  }
+});
+
+// -- isPanicCombo ----------------------------------------------------------
+
+const combo = (over: Partial<Parameters<typeof isPanicCombo>[0]> = {}) => ({
+  code: "KeyQ",
+  key: "q",
+  ctrlKey: true,
+  shiftKey: true,
+  altKey: true,
+  ...over,
+});
+
+test("the panic combo matches on code OR key, Q since the 08-02 rebind", () => {
+  assert.ok(isPanicCombo(combo()));
+  // A layout that remaps the physical Q position: `key` disagrees, `code`
+  // still matches.
+  assert.ok(isPanicCombo(combo({ key: "a" })));
+  // A layout where Q lives on a different physical key: `code` disagrees,
+  // `key` matches — including uppercase from held Shift.
+  assert.ok(isPanicCombo(combo({ code: "KeyA", key: "Q" })));
+});
+
+test("the old End combo and partial chords are NOT the panic combo", () => {
+  // The pre-rebind combo must no longer suppress forwarding — the capture
+  // surface matching End while the overlays matched Q is the drift this
+  // predicate exists to end.
+  assert.ok(!isPanicCombo(combo({ code: "End", key: "End" })));
+  assert.ok(!isPanicCombo(combo({ ctrlKey: false })));
+  assert.ok(!isPanicCombo(combo({ shiftKey: false })));
+  assert.ok(!isPanicCombo(combo({ altKey: false })));
+  // Bare q — the B-leg the matrix ran live: it must forward as ordinary text.
+  assert.ok(
+    !isPanicCombo({
+      code: "KeyQ",
+      key: "q",
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+    }),
+  );
+});
+
+// -- isEditableTarget ------------------------------------------------------
+
+test("text-taking fields are local editables", () => {
+  assert.ok(isEditableTarget({ tagName: "TEXTAREA" }));
+  assert.ok(isEditableTarget({ tagName: "INPUT" })); // type defaults to text
+  for (const type of ["text", "search", "password", "email", "number"]) {
+    assert.ok(isEditableTarget({ tagName: "INPUT", type }), type);
+  }
+  assert.ok(isEditableTarget({ tagName: "DIV", isContentEditable: true }));
+});
+
+test("non-typing targets keep forwarding", () => {
+  assert.ok(!isEditableTarget(null));
+  assert.ok(!isEditableTarget(undefined));
+  assert.ok(!isEditableTarget({ tagName: "BODY" }));
+  assert.ok(!isEditableTarget({ tagName: "BUTTON" }));
+  assert.ok(!isEditableTarget({ tagName: "DIV", isContentEditable: false }));
+  // Click-only input types take no text worth keeping local.
+  for (const type of ["checkbox", "radio", "button", "submit", "range"]) {
+    assert.ok(!isEditableTarget({ tagName: "INPUT", type }), type);
+  }
+  // A field that cannot accept text is a control, not an editable.
+  assert.ok(!isEditableTarget({ tagName: "INPUT", disabled: true }));
+  assert.ok(!isEditableTarget({ tagName: "TEXTAREA", readOnly: true }));
+});
+
+// -- releaseCause ----------------------------------------------------------
+
+test("release causes map onto the server's audit vocabulary", () => {
+  assert.equal(releaseCause("panic_key"), "panic");
+  assert.equal(releaseCause("panic"), "panic");
+  assert.equal(releaseCause("reliable_stream_gap"), "connection_lost");
+  assert.equal(releaseCause("disconnected"), "connection_lost");
+  // Native watchdog verdicts ride through verbatim.
+  for (const verbatim of [
+    "anti_cheat",
+    "indicator_hidden",
+    "max_lifetime",
+    "display_topology_changed",
+    "calibration_rejected",
+  ]) {
+    assert.equal(releaseCause(verbatim), verbatim);
+  }
+});
+
+test("unmapped reasons defer to the server's role default", () => {
+  // The plain revoke button, server-initiated teardowns and anything unknown
+  // send NO cause — the server labels those by the caller's role, so a
+  // client cannot smuggle prose into the audit trail.
+  for (const reason of [
+    "sharer_stopped",
+    "server:expired",
+    "native_revoked",
+    "session_ended",
+    "arm_failed",
+    "calibration_no_session",
+    "anything_else",
+  ]) {
+    assert.equal(releaseCause(reason), undefined, reason);
   }
 });
