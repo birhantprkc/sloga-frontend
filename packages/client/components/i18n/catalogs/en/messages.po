@@ -4764,6 +4764,10 @@ msgstr "Roll dice"
 msgid "Round-trip time for your own microphone stream. Shows a dash while your mic is not transmitting."
 msgstr "Round-trip time for your own microphone stream. Shows a dash while your mic is not transmitting."
 
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Run again"
+msgstr "Run again"
+
 #: src/interface/ServerEvents.tsx
 #: components/modal/modals/ServerIdentity.tsx
 #: components/modal/modals/CustomStatus.tsx

@@ -4764,6 +4764,10 @@ msgstr ""
 msgid "Round-trip time for your own microphone stream. Shows a dash while your mic is not transmitting."
 msgstr ""
 
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Run again"
+msgstr ""
+
 #: src/interface/ServerEvents.tsx
 #: components/modal/modals/ServerIdentity.tsx
 #: components/modal/modals/CustomStatus.tsx

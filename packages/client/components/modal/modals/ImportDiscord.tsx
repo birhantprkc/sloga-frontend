@@ -324,9 +324,27 @@ export function ImportDiscordModal(
       case "importing":
         return [{ text: <Trans>Hide</Trans> }];
       case "done": {
-        // A finished sticker run has no invite to copy.
+        // A finished sticker run has no invite to copy — but if some
+        // stickers didn't make it, offer to run again (creation is
+        // idempotent by name, so a retry only fills the gaps).
         if (isStickerJob()) {
+          const current = view()!;
+          const canRetry =
+            !!current.parentJobId &&
+            (current.summary?.stickers_skipped ?? 0) > 0;
           return [
+            ...(canRetry
+              ? [
+                  {
+                    text: <Trans>Run again</Trans>,
+                    onClick: () => {
+                      if (!starting()) startStickers(current.parentJobId!);
+                      return false;
+                    },
+                    isDisabled: starting(),
+                  },
+                ]
+              : []),
             {
               text: <Trans>Done</Trans>,
               onClick: () => {
@@ -380,15 +398,16 @@ export function ImportDiscordModal(
           {
             text: <Trans>Try again</Trans>,
             onClick: () => {
+              // A second click while a retry POST is in flight must be a
+              // no-op — falling through to the template-reset branch would
+              // wipe the failed sticker context out of the store mid-flight.
+              if (starting()) return false;
+
               // A failed sticker run retries the sticker POST against its
               // parent (both ride the wire, so this survives a reload); a
               // failed template import starts over from the explain screen.
               const current = view();
-              if (
-                current?.kind === "Stickers" &&
-                current.parentJobId &&
-                !starting()
-              ) {
+              if (current?.kind === "Stickers" && current.parentJobId) {
                 startStickers(current.parentJobId);
               } else {
                 clearDiscordImport();
