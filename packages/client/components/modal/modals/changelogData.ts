@@ -8,23 +8,31 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // NB the original v0.21.0 draft headlined remote control; it is preserved
+  // in git history and stays OUT until the RC prod flag is deliberately
+  // reopened — never announce a dark feature.
   {
     id: "sloga-2026-08-06",
     title: "Patch Notes",
-    published_at: "2026-08-06T08:00:00.000Z",
-    markdown_content: `## v0.21.0 — Hand someone your keyboard
+    published_at: "2026-08-06T16:00:00.000Z",
+    markdown_content: `## v0.21.0 — Your stickers can come too
 
-### 🖥️ Give control of your screen
-- **While you're sharing your whole screen, you can hand someone your mouse and keyboard.** Click the monitor icon in the call bar, pick the person, and they can help you directly instead of talking you through it.
-- **It only ever starts with you.** Nobody can request or take control — you choose the person, and Windows itself asks you to confirm before anything is handed over.
-- **Stop instantly, any time.** A bar stays pinned to the top of your screen for the whole session with a Stop button, and **Ctrl+Shift+Alt+Q** ends it from anywhere — even mid-click.
-- **Your mouse and keyboard input is encrypted between the two computers.** We relay it and can't read it. The confirmation you'll see spells out exactly what that does and doesn't cover.
-- **Whole-screen shares only.** If you're sharing a single window we won't offer it, because control reaches the whole screen behind that window — including what you didn't share.
-- ⚠️ **Nobody from Sloga support will ever ask you for control of your computer.** If someone claiming to be staff or support asks, it's a scam — refuse, and tell us at report@sloga.gg.
-- **Windows desktop only** for now — it needs the native app.
+### 📥 Import your Discord server's stickers
+- **Importing a server from Discord? Your custom stickers can now come across with it.** When an import finishes, we'll offer the extra step: add our importer bot to your Discord server, press **Import stickers**, and they land here — ready to send.
+- **The bot only reads stickers.** It asks for zero permissions, and you can kick it the moment the import finishes — it doesn't need to stay.
+- Anything we can't bring over (too large, or in a format we can't use) is listed plainly at the end, so the numbers always add up.
+
+### 🎞️ The GIF picker works now
+- **Search and send GIFs from the picker in the message bar** — browse the categories or find exactly the right reaction. Powered by GIPHY.
 
 ### ⚽ Slogaball
 - **Sound effects**, with a mute toggle that remembers what you picked.
+
+### ✍️ A tidier message bar
+- **Extra composer actions now tuck behind a chevron** — the dice roller lives in the slide-out tray, and disappearing messages sits next to the emoji button.
+
+### 🖥️ Desktop
+- **Start with Windows** is now a proper toggle in Settings, not just the tray menu.
 
 *Sloga — Hop on.*`,
   },
