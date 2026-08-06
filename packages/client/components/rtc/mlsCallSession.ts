@@ -3146,6 +3146,10 @@ export class MlsCallSession {
    * or re-asserts it if it drops back to negotiating (a successor re-upgrade).
    */
   #setMode(mode: CallMode): void {
+    // Closed is terminal (same idiom as #setState): a stale chained label-set
+    // surviving dispose() must not touch the shared publish gate or clobber
+    // the next call's UI signals through this binding.
+    if (this.#state === "closed") return;
     const wasNegotiating = this.#callMode.kind === "negotiating";
     this.#callMode = mode;
     if (mode.kind === "negotiating" && !wasNegotiating) {
@@ -3197,8 +3201,20 @@ export class MlsCallSession {
     // dispatch without blocking the chain.
     this.#modeChain = this.#modeChain
       .then(async () => {
+        // dispose() may have closed the session AFTER this continuation was
+        // enqueued (the chain serializes behind real media work, so a
+        // disconnect can land in between). Closed is terminal: a stale effect
+        // run here would poison the NEXT call — a pause reason landing in the
+        // shared publish gate with no owner left to release it, or an
+        // auto_leave dooming a join the user has since made. Re-checked per
+        // effect because every await below is a suspension point dispose()
+        // can land in.
+        if (this.#state === "closed") return;
         const { mode, effects } = callModeTransition(this.#callMode, event);
         for (const effect of effects) {
+          // Via the accessor: tsc narrows the field read above across the
+          // awaits below and would flag a direct re-compare as impossible.
+          if (this.state() === "closed") return;
           switch (effect.do) {
             case "pause":
               await this.#media?.pausePublishing?.(effect.reason);

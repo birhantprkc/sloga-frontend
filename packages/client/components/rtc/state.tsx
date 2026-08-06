@@ -371,11 +371,13 @@ class Voice {
   /** Unsubscribe for the native `e2ee:call-keys-changed` push (§3.5). */
   #unlistenCallKeys: (() => void) | undefined;
   /**
-   * Monotonic per-`connect()` token. `connect()` awaits (native listen, join,
-   * room.connect); a newer `connect()` (which runs `disconnect()` first) bumps
-   * this, so a stale invocation resuming after an await can detect it was
-   * superseded and bail instead of leaking its worker/listener or reviving an
-   * abandoned Room.
+   * Monotonic call-ownership token. `connect()` awaits (device enumeration,
+   * native listen, join, room.connect); BOTH a newer `connect()` and any
+   * `disconnect()` bump this, so a stale invocation resuming after an await
+   * can detect it no longer owns the call and bail instead of leaking its
+   * worker/listener or reviving a Room the teardown already disposed. The
+   * disconnect() bump is load-bearing: without it, hanging up while still
+   * CONNECTING was silently lost — connect() resumed and joined anyway.
    */
   #connectGen = 0;
   /**
@@ -1257,8 +1259,11 @@ class Voice {
             // Capture failed even after the rescue (or permission denied) —
             // or a processor attach above threw post-publish. Reconcile the
             // mute button with the room's ACTUAL state rather than forcing
-            // "muted": a hot mic must never be shown as off.
-            if (wantMic)
+            // "muted": a hot mic must never be shown as off. Only while we
+            // still own the call: when the rejection IS the hang-up (teardown
+            // aborting the capture), writing the torn-down room's "off" here
+            // would persist a mute preference the user never chose.
+            if (wantMic && gen === this.#connectGen)
               this.#settings.micOn = room.localParticipant.isMicrophoneEnabled;
           });
       if (isAfk) room.localParticipant.setCameraEnabled(false);
@@ -1470,7 +1475,11 @@ class Voice {
         autoSubscribe: false,
       });
       if (gen !== this.#connectGen) {
-        this.#publishGate.delete("negotiating");
+        // Deliberately NOT `publishGate.delete("negotiating")`: every gen
+        // bump comes via disconnect(), which already CLEARED the gate — and
+        // a newer connect() may have re-added its OWN `negotiating` since,
+        // which this stale invocation must not strip (the gate is what stops
+        // plaintext escaping the newer call's negotiation window).
         room.removeAllListeners(); // FE-9c
         room.disconnect();
         return;
@@ -1478,6 +1487,15 @@ class Voice {
       // Sweep any already-published local track under the gate (a track can
       // publish during `await room.connect`).
       if (this.#publishGate.size > 0) await this.#applyPublishGate(room);
+      // That sweep awaited: re-check ownership before touching shared state
+      // below (`#mlsSession` assignment) — a stale write there would leave a
+      // live MLS session bound to a disposed Room after a hang-up, or
+      // clobber the newer call's session.
+      if (gen !== this.#connectGen) {
+        room.removeAllListeners(); // FE-9c
+        room.disconnect();
+        return;
+      }
 
       // Assert the device-qualified identity the SFU actually minted (slice
       // 6.1/6.4 item 3): if it isn't exactly `{user_id}:{device_id}`,
@@ -1585,12 +1603,27 @@ class Voice {
       } catch {
         /* not connected */
       }
+      // A doomed invocation's failure is not actionable: the rejection is
+      // usually just OUR teardown aborting `room.connect()` (the user hung
+      // up while still connecting, or a newer join took over). Callers only
+      // need to hear about failures of a join they still own — several call
+      // sites run `voice.connect()` unawaited, so a rethrow here would
+      // surface as an error for a hang-up the user asked for.
+      if (gen !== this.#connectGen) return;
       throw error;
     }
   }
 
   disconnect() {
     try {
+      // Doom any in-flight connect() FIRST: every await in connect() re-checks
+      // this token and bails with its own room teardown. Without the bump a
+      // disconnect landing mid-await was silently lost — connect() resumed,
+      // called room.connect() on the Room this teardown had already disposed,
+      // and the user ended up joined to a call they had just left. (A fresh
+      // join still supersedes cleanly: connect()'s own leading disconnect()
+      // is followed by its own bump.)
+      this.#connectGen++;
       nativeCallServiceStop();
 
       // Media E2EE teardown (§4.2 / §7.2): dispose the MLS session FIRST (its
@@ -1726,6 +1759,10 @@ class Voice {
    * these are just its thin Room-facing effects.
    */
   #buildMediaBinding(room: Room, provider: MlsKeyProvider): MlsMediaBinding {
+    // Ownership snapshot: connect() calls this synchronously while it owns
+    // the call (no await since its last gen check), so this is that call's
+    // token. autoLeave compares against it before acting — see below.
+    const gen = this.#connectGen;
     return {
       installer: provider,
       localIdentity: () => room.localParticipant.identity,
@@ -1764,6 +1801,12 @@ class Voice {
         // session's own callback — defer (FE-9b). The explainer modal names
         // why the call ended.
         queueMicrotask(() => {
+          // Only while the call this binding was built for is still the
+          // current one: a stale session continuation surviving dispose()
+          // must not tear down the call the user has since joined — the
+          // disconnect() below DOOMS an in-flight connect() — nor blame a
+          // call they already left with an error modal.
+          if (gen !== this.#connectGen) return;
           console.warn("[mls] auto-leaving call:", reason);
           this.disconnect();
           this.openModal({ type: "error2", error: reason });
