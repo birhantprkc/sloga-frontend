@@ -1,5 +1,7 @@
 import { type JSX, createEffect, createSignal, on, splitProps } from "solid-js";
 
+import { styled } from "styled-system/jsx";
+
 import "mdui/components/slider.js";
 
 type Props = Omit<
@@ -37,5 +39,16 @@ export function Slider(props: Props) {
     }),
   );
 
-  return <mdui-slider ref={setRef} {...rest} />;
+  return <StyledSlider ref={setRef} {...rest} />;
 }
+
+/**
+ * Panda's preflight reset (* { padding: 0 }) wins over the component's
+ * internal :host padding, which is what reserves room for the handle at
+ * the ends of the track — restore it so the handle is not clipped.
+ */
+const StyledSlider = styled("mdui-slider", {
+  base: {
+    paddingInline: "1.25rem",
+  },
+});
