@@ -62,7 +62,7 @@ export function ChangelogModal(
         <TitleRow>
           <Trans>Patch Notes</Trans>
           <img
-            src="/assets/web/sloga-icon.png"
+            src="/assets/web/favicon.svg"
             alt="Sloga"
             width={30}
             height={30}
@@ -105,7 +105,7 @@ export function ChangelogHistoryModal(
         <TitleRow>
           <Trans>Patch Notes</Trans>
           <img
-            src="/assets/web/sloga-icon.png"
+            src="/assets/web/favicon.svg"
             alt="Sloga"
             width={30}
             height={30}
