@@ -4148,6 +4148,11 @@ msgstr "Push to Talk"
 msgid "Push to Talk Key"
 msgstr "Push to Talk Key"
 
+#. placeholder {0}: pttKeyLabel()
+#: components/ui/components/features/voice/callCard/RemoteControlOverlays.tsx
+msgid "Push-to-talk is on, so {0} stays on your computer and is not sent."
+msgstr "Push-to-talk is on, so {0} stays on your computer and is not sent."
+
 #: components/app/interface/settings/user/voice/CameraOptions.tsx
 msgid "Quality and bitrate changes apply the next time you turn on your camera."
 msgstr "Quality and bitrate changes apply the next time you turn on your camera."

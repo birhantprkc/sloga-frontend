@@ -16,6 +16,7 @@ import { useClient } from "@revolt/client";
 import { CONFIGURATION } from "@revolt/common";
 import { useUser } from "@revolt/markdown/users";
 import { REMOTE_CONTROL_CLAIM, isPanicCombo, useVoice } from "@revolt/rtc";
+import { useState } from "@revolt/state";
 import { Button } from "@revolt/ui/components/design";
 import { VoiceGiveControlPanel } from "./VoiceGiveControlButton";
 
@@ -31,8 +32,21 @@ import { VoiceGiveControlPanel } from "./VoiceGiveControlButton";
 export function RemoteControlOverlays() {
   const voice = useVoice();
   const client = useClient();
+  const state = useState();
   const { t } = useLingui();
   const rc = voice.remoteControl;
+
+  /**
+   * The controller's push-to-talk key is held back from the sharer (see the
+   * reservation in `RemoteControlCapture`), and while push-to-talk is ON that
+   * is a real, unavoidable hole in what you can type — the key belongs to the
+   * microphone. Say so rather than swallowing it silently: the DEFAULT key is
+   * Space, and a controller who cannot type spaces with no explanation reads
+   * the whole feature as broken.
+   */
+  const pttReserved = () => state.voice.pushToTalk;
+  /** `KeyV` → `V`, `Space` → `Space`. Mirrors the settings screen's label. */
+  const pttKeyLabel = () => state.voice.pushToTalkKey.replace(/^Key/, "");
 
   // The focused-window panic handler. `RegisterHotKey` in the shell already
   // covers the focused case on the SHARER'S machine, so this is
@@ -222,6 +236,13 @@ export function RemoteControlOverlays() {
                       You are typing locally. Click the shared screen to send
                       keys to their computer.
                     </Trans>
+                  </Muted>
+                </Show>
+                {/* Interpolated through `t` with NO JSX inside — a nested
+                    element here renders the sentence three times. */}
+                <Show when={pttReserved()}>
+                  <Muted>
+                    {t`Push-to-talk is on, so ${pttKeyLabel()} stays on your computer and is not sent.`}
                   </Muted>
                 </Show>
                 <Show when={!compact(session().phase)}>

@@ -338,10 +338,23 @@ export function RemoteControlCapture(props: {
     // NOT swallow it either. The focused-window PTT listeners live on
     // `window` in the bubble phase and are the fallback whenever native
     // arming failed, so stopping propagation here would silently kill the
-    // controller's own microphone. Applied unconditionally rather than only
-    // while push-to-talk is on, because the setting can flip mid-session and
-    // the native arm is lazy.
-    if (event.code === state.voice.pushToTalkKey) {
+    // controller's own microphone.
+    //
+    // 🔴 GATED ON PUSH-TO-TALK BEING ON, since the 08-04 live matrix. This was
+    // deliberately unconditional ("the setting can flip mid-session and the
+    // native arm is lazy") and the cost was catastrophic in the default
+    // configuration: `pushToTalkKey` defaults to **"Space"** while
+    // `pushToTalk` defaults to **false** (`stores/Voice.ts`), so on a stock
+    // install EVERY SPACE the controller typed was swallowed and the sharer
+    // received words run together — observed live, and invisible to the
+    // 08-03 evidence because that was a keystroke COUNT, not the text.
+    // Reserving it while PTT is off protects nothing: both PTT listeners
+    // (`rtc/state.tsx`) return early on the same flag, so the key does not
+    // touch the microphone either. The mid-session-flip worry does not need
+    // an unconditional reservation — this is a reactive store read evaluated
+    // per keystroke, so a flip is honoured on the very next press, and the
+    // lazy native arm only ever happens on a press while PTT is ON.
+    if (state.voice.pushToTalk && event.code === state.voice.pushToTalkKey) {
       // A printable PTT key would still reach the sharer through the sink's
       // `beforeinput` — flag the insertion for suppression there. Only when
       // it is actually going to produce one, or the flag would swallow the
