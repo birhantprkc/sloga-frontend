@@ -277,6 +277,24 @@ class Voice {
   screenshare: Accessor<boolean>;
   #setScreenshare: Setter<boolean>;
 
+  /**
+   * WHAT is being shared: `"monitor"` (a whole screen), `"window"` (one
+   * application window), `"browser"` (a tab), or `undefined` when there is no
+   * share or the platform does not report it.
+   *
+   * Straight off the published track's `getSettings().displaySurface`. It
+   * exists for remote control: injection is addressed to a MONITOR, so a
+   * window share would let a controller drive the sharer's entire screen
+   * while seeing only the one window — including parts the sharer believes
+   * are private. See the gate in `VoiceGiveControlButton`.
+   *
+   * Derived rather than stored: it depends on `screenshare()` and `room()`,
+   * both signals, and a track's settings cannot change without a new track —
+   * so re-reading on those two is exact, and there is no fourth call site to
+   * keep in sync with `#setScreenshare`.
+   */
+  screenShareSurface: Accessor<string | undefined>;
+
   fullscreen: Accessor<boolean>;
   #setFullscreen: Setter<boolean>;
 
@@ -588,6 +606,23 @@ class Voice {
     const [screenshare, setScreenshare] = createSignal(false);
     this.screenshare = screenshare;
     this.#setScreenshare = setScreenshare;
+
+    this.screenShareSurface = () => {
+      // Both reads are the reactive dependencies — see the field's doc.
+      if (!screenshare()) return undefined;
+      const room = this.room();
+      if (!room) return undefined;
+      const track = room.localParticipant.getTrackPublication(
+        Track.Source.ScreenShare,
+      )?.track?.mediaStreamTrack;
+      // `displaySurface` is a screen-capture-only setting, so it is absent
+      // from the base `MediaTrackSettings` type in this TS lib version.
+      return (
+        track?.getSettings() as (MediaTrackSettings & {
+          displaySurface?: string;
+        })
+      )?.displaySurface;
+    };
 
     const [fullscreen, setFullscreen] = createSignal(false);
     this.fullscreen = fullscreen;

@@ -93,6 +93,31 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
    */
   const mustChooseDisplay = () => (displays()?.length ?? 0) > 1;
 
+  /**
+   * 🔴 REMOTE CONTROL REQUIRES A WHOLE-SCREEN SHARE.
+   *
+   * Injection is addressed to a MONITOR — native resolves the selected
+   * display's rect and maps normalized coordinates into it. Nothing clamps
+   * that to a window. So on a window share the controller sees one
+   * application and can drive the ENTIRE screen behind it: other windows,
+   * the desktop, the taskbar — all invisible to them and all believed
+   * private by the sharer. "I'm only sharing Notepad" is the natural reading
+   * and it is wrong.
+   *
+   * Requiring `"monitor"` EXACTLY, so an unreported surface refuses rather
+   * than waves it through: a gate that silently no-ops on the platform it
+   * was written for is worse than no gate, because it reads as protection.
+   * The cost of being wrong in this direction is a visible, explained
+   * refusal (below) rather than a silent hole.
+   *
+   * NOT a security boundary — this is renderer state and a compromised
+   * renderer can claim anything. It is an honesty gate for the ordinary
+   * user. The security floor is unchanged: the native dialogs on the machine
+   * being injected into.
+   */
+  const surface = () => voice.screenShareSurface();
+  const fullScreenShare = () => surface() === "monitor";
+
   const eligible = () => {
     const room = voice.room();
     const self = client()?.user?.id;
@@ -186,6 +211,15 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
       setError(t`Still reading your displays — try again in a moment.`);
       return;
     }
+    // Backstop for the whole-screen rule. The picker already refuses in
+    // place of the people list, so this is unreachable through the UI — but
+    // the share can change UNDER an open picker (stop a screen share, start
+    // a window share, without closing this panel), and the check that
+    // matters is the one taken at the moment the offer is minted.
+    if (!fullScreenShare()) {
+      setError(t`Remote control needs a whole-screen share.`);
+      return;
+    }
     setError(undefined);
     setBusy(true);
     const offered = await rc.offerControl({
@@ -269,21 +303,38 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
               </Select>
             </Show>
 
-            <Label>
-              <Trans>Who should get control?</Trans>
-            </Label>
-            <People>
-              <For each={eligible()}>
-                {(userId) => (
-                  <PersonRow userId={userId} busy={busy()} onPick={offer} />
-                )}
-              </For>
-              <Show when={eligible().length === 0}>
-                <Muted>
-                  <Trans>Nobody else is in this call yet.</Trans>
-                </Muted>
-              </Show>
-            </People>
+            {/* The window-share refusal. Shown IN PLACE of the people list,
+              following §6's rule for ineligible rows: refuse with a reason
+              rather than hiding the affordance, because a button that
+              vanishes reads as a bug and invites a retry. The reason has to
+              name the remedy — "share your whole screen instead" — since
+              the share is already running and the fix is not obvious. */}
+            <Show
+              when={fullScreenShare()}
+              fallback={
+                <Warning>
+                  {surface()
+                    ? t`Remote control needs a whole-screen share. You are sharing a single window, and their mouse and keyboard would reach everything else on that screen — including what you have not shared. Stop the share and share your whole screen instead.`
+                    : t`Sloga cannot tell which screen you are sharing, so it will not hand over control. Stop the share and share your whole screen again.`}
+                </Warning>
+              }
+            >
+              <Label>
+                <Trans>Who should get control?</Trans>
+              </Label>
+              <People>
+                <For each={eligible()}>
+                  {(userId) => (
+                    <PersonRow userId={userId} busy={busy()} onPick={offer} />
+                  )}
+                </For>
+                <Show when={eligible().length === 0}>
+                  <Muted>
+                    <Trans>Nobody else is in this call yet.</Trans>
+                  </Muted>
+                </Show>
+              </People>
+            </Show>
 
             {/* Per-peer trust. This box only ASKS: what it changes is the
               copy of the native dialog on the next screen, and the trust is

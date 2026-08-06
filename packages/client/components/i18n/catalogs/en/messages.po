@@ -4341,6 +4341,14 @@ msgstr "Release control"
 msgid "Relevance"
 msgstr "Relevance"
 
+#: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
+msgid "Remote control needs a whole-screen share."
+msgstr "Remote control needs a whole-screen share."
+
+#: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
+msgid "Remote control needs a whole-screen share. You are sharing a single window, and their mouse and keyboard would reach everything else on that screen — including what you have not shared. Stop the share and share your whole screen instead."
+msgstr "Remote control needs a whole-screen share. You are sharing a single window, and their mouse and keyboard would reach everything else on that screen — including what you have not shared. Stop the share and share your whole screen instead."
+
 #: components/modal/modals/RemoveMember.tsx
 #: components/app/interface/settings/user/voice/CameraOptions.tsx
 #: components/app/interface/settings/channel/Overview.tsx
@@ -5018,6 +5026,10 @@ msgstr "Slash commands are unavailable in encrypted conversations."
 #: components/app/interface/settings/user/SecurityAndPrivacy.tsx
 msgid "Sloga asks you once instead of twice before this person can use your mouse and keyboard. Select to undo."
 msgstr "Sloga asks you once instead of twice before this person can use your mouse and keyboard. Select to undo."
+
+#: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
+msgid "Sloga cannot tell which screen you are sharing, so it will not hand over control. Stop the share and share your whole screen again."
+msgstr "Sloga cannot tell which screen you are sharing, so it will not hand over control. Stop the share and share your whole screen again."
 
 #: components/ui/components/features/profiles/ProfileBadges.tsx
 msgid "Sloga Developer"
