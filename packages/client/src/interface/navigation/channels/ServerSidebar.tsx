@@ -8,6 +8,7 @@ import {
   Show,
   Switch,
   createMemo,
+  createSignal,
 } from "solid-js";
 
 import { useLingui } from "@lingui-solid/solid/macro";
@@ -103,10 +104,61 @@ export const ServerSidebar = (props: Props) => {
   const state = useState();
 
   let memberScrollTarget: HTMLDivElement | undefined;
+  let channelScrollTarget: HTMLDivElement | undefined;
 
   const selectedChannel = createMemo(() =>
     props.channelId ? client().channels.get(props.channelId) : undefined,
   );
+
+  // User-dragged height (px) for the channel list while it shares the column
+  // with the member list. null = the default content-sized 60%-capped split.
+  const SPLIT_STORAGE_KEY = "sloga:channelMemberSplit";
+  const [channelListHeight, setChannelListHeight] = createSignal<number | null>(
+    (() => {
+      const stored = parseInt(
+        localStorage.getItem(SPLIT_STORAGE_KEY) ?? "",
+        10,
+      );
+      return Number.isFinite(stored) && stored > 0 ? stored : null;
+    })(),
+  );
+
+  /** Drag the channel/member divider to re-split the column */
+  function beginDividerDrag(event: PointerEvent) {
+    if (!channelScrollTarget) return;
+    event.preventDefault();
+    const startY = event.clientY;
+    const startHeight = channelScrollTarget.getBoundingClientRect().height;
+    // The column itself (SidebarBase) bounds how far down the divider can go;
+    // always leave the member list a usable strip.
+    const column = channelScrollTarget.parentElement!;
+
+    const onMove = (e: PointerEvent) => {
+      const ceiling = Math.max(column.getBoundingClientRect().height - 180, 48);
+      setChannelListHeight(
+        Math.min(Math.max(startHeight + (e.clientY - startY), 48), ceiling),
+      );
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      const height = channelListHeight();
+      if (height != null) {
+        localStorage.setItem(SPLIT_STORAGE_KEY, String(Math.round(height)));
+      }
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  }
+
+  /** Reset the divider to the default automatic split */
+  function resetDividerSplit() {
+    setChannelListHeight(null);
+    localStorage.removeItem(SPLIT_STORAGE_KEY);
+  }
 
   // Server text channels host the member list at the bottom of this column
   // rather than in a right-hand one; the channel list has to stop growing
@@ -248,14 +300,24 @@ export const ServerSidebar = (props: Props) => {
         </Match>
       </Switch>
       <div
+        ref={channelScrollTarget}
         use:invisibleScrollable
         style={{
           flex: showMemberList() ? "0 1 auto" : "1 1 auto",
           "min-height": 0,
-          // Only capped while sharing the column, so the members always keep
+          // A dragged divider position wins; otherwise content-sized with a
+          // 60% cap while sharing the column, so the members always keep
           // a 40% floor on servers with a long channel list.
-          "max-height": showMemberList() ? "60%" : "none",
-          "margin-bottom": "var(--gap-md)",
+          height:
+            showMemberList() && channelListHeight() != null
+              ? `${channelListHeight()}px`
+              : undefined,
+          "max-height": showMemberList()
+            ? channelListHeight() != null
+              ? "none"
+              : "60%"
+            : "none",
+          "margin-bottom": showMemberList() ? 0 : "var(--gap-md)",
         }}
         use:floating={props.menuGenerator(props.server)}
       >
@@ -283,13 +345,17 @@ export const ServerSidebar = (props: Props) => {
         </Draggable>
       </div>
       <Show when={showMemberList()}>
+        <DividerHandle
+          onPointerDown={beginDividerDrag}
+          onDblClick={resetDividerSplit}
+          title="Drag to resize, double-click to reset"
+        />
         <div
           ref={memberScrollTarget}
           use:invisibleScrollable
           style={{
             flex: "1 1 auto",
-            "min-height": 0,
-            "border-top": "1px solid var(--md-sys-color-outline-variant)",
+            "min-height": "48px",
             overflow: "auto",
           }}
         >
@@ -340,6 +406,36 @@ function ServerInfo(
     </Row>
   );
 }
+
+/**
+ * Grabbable divider between the channel list and the member list; doubles as
+ * the visual separator the member list used to draw with border-top.
+ */
+const DividerHandle = styled("div", {
+  base: {
+    flexShrink: 0,
+    height: "9px",
+    display: "flex",
+    alignItems: "center",
+    cursor: "ns-resize",
+    touchAction: "none",
+    userSelect: "none",
+
+    "&::after": {
+      content: '""',
+      flexGrow: 1,
+      height: "1px",
+      borderRadius: "2px",
+      background: "var(--md-sys-color-outline-variant)",
+      transition: "var(--transitions-fast) all",
+    },
+
+    "&:hover::after, &:active::after": {
+      height: "3px",
+      background: "var(--md-sys-color-outline)",
+    },
+  },
+});
 
 /**
  * Server name
