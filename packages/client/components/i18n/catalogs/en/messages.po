@@ -2456,6 +2456,10 @@ msgstr "Feedback"
 msgid "Fetching encrypted attachment…"
 msgstr "Fetching encrypted attachment…"
 
+#: src/interface/channels/text/Composition.tsx
+msgid "Fewer options"
+msgstr "Fewer options"
+
 #: components/ui/components/features/voice/minigame/MinigameChip.tsx
 msgid "Field cleared!"
 msgstr "Field cleared!"
@@ -3588,6 +3592,10 @@ msgstr "Monthly"
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
 msgid "More Contrast"
 msgstr "More Contrast"
+
+#: src/interface/channels/text/Composition.tsx
+msgid "More options"
+msgstr "More options"
 
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Move Members"

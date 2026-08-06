@@ -979,6 +979,10 @@ export function MessageComposition(props: Props) {
       : t`Messages disappear after ${disappearOption().label}`;
   }
 
+  // Extra composer actions (poll, soft-reserve, stickers, GIF) live in a
+  // slide-out tray that stays collapsed until toggled — see actionsEnd
+  const [showMoreActions, setShowMoreActions] = createSignal(false);
+
   // Dice roller (server text channels only)
   const DICE_OPTIONS = [4, 6, 8, 10, 12, 20, 100];
   const [showDiceMenu, setShowDiceMenu] = createSignal(false);
@@ -1168,76 +1172,6 @@ export function MessageComposition(props: Props) {
               </MessageBox.FloatingAction>
             </Show>
             <MessageBox.ActionContainer>
-              <MessageBox.InlineIcon>
-                <ComposerPopover
-                  open={showDisappearMenu()}
-                  onDismiss={() => setShowDisappearMenu(false)}
-                  panel={
-                    <div
-                      style={{
-                        background: "var(--md-sys-color-surface-container-high)",
-                        "border-radius": "12px",
-                        padding: "8px 0",
-                        "min-width": "160px",
-                        "box-shadow": "0 4px 20px rgba(0,0,0,0.4)",
-                        border: "1px solid var(--md-sys-color-outline-variant)",
-                      }}
-                    >
-                      <div style={{ padding: "4px 12px 8px", "font-size": "0.75em", opacity: "0.6", "font-weight": "600", "letter-spacing": "0.05em", "text-transform": "uppercase" }}>
-                        Disappear after
-                      </div>
-                      <For each={DISAPPEAR_OPTIONS}>
-                        {(opt, i) => (
-                          <div
-                            onClick={() => selectDisappear(i())}
-                            style={{
-                              display: "flex",
-                              "align-items": "center",
-                              gap: "10px",
-                              padding: "12px 16px",
-                              cursor: "pointer",
-                              background: disappearIdx() === i() ? "var(--md-sys-color-primary-container)" : "transparent",
-                              color: disappearIdx() === i() ? "var(--md-sys-color-on-primary-container)" : "inherit",
-                              "font-size": "0.9em",
-                            }}
-                          >
-                            <div style={{
-                              width: "16px",
-                              height: "16px",
-                              "border-radius": "50%",
-                              border: `2px solid ${disappearIdx() === i() ? "#FF8A00" : "var(--md-sys-color-outline)"}`,
-                              background: disappearIdx() === i() ? "#FF8A00" : "transparent",
-                              "flex-shrink": "0",
-                            }} />
-                            {opt.label}
-                          </div>
-                        )}
-                      </For>
-                    </div>
-                  }
-                >
-                  <Tooltip
-                    content={disappearTooltipText()}
-                    placement="top"
-                  >
-                    <div style={{ display: "flex", "flex-direction": "column", "align-items": "center" }}>
-                      <IconButton
-                        onPress={toggleDisappearMenu}
-                        style={disappearOption().seconds !== null ? { color: "#FF8A00" } : {}}
-                      >
-                        <Symbol>
-                          {disappearOption().seconds === null ? "timer_off" : "timer"}
-                        </Symbol>
-                      </IconButton>
-                      <Show when={disappearOption().seconds !== null}>
-                        <span style={{ "font-size": "0.6em", "line-height": "1", "margin-top": "-4px", color: "#FF8A00", "font-weight": "600", "pointer-events": "none" }}>
-                          {disappearOption().label}
-                        </span>
-                      </Show>
-                    </div>
-                  </Tooltip>
-                </ComposerPopover>
-              </MessageBox.InlineIcon>
               <Show when={props.channel.type === "TextChannel"}>
                 <MessageBox.InlineIcon>
                   <ComposerPopover
@@ -1346,59 +1280,86 @@ export function MessageComposition(props: Props) {
                   </ComposerPopover>
                 </MessageBox.InlineIcon>
               </Show>
-              <Show when={pollAllowed()}>
-                <MessageBox.InlineIcon>
-                  <Tooltip content={t`Create poll`} placement="top">
-                    <IconButton
-                      onPress={() =>
-                        openModal({
-                          type: "create_poll",
-                          channel: props.channel,
-                        })
-                      }
-                    >
-                      <Symbol>ballot</Symbol>
-                    </IconButton>
-                  </Tooltip>
-                </MessageBox.InlineIcon>
-              </Show>
-              <Show when={softresAllowed()}>
-                <MessageBox.InlineIcon>
-                  <Tooltip
-                    content={t`Create soft-reserve sheet`}
-                    placement="top"
-                  >
-                    <IconButton
-                      onPress={() =>
-                        openModal({
-                          type: "create_softres",
-                          channel: props.channel,
-                        })
-                      }
-                    >
-                      <Symbol>shield</Symbol>
-                    </IconButton>
-                  </Tooltip>
-                </MessageBox.InlineIcon>
-              </Show>
+              <MessageBox.InlineIcon>
+                <Tooltip
+                  content={
+                    showMoreActions() ? t`Fewer options` : t`More options`
+                  }
+                  placement="top"
+                >
+                  <IconButton onPress={() => setShowMoreActions((v) => !v)}>
+                    <Symbol>
+                      {showMoreActions() ? "chevron_left" : "chevron_right"}
+                    </Symbol>
+                  </IconButton>
+                </Tooltip>
+              </MessageBox.InlineIcon>
               <CompositionMediaPicker
                 onMessage={sendMessage}
                 onTextReplacement={(text) => setNodeReplacement([text])}
               >
                 {(triggerProps) => (
                   <>
-                    <MessageBox.InlineIcon>
-                      <IconButton onPress={triggerProps.onClickSticker}>
-                        <Symbol>note_stack</Symbol>
-                      </IconButton>
-                    </MessageBox.InlineIcon>
-                    <Show when={!canSend()}>
+                    {/* Slide-out tray: extra actions stay collapsed until
+                        the chevron toggle reveals them */}
+                    <div
+                      style={{
+                        display: "flex",
+                        "align-items": "center",
+                        overflow: "hidden",
+                        "max-width": showMoreActions() ? "200px" : "0px",
+                        opacity: showMoreActions() ? "1" : "0",
+                        transition: "max-width 0.25s ease, opacity 0.2s ease",
+                      }}
+                    >
+                      <Show when={pollAllowed()}>
+                        <MessageBox.InlineIcon>
+                          <Tooltip content={t`Create poll`} placement="top">
+                            <IconButton
+                              onPress={() =>
+                                openModal({
+                                  type: "create_poll",
+                                  channel: props.channel,
+                                })
+                              }
+                            >
+                              <Symbol>ballot</Symbol>
+                            </IconButton>
+                          </Tooltip>
+                        </MessageBox.InlineIcon>
+                      </Show>
+                      <Show when={softresAllowed()}>
+                        <MessageBox.InlineIcon>
+                          <Tooltip
+                            content={t`Create soft-reserve sheet`}
+                            placement="top"
+                          >
+                            <IconButton
+                              onPress={() =>
+                                openModal({
+                                  type: "create_softres",
+                                  channel: props.channel,
+                                })
+                              }
+                            >
+                              <Symbol>shield</Symbol>
+                            </IconButton>
+                          </Tooltip>
+                        </MessageBox.InlineIcon>
+                      </Show>
                       <MessageBox.InlineIcon>
-                        <IconButton onPress={triggerProps.onClickGif}>
-                          <Symbol>gif</Symbol>
+                        <IconButton onPress={triggerProps.onClickSticker}>
+                          <Symbol>note_stack</Symbol>
                         </IconButton>
                       </MessageBox.InlineIcon>
-                    </Show>
+                      <Show when={!canSend()}>
+                        <MessageBox.InlineIcon>
+                          <IconButton onPress={triggerProps.onClickGif}>
+                            <Symbol>gif</Symbol>
+                          </IconButton>
+                        </MessageBox.InlineIcon>
+                      </Show>
+                    </div>
                     <MessageBox.InlineIcon>
                       <IconButton onPress={triggerProps.onClickEmoji}>
                         <Symbol>emoticon</Symbol>
@@ -1408,6 +1369,76 @@ export function MessageComposition(props: Props) {
                   </>
                 )}
               </CompositionMediaPicker>
+              <MessageBox.InlineIcon>
+                <ComposerPopover
+                  open={showDisappearMenu()}
+                  onDismiss={() => setShowDisappearMenu(false)}
+                  panel={
+                    <div
+                      style={{
+                        background: "var(--md-sys-color-surface-container-high)",
+                        "border-radius": "12px",
+                        padding: "8px 0",
+                        "min-width": "160px",
+                        "box-shadow": "0 4px 20px rgba(0,0,0,0.4)",
+                        border: "1px solid var(--md-sys-color-outline-variant)",
+                      }}
+                    >
+                      <div style={{ padding: "4px 12px 8px", "font-size": "0.75em", opacity: "0.6", "font-weight": "600", "letter-spacing": "0.05em", "text-transform": "uppercase" }}>
+                        Disappear after
+                      </div>
+                      <For each={DISAPPEAR_OPTIONS}>
+                        {(opt, i) => (
+                          <div
+                            onClick={() => selectDisappear(i())}
+                            style={{
+                              display: "flex",
+                              "align-items": "center",
+                              gap: "10px",
+                              padding: "12px 16px",
+                              cursor: "pointer",
+                              background: disappearIdx() === i() ? "var(--md-sys-color-primary-container)" : "transparent",
+                              color: disappearIdx() === i() ? "var(--md-sys-color-on-primary-container)" : "inherit",
+                              "font-size": "0.9em",
+                            }}
+                          >
+                            <div style={{
+                              width: "16px",
+                              height: "16px",
+                              "border-radius": "50%",
+                              border: `2px solid ${disappearIdx() === i() ? "#FF8A00" : "var(--md-sys-color-outline)"}`,
+                              background: disappearIdx() === i() ? "#FF8A00" : "transparent",
+                              "flex-shrink": "0",
+                            }} />
+                            {opt.label}
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  }
+                >
+                  <Tooltip
+                    content={disappearTooltipText()}
+                    placement="top"
+                  >
+                    <div style={{ display: "flex", "flex-direction": "column", "align-items": "center" }}>
+                      <IconButton
+                        onPress={toggleDisappearMenu}
+                        style={disappearOption().seconds !== null ? { color: "#FF8A00" } : {}}
+                      >
+                        <Symbol>
+                          {disappearOption().seconds === null ? "timer_off" : "timer"}
+                        </Symbol>
+                      </IconButton>
+                      <Show when={disappearOption().seconds !== null}>
+                        <span style={{ "font-size": "0.6em", "line-height": "1", "margin-top": "-4px", color: "#FF8A00", "font-weight": "600", "pointer-events": "none" }}>
+                          {disappearOption().label}
+                        </span>
+                      </Show>
+                    </div>
+                  </Tooltip>
+                </ComposerPopover>
+              </MessageBox.InlineIcon>
               <Show when={props.channel.havePermission("UploadFiles")}>
                 <MessageBox.InlineIcon>
                   <CameraMessageButton
