@@ -1,4 +1,4 @@
-import { Accessor, Match, Setter, Show, Switch, createMemo } from "solid-js";
+import { Accessor, createMemo, Match, Setter, Show, Switch } from "solid-js";
 
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import { Channel } from "stoat.js";
@@ -237,8 +237,7 @@ export function ChannelHeader(props: Props) {
         </IconButton>
         <IconButton
           onPress={async () => {
-            await voice.connect(props.channel);
-            await voice.toggleCamera();
+            if (await voice.connect(props.channel)) await voice.toggleCamera();
           }}
           use:floating={{
             tooltip: {

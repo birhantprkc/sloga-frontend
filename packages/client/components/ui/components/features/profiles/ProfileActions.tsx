@@ -64,10 +64,13 @@ export function ProfileActions(props: {
    * Start a voice call in the DM channel
    */
   function startVoiceCall() {
-    props.user.openDM().then((channel) => {
-      enterDm(channel);
-      return voice.connect(channel);
-    }).catch(dmFailed);
+    props.user
+      .openDM()
+      .then((channel) => {
+        enterDm(channel);
+        return voice.connect(channel);
+      })
+      .catch(dmFailed);
     props.onClose();
   }
 
@@ -75,11 +78,13 @@ export function ProfileActions(props: {
    * Start a call in the DM channel with the camera enabled
    */
   function startVideoCall() {
-    props.user.openDM().then(async (channel) => {
-      enterDm(channel);
-      await voice.connect(channel);
-      await voice.toggleCamera();
-    }).catch(dmFailed);
+    props.user
+      .openDM()
+      .then(async (channel) => {
+        enterDm(channel);
+        if (await voice.connect(channel)) await voice.toggleCamera();
+      })
+      .catch(dmFailed);
     props.onClose();
   }
 
@@ -126,11 +131,21 @@ export function ProfileActions(props: {
       </Show>
       <Show when={canDm()}>
         <Button onPress={openDm}>Message</Button>
-        <IconButton onPress={startVoiceCall} use:floating={{ tooltip: { placement: "top", content: "Voice Call" } }}>
+        <IconButton
+          onPress={startVoiceCall}
+          use:floating={{
+            tooltip: { placement: "top", content: "Voice Call" },
+          }}
+        >
           <MdCall {...iconSize(16)} />
         </IconButton>
         <Show when={CONFIGURATION.ENABLE_VIDEO}>
-          <IconButton onPress={startVideoCall} use:floating={{ tooltip: { placement: "top", content: "Video Call" } }}>
+          <IconButton
+            onPress={startVideoCall}
+            use:floating={{
+              tooltip: { placement: "top", content: "Video Call" },
+            }}
+          >
             <MdVideocam {...iconSize(16)} />
           </IconButton>
         </Show>

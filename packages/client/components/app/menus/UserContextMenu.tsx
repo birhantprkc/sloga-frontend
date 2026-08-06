@@ -18,8 +18,8 @@ import MdAlternateEmail from "@material-design-icons/svg/outlined/alternate_emai
 import MdAssignmentInd from "@material-design-icons/svg/outlined/assignment_ind.svg?component-solid";
 import MdBadge from "@material-design-icons/svg/outlined/badge.svg?component-solid";
 import MdBlock from "@material-design-icons/svg/outlined/block.svg?component-solid";
-import MdCancel from "@material-design-icons/svg/outlined/cancel.svg?component-solid";
 import MdCall from "@material-design-icons/svg/outlined/call.svg?component-solid";
+import MdCancel from "@material-design-icons/svg/outlined/cancel.svg?component-solid";
 import MdChat from "@material-design-icons/svg/outlined/chat.svg?component-solid";
 import MdClose from "@material-design-icons/svg/outlined/close.svg?component-solid";
 import MdDoNotDisturbOn from "@material-design-icons/svg/outlined/do_not_disturb_on.svg?component-solid";
@@ -93,10 +93,13 @@ export function UserContextMenu(props: {
    * Start a voice call in the DM channel
    */
   function startVoiceCall() {
-    props.user.openDM().then((channel) => {
-      enterDm(channel);
-      return voice.connect(channel);
-    }).catch(dmFailed);
+    props.user
+      .openDM()
+      .then((channel) => {
+        enterDm(channel);
+        return voice.connect(channel);
+      })
+      .catch(dmFailed);
     props.onClose?.();
   }
 
@@ -104,11 +107,13 @@ export function UserContextMenu(props: {
    * Start a call in the DM channel with the camera enabled
    */
   function startVideoCall() {
-    props.user.openDM().then(async (channel) => {
-      enterDm(channel);
-      await voice.connect(channel);
-      await voice.toggleCamera();
-    }).catch(dmFailed);
+    props.user
+      .openDM()
+      .then(async (channel) => {
+        enterDm(channel);
+        if (await voice.connect(channel)) await voice.toggleCamera();
+      })
+      .catch(dmFailed);
     props.onClose?.();
   }
 
@@ -116,11 +121,13 @@ export function UserContextMenu(props: {
    * Start a call in the DM channel and immediately share the screen
    */
   function startScreenShareCall() {
-    props.user.openDM().then(async (channel) => {
-      enterDm(channel);
-      await voice.connect(channel);
-      await voice.toggleScreenshare();
-    }).catch(dmFailed);
+    props.user
+      .openDM()
+      .then(async (channel) => {
+        enterDm(channel);
+        if (await voice.connect(channel)) await voice.toggleScreenshare();
+      })
+      .catch(dmFailed);
     props.onClose?.();
   }
 

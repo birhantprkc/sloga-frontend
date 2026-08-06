@@ -1048,7 +1048,17 @@ class Voice {
     this.#setDiceRolls([]);
   }
 
-  async connect(channel: Channel, auth?: { url: string; token: string }) {
+  /**
+   * Join the given channel's call. Resolves `true` only when THIS invocation
+   * still owned the call at completion — `false` when it was doomed mid-join
+   * (the user hung up while connecting, or a newer join superseded it).
+   * Callers chaining capture toggles ("start a video call") must gate on it:
+   * an ungated toggle after a doomed join lands in whatever call survived.
+   */
+  async connect(
+    channel: Channel,
+    auth?: { url: string; token: string },
+  ): Promise<boolean> {
     this.disconnect();
     // Supersession token: a later connect() runs disconnect() first and bumps
     // this, so a stale invocation resuming after an await can detect it lost
@@ -1079,7 +1089,7 @@ class Voice {
       }
       // Superseded while enumerating: nothing constructed yet, just yield
       // (and leave the newer invocation's pin marker alone).
-      if (gen !== this.#connectGen) return;
+      if (gen !== this.#connectGen) return false;
       if (present) {
         this.#pinnedMicId = audioInputDevice as string;
         audioInputDevice = { exact: audioInputDevice as string };
@@ -1411,7 +1421,7 @@ class Voice {
           // call's state / kill its foreground service.
           room.removeAllListeners();
           room.disconnect();
-          return;
+          return false;
         }
         this.#unlistenCallKeys = unlisten;
       }
@@ -1460,7 +1470,7 @@ class Voice {
       if (gen !== this.#connectGen) {
         room.removeAllListeners(); // FE-9c — don't let its `disconnected` clobber
         room.disconnect();
-        return;
+        return false;
       }
 
       // Assert the `negotiating` publish gate BEFORE connect (R2-5): a plain
@@ -1482,7 +1492,7 @@ class Voice {
         // plaintext escaping the newer call's negotiation window).
         room.removeAllListeners(); // FE-9c
         room.disconnect();
-        return;
+        return false;
       }
       // Sweep any already-published local track under the gate (a track can
       // publish during `await room.connect`).
@@ -1494,7 +1504,7 @@ class Voice {
       if (gen !== this.#connectGen) {
         room.removeAllListeners(); // FE-9c
         room.disconnect();
-        return;
+        return false;
       }
 
       // Assert the device-qualified identity the SFU actually minted (slice
@@ -1541,11 +1551,16 @@ class Voice {
             { headers: { [authHeader]: authValue } },
           )
             .then(async (response) => {
+              // Ownership guard: a stale probe resolving after a hang-up /
+              // rejoin must not clobber the NEXT call's tri-state (the T0d
+              // fail-safe reads it; the new call runs its own probe).
+              if (gen !== this.#connectGen) return;
               const open = response.ok;
               this.#openGroupProbe = open ? "open" : "none";
               this.#setCallChannelHasOpenGroup(open);
             })
             .catch(() => {
+              if (gen !== this.#connectGen) return;
               this.#openGroupProbe = "none";
             });
         } else {
@@ -1585,33 +1600,35 @@ class Voice {
         if (this.room() === room) void this.#applyPublishGate(room);
       }
     } catch (error) {
-      // Failed connect: tear down THIS invocation's E2EE resources so the
-      // worker + native listener never leak (gate MEDIUM). Only if we still
-      // own the shared state — a newer connect() may already have taken it
-      // over (and cleaned ours) via its disconnect().
-      if (gen === this.#connectGen) {
-        this.#mlsSession?.dispose();
-        this.#mlsSession = undefined;
-        this.#unlistenCallKeys?.();
-        this.#unlistenCallKeys = undefined;
-        this.#e2eeWorker?.terminate();
-        this.#e2eeWorker = undefined;
-        this.#mlsKeyProvider = undefined;
+      // Ownership decides everything below — snapshot BEFORE disconnect(),
+      // which bumps the token.
+      const owned = gen === this.#connectGen;
+      if (owned) {
+        // We still own the call: tear the half-built call down FULLY.
+        // Anything narrower leaves `negotiating` held in the publish gate
+        // and the UI stuck on CONNECTING with a dead room until the next
+        // user action. disconnect() also disposes this invocation's E2EE
+        // resources (session, native listener, worker — gate MEDIUM), which
+        // an inline cleanup here used to do by hand.
+        this.disconnect();
+        throw error;
       }
+      // Doomed: whoever bumped the token already tore down the shared state
+      // and (normally) this room — belt-and-braces, since the rejection can
+      // land before the teardown's own room.disconnect() settles. The
+      // failure itself is not actionable: it is usually OUR teardown
+      // aborting `room.connect()` (the user hung up while still connecting,
+      // or a newer join took over), and several call sites run
+      // `voice.connect()` unawaited — a rethrow would surface an error for
+      // a hang-up the user asked for.
       try {
         room.disconnect();
       } catch {
         /* not connected */
       }
-      // A doomed invocation's failure is not actionable: the rejection is
-      // usually just OUR teardown aborting `room.connect()` (the user hung
-      // up while still connecting, or a newer join took over). Callers only
-      // need to hear about failures of a join they still own — several call
-      // sites run `voice.connect()` unawaited, so a rethrow here would
-      // surface as an error for a hang-up the user asked for.
-      if (gen !== this.#connectGen) return;
-      throw error;
+      return false;
     }
+    return true;
   }
 
   disconnect() {
@@ -1828,11 +1845,19 @@ class Voice {
    * bypass it while a reason is held.
    */
   async #pauseGate(room: Room, reason: string): Promise<void> {
+    // Stale-writer guard: a binding built for a PREVIOUS call must not add
+    // reasons to the gate it shares with the current one — its session is
+    // disposed, so nothing would ever release them and every new publication
+    // would be swept paused (publishing silence with no UI cause).
+    if (this.room() !== room) return;
     this.#publishGate.add(reason);
     await this.#applyPublishGate(room);
   }
 
   async #resumeGate(room: Room, reason: string): Promise<void> {
+    // Same stale-writer guard, for the inverse hazard: a stale resume must
+    // not release a reason the CURRENT call's session is still relying on.
+    if (this.room() !== room) return;
     this.#publishGate.delete(reason);
     await this.#applyPublishGate(room);
   }
