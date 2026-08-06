@@ -30,8 +30,21 @@ const JOB_ID_KEY = "discord_import:job_id";
 /* Feature flag                                                               */
 /* -------------------------------------------------------------------------- */
 
+/** What the root config route says about the importer. */
+export type ImportDiscordFlags = {
+  /** Whether the template importer is on at all */
+  enabled: boolean;
+  /**
+   * Discord application id of the instance's importer bot, present only when
+   * the optional sticker step is configured. The client builds the
+   * bot-invite URL from it.
+   */
+  stickerClientId?: string;
+};
+
 /**
- * Whether the server has the Discord importer enabled.
+ * Whether the server has the Discord importer enabled — and, since slice 2,
+ * whether the sticker step is available. One fetch primes both.
  *
  * Read with a raw `fetch` of the root config route, cloned from
  * `fetchStreamingFlags`. **Never read this from `client.configuration`:** the
@@ -40,18 +53,28 @@ const JOB_ID_KEY = "discord_import:job_id";
  * `GET /` is never actually fetched and `features.import_discord` would be
  * `undefined` forever — failing closed and silently.
  */
-export async function fetchImportDiscordEnabled(): Promise<boolean> {
+export async function fetchImportDiscordFlags(): Promise<ImportDiscordFlags> {
   try {
     const response = await fetch(`${CONFIGURATION.DEFAULT_API_URL}/`);
-    if (!response.ok) return false;
+    if (!response.ok) return { enabled: false };
     const config = await response.json();
-    return !!config?.features?.import_discord;
+    const stickerClientId = config?.features?.import_discord_stickers;
+    return {
+      enabled: !!config?.features?.import_discord,
+      stickerClientId:
+        typeof stickerClientId === "string" && stickerClientId
+          ? stickerClientId
+          : undefined,
+    };
   } catch {
-    return false;
+    return { enabled: false };
   }
 }
 
 const [flagEnabled, setFlagEnabled] = createSignal(false);
+const [stickerClientId, setStickerClientId] = createSignal<string | undefined>(
+  undefined,
+);
 let flagProbed = false;
 
 /**
@@ -60,7 +83,10 @@ let flagProbed = false;
 export function primeImportDiscordFlag(): void {
   if (flagProbed) return;
   flagProbed = true;
-  fetchImportDiscordEnabled().then(setFlagEnabled);
+  fetchImportDiscordFlags().then((flags) => {
+    setFlagEnabled(flags.enabled);
+    setStickerClientId(flags.stickerClientId);
+  });
 }
 
 /**
@@ -70,6 +96,15 @@ export function primeImportDiscordFlag(): void {
 export function importDiscordEnabled(): boolean {
   primeImportDiscordFlag();
   return flagEnabled();
+}
+
+/**
+ * Reactive accessor for the sticker step's bot client id; `undefined` when
+ * the instance has not configured the bot upgrade (the offer is hidden).
+ */
+export function importDiscordStickerClientId(): string | undefined {
+  primeImportDiscordFlag();
+  return stickerClientId();
 }
 
 /* -------------------------------------------------------------------------- */
@@ -87,9 +122,20 @@ export type DiscordImportView = {
   jobId: string;
   status: DiscordImportStatus;
   stage: string;
+  /**
+   * `Template` or `Stickers` — opaque-string rule like `stage`. Everything
+   * the sticker screens branch on rides the WIRE (this field, `parentJobId`,
+   * `sourceGuildId`), never client-side stashes: every event rebuilds this
+   * view object wholesale, and a reload rebuilds it from a job fetch.
+   */
+  kind?: string;
   done: number;
   /** 0 means "indeterminate" — do NOT divide by this */
   total: number;
+  /** Discord guild the template came from (bot-invite URL target) */
+  sourceGuildId?: string;
+  /** On a sticker job: the template job "Try again" re-POSTs against */
+  parentJobId?: string;
   serverId?: string;
   inviteCode?: string;
   error?: string;
@@ -124,8 +170,11 @@ function fromJob(job: DiscordImportJobData): DiscordImportView {
     jobId: job.job_id,
     status: job.status,
     stage: job.stage,
+    kind: job.kind,
     done: job.done ?? 0,
     total: job.total ?? 0,
+    sourceGuildId: job.source_guild_id,
+    parentJobId: job.parent_job_id,
     serverId: job.server_id,
     inviteCode: job.invite_code,
     error: job.error,
@@ -178,6 +227,18 @@ function rememberedJobId(): string | null {
 export function trackDiscordImport(jobId: string): void {
   persistJobId(jobId);
   setView({ jobId, status: "Queued", stage: "", done: 0, total: 0 });
+}
+
+/**
+ * Switch tracking to a freshly returned job ROW — the sticker-start POST
+ * returns the whole new job, and `applyDiscordImportJob` would refuse it
+ * (it deliberately ignores rows for jobs other than the one being tracked,
+ * which at that moment is still the parent).
+ * @param job Job row
+ */
+export function trackDiscordImportJob(job: DiscordImportJobData): void {
+  persistJobId(job.job_id);
+  setView(fromJob(job));
 }
 
 /**
@@ -238,6 +299,11 @@ export function applyDiscordImportComplete(result: {
     jobId: result.jobId,
     status: "Completed",
     stage: current?.stage ?? "Done",
+    // Wire-derived identity fields carry over until the worker's follow-up
+    // job fetch re-derives them from the row.
+    kind: current?.kind,
+    sourceGuildId: current?.sourceGuildId,
+    parentJobId: current?.parentJobId,
     done: current?.done ?? 0,
     total: current?.total ?? 0,
     serverId: result.serverId,
@@ -262,6 +328,11 @@ export function applyDiscordImportFailed(failure: {
     jobId: failure.jobId,
     status: "Failed",
     stage: current?.stage ?? "",
+    // The failed screen's sticker retry branches on `kind` and re-POSTs
+    // against `parentJobId` — they must survive the event rebuild.
+    kind: current?.kind,
+    sourceGuildId: current?.sourceGuildId,
+    parentJobId: current?.parentJobId,
     done: current?.done ?? 0,
     total: current?.total ?? 0,
     error: failure.error,

@@ -7,8 +7,10 @@ import {
   clearDiscordImport,
   discordImportErrorType,
   discordImportView,
+  importDiscordStickerClientId,
   resumeDiscordImport,
   trackDiscordImport,
+  trackDiscordImportJob,
 } from "@revolt/client/discordImport";
 import { inviteUrl } from "@revolt/common";
 import { useNavigate } from "@revolt/routing";
@@ -145,6 +147,8 @@ export function ImportDiscordModal(
         return t`Setting you up as the owner…`;
       case "Invite":
         return t`Generating an invite…`;
+      case "Stickers":
+        return t`Importing stickers…`;
       case "Done":
         return t`Finishing up…`;
       case "":
@@ -159,6 +163,30 @@ export function ImportDiscordModal(
     return code ? inviteUrl(code) : "";
   };
 
+  /** Whether the tracked job is a sticker run rather than a template import. */
+  const isStickerJob = () => view()?.kind === "Stickers";
+
+  /**
+   * Whether the finished template import can offer the sticker step: the
+   * instance has the bot configured AND the job knows its source guild
+   * (pre-slice-2 jobs don't).
+   */
+  const stickerOffer = () =>
+    !isStickerJob() && !!view()?.sourceGuildId && !!importDiscordStickerClientId();
+
+  /**
+   * Bot-invite URL, guild preselected. `permissions=0` on purpose — reading
+   * the sticker list needs no permission bits, and asking for none is the
+   * honest ask.
+   */
+  const botInviteUrl = () => {
+    const clientId = importDiscordStickerClientId();
+    const guildId = view()?.sourceGuildId;
+    return clientId && guildId
+      ? `https://discord.com/oauth2/authorize?client_id=${clientId}&scope=bot&permissions=0&guild_id=${guildId}&disable_guild_select=true`
+      : "";
+  };
+
   // Land the user in the server they just imported. Deferred a tick, as in the
   // create-server modal, so the navigation does not race the modal's own
   // render. The modal is portaled and survives the route change, so the invite
@@ -169,6 +197,10 @@ export function ImportDiscordModal(
   createEffect(() => {
     const current = view();
     if (!current || current.status !== "Completed" || !current.serverId) return;
+    // A finished STICKER run must not re-navigate: it has a fresh job id and
+    // carries `serverId`, but the user is already wherever they want to be —
+    // yanking them to the server mid-flow reads as a glitch.
+    if (current.kind === "Stickers") return;
     if (navigatedJobId === current.jobId) return;
     navigatedJobId = current.jobId;
     setTimeout(() => navigate(`/server/${current.serverId}`));
@@ -221,6 +253,46 @@ export function ImportDiscordModal(
   }
 
   /**
+   * Kick off the sticker step against a Completed template job. The modal
+   * flips back to the importing screen the moment the returned job row is
+   * tracked; all the existing worker/poll/resume machinery follows the new
+   * job unchanged.
+   * @param parentJobId The Completed TEMPLATE job's id
+   */
+  async function startStickers(parentJobId: string) {
+    if (starting()) return;
+
+    setStarting(true);
+    setStartError(undefined);
+
+    try {
+      const job = await props.client.importDiscordStickers(parentJobId);
+      trackDiscordImportJob(job);
+    } catch (error) {
+      switch (discordImportErrorType(error)) {
+        case "ImportAlreadyInProgress":
+          setStartError(
+            t`You already have an import running. Wait for it to finish before starting another.`,
+          );
+          resumeDiscordImport(props.client);
+          break;
+        case "InvalidOperation":
+          setStartError(
+            t`Stickers can't be imported for this server. Try running the import again first.`,
+          );
+          break;
+        case "OperationFailed":
+          setStartError(t`Sticker import is not available right now.`);
+          break;
+        default:
+          setStartError(t`Could not start the sticker import. Try again shortly.`);
+      }
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  /**
    * Acknowledge a finished import and reset back to the explain screen.
    */
   function finish() {
@@ -251,8 +323,35 @@ export function ImportDiscordModal(
         ];
       case "importing":
         return [{ text: <Trans>Hide</Trans> }];
-      case "done":
+      case "done": {
+        // A finished sticker run has no invite to copy.
+        if (isStickerJob()) {
+          return [
+            {
+              text: <Trans>Done</Trans>,
+              onClick: () => {
+                finish();
+                return false;
+              },
+            },
+          ];
+        }
+
         return [
+          // Only once the user has had a chance to add the bot (the link is
+          // in the body copy above these actions).
+          ...(stickerOffer()
+            ? [
+                {
+                  text: <Trans>Import stickers</Trans>,
+                  onClick: () => {
+                    startStickers(view()!.jobId);
+                    return false;
+                  },
+                  isDisabled: starting(),
+                },
+              ]
+            : []),
           {
             text: <Trans>Copy invite</Trans>,
             onClick: () => {
@@ -268,6 +367,7 @@ export function ImportDiscordModal(
             },
           },
         ];
+      }
       case "failed":
         return [
           {
@@ -280,8 +380,20 @@ export function ImportDiscordModal(
           {
             text: <Trans>Try again</Trans>,
             onClick: () => {
-              clearDiscordImport();
-              setStartError(undefined);
+              // A failed sticker run retries the sticker POST against its
+              // parent (both ride the wire, so this survives a reload); a
+              // failed template import starts over from the explain screen.
+              const current = view();
+              if (
+                current?.kind === "Stickers" &&
+                current.parentJobId &&
+                !starting()
+              ) {
+                startStickers(current.parentJobId);
+              } else {
+                clearDiscordImport();
+                setStartError(undefined);
+              }
               return false;
             },
           },
@@ -328,6 +440,14 @@ export function ImportDiscordModal(
                 so they can't come across this way.
               </Trans>
             </Text>
+            <Show when={importDiscordStickerClientId()}>
+              <Text>
+                <Trans>
+                  Stickers can come across, though — once the import finishes,
+                  we'll offer to fetch them for you.
+                </Trans>
+              </Text>
+            </Show>
             <Text>
               <Trans>
                 Bots aren't data — they're separate programs running against
@@ -410,6 +530,30 @@ export function ImportDiscordModal(
           </Column>
         </Match>
 
+        {/* ------------------------------------------------- done: stickers */}
+        <Match when={screen() === "done" && isStickerJob()}>
+          <Column>
+            <Text>
+              {t`Imported ${view()!.summary?.stickers_created ?? 0} stickers.`}
+            </Text>
+            <Text class="label">
+              <Trans>
+                You can kick the importer bot from your Discord server now —
+                it doesn't need to stay.
+              </Trans>
+            </Text>
+            <Show when={view()!.summary?.notes.length}>
+              <Text class="label">
+                <Trans>Notes</Trans>
+              </Text>
+              {/* Server-generated English; intentionally rendered verbatim. */}
+              <For each={view()!.summary!.notes}>
+                {(note) => <Text class="label">{note}</Text>}
+              </For>
+            </Show>
+          </Column>
+        </Match>
+
         {/* ------------------------------------------------------- done -- */}
         <Match when={screen() === "done"}>
           <Column>
@@ -444,6 +588,36 @@ export function ImportDiscordModal(
                 {(note) => <Text class="label">{note}</Text>}
               </For>
             </Show>
+
+            <Show when={stickerOffer()}>
+              <Text class="label">
+                <Trans>Stickers</Trans>
+              </Text>
+              <Text>
+                <Trans>
+                  Want your Discord server's stickers too? Add our importer
+                  bot to it, then press Import stickers below.
+                </Trans>
+              </Text>
+              {/* Sibling nodes, never nested inside <Trans> (triple-render
+                  trap). External link: the desktop shell routes target=_blank
+                  through the system browser. */}
+              <Text>
+                <a href={botInviteUrl()} target="_blank" rel="noreferrer">
+                  <Trans>Add the importer bot on Discord</Trans>
+                </a>
+              </Text>
+              <Text class="label">
+                <Trans>
+                  The bot only reads stickers, and you can kick it as soon as
+                  they're in.
+                </Trans>
+              </Text>
+            </Show>
+
+            <Show when={startError()}>
+              <Text class="label">{startError()}</Text>
+            </Show>
           </Column>
         </Match>
 
@@ -455,6 +629,9 @@ export function ImportDiscordModal(
             </Text>
             {/* Already user-safe server-side; shown verbatim. */}
             <Text>{view()!.error}</Text>
+            <Show when={startError()}>
+              <Text class="label">{startError()}</Text>
+            </Show>
           </Column>
         </Match>
       </Switch>

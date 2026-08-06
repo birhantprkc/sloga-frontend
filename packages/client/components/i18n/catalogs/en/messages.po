@@ -201,16 +201,6 @@ msgstr "{0} reported ({1})"
 msgid "{0} reserved"
 msgstr "{0} reserved"
 
-#. placeholder {0}: names().join(", ")
-#: components/ui/components/features/voice/callCard/VoiceCallRecordingBanner.tsx
-msgid "{0} said they are recording this call."
-msgstr "{0} said they are recording this call."
-
-#. placeholder {0}: recorderNames().join(", ")
-#: components/ui/components/features/voice/callCard/VoiceCallCardPreview.tsx
-msgid "{0} says they are recording"
-msgstr "{0} says they are recording"
-
 #. placeholder {0}: rows().length
 #: components/app/interface/channels/text/ScheduledMessagesBar.tsx
 msgid "{0} scheduled"
@@ -600,6 +590,10 @@ msgstr "Add status text"
 msgid "Add tag"
 msgstr "Add tag"
 
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Add the importer bot on Discord"
+msgstr "Add the importer bot on Discord"
+
 #: components/app/interface/settings/server/apps/AppsList.tsx
 msgid "Added ✓"
 msgstr "Added ✓"
@@ -794,6 +788,10 @@ msgstr "Attach voice message"
 msgid "Attachments"
 msgstr "Attachments"
 
+#: src/interface/ServerEvents.tsx
+msgid "Attendees can join this channel from the event when it starts. Only members who can see the channel will see the event."
+msgstr "Attendees can join this channel from the event when it starts. Only members who can see the channel will see the event."
+
 #: components/modal/modals/ScreenShareSettings.tsx
 msgid "Audio disabled by browser"
 msgstr "Audio disabled by browser"
@@ -837,6 +835,14 @@ msgstr "Automatically enable"
 #: components/app/interface/settings/user/profile/UserProfileEditor.tsx
 msgid "Avatar"
 msgstr "Avatar"
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Avatars and names"
+msgstr "Avatars and names"
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Avatars only"
+msgstr "Avatars only"
 
 #: src/interface/channels/PasswordGate.tsx
 #: src/interface/channels/AgeGate.tsx
@@ -951,6 +957,7 @@ msgstr "Blur strength"
 msgid "Blur strength: {0}"
 msgstr "Blur strength: {0}"
 
+#: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
 #: components/app/interface/channels/text/Message.tsx
 msgid "Bot"
 msgstr "Bot"
@@ -958,6 +965,14 @@ msgstr "Bot"
 #: components/modal/modals/ImportDiscord.tsx
 msgid "Bots aren't data — they're separate programs running against Discord, so there's nothing to copy. You'll set them up again here."
 msgstr "Bots aren't data — they're separate programs running against Discord, so there's nothing to copy. You'll set them up again here."
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Bottom left"
+msgstr "Bottom left"
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Bottom right"
+msgstr "Bottom right"
 
 #: components/app/interface/settings/user/voice/CameraOptions.tsx
 msgid "Brightness is unavailable on this camera while a background effect is active."
@@ -1011,6 +1026,10 @@ msgstr "Call encryption"
 #: components/ui/components/features/voice/callCard/VoiceCallCardPreview.tsx
 msgid "Call full for encryption (100)"
 msgstr "Call full for encryption (100)"
+
+#: components/app/interface/settings/user/Language.tsx
+msgid "Call transcription language"
+msgstr "Call transcription language"
 
 #: components/ui/components/features/voice/callCard/VoiceDeviceSelector.tsx
 #: components/modal/modals/CameraSettings.tsx
@@ -1282,6 +1301,10 @@ msgstr "Click to change the push to talk keybind."
 msgid "Click to copy username"
 msgstr "Click to copy username"
 
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Click to play again"
+msgstr "Click to play again"
+
 #: src/interface/channels/ChannelHeader.tsx
 #: src/interface/channels/ChannelHeader.tsx
 msgid "Click to show full description"
@@ -1465,6 +1488,10 @@ msgstr "Copied"
 msgid "Copied!"
 msgstr "Copied!"
 
+#: components/ui/components/features/voice/callCard/VoiceTranscriptPanel.tsx
+msgid "Copy"
+msgstr "Copy"
+
 #: components/app/menus/CategoryContextMenu.tsx
 msgid "Copy category ID"
 msgstr "Copy category ID"
@@ -1482,6 +1509,7 @@ msgid "Copy ID"
 msgstr "Copy ID"
 
 #: components/modal/modals/ImageViewer.tsx
+#: components/app/menus/MessageContextMenu.tsx
 #: components/app/menus/MessageContextMenu.tsx
 msgid "Copy image"
 msgstr "Copy image"
@@ -1524,6 +1552,10 @@ msgstr "Copy server ID"
 msgid "Copy text"
 msgstr "Copy text"
 
+#: components/ui/components/features/voice/callCard/VoiceTranscriptPanel.tsx
+msgid "Copy the transcript to the clipboard"
+msgstr "Copy the transcript to the clipboard"
+
 #: components/modal/modals/SoftResExport.tsx
 msgid "Copy to clipboard"
 msgstr "Copy to clipboard"
@@ -1542,6 +1574,7 @@ msgid "Copy webhook URL"
 msgstr "Copy webhook URL"
 
 #: components/app/menus/MessageContextMenu.tsx
+#: components/app/interface/channels/text/EncryptedAttachment.tsx
 msgid "Could not copy this image to the clipboard."
 msgstr "Could not copy this image to the clipboard."
 
@@ -1572,6 +1605,10 @@ msgstr "Could not start linking, try again later."
 #: components/modal/modals/ImportDiscord.tsx
 msgid "Could not start the import. Try again shortly."
 msgstr "Could not start the import. Try again shortly."
+
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Could not start the sticker import. Try again shortly."
+msgstr "Could not start the sticker import. Try again shortly."
 
 #: components/app/interface/settings/user/Connections.tsx
 msgid "Could not unlink the channel, try again."
@@ -1911,10 +1948,18 @@ msgstr "Description provided by {0}"
 msgid "Desktop"
 msgstr "Desktop"
 
+#: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
+#: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
+#: components/ui/components/features/voice/callCard/RemoteControlOverlays.tsx
 #: components/client/DiscordImportWorker.tsx
 #: components/client/DiscordImportWorker.tsx
 msgid "Details"
 msgstr "Details"
+
+#: components/app/interface/settings/user/Language.tsx
+#: components/app/interface/settings/user/Language.tsx
+msgid "Detect automatically"
+msgstr "Detect automatically"
 
 #: src/interface/channels/text/Composition.tsx
 msgid "Dice"
@@ -1964,6 +2009,10 @@ msgstr "Disadvantage"
 #: src/interface/channels/text/Composition.tsx
 msgid "Disappearing messages: Off"
 msgstr "Disappearing messages: Off"
+
+#: components/ui/components/features/voice/callCard/VoiceTranscriptPanel.tsx
+msgid "Discard"
+msgstr "Discard"
 
 #: components/ui/components/features/messaging/composition/VoiceMessageButton.tsx
 #: components/ui/components/features/messaging/composition/VoiceMessageButton.tsx
@@ -2043,10 +2092,16 @@ msgstr "Donated to Sloga"
 
 #: components/modal/modals/MFARecovery.tsx
 #: components/modal/modals/ImportDiscord.tsx
+#: components/modal/modals/ImportDiscord.tsx
 #: components/modal/modals/E2EEDisable.tsx
 #: components/modal/modals/CameraSettings.tsx
 msgid "Done"
 msgstr "Done"
+
+#. placeholder {0}: Math.round(progress * 100)
+#: components/ui/components/features/voice/callCard/VoiceTranscribeButton.tsx
+msgid "Downloading the speech model… {0}%"
+msgstr "Downloading the speech model… {0}%"
 
 #: components/modal/modals/ReportContent.tsx
 msgid "Drugs or illegal goods"
@@ -2197,10 +2252,6 @@ msgstr "Encrypt my calls"
 msgid "Encrypt this group"
 msgstr "Encrypt this group"
 
-#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
-#~ msgid "Encrypt your voice and video on this device. Everyone in a call must have this on; web participants can't join encrypted, and server features that need the raw audio or video (recording, transcoding) are turned off in encrypted calls."
-#~ msgstr "Encrypt your voice and video on this device. Everyone in a call must have this on; web participants can't join encrypted, and server features that need the raw audio or video (recording, transcoding) are turned off in encrypted calls."
-
 #: components/ui/components/features/voice/callCard/VoiceCallCardStatus.tsx
 msgid "Encrypted · unverified"
 msgstr "Encrypted · unverified"
@@ -2340,6 +2391,7 @@ msgid "Everyone must have encryption set up, or this will not turn on. Encrypted
 msgstr "Everyone must have encryption set up, or this will not turn on. Encrypted history will live only on each person's own devices, and the server will no longer be able to read new messages."
 
 #: components/ui/components/features/voice/callCard/VoiceCallCardActiveRoom.tsx
+#: components/ui/components/features/voice/callCard/RemoteControlOverlays.tsx
 msgid "Exit theater mode"
 msgstr "Exit theater mode"
 
@@ -2404,6 +2456,10 @@ msgstr "Feedback"
 msgid "Fetching encrypted attachment…"
 msgstr "Fetching encrypted attachment…"
 
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Field cleared!"
+msgstr "Field cleared!"
+
 #: src/interface/ServerEvents.tsx
 #: src/interface/ServerEvents.tsx
 msgid "file"
@@ -2436,6 +2492,11 @@ msgstr "Finish recording"
 #: components/app/interface/settings/user/SecurityAndPrivacy.tsx
 msgid "Finish restoring on this device"
 msgstr "Finish restoring on this device"
+
+#. placeholder {0}: voice.transcriptionPending()
+#: components/ui/components/features/voice/callCard/VoiceTranscriptPanel.tsx
+msgid "Finishing {0}…"
+msgstr "Finishing {0}…"
 
 #: components/modal/modals/ImportDiscord.tsx
 msgid "Finishing up…"
@@ -2534,6 +2595,10 @@ msgstr "Forwarded a message"
 #: components/auth/src/flows/FlowHome.tsx
 msgid "Free"
 msgstr "Free"
+
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Free ball!"
+msgstr "Free ball!"
 
 #: components/modal/modals/CreateSoftRes.tsx
 msgid "Friday raid night"
@@ -2697,8 +2762,11 @@ msgstr "Here is your new invite code:"
 msgid "Hidden by Streamer Mode"
 msgstr "Hidden by Streamer Mode"
 
-#: components/modal/modals/ImportDiscord.tsx
+#: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
+#: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
 #: components/ui/components/features/voice/callCard/VoiceCallRecordingBanner.tsx
+#: components/ui/components/features/voice/callCard/RemoteControlOverlays.tsx
+#: components/modal/modals/ImportDiscord.tsx
 msgid "Hide"
 msgstr "Hide"
 
@@ -2793,6 +2861,15 @@ msgstr "Import from Discord"
 msgid "Import legacy events"
 msgstr "Import legacy events"
 
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Import stickers"
+msgstr "Import stickers"
+
+#. placeholder {0}: view()!.summary?.stickers_created ?? 0
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Imported {0} stickers."
+msgstr "Imported {0} stickers."
+
 #. placeholder {0}: props.result!.imported
 #. placeholder {1}: props.result!.skipped_duplicates
 #. placeholder {2}: props.result!.skipped_invalid
@@ -2803,6 +2880,10 @@ msgstr "Imported: {0} · Duplicates skipped: {1} · Invalid: {2}"
 #: components/modal/modals/ImportDiscord.tsx
 msgid "Importing from Discord is not available right now."
 msgstr "Importing from Discord is not available right now."
+
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Importing stickers…"
+msgstr "Importing stickers…"
 
 #: src/interface/ServerEvents.tsx
 msgid "Importing…"
@@ -2835,6 +2916,10 @@ msgstr "In the meantime, get the app for a faster, smoother experience designed 
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "In this build the key only registers while the app is focused — the desktop app supports global push to talk."
 msgstr "In this build the key only registers while the app is focused — the desktop app supports global push to talk."
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "In-game overlay"
+msgstr "In-game overlay"
 
 #: components/modal/modals/SoftResExport.tsx
 msgid "In-game, type"
@@ -2965,6 +3050,10 @@ msgstr "Join"
 msgid "Join a server"
 msgstr "Join a server"
 
+#: src/interface/ServerEvents.tsx
+msgid "Join channel"
+msgstr "Join channel"
+
 #: src/interface/Home.tsx
 msgid "Join the Sloga Lounge"
 msgstr "Join the Sloga Lounge"
@@ -3046,6 +3135,7 @@ msgid "Latest activity"
 msgstr "Latest activity"
 
 #: components/app/interface/settings/user/Native.tsx
+#: components/app/interface/settings/user/Native.tsx
 msgid "Launch Sloga when you log into your computer."
 msgstr "Launch Sloga when you log into your computer."
 
@@ -3061,8 +3151,8 @@ msgstr "Leave"
 msgid "Leave {0}?"
 msgstr "Leave {0}?"
 
-#: components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
 #: components/ui/components/features/voice/callCard/VoiceCallRecordingBanner.tsx
+#: components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
 msgid "Leave call"
 msgstr "Leave call"
 
@@ -3202,7 +3292,6 @@ msgstr "Locks in {minutes}m"
 msgid "Log In"
 msgstr "Log In"
 
-#: components/app/interface/settings/UserSettings.tsx
 #: components/app/interface/settings/user/Sessions.tsx
 msgid "Log Out"
 msgstr "Log Out"
@@ -3312,6 +3401,7 @@ msgid "Max bitrate: Auto"
 msgstr "Max bitrate: Auto"
 
 #: components/ui/components/features/voice/callCard/VoiceCallCardActiveRoom.tsx
+#: components/ui/components/features/voice/callCard/RemoteControlOverlays.tsx
 msgid "Maximize & hide participants"
 msgstr "Maximize & hide participants"
 
@@ -3452,6 +3542,14 @@ msgstr "Microphone stays on automatically when in a voice channel."
 msgid "Microphone Test"
 msgstr "Microphone Test"
 
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Middle left"
+msgstr "Middle left"
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Middle right"
+msgstr "Middle right"
+
 #: components/app/interface/settings/user/Native.tsx
 msgid "Minimise to Tray"
 msgstr "Minimise to Tray"
@@ -3515,6 +3613,10 @@ msgstr "Mute"
 msgid "Mute Channel"
 msgstr "Mute Channel"
 
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Mute game sounds"
+msgstr "Mute game sounds"
+
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Mute lower-ranking members in voice call"
@@ -3570,6 +3672,10 @@ msgstr "My spoken language"
 #: components/modal/modals/CreateCategory.tsx
 msgid "Name"
 msgstr "Name"
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Names only"
+msgstr "Names only"
 
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
 msgid "Neutral"
@@ -3739,6 +3845,7 @@ msgid "Nobody here right now!"
 msgstr "Nobody here right now!"
 
 #: src/interface/ServerEvents.tsx
+#: src/interface/ServerEvents.tsx
 #: components/modal/modals/CameraSettings.tsx
 #: components/modal/modals/CameraSettings.tsx
 #: components/modal/modals/CameraSettings.tsx
@@ -3794,8 +3901,13 @@ msgid "Note to the loot master (optional)"
 msgstr "Note to the loot master (optional)"
 
 #: components/modal/modals/ImportDiscord.tsx
+#: components/modal/modals/ImportDiscord.tsx
 msgid "Notes"
 msgstr "Notes"
+
+#: components/ui/components/features/voice/callCard/VoiceTranscriptPanel.tsx
+msgid "Nothing has been transcribed yet."
+msgstr "Nothing has been transcribed yet."
 
 #: components/app/menus/ServerContextMenu.tsx
 #: components/app/menus/shared/NotificationContextMenu.tsx
@@ -3881,6 +3993,11 @@ msgstr "Only mentions will notify you"
 msgid "Only you can see this — it disappears when you reload."
 msgstr "Only you can see this — it disappears when you reload."
 
+#. placeholder {0}: Math.round(voice.overlayOpacity * 100)
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Opacity: {0}%"
+msgstr "Opacity: {0}%"
+
 #: components/modal/modals/Invite.tsx
 #: components/modal/modals/DiscoverJoin.tsx
 msgid "Open"
@@ -3890,6 +4007,10 @@ msgstr "Open"
 #: components/auth/src/flows/MailProvider.tsx
 msgid "Open {0}"
 msgstr "Open {0}"
+
+#: src/interface/ServerEvents.tsx
+msgid "Open channel"
+msgstr "Open channel"
 
 #: components/app/menus/ChannelContextMenu.tsx
 msgid "Open channel settings"
@@ -3931,6 +4052,10 @@ msgstr "Or type /roll 2d6+3 in chat"
 msgid "Other"
 msgstr "Other"
 
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Out of balls!"
+msgstr "Out of balls!"
+
 #: components/app/interface/settings/user/notifications/Sounds.tsx
 msgid "Outgoing Call Ringtone"
 msgstr "Outgoing Call Ringtone"
@@ -3938,6 +4063,14 @@ msgstr "Outgoing Call Ringtone"
 #: components/app/interface/settings/user/voice/VoiceInputOptions.tsx
 msgid "Output Volume"
 msgstr "Output Volume"
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Overlay opacity"
+msgstr "Overlay opacity"
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Overlay size"
+msgstr "Overlay size"
 
 #: components/app/interface/settings/ServerSettings.tsx
 #: components/app/interface/settings/ChannelSettings.tsx
@@ -4014,6 +4147,10 @@ msgstr "Play server soundboard sounds in a voice call"
 #: components/app/interface/settings/user/notifications/Sounds.tsx
 msgid "Play sound"
 msgstr "Play sound"
+
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Play while you wait?"
+msgstr "Play while you wait?"
 
 #. placeholder {0}: playing.name
 #. placeholder {0}: activity.name
@@ -4334,6 +4471,7 @@ msgid "Reject friend request"
 msgstr "Reject friend request"
 
 #: components/ui/components/features/voice/callCard/RemoteControlOverlays.tsx
+#: components/ui/components/features/voice/callCard/RemoteControlOverlays.tsx
 msgid "Release control"
 msgstr "Release control"
 
@@ -4488,7 +4626,6 @@ msgid "Resend"
 msgstr "Resend"
 
 #: components/auth/src/flows/FlowResend.tsx
-#: components/auth/src/flows/FlowLogin.tsx
 msgid "Resend verification"
 msgstr "Resend verification"
 
@@ -4623,6 +4760,10 @@ msgstr "Roles"
 msgid "Roll dice"
 msgstr "Roll dice"
 
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Round-trip time for your own microphone stream. Shows a dash while your mic is not transmitting."
+msgstr "Round-trip time for your own microphone stream. Shows a dash while your mic is not transmitting."
+
 #: src/interface/ServerEvents.tsx
 #: components/modal/modals/ServerIdentity.tsx
 #: components/modal/modals/CustomStatus.tsx
@@ -4639,8 +4780,17 @@ msgid "Save"
 msgstr "Save"
 
 #: components/app/menus/MessageContextMenu.tsx
+#: components/app/menus/MessageContextMenu.tsx
 msgid "Save file"
 msgstr "Save file"
+
+#: components/ui/components/features/voice/callCard/VoiceTranscriptPanel.tsx
+msgid "Save the transcript as a text file"
+msgstr "Save the transcript as a text file"
+
+#: components/ui/components/features/voice/callCard/VoiceTranscriptPanel.tsx
+msgid "Save the transcript as subtitles"
+msgstr "Save the transcript as subtitles"
 
 #: src/interface/channels/text/Composition.tsx
 msgid "Save to your notes"
@@ -4676,6 +4826,10 @@ msgstr "Schedule"
 #: src/interface/channels/text/Composition.tsx
 msgid "Scheduling does not support attachments yet"
 msgstr "Scheduling does not support attachments yet"
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Screen position"
+msgstr "Screen position"
 
 #: components/app/menus/UserContextMenu.tsx
 msgid "Screen Share"
@@ -4959,6 +5113,10 @@ msgstr "Show corrections and suggestions as you type."
 msgid "Show friends what game you are playing (desktop app only)."
 msgstr "Show friends what game you are playing (desktop app only)."
 
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Show latency"
+msgstr "Show latency"
+
 #: components/app/interface/settings/user/Language.tsx
 msgid "Show live captions during voice and video calls, translated into your chosen language. Your microphone audio is sent to your browser's speech service (Google) to transcribe it, and the text is sent to Google Translate; captions are disabled on end-to-end encrypted calls."
 msgstr "Show live captions during voice and video calls, translated into your chosen language. Your microphone audio is sent to your browser's speech service (Google) to transcribe it, and the text is sent to Google Translate; captions are disabled on end-to-end encrypted calls."
@@ -4975,9 +5133,17 @@ msgstr "Show message timestamps"
 msgid "Show Others"
 msgstr "Show Others"
 
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Show overlay during calls"
+msgstr "Show overlay during calls"
+
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
 msgid "Show send message button"
 msgstr "Show send message button"
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Show who is talking on top of your game during a call. Works in borderless-windowed games; exclusive fullscreen cannot be drawn over."
+msgstr "Show who is talking on top of your game during a call. Works in borderless-windowed games; exclusive fullscreen cannot be drawn over."
 
 #: components/modal/modals/CreateSoftRes.tsx
 msgid "Shown on the sheet card"
@@ -4992,12 +5158,9 @@ msgid "Sign in with your account to link your channel."
 msgstr "Sign in with your account to link your channel."
 
 #: src/interface/navigation/servers/UserMenu.tsx
+#: components/app/interface/settings/UserSettings.tsx
 msgid "Sign out"
 msgstr "Sign out"
-
-#: components/auth/src/flows/FlowLogin.tsx
-msgid "Sign into Sloga"
-msgstr "Sign into Sloga"
 
 #: components/auth/src/flows/FlowHome.tsx
 msgid "Sign Up"
@@ -5010,6 +5173,11 @@ msgstr "Signing you in…"
 #: components/app/interface/channels/text/Message.tsx
 msgid "Silent"
 msgstr "Silent"
+
+#. placeholder {0}: Math.round(voice.overlayScale * 100)
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Size: {0}%"
+msgstr "Size: {0}%"
 
 #: components/modal/modals/E2EEEnable.tsx
 msgid "Skip for now"
@@ -5055,6 +5223,10 @@ msgstr "Sloga will start in the system tray."
 msgid "Sloga works best as an app"
 msgstr "Sloga works best as an app"
 
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Slogaball minigame"
+msgstr "Slogaball minigame"
+
 #: src/interface/channels/text/Composition.tsx
 msgid "Slowmode Immune"
 msgstr "Slowmode Immune"
@@ -5079,10 +5251,6 @@ msgstr "Some hard reserves are not in the selected raids' loot — remove them (
 msgid "Someone here is recording audio"
 msgstr "Someone here is recording audio"
 
-#: components/ui/components/features/voice/callCard/VoiceCallCardPreview.tsx
-msgid "Someone here says they are recording"
-msgstr "Someone here says they are recording"
-
 #: components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
 msgid "Someone in this call is not using encrypted calls. Your audio and video stay paused until you turn off encryption."
 msgstr "Someone in this call is not using encrypted calls. Your audio and video stay paused until you turn off encryption."
@@ -5090,10 +5258,6 @@ msgstr "Someone in this call is not using encrypted calls. Your audio and video 
 #: components/ui/components/features/voice/callCard/VoiceCallRecordingBanner.tsx
 msgid "Someone in this call is recording audio."
 msgstr "Someone in this call is recording audio."
-
-#: components/ui/components/features/voice/callCard/VoiceCallRecordingBanner.tsx
-msgid "Someone in this call said they are recording it."
-msgstr "Someone in this call said they are recording it."
 
 #: components/modal/modals/EditEmail.tsx
 msgid "someone@example.com"
@@ -5174,6 +5338,7 @@ msgid "Start the call"
 msgstr "Start the call"
 
 #: components/app/interface/settings/user/Native.tsx
+#: components/app/interface/settings/user/Native.tsx
 msgid "Start with Computer"
 msgstr "Start with Computer"
 
@@ -5185,13 +5350,26 @@ msgstr "Status"
 msgid "Stay unencrypted"
 msgstr "Stay unencrypted"
 
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Sticker import is not available right now."
+msgstr "Sticker import is not available right now."
+
 #: components/app/interface/settings/server/stickers/StickerList.tsx
 msgid "Sticker Name"
 msgstr "Sticker Name"
 
+#: components/modal/modals/ImportDiscord.tsx
 #: components/app/interface/settings/ServerSettings.tsx
 msgid "Stickers"
 msgstr "Stickers"
+
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Stickers can come across, though — once the import finishes, we'll offer to fetch them for you."
+msgstr "Stickers can come across, though — once the import finishes, we'll offer to fetch them for you."
+
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Stickers can't be imported for this server. Try running the import again first."
+msgstr "Stickers can't be imported for this server. Try running the import again first."
 
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
 msgid "Still reading your displays — try again in a moment."
@@ -5221,6 +5399,10 @@ msgstr "Stop recording"
 #: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx
 msgid "Stop sharing"
 msgstr "Stop sharing"
+
+#: components/ui/components/features/voice/callCard/VoiceTranscribeButton.tsx
+msgid "Stop transcribing"
+msgstr "Stop transcribing"
 
 #: components/app/interface/settings/user/notifications/Sounds.tsx
 msgid "Stream End"
@@ -5343,6 +5525,7 @@ msgid "Tags let members categorise posts. Moderated tags can only be applied by 
 msgstr "Tags let members categorise posts. Moderated tags can only be applied by members who can manage this channel."
 
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
+#: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
 msgid "Take back control"
 msgstr "Take back control"
 
@@ -5408,6 +5591,10 @@ msgstr "That doesn't look like a Discord server template link."
 #: components/app/interface/channels/text/MessageComponents.tsx
 msgid "The bot did not respond in time."
 msgstr "The bot did not respond in time."
+
+#: components/modal/modals/ImportDiscord.tsx
+msgid "The bot only reads stickers, and you can kick it as soon as they're in."
+msgstr "The bot only reads stickers, and you can kick it as soon as they're in."
 
 #: src/interface/ServerEvents.tsx
 msgid "The calendar feature is not enabled on this server."
@@ -5645,6 +5832,10 @@ msgstr "Thread Name"
 msgid "Threads"
 msgstr "Threads"
 
+#: components/ui/components/features/voice/callCard/VoiceTranscriptPanel.tsx
+msgid "Throw this transcript away"
+msgstr "Throw this transcript away"
+
 #: components/app/interface/settings/user/Language.tsx
 msgid "Time format"
 msgstr "Time format"
@@ -5678,9 +5869,29 @@ msgstr "Tomorrow at 9:00"
 msgid "Tonal Spot"
 msgstr "Tonal Spot"
 
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Top left"
+msgstr "Top left"
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Top right"
+msgstr "Top right"
+
 #: components/app/interface/settings/user/Language.tsx
 msgid "Traditional (DD/MM/YYYY)"
 msgstr "Traditional (DD/MM/YYYY)"
+
+#: components/ui/components/features/voice/callCard/VoiceTranscriptPanel.tsx
+msgid "Transcribing"
+msgstr "Transcribing"
+
+#: components/ui/components/features/voice/callCard/VoiceTranscriptPanel.tsx
+msgid "Transcript"
+msgstr "Transcript"
+
+#: components/ui/components/features/voice/callCard/VoiceTranscribeButton.tsx
+msgid "Transcription isn't supported on this device"
+msgstr "Transcription isn't supported on this device"
 
 #: components/app/interface/settings/user/Language.tsx
 msgid "Translate captions to"
@@ -5807,6 +6018,10 @@ msgstr "Unmute"
 #: components/app/menus/shared/NotificationContextMenu.tsx
 msgid "Unmute Channel"
 msgstr "Unmute Channel"
+
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Unmute game sounds"
+msgstr "Unmute game sounds"
 
 #: components/app/menus/ServerContextMenu.tsx
 msgid "Unmute Server"
@@ -6041,6 +6256,10 @@ msgstr "Voice & Video"
 msgid "Voice Activity Detection"
 msgstr "Voice Activity Detection"
 
+#: src/interface/ServerEvents.tsx
+msgid "Voice channel"
+msgstr "Voice channel"
+
 #: components/modal/modals/CreateChannel.tsx
 msgid "Voice Channel"
 msgstr "Voice Channel"
@@ -6086,6 +6305,10 @@ msgstr "Waiting for them to confirm on their machine"
 msgid "Want to change username?"
 msgstr "Want to change username?"
 
+#: components/modal/modals/ImportDiscord.tsx
+msgid "Want your Discord server's stickers too? Add our importer bot to it, then press Import stickers below."
+msgstr "Want your Discord server's stickers too? Add our importer bot to it, then press Import stickers below."
+
 #: src/interface/ServerEvents.tsx
 msgid "was going"
 msgstr "was going"
@@ -6093,6 +6316,10 @@ msgstr "was going"
 #: components/ui/components/features/voice/callCard/RemoteControlOverlays.tsx
 msgid "Watch their screen to see whether it is landing. Their computer can silently ignore input on system prompts and on windows with higher privileges, and they can take control back at any time."
 msgstr "Watch their screen to see whether it is landing. Their computer can silently ignore input on system prompts and on windows with higher privileges, and they can take control back at any time."
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "Wayland session detected — the overlay may not stay above games on this desktop. X11 sessions are fully supported."
+msgstr "Wayland session detected — the overlay may not stay above games on this desktop. X11 sessions are fully supported."
 
 #: src/AndroidNag.tsx
 msgid "We are working hard on optimising our web app for mobile."
@@ -6123,10 +6350,6 @@ msgstr "Webhooks"
 msgid "Weekly"
 msgstr "Weekly"
 
-#: components/auth/src/flows/FlowLogin.tsx
-msgid "Welcome!"
-msgstr "Welcome!"
-
 #: components/modal/modals/ImportDiscord.tsx
 msgid "What comes across"
 msgstr "What comes across"
@@ -6134,6 +6357,10 @@ msgstr "What comes across"
 #: components/modal/modals/ImportDiscord.tsx
 msgid "What doesn't"
 msgstr "What doesn't"
+
+#: components/app/interface/settings/user/voice/OverlaySettings.tsx
+msgid "What the overlay shows"
+msgstr "What the overlay shows"
 
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Whether other users can edit these settings"
@@ -6180,6 +6407,10 @@ msgstr "Would you like to join this server?"
 msgid "Write a message first, then schedule it"
 msgstr "Write a message first, then schedule it"
 
+#: components/ui/components/features/voice/callCard/VoiceTranscribeButton.tsx
+msgid "Write down what's said, on this device — everyone in the call will be told"
+msgstr "Write down what's said, on this device — everyone in the call will be told"
+
 #: components/modal/modals/SignOut.tsx
 msgid "Yes"
 msgstr "Yes"
@@ -6188,6 +6419,7 @@ msgstr "Yes"
 msgid "Yes, that's the right screen"
 msgstr "Yes, that's the right screen"
 
+#: components/modal/modals/ImportDiscord.tsx
 #: components/modal/modals/ImportDiscord.tsx
 msgid "You already have an import running. Wait for it to finish before starting another."
 msgstr "You already have an import running. Wait for it to finish before starting another."
@@ -6241,6 +6473,10 @@ msgstr "You can also click the gear icon in the bottom left."
 #: components/modal/modals/ImportDiscord.tsx
 msgid "You can close this — the import keeps going and we'll let you know when it's ready."
 msgstr "You can close this — the import keeps going and we'll let you know when it's ready."
+
+#: components/modal/modals/ImportDiscord.tsx
+msgid "You can kick the importer bot from your Discord server now — it doesn't need to stay."
+msgstr "You can kick the importer bot from your Discord server now — it doesn't need to stay."
 
 #: components/modal/modals/DeleteChannel.tsx
 msgid "You can re-open it later, but it will disappear on both sides."
@@ -6400,10 +6636,6 @@ msgstr "Your account and all of your data (including your messages and friends l
 msgid "Your account has been verified!"
 msgstr "Your account has been verified!"
 
-#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
-#~ msgid "Your calls negotiate end-to-end encryption on this device when everyone in the call supports it."
-#~ msgstr "Your calls negotiate end-to-end encryption on this device when everyone in the call supports it."
-
 #: components/modal/modals/E2EEVerify.tsx
 msgid "your contact"
 msgstr "your contact"
@@ -6477,199 +6709,3 @@ msgstr "Your suspension has expired — try logging in again."
 #: components/i18n/errors.ts
 msgid "Your user has already been created? Try logging in again or refreshing the app."
 msgstr "Your user has already been created? Try logging in again or refreshing the app."
-
-#: src/interface/ServerEvents.tsx
-msgid "Voice channel"
-msgstr "Voice channel"
-
-#: src/interface/ServerEvents.tsx
-msgid "Join channel"
-msgstr "Join channel"
-
-#: src/interface/ServerEvents.tsx
-msgid "Open channel"
-msgstr "Open channel"
-
-#: src/interface/ServerEvents.tsx
-msgid "Attendees can join this channel from the event when it starts. Only members who can see the channel will see the event."
-msgstr "Attendees can join this channel from the event when it starts. Only members who can see the channel will see the event."
-
-#: components/app/interface/settings/user/voice/OverlaySettings.tsx
-msgid "Avatars and names"
-msgstr "Avatars and names"
-
-#: components/app/interface/settings/user/voice/OverlaySettings.tsx
-msgid "Avatars only"
-msgstr "Avatars only"
-
-#: components/app/interface/settings/user/voice/OverlaySettings.tsx
-msgid "Bottom left"
-msgstr "Bottom left"
-
-#: components/app/interface/settings/user/voice/OverlaySettings.tsx
-msgid "Bottom right"
-msgstr "Bottom right"
-
-#: components/app/interface/settings/user/voice/OverlaySettings.tsx
-msgid "In-game overlay"
-msgstr "In-game overlay"
-
-#: components/app/interface/settings/user/voice/OverlaySettings.tsx
-msgid "Names only"
-msgstr "Names only"
-
-#. placeholder {0}: Math.round(voice.overlayOpacity * 100)
-#: components/app/interface/settings/user/voice/OverlaySettings.tsx
-msgid "Opacity: {0}%"
-msgstr "Opacity: {0}%"
-
-#: components/app/interface/settings/user/voice/OverlaySettings.tsx
-msgid "Overlay opacity"
-msgstr "Overlay opacity"
-
-#: components/app/interface/settings/user/voice/OverlaySettings.tsx
-msgid "Overlay size"
-msgstr "Overlay size"
-
-#: components/app/interface/settings/user/voice/OverlaySettings.tsx
-msgid "Round-trip time for your own microphone stream. Shows a dash while your mic is not transmitting."
-msgstr "Round-trip time for your own microphone stream. Shows a dash while your mic is not transmitting."
-
-#: components/app/interface/settings/user/voice/OverlaySettings.tsx
-msgid "Middle left"
-msgstr "Middle left"
-
-#: components/app/interface/settings/user/voice/OverlaySettings.tsx
-msgid "Middle right"
-msgstr "Middle right"
-
-#: components/app/interface/settings/user/voice/OverlaySettings.tsx
-msgid "Screen position"
-msgstr "Screen position"
-
-#: components/app/interface/settings/user/voice/OverlaySettings.tsx
-msgid "Show latency"
-msgstr "Show latency"
-
-#: components/app/interface/settings/user/voice/OverlaySettings.tsx
-msgid "Show overlay during calls"
-msgstr "Show overlay during calls"
-
-#: components/app/interface/settings/user/voice/OverlaySettings.tsx
-msgid "Show who is talking on top of your game during a call. Works in borderless-windowed games; exclusive fullscreen cannot be drawn over."
-msgstr "Show who is talking on top of your game during a call. Works in borderless-windowed games; exclusive fullscreen cannot be drawn over."
-
-#. placeholder {0}: Math.round(voice.overlayScale * 100)
-#: components/app/interface/settings/user/voice/OverlaySettings.tsx
-msgid "Size: {0}%"
-msgstr "Size: {0}%"
-
-#: components/app/interface/settings/user/voice/OverlaySettings.tsx
-msgid "Top left"
-msgstr "Top left"
-
-#: components/app/interface/settings/user/voice/OverlaySettings.tsx
-msgid "Top right"
-msgstr "Top right"
-
-#: components/app/interface/settings/user/voice/OverlaySettings.tsx
-msgid "Wayland session detected — the overlay may not stay above games on this desktop. X11 sessions are fully supported."
-msgstr "Wayland session detected — the overlay may not stay above games on this desktop. X11 sessions are fully supported."
-
-#: components/app/interface/settings/user/voice/OverlaySettings.tsx
-msgid "What the overlay shows"
-msgstr "What the overlay shows"
-
-#: components/ui/components/features/voice/callCard/VoiceTranscriptPanel.tsx
-msgid "Copy"
-msgstr "Copy"
-
-#: components/ui/components/features/voice/callCard/VoiceTranscriptPanel.tsx
-msgid "Copy the transcript to the clipboard"
-msgstr "Copy the transcript to the clipboard"
-
-#: components/ui/components/features/voice/callCard/VoiceTranscriptPanel.tsx
-msgid "Discard"
-msgstr "Discard"
-
-#. placeholder {0}: Math.round(progress * 100)
-#: components/ui/components/features/voice/callCard/VoiceTranscribeButton.tsx
-msgid "Downloading the speech model… {0}%"
-msgstr "Downloading the speech model… {0}%"
-
-#: components/ui/components/features/voice/callCard/VoiceTranscriptPanel.tsx
-msgid "Nothing has been transcribed yet."
-msgstr "Nothing has been transcribed yet."
-
-#: components/ui/components/features/voice/callCard/VoiceTranscriptPanel.tsx
-msgid "Save the transcript as a text file"
-msgstr "Save the transcript as a text file"
-
-#: components/ui/components/features/voice/callCard/VoiceTranscriptPanel.tsx
-msgid "Save the transcript as subtitles"
-msgstr "Save the transcript as subtitles"
-
-#: components/ui/components/features/voice/callCard/VoiceTranscribeButton.tsx
-msgid "Stop transcribing"
-msgstr "Stop transcribing"
-
-#: components/ui/components/features/voice/callCard/VoiceTranscriptPanel.tsx
-msgid "Throw this transcript away"
-msgstr "Throw this transcript away"
-
-#: components/ui/components/features/voice/callCard/VoiceTranscriptPanel.tsx
-msgid "Transcribing"
-msgstr "Transcribing"
-
-#: components/ui/components/features/voice/callCard/VoiceTranscriptPanel.tsx
-msgid "Transcript"
-msgstr "Transcript"
-
-#: components/ui/components/features/voice/callCard/VoiceTranscribeButton.tsx
-msgid "Transcription isn't supported on this device"
-msgstr "Transcription isn't supported on this device"
-
-#: components/ui/components/features/voice/callCard/VoiceTranscribeButton.tsx
-msgid "Write down what's said, on this device — everyone in the call will be told"
-msgstr "Write down what's said, on this device — everyone in the call will be told"
-
-#: components/app/interface/settings/user/Language.tsx
-msgid "Call transcription language"
-msgstr "Call transcription language"
-
-#: components/app/interface/settings/user/Language.tsx
-#: components/app/interface/settings/user/Language.tsx
-msgid "Detect automatically"
-msgstr "Detect automatically"
-
-#: components/ui/components/features/voice/minigame/MinigameChip.tsx
-msgid "Mute game sounds"
-msgstr "Mute game sounds"
-
-#: components/ui/components/features/voice/minigame/MinigameChip.tsx
-msgid "Unmute game sounds"
-msgstr "Unmute game sounds"
-
-#: components/ui/components/features/voice/minigame/MinigameChip.tsx
-msgid "Play while you wait?"
-msgstr "Play while you wait?"
-
-#: components/ui/components/features/voice/minigame/MinigameChip.tsx
-msgid "Slogaball minigame"
-msgstr "Slogaball minigame"
-
-#: components/ui/components/features/voice/minigame/MinigameChip.tsx
-msgid "Out of balls!"
-msgstr "Out of balls!"
-
-#: components/ui/components/features/voice/minigame/MinigameChip.tsx
-msgid "Field cleared!"
-msgstr "Field cleared!"
-
-#: components/ui/components/features/voice/minigame/MinigameChip.tsx
-msgid "Click to play again"
-msgstr "Click to play again"
-
-#: components/ui/components/features/voice/minigame/MinigameChip.tsx
-msgid "Free ball!"
-msgstr "Free ball!"
