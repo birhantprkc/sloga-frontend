@@ -2,6 +2,7 @@ import { createSignal, onMount } from "solid-js";
 
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
 
+import { tauriInvoke } from "@revolt/common";
 import { CategoryButton, Checkbox, Column } from "@revolt/ui";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
@@ -53,9 +54,64 @@ declare global {
 }
 
 /**
- * Desktop Configuration Page
+ * Desktop Configuration Page — routes to the shell that is actually
+ * hosting us. The Windows (Tauri) shell has no `window.desktopConfig`;
+ * its only setting is autostart, over the command bridge.
  */
 export default function Native() {
+  return tauriInvoke() ? <TauriNative /> : <ElectronNative />;
+}
+
+/**
+ * Windows (Tauri) shell settings. The OS launch entry is the source of
+ * truth for autostart (default off) — the same state the tray's "Start
+ * with Windows" item toggles, so the shell keeps the two in sync.
+ */
+function TauriNative() {
+  const invoke = tauriInvoke()!;
+  const [autostart, setAutostart] = createSignal(false);
+
+  onMount(async () => {
+    try {
+      setAutostart(await invoke<boolean>("autostart_get"));
+    } catch (err) {
+      console.error("[native-settings] autostart_get failed:", err);
+    }
+  });
+
+  async function toggleAutostart() {
+    try {
+      // The command returns the RESULTING state — unchanged on failure.
+      setAutostart(
+        await invoke<boolean>("autostart_set", { enabled: !autostart() }),
+      );
+    } catch (err) {
+      console.error("[native-settings] autostart_set failed:", err);
+    }
+  }
+
+  return (
+    <Column gap="lg">
+      <CategoryButton.Group>
+        <CategoryButton
+          action={<Checkbox checked={autostart()} />}
+          onClick={toggleAutostart}
+          icon={<Symbol>exit_to_app</Symbol>}
+          description={
+            <Trans>Launch Sloga when you log into your computer.</Trans>
+          }
+        >
+          <Trans>Start with Computer</Trans>
+        </CategoryButton>
+      </CategoryButton.Group>
+    </Column>
+  );
+}
+
+/**
+ * Electron shell settings (legacy Revolt surface).
+ */
+function ElectronNative() {
   const { t } = useLingui();
   const [autostart, setAutostart] = createSignal(false);
   const [config, setConfig] = createSignal(window.desktopConfig.get());

@@ -9,7 +9,7 @@ import {
   nativeE2EEAvailable,
   useClient,
 } from "@revolt/client";
-import { CONFIGURATION } from "@revolt/common";
+import { CONFIGURATION, tauriInvoke } from "@revolt/common";
 import { useUser } from "@revolt/markdown/users";
 import { useModals } from "@revolt/modal";
 import { fetchAllChangelogs } from "@revolt/modal/modals/Changelog";
@@ -332,7 +332,9 @@ const Config: SettingsConfiguration<{ server: Server }> = {
             // },
             {
               id: "native",
-              hidden: !window.native,
+              // Electron exposes window.native; the Windows (Tauri) shell
+              // is detected by its command bridge instead.
+              hidden: !window.native && !tauriInvoke(),
               icon: <Symbol size={20}>desktop_windows</Symbol>,
               title: <Trans>Desktop</Trans>,
             },
