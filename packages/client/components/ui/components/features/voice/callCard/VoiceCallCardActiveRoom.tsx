@@ -158,8 +158,21 @@ function ImmersiveExit() {
 
 const TILE_MIN_WIDTH = "250px",
   TILE_MIN_FOCUS_HEIGHT = "100px",
-  /** Width of the side column of other participants in the focus layout. */
-  SIDEBAR_WIDTH = "min(28%, 260px)",
+  /**
+   * Width of the side column of other participants in the focus layout.
+   *
+   * Indirected through a custom property so the CONTROLLING case can narrow
+   * it per-instance (see `narrowSidebar`) without a second recipe variant —
+   * variant-vs-variant width precedence in a Panda recipe depends on
+   * declaration order, which is a fragile thing to hang a layout on.
+   */
+  SIDEBAR_WIDTH = "var(--vc-sidebar-w, min(28%, 260px))",
+  /**
+   * The controlling column. Every pixel here is aim the controller loses, so
+   * it is as narrow as still shows who is on the call: ~8% of a 1920 frame,
+   * and 128px in the controller's own 640px float.
+   */
+  NARROW_SIDEBAR_WIDTH = "min(160px, 20%)",
   /** Card width it takes to earn a side column instead of a bottom strip. */
   SIDEBAR_MIN_CARD_WIDTH = 560,
   /**
@@ -236,17 +249,31 @@ function Participants() {
    * there would leave the share a sliver. Below the threshold the strip layout
    * is kept as-is. Theater mode hides the others entirely, so it never applies.
    *
-   * Never while CONTROLLING someone's screen, at any width: the controller is
-   * aiming a pointer at a whole remote desktop rendered into that tile, and
-   * every pixel the column takes is aim they lose. Same reasoning that blocks
-   * PiP for a controller (see VoiceCallCard) — and the controller's own float
-   * is 640px wide, which would otherwise clear the threshold.
+   * 🔴 IT NOW APPLIES WHILE CONTROLLING TOO, at a NARROW width — reversing the
+   * original rule, because the live matrix (08-04) showed that rule cost the
+   * controller more than it saved. It used to read "never while CONTROLLING,
+   * at any width: every pixel the column takes is aim they lose." True of a
+   * 260px column, but the layout it fell back to is the STRIP, which takes
+   * `max(20%, 100px)` of the frame's HEIGHT — on a 1920x1275 frame that is
+   * ~20% of the area against ~8% for a 160px column, and it leaves the share
+   * letterboxed with dead space beside the tiles rather than filling. So the
+   * suppression was spending more aim than the column ever did.
+   *
+   * The width comes down for the controlling case (`--vc-sidebar-w` below);
+   * everything else about the layout is the one already shipped.
    */
   const sidebar = () =>
     !!voice.focusId() &&
     !voice.immersive() &&
-    !voice.remoteControl.controlling() &&
     callWidth() >= SIDEBAR_MIN_CARD_WIDTH;
+
+  /**
+   * The controlling case of the column: same layout, narrower. `min(160px,
+   * 20%)` so it stays usable in the controller's own 640px float (128px)
+   * without eating a 1920px frame (160px, ~8%).
+   */
+  const narrowSidebar = () =>
+    sidebar() && !!voice.remoteControl.controlling();
 
   /**
    * Theater mode WHILE CONTROLLING: the other participants become small
@@ -400,7 +427,12 @@ function Participants() {
                 ? scrollableStyles({ direction: "x" })
                 : ""
           }
-          style={{ "--vc-tile-width": tileWidth() }}
+          style={{
+            "--vc-tile-width": tileWidth(),
+            ...(narrowSidebar()
+              ? { "--vc-sidebar-w": NARROW_SIDEBAR_WIDTH }
+              : {}),
+          }}
         >
           <TrackLoop
             tracks={() => voice.vidTracks().filter((t) => !voice.isFocus(t))}
