@@ -74,8 +74,13 @@ function SelectInput(props: { kind: MediaDeviceKind }) {
     let d = devs.find((d) => d.deviceId === "default");
     opts.default = { title: d?.label ?? "Default" };
 
+    // Pre-permission enumerateDevices yields placeholder entries with empty
+    // deviceId/label — hide them rather than list unselectable rows (and
+    // never let "" be persisted as a device preference). Mirrors the in-call
+    // VoiceDeviceSelector.
     for (d of devs)
-      if (d.deviceId !== "default") opts[d.deviceId] = { title: d.label };
+      if (d.deviceId && d.deviceId !== "default")
+        opts[d.deviceId] = { title: d.label };
     return opts;
   });
 

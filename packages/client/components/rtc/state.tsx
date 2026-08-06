@@ -343,6 +343,13 @@ class Voice {
   #vadCtx: AudioContext | undefined;
   #vadFrame: number | undefined;
   #vadSilenceTimer: ReturnType<typeof setTimeout> | undefined;
+  /**
+   * Supersession token for `#startVAD`'s async capture, bumped by `#stopVAD`:
+   * a start superseded mid-getUserMedia (device switch, call ended) must stop
+   * the stream it acquired rather than leak a live mic capture — a leaked VAD
+   * stream keeps the OS mic indicator lit after the call.
+   */
+  #vadGen = 0;
 
   // --- Media E2EE (slice 6.3) ---------------------------------------
   // The native-derived key provider + self-hosted worker are constructed per
@@ -371,6 +378,14 @@ class Voice {
    * abandoned Room.
    */
   #connectGen = 0;
+  /**
+   * The mic id `connect()` pinned `{ exact }` into `audioCaptureDefaults` for
+   * the CURRENT call; undefined when no pin is in force. Lets
+   * `#setMicEnabled`'s rescue distinguish OUR join-time pin (safe to un-pin
+   * when the device has vanished) from an exact constraint the user picked
+   * mid-call via `switchActiveDevice` (never silently dropped).
+   */
+  #pinnedMicId: string | undefined;
   /**
    * LiveKit's observed per-participant encryption status (identity → encrypted)
    * — a REQUIRED gating input for the green lock (§4.4 invariant 11: native
@@ -618,9 +633,9 @@ class Voice {
       // `displaySurface` is a screen-capture-only setting, so it is absent
       // from the base `MediaTrackSettings` type in this TS lib version.
       return (
-        track?.getSettings() as (MediaTrackSettings & {
+        track?.getSettings() as MediaTrackSettings & {
           displaySurface?: string;
-        })
+        }
       )?.displaySurface;
     };
 
@@ -839,6 +854,22 @@ class Voice {
       this.#settings.preferredAudioOutputDevice;
       this.#soundboard.refreshOutputDevice();
     });
+    // Re-point the VAD capture when the input device changes mid-call: the
+    // in-call switcher restarts the PUBLISHED track itself (switchActiveDevice)
+    // but the VAD stream is opened by us and would otherwise keep listening on
+    // the old device. `#startVAD` no-ops unless voice-activity mode is on.
+    createEffect(() => {
+      this.#settings.preferredAudioInputDevice;
+      // Untracked as a block: `#startVAD` synchronously reads `vadEnabled`
+      // (and re-reads the preference) before its first await, which would
+      // otherwise silently join this effect's dependency set and make the
+      // mid-call VAD checkbox live-apply only in calls where the device
+      // preference had been touched.
+      untrack(() => {
+        const room = this.room();
+        if (room && this.state() === "CONNECTED") void this.#startVAD(room);
+      });
+    });
 
     // Identify this device to native as soon as the session is hydrated.
     // BOTH handshake commands fail closed until this is set — it is what
@@ -1022,6 +1053,37 @@ class Voice {
     // and bail (gate HIGH — async-registration race).
     const gen = ++this.#connectGen;
 
+    // Pin the saved microphone with an EXACT constraint when it is currently
+    // present. `audioCaptureDefaults` hands getUserMedia a bare string, which
+    // is only an "ideal" hint — a saved mic that is busy (Windows exclusive
+    // mode) or whose id has gone stale silently yields a DIFFERENT
+    // microphone, while every picker keeps showing the saved one as selected:
+    // "mic connected, no audio" until the user reselects it in the in-call
+    // switcher (which works precisely because `switchActiveDevice` uses
+    // `{ exact }`). A device absent from the enumeration keeps the bare
+    // string (first join before the permission grant, mic currently
+    // unplugged), so joining is never stricter than before when the id could
+    // not have matched anyway.
+    let audioInputDevice: ConstrainDOMString | undefined =
+      this.#settings.preferredAudioInputDevice;
+    this.#pinnedMicId = undefined;
+    if (audioInputDevice) {
+      let present = false;
+      try {
+        const inputs = await Room.getLocalDevices("audioinput", false);
+        present = inputs.some((d) => d.deviceId === audioInputDevice);
+      } catch {
+        // enumeration unavailable — keep the best-effort hint
+      }
+      // Superseded while enumerating: nothing constructed yet, just yield
+      // (and leave the newer invocation's pin marker alone).
+      if (gen !== this.#connectGen) return;
+      if (present) {
+        this.#pinnedMicId = audioInputDevice as string;
+        audioInputDevice = { exact: audioInputDevice as string };
+      }
+    }
+
     // Media E2EE (§4.1, amendment A4): construct the Room E2EE-capable on ANY
     // shell that can do media E2EE (`isE2EESupported()` + a native layer),
     // REGARDLESS of whether THIS call is currently E2EE-eligible. LiveKit's
@@ -1106,7 +1168,7 @@ class Voice {
       // the custom PiP/tile/fullscreen renderers here don't reliably signal.
       dynacast: true,
       audioCaptureDefaults: {
-        deviceId: this.#settings.preferredAudioInputDevice,
+        deviceId: audioInputDevice,
         echoCancellation: this.#settings.echoCancellation,
         noiseSuppression: this.#settings.noiseSupression === "browser",
         autoGainControl: this.#settings.autoGainControl,
@@ -1158,38 +1220,47 @@ class Voice {
       // asked for it — a deafen/AFK-forced "off" is not a mute preference.
       const wantMic = !isAfk && !this.#settings.deafen && this.#settings.micOn;
       if (this.speakingPermission)
-        room.localParticipant.setMicrophoneEnabled(wantMic).then((track) => {
-          if (wantMic) this.#settings.micOn = track != null;
-          if (!isAfk && track?.audioTrack) {
-            const gain = this.#settings.microphoneGain ?? 100;
-            // Processor/E2EE ordering (§4.3) — DO NOT REORDER: denoise
-            // (this AudioWorklet) and camera effects are PRE-encode track
-            // processors on the raw media; LiveKit E2EE runs POST-encode on
-            // encoded frames (RTCRtpScriptTransform). The fixed pipeline is
-            // processor → encoder → E2EE encrypt → SFU, so there is no slot
-            // conflict and denoise + E2EE coexist (test T-10). Moving E2EE
-            // ahead of the encoder, or a processor after it, would break
-            // one or the other.
-            if (this.#settings.noiseSupression === "enhanced") {
-              track.audioTrack.setProcessor(
-                new DenoiseTrackProcessor({
-                  // Self-hosted worklet assets (public/rnnoise/) — never the
-                  // package's jsdelivr default: external script origins are
-                  // blocked by the desktop shell CSP (slice 6.2b) and violate
-                  // the no-CDN policy everywhere else. Must be absolute: the
-                  // lib resolves it with base-less `new URL(...)`.
-                  workletCDNURL: new URL(
-                    CONFIGURATION.RNNOISE_WORKLET_CDN_URL ||
-                      `${import.meta.env.BASE_URL}rnnoise/`,
-                    window.location.origin,
-                  ).href,
-                }),
-              );
-            } else if (gain !== 100) {
-              track.audioTrack.setProcessor(new GainTrackProcessor(gain));
+        this.#setMicEnabled(room, wantMic)
+          .then((track) => {
+            if (wantMic) this.#settings.micOn = track != null;
+            if (!isAfk && track?.audioTrack) {
+              const gain = this.#settings.microphoneGain ?? 100;
+              // Processor/E2EE ordering (§4.3) — DO NOT REORDER: denoise
+              // (this AudioWorklet) and camera effects are PRE-encode track
+              // processors on the raw media; LiveKit E2EE runs POST-encode on
+              // encoded frames (RTCRtpScriptTransform). The fixed pipeline is
+              // processor → encoder → E2EE encrypt → SFU, so there is no slot
+              // conflict and denoise + E2EE coexist (test T-10). Moving E2EE
+              // ahead of the encoder, or a processor after it, would break
+              // one or the other.
+              if (this.#settings.noiseSupression === "enhanced") {
+                track.audioTrack.setProcessor(
+                  new DenoiseTrackProcessor({
+                    // Self-hosted worklet assets (public/rnnoise/) — never the
+                    // package's jsdelivr default: external script origins are
+                    // blocked by the desktop shell CSP (slice 6.2b) and violate
+                    // the no-CDN policy everywhere else. Must be absolute: the
+                    // lib resolves it with base-less `new URL(...)`.
+                    workletCDNURL: new URL(
+                      CONFIGURATION.RNNOISE_WORKLET_CDN_URL ||
+                        `${import.meta.env.BASE_URL}rnnoise/`,
+                      window.location.origin,
+                    ).href,
+                  }),
+                );
+              } else if (gain !== 100) {
+                track.audioTrack.setProcessor(new GainTrackProcessor(gain));
+              }
             }
-          }
-        });
+          })
+          .catch(() => {
+            // Capture failed even after the rescue (or permission denied) —
+            // or a processor attach above threw post-publish. Reconcile the
+            // mute button with the room's ACTUAL state rather than forcing
+            // "muted": a hot mic must never be shown as off.
+            if (wantMic)
+              this.#settings.micOn = room.localParticipant.isMicrophoneEnabled;
+          });
       if (isAfk) room.localParticipant.setCameraEnabled(false);
       for (const p of room.remoteParticipants.values()) {
         const screenShareTrack = p.getTrackPublication(
@@ -1547,6 +1618,7 @@ class Voice {
       this.#clearDiceToasts();
       this.callEncryption.clear();
       this.#publishGate.clear();
+      this.#pinnedMicId = undefined;
       this.#setCallEncryptionError(undefined);
       this.#setCallNonEnrolled([]);
       // Reset the 6.5 signals so the next call's card never flashes this
@@ -1735,11 +1807,42 @@ class Voice {
     await Promise.allSettled(ops);
   }
 
+  /**
+   * Every mic enable goes through here: `setMicrophoneEnabled` plus the
+   * exact-pin rescue. When `connect()` pinned the saved mic `{ exact }` and
+   * that device has since vanished while no live track existed (unplugged
+   * while muted — livekit's own ended-track fallback only runs for a live
+   * track), every plain enable would reject with OverconstrainedError
+   * forever. Un-pin OUR OWN pin — never an exact constraint the user picked
+   * mid-call via `switchActiveDevice` — and retry once on browser defaults:
+   * a fallback mic beats a mic that can never come back. Mutating `options`
+   * is livekit's own rollback idiom (see Room.switchActiveDevice).
+   */
+  async #setMicEnabled(room: Room, enabled: boolean) {
+    try {
+      return await room.localParticipant.setMicrophoneEnabled(enabled);
+    } catch (error) {
+      const defaults = room.options.audioCaptureDefaults;
+      const pinned = this.#pinnedMicId;
+      if (
+        !enabled ||
+        !pinned ||
+        typeof defaults?.deviceId !== "object" ||
+        (defaults.deviceId as { exact?: string }).exact !== pinned
+      )
+        throw error;
+      this.#pinnedMicId = undefined;
+      defaults.deviceId = undefined;
+      return room.localParticipant.setMicrophoneEnabled(enabled);
+    }
+  }
+
   async toggleDeafen(fromMute?: boolean) {
     try {
       const room = this.room();
       if (!room) throw "invalid state";
-      await room.localParticipant.setMicrophoneEnabled(
+      await this.#setMicEnabled(
+        room,
         (this.#settings.micOn || !!fromMute) &&
           !room.localParticipant.isMicrophoneEnabled,
       );
@@ -1766,7 +1869,8 @@ class Voice {
     try {
       const room = this.room();
       if (!room) throw "invalid state";
-      await room.localParticipant.setMicrophoneEnabled(
+      await this.#setMicEnabled(
+        room,
         !room.localParticipant.isMicrophoneEnabled,
       );
 
@@ -3283,7 +3387,7 @@ class Voice {
       // global hook (covers mid-call enable + keybind changes).
       void this.#ensureNativePtt(room);
       if (room.localParticipant.isMicrophoneEnabled) return;
-      room.localParticipant.setMicrophoneEnabled(true);
+      void this.#setMicEnabled(room, true).catch(() => {});
     };
 
     this.#pttKeyup = (e: KeyboardEvent) => {
@@ -3345,7 +3449,7 @@ class Voice {
             return;
           }
           if (room.localParticipant.isMicrophoneEnabled) return;
-          room.localParticipant.setMicrophoneEnabled(true);
+          void this.#setMicEnabled(room, true).catch(() => {});
         });
         const up = await tauri.event.listen<void>("ptt:up", () => {
           if (!this.#settings.pushToTalk) return;
@@ -3387,11 +3491,41 @@ class Voice {
   async #startVAD(room: Room) {
     this.#stopVAD();
     if (!this.#settings.vadEnabled) return;
+    const gen = ++this.#vadGen;
 
     try {
-      this.#vadStream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-        video: false,
+      // VAD must listen on the SAME microphone the call publishes:
+      // `{ audio: true }` is the OS-default device, and when that differs
+      // from the saved mic (dead onboard jack, virtual device) VAD hears
+      // silence and force-mutes a perfectly working call mic. Fall back to
+      // the default device if the saved one cannot be opened, mirroring the
+      // publish path's fallback.
+      const preferred = this.#settings.preferredAudioInputDevice;
+      const stream = await navigator.mediaDevices
+        .getUserMedia({
+          audio: preferred ? { deviceId: { exact: preferred } } : true,
+          video: false,
+        })
+        .catch((error) => {
+          if (!preferred) throw error;
+          return navigator.mediaDevices.getUserMedia({
+            audio: true,
+            video: false,
+          });
+        });
+      if (gen !== this.#vadGen) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+      this.#vadStream = stream;
+      // A dying VAD mic must not force-mute a working call: with the source
+      // gone the analyser reads zeros forever, and every manual unmute would
+      // be re-muted 600 ms later. Restart on `ended` — the exact pin above
+      // then fails over to `audio: true`, landing on the surviving default
+      // device; if no mic is left at all, the outer catch stops VAD outright
+      // (fail open, no force-muting without a live source).
+      stream.getAudioTracks()[0]?.addEventListener("ended", () => {
+        if (gen === this.#vadGen) void this.#startVAD(room);
       });
       this.#vadCtx = new AudioContext();
       const analyser = this.#vadCtx.createAnalyser();
@@ -3409,7 +3543,7 @@ class Voice {
           clearTimeout(this.#vadSilenceTimer);
           this.#vadSilenceTimer = undefined;
           if (!room.localParticipant.isMicrophoneEnabled) {
-            room.localParticipant.setMicrophoneEnabled(true);
+            void this.#setMicEnabled(room, true).catch(() => {});
           }
         } else if (
           room.localParticipant.isMicrophoneEnabled &&
@@ -3430,6 +3564,7 @@ class Voice {
   }
 
   #stopVAD() {
+    this.#vadGen++;
     if (this.#vadFrame !== undefined) cancelAnimationFrame(this.#vadFrame);
     clearTimeout(this.#vadSilenceTimer);
     this.#vadStream?.getTracks().forEach((t) => t.stop());

@@ -266,15 +266,27 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
   clean(input: Partial<TypeVoice>): TypeVoice {
     const data = this.default();
 
-    if (typeof input.preferredAudioInputDevice === "string") {
+    // Non-empty: the pre-filter settings page could persist a pre-permission
+    // placeholder's "" device id, which matches no real device and renders as
+    // a blank selection — treat it as "default" (absent) on load.
+    if (
+      typeof input.preferredAudioInputDevice === "string" &&
+      input.preferredAudioInputDevice
+    ) {
       data.preferredAudioInputDevice = input.preferredAudioInputDevice;
     }
 
-    if (typeof input.preferredAudioOutputDevice === "string") {
+    if (
+      typeof input.preferredAudioOutputDevice === "string" &&
+      input.preferredAudioOutputDevice
+    ) {
       data.preferredAudioOutputDevice = input.preferredAudioOutputDevice;
     }
 
-    if (typeof input.preferredVideoDevice === "string") {
+    if (
+      typeof input.preferredVideoDevice === "string" &&
+      input.preferredVideoDevice
+    ) {
       data.preferredVideoDevice = input.preferredVideoDevice;
     }
 
