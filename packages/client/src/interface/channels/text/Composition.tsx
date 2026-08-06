@@ -1172,114 +1172,6 @@ export function MessageComposition(props: Props) {
               </MessageBox.FloatingAction>
             </Show>
             <MessageBox.ActionContainer>
-              <Show when={props.channel.type === "TextChannel"}>
-                <MessageBox.InlineIcon>
-                  <ComposerPopover
-                    open={showDiceMenu()}
-                    onDismiss={() => setShowDiceMenu(false)}
-                    panel={
-                      <div
-                        style={{
-                          background: "var(--md-sys-color-surface-container-high)",
-                          "border-radius": "12px",
-                          padding: "12px",
-                          "min-width": "240px",
-                          "box-shadow": "0 4px 20px rgba(0,0,0,0.4)",
-                          border: "1px solid var(--md-sys-color-outline-variant)",
-                        }}
-                      >
-                        <div style={{ padding: "0 0 8px", "font-size": "0.75em", opacity: "0.6", "font-weight": "600", "letter-spacing": "0.05em", "text-transform": "uppercase" }}>
-                          {t`Roll dice`}
-                        </div>
-                        {/* advantage / disadvantage (single d20 only) */}
-                        <div style={{ display: "flex", gap: "4px", "padding-bottom": "8px" }}>
-                          <For each={[
-                            { key: "none", label: t`Normal` },
-                            { key: "adv", label: t`Advantage` },
-                            { key: "dis", label: t`Disadvantage` },
-                          ] as const}>
-                            {(opt) => (
-                              <div
-                                onClick={() => setDiceAdv(opt.key)}
-                                style={{
-                                  flex: "1",
-                                  "text-align": "center",
-                                  padding: "8px 6px",
-                                  "border-radius": "8px",
-                                  cursor: "pointer",
-                                  "font-size": "0.75em",
-                                  "font-weight": "600",
-                                  background: diceAdv() === opt.key ? "var(--md-sys-color-primary-container)" : "transparent",
-                                  color: diceAdv() === opt.key ? "var(--md-sys-color-on-primary-container)" : "inherit",
-                                  border: "1px solid var(--md-sys-color-outline-variant)",
-                                }}
-                              >
-                                {opt.label}
-                              </div>
-                            )}
-                          </For>
-                        </div>
-                        {/* quantity + modifier steppers */}
-                        <div style={{ display: "flex", gap: "12px", "padding-bottom": "8px", "font-size": "0.85em" }}>
-                          <div style={{ flex: "1", display: "flex", "align-items": "center", gap: "6px" }}>
-                            <span style={{ opacity: "0.7" }}>{t`Dice`}</span>
-                            <IconButton size="sm" onPress={() => setDiceQty((q) => Math.max(1, q - 1))}>
-                              <Symbol>remove</Symbol>
-                            </IconButton>
-                            <span style={{ "min-width": "2ch", "text-align": "center", "font-weight": "600" }}>{diceQty()}</span>
-                            <IconButton size="sm" onPress={() => setDiceQty((q) => Math.min(20, q + 1))}>
-                              <Symbol>add</Symbol>
-                            </IconButton>
-                          </div>
-                          <div style={{ flex: "1", display: "flex", "align-items": "center", gap: "6px" }}>
-                            <span style={{ opacity: "0.7" }}>{t`Mod`}</span>
-                            <IconButton size="sm" onPress={() => setDiceMod((m) => Math.max(-99, m - 1))}>
-                              <Symbol>remove</Symbol>
-                            </IconButton>
-                            <span style={{ "min-width": "3ch", "text-align": "center", "font-weight": "600" }}>
-                              {diceMod() > 0 ? `+${diceMod()}` : diceMod()}
-                            </span>
-                            <IconButton size="sm" onPress={() => setDiceMod((m) => Math.min(99, m + 1))}>
-                              <Symbol>add</Symbol>
-                            </IconButton>
-                          </div>
-                        </div>
-                        {/* die buttons — click to roll */}
-                        <div style={{ display: "grid", "grid-template-columns": "repeat(4, 1fr)", gap: "6px" }}>
-                          <For each={DICE_OPTIONS}>
-                            {(sides) => (
-                              <div
-                                onClick={() => rollFromPicker(sides)}
-                                style={{
-                                  "text-align": "center",
-                                  padding: "12px 4px",
-                                  "border-radius": "8px",
-                                  cursor: "pointer",
-                                  "font-weight": "700",
-                                  "font-size": "0.85em",
-                                  background: "var(--md-sys-color-primary-container)",
-                                  color: "var(--md-sys-color-on-primary-container)",
-                                }}
-                              >
-                                d{sides}
-                              </div>
-                            )}
-                          </For>
-                        </div>
-                        <div style={{ padding: "8px 0 0", "font-size": "0.7em", opacity: "0.5" }}>
-                          {t`Or type /roll 2d6+3 in chat`}
-                        </div>
-                      </div>
-                    }
-                  >
-                    <Tooltip content={t`Roll dice`} placement="top">
-                      <IconButton onPress={() => setShowDiceMenu((v) => !v)}>
-                        <Symbol>casino</Symbol>
-                      </IconButton>
-                    </Tooltip>
-                  </ComposerPopover>
-                </MessageBox.InlineIcon>
-              </Show>
               <MessageBox.InlineIcon>
                 <Tooltip
                   content={
@@ -1307,11 +1199,119 @@ export function MessageComposition(props: Props) {
                         display: "flex",
                         "align-items": "center",
                         overflow: "hidden",
-                        "max-width": showMoreActions() ? "200px" : "0px",
+                        "max-width": showMoreActions() ? "240px" : "0px",
                         opacity: showMoreActions() ? "1" : "0",
                         transition: "max-width 0.25s ease, opacity 0.2s ease",
                       }}
                     >
+                      <Show when={props.channel.type === "TextChannel"}>
+                        <MessageBox.InlineIcon>
+                          <ComposerPopover
+                            open={showDiceMenu()}
+                            onDismiss={() => setShowDiceMenu(false)}
+                            panel={
+                              <div
+                                style={{
+                                  background: "var(--md-sys-color-surface-container-high)",
+                                  "border-radius": "12px",
+                                  padding: "12px",
+                                  "min-width": "240px",
+                                  "box-shadow": "0 4px 20px rgba(0,0,0,0.4)",
+                                  border: "1px solid var(--md-sys-color-outline-variant)",
+                                }}
+                              >
+                                <div style={{ padding: "0 0 8px", "font-size": "0.75em", opacity: "0.6", "font-weight": "600", "letter-spacing": "0.05em", "text-transform": "uppercase" }}>
+                                  {t`Roll dice`}
+                                </div>
+                                {/* advantage / disadvantage (single d20 only) */}
+                                <div style={{ display: "flex", gap: "4px", "padding-bottom": "8px" }}>
+                                  <For each={[
+                                    { key: "none", label: t`Normal` },
+                                    { key: "adv", label: t`Advantage` },
+                                    { key: "dis", label: t`Disadvantage` },
+                                  ] as const}>
+                                    {(opt) => (
+                                      <div
+                                        onClick={() => setDiceAdv(opt.key)}
+                                        style={{
+                                          flex: "1",
+                                          "text-align": "center",
+                                          padding: "8px 6px",
+                                          "border-radius": "8px",
+                                          cursor: "pointer",
+                                          "font-size": "0.75em",
+                                          "font-weight": "600",
+                                          background: diceAdv() === opt.key ? "var(--md-sys-color-primary-container)" : "transparent",
+                                          color: diceAdv() === opt.key ? "var(--md-sys-color-on-primary-container)" : "inherit",
+                                          border: "1px solid var(--md-sys-color-outline-variant)",
+                                        }}
+                                      >
+                                        {opt.label}
+                                      </div>
+                                    )}
+                                  </For>
+                                </div>
+                                {/* quantity + modifier steppers */}
+                                <div style={{ display: "flex", gap: "12px", "padding-bottom": "8px", "font-size": "0.85em" }}>
+                                  <div style={{ flex: "1", display: "flex", "align-items": "center", gap: "6px" }}>
+                                    <span style={{ opacity: "0.7" }}>{t`Dice`}</span>
+                                    <IconButton size="sm" onPress={() => setDiceQty((q) => Math.max(1, q - 1))}>
+                                      <Symbol>remove</Symbol>
+                                    </IconButton>
+                                    <span style={{ "min-width": "2ch", "text-align": "center", "font-weight": "600" }}>{diceQty()}</span>
+                                    <IconButton size="sm" onPress={() => setDiceQty((q) => Math.min(20, q + 1))}>
+                                      <Symbol>add</Symbol>
+                                    </IconButton>
+                                  </div>
+                                  <div style={{ flex: "1", display: "flex", "align-items": "center", gap: "6px" }}>
+                                    <span style={{ opacity: "0.7" }}>{t`Mod`}</span>
+                                    <IconButton size="sm" onPress={() => setDiceMod((m) => Math.max(-99, m - 1))}>
+                                      <Symbol>remove</Symbol>
+                                    </IconButton>
+                                    <span style={{ "min-width": "3ch", "text-align": "center", "font-weight": "600" }}>
+                                      {diceMod() > 0 ? `+${diceMod()}` : diceMod()}
+                                    </span>
+                                    <IconButton size="sm" onPress={() => setDiceMod((m) => Math.min(99, m + 1))}>
+                                      <Symbol>add</Symbol>
+                                    </IconButton>
+                                  </div>
+                                </div>
+                                {/* die buttons — click to roll */}
+                                <div style={{ display: "grid", "grid-template-columns": "repeat(4, 1fr)", gap: "6px" }}>
+                                  <For each={DICE_OPTIONS}>
+                                    {(sides) => (
+                                      <div
+                                        onClick={() => rollFromPicker(sides)}
+                                        style={{
+                                          "text-align": "center",
+                                          padding: "12px 4px",
+                                          "border-radius": "8px",
+                                          cursor: "pointer",
+                                          "font-weight": "700",
+                                          "font-size": "0.85em",
+                                          background: "var(--md-sys-color-primary-container)",
+                                          color: "var(--md-sys-color-on-primary-container)",
+                                        }}
+                                      >
+                                        d{sides}
+                                      </div>
+                                    )}
+                                  </For>
+                                </div>
+                                <div style={{ padding: "8px 0 0", "font-size": "0.7em", opacity: "0.5" }}>
+                                  {t`Or type /roll 2d6+3 in chat`}
+                                </div>
+                              </div>
+                            }
+                          >
+                            <Tooltip content={t`Roll dice`} placement="top">
+                              <IconButton onPress={() => setShowDiceMenu((v) => !v)}>
+                                <Symbol>casino</Symbol>
+                              </IconButton>
+                            </Tooltip>
+                          </ComposerPopover>
+                        </MessageBox.InlineIcon>
+                      </Show>
                       <Show when={pollAllowed()}>
                         <MessageBox.InlineIcon>
                           <Tooltip content={t`Create poll`} placement="top">
