@@ -648,6 +648,17 @@ export function ImportDiscordModal(
             </Text>
             {/* Already user-safe server-side; shown verbatim. */}
             <Text>{view()!.error}</Text>
+            {/* Live-smoke finding: the "bot not added yet" failure tells the
+                user to add the bot but gave them nowhere to do it — the
+                invite link lived only on the parent's done screen, which is
+                gone by now. The view still knows the guild, so offer it. */}
+            <Show when={isStickerJob() && botInviteUrl()}>
+              <Text>
+                <a href={botInviteUrl()} target="_blank" rel="noreferrer">
+                  <Trans>Add the importer bot on Discord</Trans>
+                </a>
+              </Text>
+            </Show>
             <Show when={startError()}>
               <Text class="label">{startError()}</Text>
             </Show>
