@@ -1891,6 +1891,37 @@ class Voice {
    * someone who joined after a recording began, and it is a `ReactiveMap` so
    * this tracks without a version counter.
    */
+  /**
+   * Does the SERVER currently believe this user is publishing screen video?
+   *
+   * `voice.screenshare()` and the local LiveKit publication are both
+   * CLIENT-side beliefs, and 2026-08-06 showed they can outlive the truth: a
+   * reconnect left the OS capture running, `screenshare()` true, and the
+   * local publication resolving a live track with `displaySurface: "monitor"`
+   * — while the SFU had no screen-share track at all and the server's
+   * `screen_video` was false. Every client-side signal agreed on the wrong
+   * answer, so the Give-control button was offered against a share that did
+   * not exist and the offer could only ever 400.
+   *
+   * `VoiceParticipant.isScreenVideo` is fed from the same `screen_video`
+   * field the offer route gates on, and it is reactive, so this
+   * self-corrects the moment the server's view changes.
+   *
+   * Returns `undefined` when this user's participant record cannot be
+   * resolved at all — no call, or a server that does not send the field —
+   * so callers can distinguish "the server says no" from "the server has
+   * not said". Never treat `undefined` as a refusal: that would hide the
+   * affordance outright on any deployment that omits the field.
+   */
+  serverSeesScreenVideo(): boolean | undefined {
+    const channel = this.channel();
+    const self = this.getClient()?.user?.id;
+    if (!channel || !self) return undefined;
+    const participant = channel.voiceParticipants.get(self);
+    if (!participant) return undefined;
+    return participant.isScreenVideo();
+  }
+
   recordersInCall(): string[] {
     const channel = this.channel();
     if (!channel) return [];
