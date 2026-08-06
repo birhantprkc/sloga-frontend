@@ -105,6 +105,10 @@ function MinigameOverlay(props: { onClose: () => void }) {
   let host: HTMLDivElement | undefined;
   let unmounted = false;
 
+  // Mirrors the engine's per-device mute preference; synced once the (maybe
+  // still downloading) game chunk is up, since the engine owns persistence.
+  const [muted, setMuted] = createSignal(false);
+
   onMount(async () => {
     const channelId = voice.channel()?.id ?? "";
     if (parked && parked.channelId !== channelId) disposeParked();
@@ -133,6 +137,8 @@ function MinigameOverlay(props: { onClose: () => void }) {
       };
     }
 
+    setMuted(parked.game.isMuted());
+
     // The overlay may have collapsed while the chunk downloaded (someone
     // joined on a slow link) — leave the game parked instead of hosting it
     // in a detached element.
@@ -156,16 +162,32 @@ function MinigameOverlay(props: { onClose: () => void }) {
     <Overlay>
       <OverlayHeader>
         <OverlayTitle>Slogaball</OverlayTitle>
-        <IconButton
-          size="sm"
-          variant="standard"
-          onPress={() => {
-            disposeParked();
-            props.onClose();
-          }}
-        >
-          <Symbol>close</Symbol>
-        </IconButton>
+        <HeaderActions>
+          <IconButton
+            size="sm"
+            variant="standard"
+            aria-label={muted() ? t`Unmute game sounds` : t`Mute game sounds`}
+            onPress={() => {
+              // No-op until the game chunk lands; the engine persists it.
+              if (!parked) return;
+              const next = !parked.game.isMuted();
+              parked.game.setMuted(next);
+              setMuted(next);
+            }}
+          >
+            <Symbol>{muted() ? "volume_off" : "volume_up"}</Symbol>
+          </IconButton>
+          <IconButton
+            size="sm"
+            variant="standard"
+            onPress={() => {
+              disposeParked();
+              props.onClose();
+            }}
+          >
+            <Symbol>close</Symbol>
+          </IconButton>
+        </HeaderActions>
       </OverlayHeader>
       <GameHost ref={host} />
     </Overlay>
@@ -228,6 +250,14 @@ const Overlay = styled("div", {
     background:
       "color-mix(in srgb, var(--md-sys-color-surface-container-low) 92%, transparent)",
     backdropFilter: "blur(6px)",
+  },
+});
+
+const HeaderActions = styled("div", {
+  base: {
+    display: "flex",
+    alignItems: "center",
+    gap: "var(--gap-sm)",
   },
 });
 

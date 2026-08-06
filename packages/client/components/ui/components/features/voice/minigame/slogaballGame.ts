@@ -71,6 +71,8 @@ const TARGET_COLOR = "#ff8b3d";
  * plan doc: no DEFAULT_VALUES double-table to keep in sync, and a per-device
  * high score is fine for a time-killer. */
 const HIGH_SCORE_KEY = "sloga:minigame:slogaball:high";
+/** Same reasoning as the high score: sound preference is per-device. */
+const MUTE_KEY = "sloga:minigame:slogaball:muted";
 
 /** Localized copy the engine draws itself; the host passes `t`-macro output
  * at creation time (the canvas can't re-render on locale switch — acceptable
@@ -91,6 +93,9 @@ export interface SlogaballHandle {
   resume(): void;
   /** Tear down listeners and the loop for good. The canvas is the host's. */
   dispose(): void;
+  /** Silence (or restore) the sound effects; persisted per device. */
+  setMuted(muted: boolean): void;
+  isMuted(): boolean;
 }
 
 export interface Peg {
@@ -203,7 +208,13 @@ export function createSlogaball(
   const ctx = canvas.getContext("2d");
   if (!ctx) {
     // 2d context refused (nothing sane to do; the overlay just stays blank).
-    return { pause() {}, resume() {}, dispose() {} };
+    return {
+      pause() {},
+      resume() {},
+      dispose() {},
+      setMuted() {},
+      isMuted: () => true,
+    };
   }
 
   // ---- theme ----------------------------------------------------------
@@ -228,6 +239,119 @@ export function createSlogaball(
       bucket: read("--md-sys-color-secondary", theme.bucket),
     };
   }
+
+  // ---- audio ----------------------------------------------------------
+  // Everything is synthesized with WebAudio, which keeps the module's two
+  // founding rules intact: no assets (nothing to stage into a bundled desktop
+  // or Android dist) and no module-level DOM (this all lives inside
+  // `createSlogaball`, so the helper specs still run under `node --test`).
+  let muted = false;
+  try {
+    muted = localStorage.getItem(MUTE_KEY) === "1";
+  } catch {
+    /* storage denied — the preference just won't persist */
+  }
+  let audio: AudioContext | null = null;
+  let master: GainNode | null = null;
+  /** Rate-limits collision blips: a ball rattling through a peg cluster can
+   * collide every substep, and a note per collision is white noise. */
+  let lastBlip = 0;
+
+  /** The context is created lazily on the first audible event — the first one
+   * is always inside the launch pointerdown, so autoplay policy is satisfied
+   * and a muted player never allocates audio at all. */
+  function audioCtx(): AudioContext | null {
+    if (muted) return null;
+    if (!audio) {
+      const Ctor =
+        window.AudioContext ??
+        (window as { webkitAudioContext?: typeof AudioContext })
+          .webkitAudioContext;
+      if (!Ctor) return null;
+      try {
+        audio = new Ctor();
+        master = audio.createGain();
+        // Effects sit under a call — keep them well below speech level.
+        master.gain.value = 0.35;
+        master.connect(audio.destination);
+      } catch {
+        return null;
+      }
+    }
+    if (audio.state === "suspended") void audio.resume().catch(() => {});
+    return audio;
+  }
+
+  /**
+   * One enveloped oscillator note at `when` seconds from now; `glide` slides
+   * the pitch to that frequency over the note's length. Short attack, then an
+   * exponential decay — reads as a "blip" rather than an organ tone.
+   */
+  function note(
+    freq: number,
+    dur: number,
+    type: OscillatorType,
+    vol: number,
+    when = 0,
+    glide?: number,
+  ) {
+    const ctx = audioCtx();
+    if (!ctx || !master) return;
+    const t0 = ctx.currentTime + when;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, t0);
+    if (glide !== undefined)
+      osc.frequency.exponentialRampToValueAtTime(Math.max(1, glide), t0 + dur);
+    gain.gain.setValueAtTime(0, t0);
+    gain.gain.linearRampToValueAtTime(vol, t0 + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+    osc.connect(gain);
+    gain.connect(master);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.02);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
+  }
+
+  /** Collision blip, rate-limited against `clock` (game time). */
+  function blip(freq: number, vol: number, type: OscillatorType = "sine") {
+    if (clock - lastBlip < 0.035) return;
+    lastBlip = clock;
+    note(freq, 0.07, type, vol);
+  }
+
+  const sfx = {
+    launch: () => note(320, 0.09, "triangle", 0.4, 0, 170),
+    peg: () => blip(620, 0.35),
+    target: () => {
+      // Bright two-tone so the objective pegs SOUND special too.
+      note(880, 0.08, "sine", 0.4);
+      note(1318, 0.1, "sine", 0.3, 0.05);
+    },
+    /** Rebound off an already-lit peg or a wall — audible, not scoring. */
+    thud: () => blip(300, 0.12, "triangle"),
+    freeBall: () => {
+      note(523, 0.09, "square", 0.22);
+      note(784, 0.14, "square", 0.22, 0.09);
+    },
+    /** End-of-shot pop cascade; capped so a monster shot isn't a machine gun. */
+    pops: (count: number) => {
+      for (let i = 0; i < Math.min(count, 8); i++)
+        note(440 + i * 70, 0.07, "sine", 0.25, i * 0.04);
+    },
+    won: () => {
+      const arp = [523, 659, 784, 1047];
+      arp.forEach((f, i) => note(f, 0.16, "triangle", 0.3, i * 0.11));
+    },
+    lost: () => {
+      note(330, 0.18, "triangle", 0.3);
+      note(233, 0.3, "triangle", 0.3, 0.16);
+    },
+  };
 
   // ---- state ----------------------------------------------------------
   type Phase = "aim" | "flight" | "won" | "lost";
@@ -290,11 +414,14 @@ export function createSlogaball(
     };
     caught = false;
     phase = "flight";
+    sfx.launch();
   }
 
   function endShot() {
+    let popped = 0;
     for (const p of pegs) {
       if (!p.lit) continue;
+      popped++;
       p.lit = false;
       p.gone = true;
       for (let i = 0; i < 6; i++) {
@@ -313,14 +440,17 @@ export function createSlogaball(
     if (!caught) ballsLeft--;
     caught = false;
     ball = null;
+    sfx.pops(popped);
 
     if (!pegs.some((p) => p.target && !p.gone)) {
       score += ballsLeft * SCORE_BALL_BONUS;
       saveBest();
       phase = "won";
+      sfx.won();
     } else if (ballsLeft <= 0) {
       saveBest();
       phase = "lost";
+      sfx.lost();
     } else {
       phase = "aim";
     }
@@ -345,13 +475,16 @@ export function createSlogaball(
       if (ball.x < BALL_R) {
         ball.x = BALL_R;
         ball.vx = Math.abs(ball.vx) * WALL_RESTITUTION;
+        sfx.thud();
       } else if (ball.x > FIELD_W - BALL_R) {
         ball.x = FIELD_W - BALL_R;
         ball.vx = -Math.abs(ball.vx) * WALL_RESTITUTION;
+        sfx.thud();
       }
       if (ball.y < BALL_R) {
         ball.y = BALL_R;
         ball.vy = Math.abs(ball.vy) * WALL_RESTITUTION;
+        sfx.thud();
       }
 
       for (const p of pegs) {
@@ -372,6 +505,10 @@ export function createSlogaball(
         if (!p.lit) {
           p.lit = true;
           score += p.target ? SCORE_TARGET : SCORE_PEG;
+          if (p.target) sfx.target();
+          else sfx.peg();
+        } else {
+          sfx.thud();
         }
       }
 
@@ -384,6 +521,7 @@ export function createSlogaball(
         Math.abs(ball.x - bucketX()) < BUCKET_W / 2 - BALL_R / 2
       ) {
         caught = true;
+        sfx.freeBall();
         toasts.push({
           text: strings.freeBall,
           x: bucketX(),
@@ -621,8 +759,12 @@ export function createSlogaball(
 
   const onVisibility = () => {
     hiddenPaused = document.hidden;
-    if (hiddenPaused) stopLoop();
-    else ensureLoop();
+    if (hiddenPaused) {
+      stopLoop();
+      // A backgrounded game must not keep making noise (scheduled tails are
+      // at most ~0.5s; suspending also cuts those).
+      void audio?.suspend().catch(() => {});
+    } else ensureLoop();
   };
 
   canvas.addEventListener("pointermove", onPointerMove);
@@ -633,11 +775,14 @@ export function createSlogaball(
     pause() {
       userPaused = true;
       stopLoop();
+      void audio?.suspend().catch(() => {});
     },
     resume() {
       userPaused = false;
       readTheme();
       ensureLoop();
+      // The context stays suspended until the next sound asks for it — a
+      // muted (or silent-so-far) game never resumes audio here.
     },
     dispose() {
       userPaused = true;
@@ -645,6 +790,20 @@ export function createSlogaball(
       canvas.removeEventListener("pointermove", onPointerMove);
       canvas.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("visibilitychange", onVisibility);
+      void audio?.close().catch(() => {});
+      audio = null;
+      master = null;
     },
+    setMuted(m: boolean) {
+      muted = m;
+      try {
+        localStorage.setItem(MUTE_KEY, m ? "1" : "0");
+      } catch {
+        /* see above */
+      }
+      // Cut scheduled tails immediately rather than letting them ring out.
+      if (m) void audio?.suspend().catch(() => {});
+    },
+    isMuted: () => muted,
   };
 }

@@ -6643,6 +6643,14 @@ msgid "Detect automatically"
 msgstr "Detect automatically"
 
 #: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Mute game sounds"
+msgstr "Mute game sounds"
+
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Unmute game sounds"
+msgstr "Unmute game sounds"
+
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
 msgid "Play while you wait?"
 msgstr "Play while you wait?"
 
