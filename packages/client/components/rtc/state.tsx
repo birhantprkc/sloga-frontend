@@ -200,6 +200,15 @@ const MAX_DICE_TOASTS = 5;
  *  an E2EE call (control-plane cost scales with roster). Trivially tunable. */
 const MAX_VIDEO_PARTICIPANTS = 30;
 
+/**
+ * Upper bound on the open-group probe (T0d): the fail-safe holds the publish
+ * gate while the probe is "pending", so a HUNG fetch would keep a live call
+ * paused (publishing nothing) indefinitely. A timeout rejects into the probe's
+ * catch, which resolves "none" — the ratified probe-error availability escape
+ * (R2-6, same origin as the DS).
+ */
+const OPEN_GROUP_PROBE_TIMEOUT_MS = 10_000;
+
 type State =
   | "READY"
   | "DISCONNECTED"
@@ -1392,71 +1401,75 @@ class Voice {
       });
     });
 
-    // --- Media E2EE wiring (slice 6.3/6.4) ----------------------------
-    // The frame-key path + the media-plane observers are wired here; the MLS
-    // control-plane session (constructed after room.connect, below) is the SOLE
-    // driver of all of it. Inert until `media_e2ee_enabled` flips (6.5).
-    if (e2eeCapable) {
-      // Keys-changed loop (§3.5): native pushes `e2ee:call-keys-changed` on
-      // every LOCAL epoch advance. Route it INTO the session (the SOLE
-      // `applyKeys` driver, NEW-3): it fetches the §7.2 frame-key egress and
-      // installs them under the Add-grace/Remove-immediate timing + the §4.4
-      // loud-state debounce — replacing 6.3's direct `provider.applyKeys`.
-      // (`bridge` is non-null here — `e2eeCapable` required it.)
-      if (bridge) {
-        const unlisten = await bridge.onCallKeysChanged((event) => {
-          void this.#mlsSession?.onLocalKeysChanged(
-            event.group_id,
-            event.epoch,
-          );
-        });
-        // A newer connect() may have superseded us across the await — drop
-        // this listener immediately rather than orphaning it, and never clobber
-        // the newer invocation's shared state (gate HIGH).
-        if (gen !== this.#connectGen) {
-          unlisten();
-          // Strip THIS room's listeners before abandoning it (FE-9c): its
-          // async `disconnected` event would otherwise fire `#setState(
-          // "DISCONNECTED")` + `nativeCallServiceStop()` and clobber the newer
-          // call's state / kill its foreground service.
-          room.removeAllListeners();
-          room.disconnect();
-          return false;
+    try {
+      // --- Media E2EE wiring (slice 6.3/6.4) --------------------------
+      // The frame-key path + the media-plane observers are wired here; the
+      // MLS control-plane session (constructed after room.connect, below) is
+      // the SOLE driver of all of it. Inert until `media_e2ee_enabled` flips
+      // (6.5). Inside the try DELIBERATELY: `await bridge.onCallKeysChanged`
+      // can reject (native listener registration), and an owned rejection
+      // outside the try escaped with no teardown — worker/provider held and
+      // the UI stuck on CONNECTING until the next user action.
+      if (e2eeCapable) {
+        // Keys-changed loop (§3.5): native pushes `e2ee:call-keys-changed` on
+        // every LOCAL epoch advance. Route it INTO the session (the SOLE
+        // `applyKeys` driver, NEW-3): it fetches the §7.2 frame-key egress and
+        // installs them under the Add-grace/Remove-immediate timing + the §4.4
+        // loud-state debounce — replacing 6.3's direct `provider.applyKeys`.
+        // (`bridge` is non-null here — `e2eeCapable` required it.)
+        if (bridge) {
+          const unlisten = await bridge.onCallKeysChanged((event) => {
+            void this.#mlsSession?.onLocalKeysChanged(
+              event.group_id,
+              event.epoch,
+            );
+          });
+          // A newer connect() may have superseded us across the await — drop
+          // this listener immediately rather than orphaning it, and never clobber
+          // the newer invocation's shared state (gate HIGH).
+          if (gen !== this.#connectGen) {
+            unlisten();
+            // Strip THIS room's listeners before abandoning it (FE-9c): its
+            // async `disconnected` event would otherwise fire `#setState(
+            // "DISCONNECTED")` + `nativeCallServiceStop()` and clobber the newer
+            // call's state / kill its foreground service.
+            room.removeAllListeners();
+            room.disconnect();
+            return false;
+          }
+          this.#unlistenCallKeys = unlisten;
         }
-        this.#unlistenCallKeys = unlisten;
+
+        // LiveKit's observed per-participant encryption status — a REQUIRED
+        // media-plane gating input for the green lock (§4.4 invariant 11:
+        // native "keys pushed" ≠ "encryption happened"; only this webview signal
+        // witnesses the media plane). 6.3 records it; 6.5 builds the chip.
+        room.addListener(
+          "participantEncryptionStatusChanged",
+          (encrypted, participant) => {
+            const identity =
+              participant?.identity ?? room.localParticipant.identity;
+            if (identity) this.callEncryption.set(identity, encrypted);
+            // A participant observed encrypted again clears a transient
+            // RE-SECURING in the session's §4.4 debounce before it goes loud.
+            if (encrypted) this.#mlsSession?.noteEncryptionRecovered();
+          },
+        );
+        // LiveKit emits ONE `encryptionError` then silently drops frames
+        // (failureTolerance:0, §1.5) — hand it to the session's §4.4
+        // rotation-window-vs-loud classification. Latching happens ONLY via the
+        // session's verdict (`onEncryptionState("loud")` in #buildMediaBinding),
+        // NOT directly here (6.7b fix): a joiner receiving already-encrypted
+        // frames before its Welcome resolves raises EXPECTED missing-key errors,
+        // and a direct latch pinned the chip loud past a successful join. A
+        // session-less error can't latch — but session-less means torn down /
+        // never constructed, where the ME-7 no-session policy arm already keeps
+        // an E2EE-known call loud (chipState `channelHasOpenGroup` branch).
+        room.addListener("encryptionError", (error) => {
+          this.#mlsSession?.noteEncryptionError(error);
+        });
       }
 
-      // LiveKit's observed per-participant encryption status — a REQUIRED
-      // media-plane gating input for the green lock (§4.4 invariant 11:
-      // native "keys pushed" ≠ "encryption happened"; only this webview signal
-      // witnesses the media plane). 6.3 records it; 6.5 builds the chip.
-      room.addListener(
-        "participantEncryptionStatusChanged",
-        (encrypted, participant) => {
-          const identity =
-            participant?.identity ?? room.localParticipant.identity;
-          if (identity) this.callEncryption.set(identity, encrypted);
-          // A participant observed encrypted again clears a transient
-          // RE-SECURING in the session's §4.4 debounce before it goes loud.
-          if (encrypted) this.#mlsSession?.noteEncryptionRecovered();
-        },
-      );
-      // LiveKit emits ONE `encryptionError` then silently drops frames
-      // (failureTolerance:0, §1.5) — hand it to the session's §4.4
-      // rotation-window-vs-loud classification. Latching happens ONLY via the
-      // session's verdict (`onEncryptionState("loud")` in #buildMediaBinding),
-      // NOT directly here (6.7b fix): a joiner receiving already-encrypted
-      // frames before its Welcome resolves raises EXPECTED missing-key errors,
-      // and a direct latch pinned the chip loud past a successful join. A
-      // session-less error can't latch — but session-less means torn down /
-      // never constructed, where the ME-7 no-session policy arm already keeps
-      // an E2EE-known call loud (chipState `channelHasOpenGroup` branch).
-      room.addListener("encryptionError", (error) => {
-        this.#mlsSession?.noteEncryptionError(error);
-      });
-    }
-
-    try {
       if (!auth) {
         auth = await channel.joinCall(
           "worldwide",
@@ -1548,7 +1561,10 @@ class Voice {
           const [authHeader, authValue] = apiClient.authenticationHeader;
           void fetch(
             `${apiClient.options.baseURL}/mls/channels/${channel.id}/open_group`,
-            { headers: { [authHeader]: authValue } },
+            {
+              headers: { [authHeader]: authValue },
+              signal: AbortSignal.timeout(OPEN_GROUP_PROBE_TIMEOUT_MS),
+            },
           )
             .then(async (response) => {
               // Ownership guard: a stale probe resolving after a hang-up /
