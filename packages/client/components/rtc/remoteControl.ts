@@ -401,6 +401,14 @@ export class RemoteControl {
           rcSessionId: string;
           sharerId: string;
           sharerName: string;
+          /**
+           * From the ACCEPT response — the release route is grant-addressed
+           * and permits either party, so holding it is what lets a
+           * controller-side teardown be recorded as one. Optional: an older
+           * server (or an unreadable body) leaves it unset and teardown falls
+           * back to the sharer-driven path.
+           */
+          grantId?: string;
           phase: RcControllerPhase;
           sas?: string;
         }
@@ -1153,11 +1161,23 @@ export class RemoteControl {
         this.#setError(`accept rejected (${response.status})`);
         return false;
       }
+      // The accept response carries the grant id (`RemoteControlRespondResponse`)
+      // and this side used to DISCARD it, which is why the controller never
+      // called the release route and every controller-side teardown reached
+      // the audit as the SHARER's — see `endControlling`. Best-effort: an
+      // unreadable body must not fail an accept that the server took.
+      let grantId: string | undefined;
+      try {
+        grantId = ((await response.json()) as { grant_id?: string }).grant_id;
+      } catch {
+        /* older server, or an empty body — teardown falls back to the sharer path */
+      }
       this.#setControlling({
         channelId: args.offer.channelId,
         rcSessionId: args.offer.rcSessionId,
         sharerId: args.offer.sharerId,
         sharerName: args.sharerName,
+        grantId,
         // NOT "active": the sharer still has to answer their own `RcArm`
         // dialog, and nothing tells us when they do. Until then input is
         // sealed and sent and simply not injected, so a UI that claimed
@@ -1407,13 +1427,28 @@ export class RemoteControl {
       }).catch(() => undefined);
     }
     const ctx = this.#heartbeatCtx;
-    if (ctx) {
-      // The controller has no grant id — the release route is grant-id
-      // addressed and the grant id rides the sharer's private accept event.
-      // Ending natively drops the sealing key, and the sharer's heartbeat
-      // stops when their own session ends, so the capability expires within
-      // the 16 s grace regardless.
-      void ctx;
+    // RELEASE FROM THIS SIDE TOO. The old comment here said "the controller
+    // has no grant id" and skipped the call — but the id comes back in the
+    // controller's OWN accept response, and the route explicitly permits
+    // either party. The cost of skipping it was measured on 08-04: a
+    // controller pressing "Release control" produced `revoked_by_sharer` in
+    // the audit, because the only client that ever called the route was the
+    // sharer's, reacting to the session going quiet. `released_by_controller`
+    // was unreachable — a vocabulary entry nothing could produce.
+    //
+    // Correctness does not DEPEND on this (ending natively drops the sealing
+    // key and the sharer's heartbeat stops, so the capability dies inside the
+    // 16 s grace either way) — the audit's honesty does.
+    if (ctx && controlling.grantId) {
+      const cause = releaseCause(reason);
+      const query = cause ? `?cause=${encodeURIComponent(cause)}` : "";
+      await fetch(
+        `${ctx.apiBase}/channels/${controlling.channelId}/control/${controlling.grantId}${query}`,
+        {
+          method: "DELETE",
+          headers: { [ctx.authHeader[0]]: ctx.authHeader[1] },
+        },
+      ).catch(() => undefined);
     }
   }
 
