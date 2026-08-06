@@ -790,6 +790,20 @@ class Voice {
         authHeader: client.authenticationHeader as [string, string],
       });
 
+      // The instance's own `remote_control` switch, so the affordance can be
+      // dark on a server that has the feature off instead of offering a
+      // button that dead-ends at `FeatureDisabled`. Read defensively: the
+      // field is newer than the pinned `stoat-api` types, and an older
+      // deployment omits it entirely — `undefined` then means "unknown",
+      // which the gate treats as permissive (see `supported`).
+      this.remoteControl.setServerEnabled(
+        (
+          client.configuration?.features as
+            | { remote_control?: boolean }
+            | undefined
+        )?.remote_control,
+      );
+
       const onOffered = (detail: {
         channelId: string;
         offerId: string;

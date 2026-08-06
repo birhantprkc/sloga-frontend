@@ -338,6 +338,20 @@ export class RemoteControl {
    * returns early, and both handshake commands fail closed without it.
    */
   async supported(): Promise<boolean> {
+    // THE SERVER'S OWN FLAG, checked ahead of the memo and never folded into
+    // it. `remote_control` is a per-instance operator switch
+    // (`RevoltFeatures`, delta `routes/root.rs`), and until slice 5's exit
+    // obligation was met the client could not see it at all: a build with the
+    // affordance lit showed "Give control" against a flag-off instance and
+    // dead-ended at `FeatureDisabled` (400) with nothing explaining why.
+    //
+    // Deliberately `=== false` rather than falsy: `undefined` means the
+    // config has not been read yet (it is fetched once at boot), and treating
+    // "not yet known" as "off" would hide the affordance permanently on a
+    // slow config fetch — a worse failure than the one being fixed, and one
+    // that fails CLOSED silently. The server refuses the offer regardless, so
+    // this gate is about honesty in the UI, not about enforcement.
+    if (this.serverEnabled() === false) return false;
     if (this.#supported !== undefined) return this.#supported;
     if (!CONFIGURATION.ENABLE_REMOTE_CONTROL) return (this.#supported = false);
     const invoke = tauriInvoke();
@@ -418,6 +432,9 @@ export class RemoteControl {
     [this.error, this.#setError] = createSignal<string | undefined>();
     [this.captureActive, this.#setCaptureActive] = createSignal(false);
     [this.localTyping, this.#setLocalTyping] = createSignal(false);
+    [this.serverEnabled, this.#setServerEnabled] = createSignal<
+      boolean | undefined
+    >();
   }
 
   // -- room binding (LiveKit) -------------------------------------------
@@ -552,6 +569,20 @@ export class RemoteControl {
   /** Reported by the capture surface's `focusin` tracking. */
   setLocalTyping(value: boolean) {
     this.#setLocalTyping(value);
+  }
+
+  /**
+   * Whether THIS INSTANCE has remote control switched on server-side
+   * (`RevoltFeatures.remote_control`). `undefined` until the config has been
+   * read. A SIGNAL, so an affordance gated on it re-evaluates when the
+   * config lands rather than latching whatever was true at first render.
+   */
+  readonly serverEnabled: Accessor<boolean | undefined>;
+  readonly #setServerEnabled: Setter<boolean | undefined>;
+
+  /** Set from `client.configuration` once it is available. */
+  setServerEnabled(value: boolean | undefined) {
+    this.#setServerEnabled(value);
   }
 
   /**

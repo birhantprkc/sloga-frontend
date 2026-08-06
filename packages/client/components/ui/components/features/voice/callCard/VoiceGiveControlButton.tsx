@@ -144,9 +144,17 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
   // where it has to live to darken the inbound direction as well. It is
   // repeated here so that the release gate is visible at the affordance
   // itself rather than only two files away.
+  //
+  // `serverEnabled()` is the INSTANCE's switch and is checked here as well as
+  // inside `supported()`, for a reactivity reason rather than a belt-and-
+  // braces one: `supported()` is consumed through `createResource`, which
+  // resolves ONCE, so a config that lands after first render would never
+  // re-open the gate. Reading the signal directly in this memo does.
+  // `!== false` because `undefined` is "config not read yet", not "off".
   const canOffer = () =>
     CONFIGURATION.ENABLE_VIDEO &&
     CONFIGURATION.ENABLE_REMOTE_CONTROL &&
+    rc.serverEnabled() !== false &&
     supported() === true &&
     voice.screenshare() &&
     !rc.sharing();
