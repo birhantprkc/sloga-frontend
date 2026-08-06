@@ -54,6 +54,9 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
   // opt-in that survives between sessions is how someone ends up remembering
   // a stranger they meant to help once.
   const [remember, setRemember] = createSignal(false);
+  // The claim + mode-note disclosure. Collapsed every time the picker opens
+  // for the same reason `remember` resets: the default view is the short one.
+  const [details, setDetails] = createSignal(false);
 
   // A COMMAND PROBE rather than a shell sniff — see `RemoteControl.supported`.
   const [supported] = createResource(() => rc.supported());
@@ -194,12 +197,24 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
         | undefined
     )?.remote_control !== false;
 
+  /**
+   * The SERVER's view of our screen share (dc0d5946's other half). After a
+   * reconnect the OS capture, `voice.screenshare()` and the local LiveKit
+   * publication can all report a live share while the SFU has no track — so
+   * the button was offered against a dead share and the offer could only
+   * come back `400 FailedValidation`. This reads the same `screen_video`
+   * the offer route gates on. `undefined` means "server hasn't said" and
+   * stays permissive — only an explicit `false` is a refusal.
+   */
+  const serverSeesShare = () => voice.serverSeesScreenVideo() !== false;
+
   const canOffer = () =>
     CONFIGURATION.ENABLE_VIDEO &&
     CONFIGURATION.ENABLE_REMOTE_CONTROL &&
     serverAllows() &&
     supported() === true &&
     voice.screenshare() &&
+    serverSeesShare() &&
     !rc.sharing();
 
   async function offer(userId: string, name: string) {
@@ -275,7 +290,10 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
             // Reset on every open, not on close: a checkbox that stayed
             // ticked from the last time is how someone remembers a person
             // they never meant to.
-            if (!was) setRemember(false);
+            if (!was) {
+              setRemember(false);
+              setDetails(false);
+            }
             return !was;
           })
         }
@@ -360,18 +378,14 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
               renderer that could write the list could grant itself a way
               past a consent dialog, so there is no command that does.
 
-              🔴 The note beneath is a SECURITY STATEMENT for a mode with a
-              different property than the pinned claim — one OS confirmation
-              instead of two. It is a separate string on purpose (reviewed
-              2026-07-29); do not fold it into REMOTE_CONTROL_CLAIM, which is
-              still true and still rendered verbatim below.
-
               The label itself was reviewed and left ALONE deliberately. It
               never names which confirmation goes, and "one of the two, next
               time" is true in both express states — rc_dialog_plan rows 1→2
               and 3→4 both go from two dialogs to one. What it leaves out,
               that under Express Connect the one skipped is the one carrying
-              the code, is covered by the note directly beneath it. */}
+              the code, is covered by the trust note (behind Details since
+              the rc-dialog-trim pass) and by the native dialogs, which are
+              the consent surface. */}
             <Remember>
               <input
                 type="checkbox"
@@ -383,23 +397,11 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
                 time
               </Trans>
             </Remember>
-            <Show when={remember()}>
-              <Warning>{REMOTE_CONTROL_TRUST_NOTE}</Warning>
-            </Show>
-
-            {/* 🔴 Also a SECURITY STATEMENT (reviewed 2026-07-29, same pass
-              as the trust note above). Shown whenever Express Connect is on,
-              not only when it will apply to the person about to be picked —
-              native decides that per peer (it needs them already remembered)
-              and this component cannot know which rows qualify without asking
-              about each one. Over-warning is the safe direction; under-warning
-              is not. */}
-            <Show when={express()}>
-              <Warning>{REMOTE_CONTROL_EXPRESS_NOTE}</Warning>
-            </Show>
-
             {/* §8: this is the tech-support scam, near enough verbatim, and the
-              warning belongs where the decision is made. */}
+              warning belongs where the decision is made. ALWAYS visible —
+              the rc-dialog-trim pass moved everything else behind Details
+              precisely so this sentence is not buried while a victim is
+              being talked through the flow on the phone. */}
             <Warning>
               <Trans>
                 Anyone you give control to can use your mouse and keyboard, run
@@ -408,10 +410,43 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
               </Trans>
             </Warning>
 
-            {/* The approved claim wording, rendered verbatim and never
-              paraphrased upward. It concedes keystroke timing in the same
-              sentence as confidentiality on purpose. */}
-            <Claim>{REMOTE_CONTROL_CLAIM}</Claim>
+            {/* rc-dialog-trim §5: the pinned claim and the two mode notes sit
+              behind a disclosure so the default view is short. No string
+              changes — "Details"/"Hide" are the panel's existing msgids, and
+              the three texts render verbatim when opened.
+
+              🔴 The trust note and the express note are SECURITY STATEMENTS
+              (reviewed 2026-07-29) for modes with a different property than
+              the pinned claim — one OS confirmation instead of two. They are
+              separate strings on purpose; do not fold them into
+              REMOTE_CONTROL_CLAIM, which is still rendered verbatim below.
+              The express note shows whenever Express Connect is on, not only
+              when it will apply to the person about to be picked — native
+              decides that per peer and this component cannot know which rows
+              qualify. Over-warning is the safe direction. */}
+            <Show
+              when={details()}
+              fallback={
+                <Button size="sm" variant="text" onPress={() => setDetails(true)}>
+                  <Trans>Details</Trans>
+                </Button>
+              }
+            >
+              <Show when={remember()}>
+                <Warning>{REMOTE_CONTROL_TRUST_NOTE}</Warning>
+              </Show>
+              <Show when={express()}>
+                <Warning>{REMOTE_CONTROL_EXPRESS_NOTE}</Warning>
+              </Show>
+
+              {/* The approved claim wording, rendered verbatim and never
+                paraphrased upward. It concedes keystroke timing in the same
+                sentence as confidentiality on purpose. */}
+              <Claim>{REMOTE_CONTROL_CLAIM}</Claim>
+              <Button size="sm" variant="text" onPress={() => setDetails(false)}>
+                <Trans>Hide</Trans>
+              </Button>
+            </Show>
 
             <Show when={error()}>
               <Warning>{error()}</Warning>
