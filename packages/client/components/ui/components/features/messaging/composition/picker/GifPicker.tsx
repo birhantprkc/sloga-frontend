@@ -64,9 +64,26 @@ export function GifPicker() {
           </Match>
         </Switch>
       </Suspense>
+      <Attribution>Powered by GIPHY</Attribution>
     </Stack>
   );
 }
+
+const Attribution = styled("div", {
+  base: {
+    ...typography.raw({ class: "label", size: "small" }),
+
+    display: "flex",
+    justifyContent: "end",
+    flexShrink: 0,
+    padding: "var(--gap-sm) var(--gap-md)",
+
+    fontWeight: 600,
+    letterSpacing: "0.5px",
+    color: "var(--md-sys-color-outline)",
+    userSelect: "none",
+  },
+});
 
 const Stack = styled("div", {
   base: {
