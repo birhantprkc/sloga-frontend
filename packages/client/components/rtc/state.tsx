@@ -772,6 +772,43 @@ class Voice {
 
     this.getClient = useClient();
 
+    /**
+     * Mirror the instance's `remote_control` switch into the store.
+     *
+     * 🔴 TRACKS `ready()`, NOT `configuration`, and that is the whole point.
+     * `Client.configuration` is a PLAIN FIELD, so reading it inside an effect
+     * registers no dependency, and `getClient()` is not reactive either. The
+     * client object exists before the config has been fetched, so a lone read
+     * returns `undefined` on the first and ONLY run and the value latches
+     * there forever. Measured 2026-08-06: with the server flag off, a
+     * 0.15.93 client still showed "Give control" and the offer dead-ended at
+     * `400 FeatureDisabled` — exactly the failure the gate was added to
+     * prevent, reintroduced by the same mistake `localUserIdentity.ts` was
+     * written about.
+     *
+     * `ready()` is a real signal, set in the Ready handler and reset on every
+     * `connect()`, and the configuration fetch completes before it — so this
+     * re-runs with the value present, and re-asserts it after a reconnect.
+     *
+     * Its own effect rather than folded into the RC listener effect below:
+     * adding a `ready()` dependency there would re-bind those listeners on
+     * every reconnect, which is a behaviour change this fix does not need.
+     */
+    createEffect(() => {
+      const client = this.getClient();
+      if (!client?.ready()) {
+        this.remoteControl.setServerEnabled(undefined);
+        return;
+      }
+      this.remoteControl.setServerEnabled(
+        (
+          client.configuration?.features as
+            | { remote_control?: boolean }
+            | undefined
+        )?.remote_control,
+      );
+    });
+
     // Client-local soundboard playback. The `soundboardSound` client event is
     // app-lifetime (not room-scoped), so subscribe ONCE here and do all
     // scoping in the handler — this survives leave/rejoin (a connect/disconnect
@@ -824,20 +861,6 @@ class Voice {
         apiBase: client.options.baseURL,
         authHeader: client.authenticationHeader as [string, string],
       });
-
-      // The instance's own `remote_control` switch, so the affordance can be
-      // dark on a server that has the feature off instead of offering a
-      // button that dead-ends at `FeatureDisabled`. Read defensively: the
-      // field is newer than the pinned `stoat-api` types, and an older
-      // deployment omits it entirely — `undefined` then means "unknown",
-      // which the gate treats as permissive (see `supported`).
-      this.remoteControl.setServerEnabled(
-        (
-          client.configuration?.features as
-            | { remote_control?: boolean }
-            | undefined
-        )?.remote_control,
-      );
 
       const onOffered = (detail: {
         channelId: string;

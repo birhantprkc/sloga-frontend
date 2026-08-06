@@ -170,16 +170,34 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
   // repeated here so that the release gate is visible at the affordance
   // itself rather than only two files away.
   //
-  // `serverEnabled()` is the INSTANCE's switch and is checked here as well as
-  // inside `supported()`, for a reactivity reason rather than a belt-and-
-  // braces one: `supported()` is consumed through `createResource`, which
-  // resolves ONCE, so a config that lands after first render would never
-  // re-open the gate. Reading the signal directly in this memo does.
-  // `!== false` because `undefined` is "config not read yet", not "off".
+  /**
+   * The INSTANCE's `remote_control` switch, read LIVE off the client rather
+   * than from `rc.serverEnabled()`.
+   *
+   * The store signal is fed by an effect that can only run as often as its
+   * dependencies change, and the 2026-08-06 measurement showed what that
+   * costs when it latches: flag off, button shown, offer dead-ending at
+   * `400 FeatureDisabled`. This read cannot latch — `canOffer` re-evaluates
+   * whenever `screenshare()`/`sharing()`/`supported()` change, and by the
+   * time anyone is screensharing the configuration has long since been
+   * fetched. The signal remains the gate for the INBOUND direction inside
+   * `supported()`, where no such re-evaluation is available.
+   *
+   * `!== false` because `undefined` means "not read yet", not "off"; the
+   * server refuses the offer regardless, so this gate is about not showing a
+   * dead button rather than about enforcement.
+   */
+  const serverAllows = () =>
+    (
+      client()?.configuration?.features as
+        | { remote_control?: boolean }
+        | undefined
+    )?.remote_control !== false;
+
   const canOffer = () =>
     CONFIGURATION.ENABLE_VIDEO &&
     CONFIGURATION.ENABLE_REMOTE_CONTROL &&
-    rc.serverEnabled() !== false &&
+    serverAllows() &&
     supported() === true &&
     voice.screenshare() &&
     !rc.sharing();
