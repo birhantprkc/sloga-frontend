@@ -85,6 +85,10 @@ export type Modals =
   | {
       type: "create_channel";
       server: Server;
+      /**
+       * Category to preselect in the modal's category picker
+       */
+      categoryId?: string;
       cb?: (channel: Channel) => void;
     }
   | {

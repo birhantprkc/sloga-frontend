@@ -6721,3 +6721,11 @@ msgstr "Your suspension has expired — try logging in again."
 #: components/i18n/errors.ts
 msgid "Your user has already been created? Try logging in again or refreshing the app."
 msgstr "Your user has already been created? Try logging in again or refreshing the app."
+
+#: components/modal/modals/CreateChannel.tsx
+msgid "Category"
+msgstr "Category"
+
+#: components/modal/modals/CreateChannel.tsx
+msgid "No category"
+msgstr "No category"

@@ -1,3 +1,4 @@
+import { useFloating } from "solid-floating-ui";
 import { BiRegularCheckCircle, BiSolidCheckCircle } from "solid-icons/bi";
 import {
   Accessor,
@@ -7,15 +8,22 @@ import {
   Setter,
   Show,
   Switch,
+  createEffect,
   createMemo,
   createSignal,
+  on,
+  onCleanup,
+  onMount,
 } from "solid-js";
+import { Portal } from "solid-js/web";
+import { Motion, Presence } from "solid-motionone";
 
-import { useLingui } from "@lingui-solid/solid/macro";
+import { autoUpdate, flip, offset, shift } from "@floating-ui/dom";
+import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import type { API, Channel, Server, ServerFlags } from "stoat.js";
 import { styled } from "styled-system/jsx";
 
-import { createChannelInCategory } from "@revolt/app";
+import { ContextMenu, ContextMenuButton } from "@revolt/app/menus/ContextMenu";
 import { useClient } from "@revolt/client";
 import { useDevice } from "@revolt/common";
 import { KeybindAction, createKeybind } from "@revolt/keybinds";
@@ -43,6 +51,7 @@ import { createDragHandle } from "@revolt/ui/components/utils/Draggable";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
 import MdChevronRight from "@material-design-icons/svg/filled/chevron_right.svg?component-solid";
+import MdLibraryAdd from "@material-design-icons/svg/outlined/library_add.svg?component-solid";
 import MdSettings from "@material-symbols/svg-400/outlined/settings-fill.svg?component-solid";
 
 import { ServerMemberSidebar } from "../../channels/text/MemberSidebar";
@@ -384,7 +393,7 @@ function ServerInfo(
   },
 ) {
   const navigate = useNavigate();
-  const { openModal } = useModals();
+  const [createAnchor, setCreateAnchor] = createSignal<HTMLDivElement>();
   return (
     <Row align grow minWidth={0}>
       <ServerBadge flags={props.server.flags} />
@@ -392,19 +401,19 @@ function ServerInfo(
         <TextWithEmoji content={props.server.name} />
       </ServerName>
       <Show when={props.server.havePermission("ManageChannel")}>
-        <IconButton
-          size="xs"
-          width="narrow"
-          variant={props.server.banner ? "_header" : "standard"}
-          onPress={() =>
-            openModal({ type: "create_channel", server: props.server })
-          }
-          use:floating={{
-            tooltip: { placement: "bottom", content: "Create Channel" },
-          }}
-        >
-          <Symbol>add</Symbol>
-        </IconButton>
+        <div ref={setCreateAnchor} style={{ display: "flex" }}>
+          <IconButton
+            size="xs"
+            width="narrow"
+            variant={props.server.banner ? "_header" : "standard"}
+            use:floating={{
+              tooltip: { placement: "bottom", content: "Create" },
+            }}
+          >
+            <Symbol>add</Symbol>
+          </IconButton>
+        </div>
+        <HeaderCreateMenu server={props.server} anchor={createAnchor} />
       </Show>
       <IconButton
         size="xs"
@@ -426,6 +435,99 @@ function ServerInfo(
         </IconButton>
       </Show>
     </Row>
+  );
+}
+
+/**
+ * Dropdown behind the header "+": create a channel (goes uncategorised
+ * unless the picker says otherwise) or a category. Click-opened floating
+ * menus follow the UserMenu anchor/portal pattern.
+ */
+function HeaderCreateMenu(props: {
+  server: Server;
+  anchor: Accessor<HTMLDivElement | undefined>;
+}) {
+  const { openModal } = useModals();
+  const [show, setShow] = createSignal(false);
+  const [ref, setRef] = createSignal<HTMLDivElement>();
+
+  const position = useFloating(() => props.anchor(), ref, {
+    placement: "bottom-start",
+    whileElementsMounted: autoUpdate,
+    middleware: [offset(5), flip(), shift({ padding: 8 })],
+  });
+
+  function toggle() {
+    setShow((v) => !v);
+  }
+
+  function close() {
+    setShow(false);
+  }
+
+  function onMouseDown(event: MouseEvent) {
+    const target = event.target as Node;
+    // The anchor's own click handler toggles; only close for true
+    // outside clicks.
+    if (props.anchor()?.contains(target)) return;
+    close();
+  }
+
+  onMount(() => document.addEventListener("mousedown", onMouseDown));
+  onCleanup(() => document.removeEventListener("mousedown", onMouseDown));
+
+  createEffect(
+    on(
+      () => props.anchor(),
+      (anchor) => {
+        if (anchor) {
+          anchor.addEventListener("click", toggle);
+          onCleanup(() => anchor.removeEventListener("click", toggle));
+        }
+      },
+    ),
+  );
+
+  return (
+    <Portal mount={document.getElementById("floating")!}>
+      <Presence>
+        <Show when={show()}>
+          <Motion
+            ref={setRef}
+            style={{
+              position: position.strategy,
+              top: `${position.y ?? 0}px`,
+              left: `${position.x ?? 0}px`,
+            }}
+            initial={{ opacity: 0, y: -12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2, easing: [0.87, 0, 0.13, 1] }}
+          >
+            <ContextMenu>
+              <ContextMenuButton
+                icon={<Symbol size={16}>add</Symbol>}
+                onClick={() => {
+                  close();
+                  openModal({ type: "create_channel", server: props.server });
+                }}
+              >
+                <Trans>Create channel</Trans>
+              </ContextMenuButton>
+              <ContextMenuButton
+                icon={MdLibraryAdd}
+                onClick={() => {
+                  close();
+                  openModal({ type: "create_category", server: props.server });
+                }}
+              >
+                <Trans>Create category</Trans>
+              </ContextMenuButton>
+            </ContextMenu>
+          </Motion>
+        </Show>
+      </Presence>
+    </Portal>
   );
 }
 
@@ -514,7 +616,6 @@ function Category(
   const isOpen = () => state.layout.getSectionState(props.category.id, true);
   const { isMobile } = useDevice();
   const { openModal } = useModals();
-  const navigate = useNavigate();
 
   const channels = createMemo(() =>
     props.category.channels.filter(
@@ -550,12 +651,11 @@ function Category(
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
-                  createChannelInCategory(
-                    openModal,
-                    navigate,
-                    props.server,
-                    props.category.id,
-                  );
+                  openModal({
+                    type: "create_channel",
+                    server: props.server,
+                    categoryId: props.category.id,
+                  });
                 }}
               >
                 <Symbol size={16}>add</Symbol>

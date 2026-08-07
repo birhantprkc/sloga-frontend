@@ -1,11 +1,18 @@
-import { Show } from "solid-js";
+import { For, Show, createMemo } from "solid-js";
 
 import { createFormControl, createFormGroup } from "solid-forms";
 
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
 
 import { useNavigate } from "@revolt/routing";
-import { Column, Dialog, DialogProps, Form2, Radio2 } from "@revolt/ui";
+import {
+  Column,
+  Dialog,
+  DialogProps,
+  Form2,
+  MenuItem,
+  Radio2,
+} from "@revolt/ui";
 
 import { useModals } from "..";
 import { Modals } from "../types";
@@ -24,7 +31,18 @@ export function CreateChannelModal(
     name: createFormControl("", { required: true }),
     type: createFormControl("Text"),
     announcement: createFormControl(false),
+    category: createFormControl(props.categoryId ?? "default"),
   });
+
+  /**
+   * Real categories on the server ("default" is the synthetic uncategorised
+   * bucket, offered as the "No category" option instead)
+   */
+  const categories = createMemo(() =>
+    props.server.orderedChannels.filter(
+      (category) => category.id !== "default",
+    ),
+  );
 
   async function onSubmit() {
     try {
@@ -40,6 +58,24 @@ export function CreateChannelModal(
           ? { announcement: true }
           : {}),
       } as never);
+
+      // File the channel into the chosen category; without this edit it
+      // stays in the uncategorised block. The new id is filtered out of
+      // every category first so a racing ChannelCreate event cannot
+      // duplicate it; if the category was deleted meanwhile, the channel
+      // simply stays uncategorised.
+      const categoryId = group.controls.category.value;
+      if (categoryId !== "default") {
+        await props.server.edit({
+          categories: props.server.orderedChannels.map((category) => ({
+            ...category,
+            channels: category.channels
+              .map((entry) => entry.id)
+              .filter((id) => id !== channel.id)
+              .concat(category.id === categoryId ? [channel.id] : []),
+          })),
+        });
+      }
 
       if (props.cb) {
         props.cb(channel);
@@ -103,6 +139,19 @@ export function CreateChannelModal(
             >
               <Trans>Announcement channel</Trans>
             </Form2.Checkbox>
+          </Show>
+
+          <Show when={categories().length}>
+            <Form2.Select label={t`Category`} control={group.controls.category}>
+              <MenuItem value="default">
+                <Trans>No category</Trans>
+              </MenuItem>
+              <For each={categories()}>
+                {(category) => (
+                  <MenuItem value={category.id}>{category.title}</MenuItem>
+                )}
+              </For>
+            </Form2.Select>
           </Show>
         </Column>
       </form>
