@@ -135,6 +135,7 @@ import {
   type CameraBackgroundStatus,
   CameraEffectsController,
 } from "./cameraEffects";
+import { createCaptionEngine } from "./captions/captionEngine";
 import { LiveCaptions } from "./captions/liveCaptions";
 import { CaptionPublisher } from "./components/CaptionPublisher";
 import { CaptionSpeaker } from "./components/CaptionSpeaker";
@@ -406,12 +407,17 @@ class Voice {
    */
   readonly callEncryption = new ReactiveMap<string, boolean>();
   /**
-   * Translated live captions for this call (STT → data channel → per-receiver
+   * Translated live captions for this call (STT → server relay → per-receiver
    * translation). Attached on connect, torn down on disconnect. Local
    * broadcasting is gated OFF on E2EE calls (audio would reach the speech
-   * vendor and the transcript rides an unencrypted data channel).
+   * vendor and the transcript would pass through the server in plaintext).
+   *
+   * Captions deliberately do NOT use a LiveKit data channel: the voice token
+   * is minted `can_publish_data: false`, so the SFU silently drops every
+   * packet a speaker publishes. Finalized lines POST to the server, which
+   * fans a `CallCaption` event to the call's participants.
    */
-  readonly captions = new LiveCaptions();
+  readonly captions = new LiveCaptions(createCaptionEngine);
   /**
    * Remote desktop control during screen share. Owned by this class rather
    * than by any component, because a tile is destroyed and rebuilt by
@@ -423,8 +429,10 @@ class Voice {
    * Two subscriptions, on the two precedents in this file: an app-lifetime
    * client-event subscription for the handshake events (the soundboard
    * shape — a connect/disconnect one would go dead after the first call),
-   * and a room-scoped `attach`/`detach` for the data channel (the captions
-   * shape, including the explicit `off`).
+   * and a room-scoped `attach`/`detach` for the data channel, including the
+   * explicit `off`. Remote control is now the only user of that second shape:
+   * captions used to share it and no longer do, because the SFU was dropping
+   * everything they published.
    */
   readonly remoteControl = new RemoteControl();
   /**
@@ -859,6 +867,31 @@ class Voice {
       client.addListener("soundboardSound", handler);
       onCleanup(() => client.removeListener("soundboardSound", handler));
     });
+
+    // Live captions relayed by the server. Same app-lifetime shape as the
+    // soundboard above, and for the same reason: a connect/disconnect
+    // subscription would go dead after the first call.
+    //
+    // Scoping matters here — `CallCaption` arrives on this user's PRIVATE
+    // topic, which reaches every session including ones not in the call, so
+    // drop anything that isn't the call we're currently connected to.
+    createEffect(() => {
+      const client = this.getClient();
+      if (!client) return;
+      const handler = (detail: {
+        channelId: string;
+        identity: string;
+        userId: string;
+        text: string;
+        lang: string;
+      }) => {
+        if (this.state() !== "CONNECTED") return;
+        if (this.channel()?.id !== detail.channelId) return;
+        this.captions.handleRemoteCaption(detail);
+      };
+      client.addListener("callCaption", handler);
+      onCleanup(() => client.removeListener("callCaption", handler));
+    });
     // Re-point any in-flight soundboard playback when the output device
     // changes mid-call (future plays read the device per-play already).
     createEffect(() => {
@@ -1229,7 +1262,19 @@ class Voice {
     room.addListener("connected", () => {
       this.#setState("CONNECTED");
       nativeCallServiceStart();
-      this.captions.attach(room, room.localParticipant.identity);
+      // Captions relay through the SERVER, not a LiveKit data channel: the
+      // voice token is minted `can_publish_data: false`, so the SFU silently
+      // drops anything published and no remote participant ever sees a line.
+      // Ingestion is the app-lifetime `callCaption` subscription in the
+      // constructor; this half is send-only.
+      this.captions.attach(room.localParticipant.identity, (text, lang) => {
+        void channel.sendCaption(text, lang).catch((error) => {
+          // Best-effort, exactly like the old data-channel path: a dropped
+          // line (offline blip, ratelimit) is superseded by the next
+          // utterance and must never break the call.
+          console.error("caption relay failed", error);
+        });
+      });
       this.remoteControl.attach(room, room.localParticipant.identity);
       this.#startPushToTalk(room);
       this.#startVAD(room);

@@ -1,8 +1,10 @@
 import { ReactiveMap } from "@solid-primitives/map";
-import type { Room } from "livekit-client";
 
-import { createCaptionEngine } from "./captionEngine";
-import type { CaptionEngine, CaptionResult } from "./speechCaptionEngine";
+// Type-only, so nothing here pulls the engine implementations (and through
+// them `@capacitor/core` and the Web Speech globals) into this module. The
+// engine arrives through the constructor instead, which is what lets
+// `liveCaptions.test.ts` drive this class under `node --test` with no shell.
+import type { CaptionEngine, CaptionResult } from "./speechCaptionEngine.ts";
 
 /** A caption currently displayed for one call participant. */
 export interface CaptionEntry {
@@ -14,52 +16,65 @@ export interface CaptionEntry {
   sourceLang: string;
 }
 
-/** LiveKit data-channel topic caption packets travel on. */
-const CAPTION_TOPIC = "captions";
-/** Wire format version — receivers ignore packets they don't understand. */
-const WIRE_VERSION = 1;
+/** Relays one finalized caption to the other participants of the call. */
+export type CaptionSender = (text: string, lang: string) => void;
+
 /** Clear a finalized caption this long after its last update. */
 const FINAL_LINGER_MS = 6000;
 /** Clear a stalled interim caption if no further update arrives. */
 const INTERIM_TIMEOUT_MS = 8000;
 /**
  * Hard cap on caption length (outgoing and ingested). Bounds a hostile/oversized
- * remote packet from overflowing the tile, and keeps text under the
+ * remote caption from overflowing the tile, and keeps text under the
  * translate-endpoint limit. Utterances longer than this are simply truncated.
+ * The server clamps to the same number.
  */
 const MAX_CAPTION_CHARS = 240;
 
-interface WireCaption {
-  v: number;
-  t: string;
-  f: boolean;
-  l: string;
-}
-
 /**
- * Live call captions: runs the local speech recognizer, broadcasts the
- * speaker's transcript over a LiveKit data channel, and ingests remote
- * participants' transcripts into a reactive per-identity map the UI renders
- * (translating on the receiving end via the existing message-translation path).
+ * Live call captions: runs the local speech recognizer, relays the speaker's
+ * finalized transcript through the server, and ingests other participants'
+ * transcripts into a reactive per-identity map the UI renders (translating on
+ * the receiving end via the existing message-translation path).
  *
- * PRIVACY: recognition sends mic audio to the browser's speech vendor and the
- * transcript travels over an UNENCRYPTED data channel (LiveKit E2EE covers
- * media frames, not data packets). The controller therefore never publishes on
- * an E2EE call — the caller gates `setLocalPublishing` on call mode.
+ * TRANSPORT: captions do NOT ride a LiveKit data channel, and cannot. The
+ * voice join token is minted `can_publish_data: false`, so the SFU silently
+ * discards published packets — `publishData()` resolves without error and
+ * nothing reaches the peer. That is why the original build appeared to work in
+ * solo tests (the local self-mirror below) while no remote participant ever
+ * saw a caption. Finalized lines now go over REST and come back as a
+ * `CallCaption` event fanned to the call's participants.
+ *
+ * FINALS ONLY: interim recognizer results stay on the speaker's own screen.
+ * They would otherwise cost one request per keystroke-rate update, and the
+ * receiver debounces interims 450ms before translating anyway.
+ *
+ * PRIVACY: recognition sends mic audio to the browser's speech vendor, and the
+ * transcript now passes through the server in plaintext (it did not before —
+ * the data channel was peer-to-SFU). The controller therefore never publishes
+ * on an E2EE call: the caller gates `setLocalPublishing` on call mode.
  */
 export class LiveCaptions {
   /** identity -> latest caption; reactive so participant tiles re-render. */
   readonly entries = new ReactiveMap<string, CaptionEntry>();
 
-  #room: Room | undefined;
   #engine: CaptionEngine | undefined;
+  #engineFactory: () => CaptionEngine;
   #localIdentity = "";
   #localLang = "en-US";
   #publishing = false;
-  #dataHandler: ((payload: Uint8Array, ...rest: unknown[]) => void) | undefined;
+  #send: CaptionSender | undefined;
+  #lastSentText = "";
   #clearTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  #encoder = new TextEncoder();
-  #decoder = new TextDecoder();
+
+  /**
+   * @param engineFactory Supplies the shell's speech recognizer. Injected
+   * rather than imported so this module stays free of shell globals and
+   * specs can drive it with a fake; called lazily on first use.
+   */
+  constructor(engineFactory: () => CaptionEngine) {
+    this.#engineFactory = engineFactory;
+  }
 
   /** This device's LiveKit identity — lets the narrator skip my own captions. */
   get localIdentity(): string {
@@ -73,39 +88,28 @@ export class LiveCaptions {
   }
 
   /**
-   * Bind to a connected Room and begin ingesting remote captions. Local
-   * broadcasting stays off until `setLocalPublishing(true, …)`.
+   * Bind to a connected call. Local broadcasting stays off until
+   * `setLocalPublishing(true, …)`.
+   *
+   * No transport listener is registered here: the `CallCaption` client event
+   * is app-lifetime, so the store subscribes once and calls
+   * `handleRemoteCaption`. A connect/disconnect subscription would go dead
+   * after the first call — the same reasoning as the soundboard.
    */
-  attach(room: Room, localIdentity: string) {
+  attach(localIdentity: string, send: CaptionSender) {
     this.detach();
-    this.#room = room;
     this.#localIdentity = localIdentity;
-    this.#dataHandler = (
-      payload: Uint8Array,
-      participant?: unknown,
-      _kind?: unknown,
-      topic?: unknown,
-    ) => {
-      if (topic !== CAPTION_TOPIC) return;
-      const identity = (participant as { identity?: string } | undefined)
-        ?.identity;
-      if (!identity) return;
-      this.#ingest(identity, payload);
-    };
-    room.on("dataReceived", this.#dataHandler as never);
+    this.#send = send;
   }
 
   /** Unbind and clear all caption state. Safe to call repeatedly. */
   detach() {
     this.stopLocal();
-    if (this.#room && this.#dataHandler) {
-      this.#room.off("dataReceived", this.#dataHandler as never);
-    }
     for (const timer of this.#clearTimers.values()) clearTimeout(timer);
     this.#clearTimers.clear();
     this.entries.clear();
-    this.#room = undefined;
-    this.#dataHandler = undefined;
+    this.#send = undefined;
+    this.#lastSentText = "";
   }
 
   /**
@@ -119,7 +123,7 @@ export class LiveCaptions {
   }
 
   #startLocal() {
-    const engine = (this.#engine ??= createCaptionEngine());
+    const engine = (this.#engine ??= this.#engineFactory());
     if (!engine.supported) return;
     // start() re-targets the language if already running.
     engine.start(this.#localLang, (result) => this.#onLocalResult(result));
@@ -130,53 +134,57 @@ export class LiveCaptions {
     if (!this.#publishing) return;
     this.#publishing = false;
     this.#engine?.stop();
+    this.#lastSentText = "";
     this.#clearEntry(this.#localIdentity);
   }
 
   #onLocalResult(result: CaptionResult) {
+    // Recognizers deliver results ASYNCHRONOUSLY and can emit a final AFTER
+    // stop() — Web Speech routinely flushes the in-flight utterance. Without
+    // this guard, muting the mic or dropping onto an E2EE call mid-sentence
+    // would still relay that sentence, defeating both gates in
+    // `CaptionPublisher`. Checked before the local mirror too: `stopLocal`
+    // just cleared my entry, and a late result would put it back.
+    if (!this.#publishing) return;
+
     const text = this.#clampText(result.text);
-    // Mirror my own caption locally so I can see what's being broadcast.
+    // Mirror my own caption locally — including interims, which never leave
+    // this machine — so I can see what is being relayed.
     this.#apply(this.#localIdentity, {
       text,
       isFinal: result.isFinal,
       sourceLang: this.#localLang,
     });
-    const room = this.#room;
-    if (!room) return;
-    const wire: WireCaption = {
-      v: WIRE_VERSION,
-      t: text,
-      f: result.isFinal,
-      l: this.#localLang,
-    };
-    try {
-      // Interim packets are lossy (superseded by the next); finals are reliable
-      // so a completed utterance always lands.
-      void Promise.resolve(
-        room.localParticipant.publishData(
-          this.#encoder.encode(JSON.stringify(wire)),
-          { reliable: result.isFinal, topic: CAPTION_TOPIC },
-        ),
-      ).catch(() => {
-        // Best-effort: a dropped interim is corrected by the next result.
-      });
-    } catch {
-      // publishData can throw synchronously before the channel is ready.
-    }
+
+    if (!result.isFinal) return;
+    if (!text.trim()) return;
+    // Some recognizers repeat a final verbatim; don't spend a request on it.
+    if (text === this.#lastSentText) return;
+    this.#lastSentText = text;
+    this.#send?.(text, this.#localLang);
   }
 
-  #ingest(identity: string, payload: Uint8Array) {
-    let wire: WireCaption;
-    try {
-      wire = JSON.parse(this.#decoder.decode(payload)) as WireCaption;
-    } catch {
-      return;
-    }
-    if (wire?.v !== WIRE_VERSION || typeof wire.t !== "string") return;
-    this.#apply(identity, {
-      text: wire.t,
-      isFinal: !!wire.f,
-      sourceLang: typeof wire.l === "string" ? wire.l : "und",
+  /**
+   * Ingest a caption relayed by the server. The caller is responsible for
+   * scoping to the active call — the private topic this arrives on reaches
+   * every session of this user, including ones not in the call.
+   *
+   * Always final: the server only relays finalized utterances.
+   */
+  handleRemoteCaption(detail: {
+    identity: string;
+    text: string;
+    lang: string;
+  }): void {
+    if (!detail.identity || typeof detail.text !== "string") return;
+    // Never let a relayed caption overwrite my own tile: my recognizer output
+    // is authoritative for me, and this is the one entry a sender does not
+    // control server-side.
+    if (detail.identity === this.#localIdentity) return;
+    this.#apply(detail.identity, {
+      text: detail.text,
+      isFinal: true,
+      sourceLang: typeof detail.lang === "string" ? detail.lang : "und",
     });
   }
 

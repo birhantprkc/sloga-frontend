@@ -10,8 +10,8 @@ import { useVoice } from "..";
  * connected call.
  *
  * Captions never broadcast on an E2EE call (recognition audio would reach
- * Google and the transcript rides an unencrypted data channel), nor while the
- * microphone is muted (a muted user must not leak speech as text).
+ * Google and the transcript would pass through the server in plaintext), nor
+ * while the microphone is muted (a muted user must not leak speech as text).
  */
 export function CaptionPublisher() {
   const voice = useVoice();
@@ -29,7 +29,9 @@ export function CaptionPublisher() {
     // when the mode is POSITIVELY plaintext ("off"). An undefined/negotiating
     // mode is treated as unsafe — during the E2EE negotiation window callMode()
     // is undefined, and recognition ships mic audio to the speech vendor while
-    // the transcript rides an UNENCRYPTED data channel. A non-capable call
+    // the transcript passes through the SERVER in plaintext. That last part is
+    // a stronger reason than it used to be: captions once rode a peer-to-SFU
+    // data channel, and now the relay sees the text. A non-capable call
     // (e.g. web shell, or "Encrypt my calls" off) is always plaintext.
     const plaintextSafe = voice.callE2EECapable()
       ? mode?.kind === "off"

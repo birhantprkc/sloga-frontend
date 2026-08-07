@@ -11,8 +11,8 @@
  *
  * PRIVACY: with the on-device recognizer, mic audio and the transcript stay on
  * the phone — stronger than the web path (which streams audio to Google). Only
- * the caption text crosses the bridge, and it still rides the unencrypted
- * LiveKit data channel, so the E2EE gate in `CaptionPublisher` is unchanged.
+ * the caption text crosses the bridge, and it is then relayed through the
+ * server in plaintext, so the E2EE gate in `CaptionPublisher` is unchanged.
  */
 
 import type { PluginListenerHandle } from "@capacitor/core";
