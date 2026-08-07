@@ -12,6 +12,34 @@ export const CHANGELOGS: ChangelogResponse[] = [
   // in git history and stays OUT until the RC prod flag is deliberately
   // reopened — never announce a dark feature.
   {
+    id: "sloga-2026-08-07",
+    title: "Patch Notes",
+    published_at: "2026-08-07T20:00:00.000Z",
+    markdown_content: `## v0.22.0 — A plus sign where you'd expect one
+
+### ➕ Making channels without the guesswork
+- **Every category header now has a + button.** Hover it and click — the new channel lands in that category, where you asked for it.
+- **The server name has a + too**, next to the calendar and settings icons. It opens a little menu: **Create channel** or **Create category**. No more right-clicking around to find them.
+- **The create-channel box lets you pick the category** on the way in. Leave it on **No category** and the channel sits at the top level, same as before.
+- Thanks to the folks in our Discord who pointed out that this was hiding behind a right-click. It was.
+
+### 🎚️ A sidebar that stays where you put it
+- **Drag the divider between your channels and the member list** to give either one more room. Double-click it to snap back.
+- **Your name and mic controls stay put when you collapse the channel list** — the bar shrinks onto the server rail instead of disappearing.
+
+### 🎤 Calls
+- **The microphone you picked in Settings is the one that gets used** when you join a call. If it's unavailable, we say so instead of quietly connecting you muted.
+- **Hanging up while a call is still connecting actually cancels it** now, rather than dropping you into the call a second later.
+
+### ⚽ Slogaball
+- **Bomb pegs.** Hit one and it takes its neighbours with it, in full colour.
+
+### 📥 Import from Discord
+- **A finished import stops announcing itself** every time you reload, and the notice has an X on it.
+
+*Sloga — Hop on.*`,
+  },
+  {
     id: "sloga-2026-08-06",
     title: "Patch Notes",
     published_at: "2026-08-06T16:00:00.000Z",
