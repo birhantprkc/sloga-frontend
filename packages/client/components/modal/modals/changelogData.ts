@@ -12,6 +12,21 @@ export const CHANGELOGS: ChangelogResponse[] = [
   // in git history and stays OUT until the RC prod flag is deliberately
   // reopened — never announce a dark feature.
   {
+    id: "sloga-2026-08-07-2",
+    title: "Patch Notes",
+    published_at: "2026-08-07T22:15:00.000Z",
+    markdown_content: `## v0.23.0 — Unread counts, not just dots
+
+### 🔢 How much did you actually miss?
+- **Servers, DMs and channels now show how many messages are waiting**, instead of a plain dot. It counts everything since you last read and stops at 99+.
+- **The badge turns pink when there's an attachment in what you missed** — a file or an image landed while you were away.
+- **It turns red when someone mentioned you**, so a ping never hides inside a big number.
+- **Muted channels stay out of a server's total**, the same way they already stay out of its unread mark.
+- Read a channel somewhere else? The number clears itself the next time this app reconnects.
+
+*Sloga — Hop on.*`,
+  },
+  {
     id: "sloga-2026-08-07",
     title: "Patch Notes",
     published_at: "2026-08-07T20:00:00.000Z",
