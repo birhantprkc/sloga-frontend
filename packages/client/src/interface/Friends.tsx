@@ -237,6 +237,25 @@ export function Friends(props: Partial<RouteSectionProps> & { popout?: boolean }
         <SelfBar />
 
         <div class={searchRow()}>
+          <IconButton
+            variant="filled"
+            shape="square"
+            onPress={() =>
+              openModal({
+                type: "add_friend",
+                client: client(),
+              })
+            }
+            use:floating={{
+              tooltip: {
+                placement: "bottom",
+                content: t`Add a new friend`,
+              },
+            }}
+          >
+            <Symbol>person_add</Symbol>
+          </IconButton>
+
           <div class={searchField()}>
             <Symbol size={18}>search</Symbol>
             <input
@@ -254,25 +273,6 @@ export function Friends(props: Partial<RouteSectionProps> & { popout?: boolean }
               </button>
             </Show>
           </div>
-
-          <IconButton
-            variant="filled"
-            shape="square"
-            onPress={() =>
-              openModal({
-                type: "add_friend",
-                client: client(),
-              })
-            }
-            use:floating={{
-              tooltip: {
-                placement: "left",
-                content: t`Add a new friend`,
-              },
-            }}
-          >
-            <Symbol>person_add</Symbol>
-          </IconButton>
         </div>
 
         <div
@@ -641,7 +641,9 @@ const searchRow = cva({
 
 const searchField = cva({
   base: {
-    flexGrow: 1,
+    // deliberately narrow — the row reads as "add friend, then filter",
+    // not as a full-width search bar. Shrinks below this on narrow windows.
+    width: "180px",
     minWidth: 0,
     height: "40px",
     display: "flex",
