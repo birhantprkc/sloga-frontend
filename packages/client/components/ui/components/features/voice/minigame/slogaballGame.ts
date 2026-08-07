@@ -4,7 +4,8 @@
  * A peggle-like: aim from the launcher at the top, the ball falls under
  * gravity and bounces off pegs, clear all the amber TARGET pegs to win, the
  * moving bucket at the bottom refunds the shot. Ten balls, score, per-device
- * best.
+ * best. A couple of Sloga-"O" pegs (the brand mark, drawn in canvas) detonate
+ * on hit and blast the surrounding cluster — chaining into each other.
  *
  * Deliberately a plain-TS canvas engine with NO imports: no Solid (the module
  * must evaluate under `node --test` for the helper specs below — only
@@ -21,7 +22,16 @@ export const FIELD_W = 420;
 export const FIELD_H = 560;
 
 export const PEG_R = 9;
+/** Sloga-"O" bomb pegs are bigger, both to fit the mark and to be hittable
+ * on purpose — they are the strategic shot. */
+export const BOMB_R = 13;
 const BALL_R = 7;
+
+/** Blast radius of a Sloga-"O" peg, centre to centre. The lattice spacing is
+ * ~46 (rows) / ~53 (columns), so this reaches the immediate neighbours —
+ * "the cluster" — and nothing beyond. */
+export const EXPLOSION_R = 70;
+const BOMBS_PER_FIELD = 2;
 
 const GRAVITY = 900;
 const PEG_RESTITUTION = 0.78;
@@ -40,6 +50,8 @@ const MAX_FRAME = 0.05;
 const START_BALLS = 10;
 const SCORE_PEG = 10;
 const SCORE_TARGET = 100;
+/** The Sloga-"O" peg itself; the pegs it blasts score their own values. */
+const SCORE_BOMB = 50;
 /** Every unspent ball is worth this on a win. */
 const SCORE_BALL_BONUS = 500;
 
@@ -66,6 +78,24 @@ const BUCKET_MARGIN = 8;
  * are the ones that shift hue, which still keeps the two apart... mostly).
  */
 const TARGET_COLOR = "#ff8b3d";
+
+/**
+ * Sloga brand palette for the "O" bomb pegs — green core with eight satellite
+ * dots, clockwise from top. Same sampling as LoadingProgress.tsx (from
+ * assets/web/sloga-icon.png); fixed like TARGET_COLOR because the mark IS the
+ * brand and must not shift with the theme.
+ */
+const SLOGA_GREEN = "#27A163";
+const SLOGA_DOTS = [
+  "#3BB8ED",
+  "#F5870D",
+  "#CF2A27",
+  "#E3CF1B",
+  "#3BB8ED",
+  "#F5870D",
+  "#2B2BD8",
+  "#C05FC8",
+];
 
 /** Sink for per-device best. Deliberately NOT a synced settings key — see the
  * plan doc: no DEFAULT_VALUES double-table to keep in sync, and a per-device
@@ -103,10 +133,18 @@ export interface Peg {
   y: number;
   /** Amber objective peg — clear all of these to win. */
   target: boolean;
+  /** Sloga-"O" peg: detonates on hit, blasting everything in EXPLOSION_R.
+   * Never also a target. */
+  bomb: boolean;
   /** Hit this shot; scores once, pops when the ball drains. */
   lit: boolean;
   /** Removed from play (popped at the end of an earlier shot). */
   gone: boolean;
+}
+
+/** Collision (and draw) radius of a peg — bombs are bigger. */
+export function pegRadius(p: Peg): number {
+  return p.bomb ? BOMB_R : PEG_R;
 }
 
 /**
@@ -168,7 +206,7 @@ export function generatePegs(random: () => number = Math.random): Peg[] {
       // Odd rows sit half a gap in, staggering the lattice.
       const x = inset + (even ? c * gap : gap / 2 + c * gap);
       if (random() < 0.15) continue; // knocked out — keeps fields distinct
-      pegs.push({ x, y, target: false, lit: false, gone: false });
+      pegs.push({ x, y, target: false, bomb: false, lit: false, gone: false });
     }
   }
 
@@ -182,7 +220,58 @@ export function generatePegs(random: () => number = Math.random): Peg[] {
   for (let i = 0; i < targets && i < order.length; i++)
     pegs[order[i]].target = true;
 
+  // The next few pegs in the shuffle (never targets: the objective must be
+  // clearable by aiming, not only by luck of the blast) become Sloga-"O"
+  // bombs.
+  for (
+    let i = targets, bombs = 0;
+    i < order.length && bombs < BOMBS_PER_FIELD;
+    i++, bombs++
+  )
+    pegs[order[i]].bomb = true;
+
   return pegs;
+}
+
+/**
+ * Detonate `origin` (a bomb peg): it and every peg within EXPLOSION_R are
+ * removed immediately, and any bomb caught in the blast detonates in turn.
+ * Pure — the caller owns effects (particles, sound). Returns the points
+ * earned (already-lit pegs scored when struck, so they add nothing) and the
+ * removed pegs, origin included, for the caller's visuals.
+ */
+export function resolveExplosion(
+  pegs: Peg[],
+  origin: Peg,
+): { score: number; popped: Peg[] } {
+  let score = 0;
+  const popped: Peg[] = [];
+  const queue: Peg[] = [];
+  const detonate = (b: Peg) => {
+    b.gone = true;
+    b.lit = false;
+    score += SCORE_BOMB;
+    popped.push(b);
+    queue.push(b);
+  };
+  if (origin.gone || !origin.bomb) return { score, popped };
+  detonate(origin);
+  while (queue.length) {
+    const b = queue.shift()!;
+    for (const p of pegs) {
+      if (p.gone) continue;
+      if (Math.hypot(p.x - b.x, p.y - b.y) > EXPLOSION_R) continue;
+      if (p.bomb) {
+        detonate(p);
+        continue;
+      }
+      if (!p.lit) score += p.target ? SCORE_TARGET : SCORE_PEG;
+      p.lit = false;
+      p.gone = true;
+      popped.push(p);
+    }
+  }
+  return { score, popped };
 }
 
 interface Particle {
@@ -334,6 +423,40 @@ export function createSlogaball(
     },
     /** Rebound off an already-lit peg or a wall — audible, not scoring. */
     thud: () => blip(300, 0.12, "triangle"),
+    /** Sloga-"O" detonation: a filtered noise burst over a low thump, capped
+     * with a sparkle — unmistakably different from every blip above. */
+    boom: () => {
+      const ctx = audioCtx();
+      if (!ctx || !master) return;
+      const dur = 0.3;
+      const buf = ctx.createBuffer(
+        1,
+        Math.ceil(ctx.sampleRate * dur),
+        ctx.sampleRate,
+      );
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < data.length; i++)
+        data[i] = (Math.random() * 2 - 1) * (1 - i / data.length) ** 2;
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const lp = ctx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.setValueAtTime(2800, ctx.currentTime);
+      lp.frequency.exponentialRampToValueAtTime(180, ctx.currentTime + dur);
+      const gain = ctx.createGain();
+      gain.gain.value = 0.55;
+      src.connect(lp);
+      lp.connect(gain);
+      gain.connect(master!);
+      src.start();
+      src.onended = () => {
+        src.disconnect();
+        lp.disconnect();
+        gain.disconnect();
+      };
+      note(140, 0.32, "triangle", 0.5, 0, 45);
+      note(1568, 0.12, "sine", 0.18, 0.03);
+    },
     freeBall: () => {
       note(523, 0.09, "square", 0.22);
       note(784, 0.14, "square", 0.22, 0.09);
@@ -417,6 +540,38 @@ export function createSlogaball(
     sfx.launch();
   }
 
+  /** Particles for a Sloga-"O" detonation: a ring of brand colours out of the
+   * origin, plus a small burst per blasted peg in that peg's own colour. */
+  function explosionBurst(origin: Peg, popped: Peg[]) {
+    for (let i = 0; i < 14; i++) {
+      const a = (i / 14) * Math.PI * 2;
+      const s = 130 + Math.random() * 110;
+      particles.push({
+        x: origin.x,
+        y: origin.y,
+        vx: Math.cos(a) * s,
+        vy: Math.sin(a) * s - 40,
+        ttl: 0.5,
+        color: i % 2 ? SLOGA_DOTS[(i >> 1) % SLOGA_DOTS.length] : SLOGA_GREEN,
+      });
+    }
+    for (const p of popped) {
+      if (p === origin) continue;
+      for (let i = 0; i < 5; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const s = 60 + Math.random() * 100;
+        particles.push({
+          x: p.x,
+          y: p.y,
+          vx: Math.cos(a) * s,
+          vy: Math.sin(a) * s - 30,
+          ttl: 0.5,
+          color: p.bomb ? SLOGA_GREEN : p.target ? TARGET_COLOR : theme.peg,
+        });
+      }
+    }
+  }
+
   function endShot() {
     let popped = 0;
     for (const p of pegs) {
@@ -492,7 +647,7 @@ export function createSlogaball(
         const dx = ball.x - p.x;
         const dy = ball.y - p.y;
         const d = Math.hypot(dx, dy);
-        const min = BALL_R + PEG_R;
+        const min = BALL_R + pegRadius(p);
         if (d >= min || d === 0) continue;
         const nx = dx / d;
         const ny = dy / d;
@@ -502,7 +657,12 @@ export function createSlogaball(
         const v = reflectVelocity(ball.vx, ball.vy, nx, ny, PEG_RESTITUTION);
         ball.vx = v.vx;
         ball.vy = v.vy;
-        if (!p.lit) {
+        if (p.bomb) {
+          const blast = resolveExplosion(pegs, p);
+          score += blast.score;
+          explosionBurst(p, blast.popped);
+          sfx.boom();
+        } else if (!p.lit) {
           p.lit = true;
           score += p.target ? SCORE_TARGET : SCORE_PEG;
           if (p.target) sfx.target();
@@ -594,6 +754,28 @@ export function createSlogaball(
     // Pegs
     for (const p of pegs) {
       if (p.gone) continue;
+      if (p.bomb) {
+        // The Sloga "O": green core, eight satellite dots clockwise from
+        // top. Drawn, not an image — the module ships no assets.
+        c.fillStyle = SLOGA_GREEN;
+        c.beginPath();
+        c.arc(p.x, p.y, 5.2, 0, Math.PI * 2);
+        c.fill();
+        for (let i = 0; i < SLOGA_DOTS.length; i++) {
+          const a = -Math.PI / 2 + (i * Math.PI * 2) / SLOGA_DOTS.length;
+          c.fillStyle = SLOGA_DOTS[i];
+          c.beginPath();
+          c.arc(
+            p.x + Math.cos(a) * 9.6,
+            p.y + Math.sin(a) * 9.6,
+            2.6,
+            0,
+            Math.PI * 2,
+          );
+          c.fill();
+        }
+        continue;
+      }
       c.beginPath();
       c.arc(p.x, p.y, PEG_R, 0, Math.PI * 2);
       c.fillStyle = p.target ? TARGET_COLOR : theme.peg;

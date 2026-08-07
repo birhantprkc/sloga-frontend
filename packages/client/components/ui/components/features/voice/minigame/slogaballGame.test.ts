@@ -8,12 +8,16 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  EXPLOSION_R,
   FIELD_H,
   FIELD_W,
   PEG_R,
   clampAim,
   generatePegs,
+  pegRadius,
   reflectVelocity,
+  resolveExplosion,
+  type Peg,
 } from "./slogaballGame.ts";
 
 /** Deterministic RNG (mulberry32) so a layout failure is reproducible. */
@@ -87,7 +91,72 @@ test("generated fields are playable across many seeds", () => {
     for (let i = 0; i < pegs.length; i++)
       for (let j = i + 1; j < pegs.length; j++) {
         const d = Math.hypot(pegs[i].x - pegs[j].x, pegs[i].y - pegs[j].y);
-        assert.ok(d >= PEG_R * 2, `seed ${seed}: pegs ${i}/${j} overlap`);
+        assert.ok(
+          d >= pegRadius(pegs[i]) + pegRadius(pegs[j]),
+          `seed ${seed}: pegs ${i}/${j} overlap`,
+        );
       }
   }
+});
+
+test("fields carry Sloga-O bomb pegs, and never as targets", () => {
+  for (let seed = 1; seed <= 50; seed++) {
+    const pegs = generatePegs(seeded(seed));
+    const bombs = pegs.filter((p) => p.bomb);
+    assert.ok(bombs.length >= 1, `seed ${seed}: at least one bomb`);
+    assert.ok(bombs.length <= 2, `seed ${seed}: at most two bombs`);
+    for (const b of bombs)
+      assert.ok(!b.target, `seed ${seed}: a bomb doubles as a target`);
+  }
+});
+
+/** Hand-built peg for the explosion specs. */
+function peg(x: number, y: number, extra: Partial<Peg> = {}): Peg {
+  return { x, y, target: false, bomb: false, lit: false, gone: false, ...extra };
+}
+
+test("an explosion pops the cluster, chains through bombs, spares the rest", () => {
+  const origin = peg(100, 100, { bomb: true });
+  const near = peg(150, 100); // 50 from origin — in the blast
+  const nearTarget = peg(100, 160, { target: true }); // 60 — in the blast
+  const nearLit = peg(60, 100, { lit: true }); // 40 — in, but already scored
+  const secondBomb = peg(150, 140, { bomb: true }); // 64 — chains
+  const chainOnly = peg(210, 140); // 117 from origin, 60 from secondBomb
+  const far = peg(320, 400);
+  const pegs = [origin, near, nearTarget, nearLit, secondBomb, chainOnly, far];
+
+  const res = resolveExplosion(pegs, origin);
+
+  for (const p of [origin, near, nearTarget, nearLit, secondBomb, chainOnly])
+    assert.ok(p.gone && !p.lit, "blasted pegs are gone and unlit");
+  assert.ok(!far.gone, "a peg outside every blast survives");
+  // 50 per bomb ×2, +10 near, +100 target, +0 for the already-lit, +10 chained.
+  assert.equal(res.score, 220);
+  assert.equal(res.popped.length, 6);
+  assert.ok(res.popped.includes(origin), "origin reported for visuals");
+});
+
+test("explosion range is EXPLOSION_R inclusive-ish: just outside survives", () => {
+  const origin = peg(100, 100, { bomb: true });
+  const inside = peg(100, 100 + EXPLOSION_R - 1);
+  const outside = peg(100, 100 + EXPLOSION_R + 1);
+  const res = resolveExplosion([origin, inside, outside], origin);
+  assert.ok(inside.gone);
+  assert.ok(!outside.gone);
+  assert.equal(res.popped.length, 2);
+});
+
+test("detonating a non-bomb or spent peg is a no-op", () => {
+  const plain = peg(100, 100);
+  const nearby = peg(120, 100);
+  assert.deepEqual(resolveExplosion([plain, nearby], plain), {
+    score: 0,
+    popped: [],
+  });
+  const spent = peg(100, 100, { bomb: true, gone: true });
+  assert.deepEqual(resolveExplosion([spent, nearby], spent), {
+    score: 0,
+    popped: [],
+  });
+  assert.ok(!nearby.gone);
 });
