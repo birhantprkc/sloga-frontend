@@ -6729,3 +6729,7 @@ msgstr "Category"
 #: components/modal/modals/CreateChannel.tsx
 msgid "No category"
 msgstr "No category"
+
+#: components/i18n/errors.ts
+msgid "This name is not allowed."
+msgstr "This name is not allowed."

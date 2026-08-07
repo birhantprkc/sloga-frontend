@@ -50,6 +50,8 @@ export function useError() {
         return t`This announcement channel has reached its follower limit (${errMax}).`;
       if (errType === "TooManyCrossposts")
         return t`You're publishing too fast — up to ${errMax} announcements can be published per hour.`;
+      if (errType === "DisallowedName")
+        return t`This name is not allowed.`;
 
       switch (err.type) {
         case "AccountDisabled":
