@@ -9,14 +9,18 @@ import { styled } from "styled-system/jsx";
  */
 export type UnreadTone = "mention" | "attachment" | "unread";
 
-/** Fill and ink per tone. Attachment pink is the brand's own `a` colour. */
+/**
+ * Fill and ink per tone. Plain unread takes the logo's blue and attachments
+ * its pink — both straight off the brand ring in `ServerList`'s `HOME_DOT_COLORS`.
+ * Each light fill carries dark ink; white on either falls short on contrast.
+ */
 const TONES: Record<UnreadTone, { fill: string; ink: string }> = {
   mention: {
     fill: "var(--md-sys-color-error)",
     ink: "var(--md-sys-color-on-error)",
   },
   attachment: { fill: "#C05FC8", ink: "#FFFFFF" },
-  unread: { fill: "#FF8A00", ink: "#3A1F00" },
+  unread: { fill: "#3BB8ED", ink: "#04222E" },
 };
 
 export type Props = {
