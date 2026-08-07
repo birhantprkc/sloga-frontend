@@ -26,6 +26,13 @@ import { CONFIGURATION } from "@revolt/common";
  */
 const JOB_ID_KEY = "discord_import:job_id";
 
+/**
+ * Id of the job whose terminal outcome was last announced on this device.
+ * Persisted alongside the job id — the job id survives reloads, so the
+ * "already told the user" marker must too, or every boot re-announces.
+ */
+const ANNOUNCED_KEY = "discord_import:announced_job_id";
+
 /* -------------------------------------------------------------------------- */
 /* Feature flag                                                               */
 /* -------------------------------------------------------------------------- */
@@ -203,6 +210,7 @@ function persistJobId(jobId: string) {
 function forgetJobId() {
   try {
     localStorage.removeItem(JOB_ID_KEY);
+    localStorage.removeItem(ANNOUNCED_KEY);
   } catch {
     /* ignore */
   }
@@ -363,6 +371,25 @@ const announcedTerminal = new Set<string>();
  */
 export function noteDiscordImportAnnounced(jobId: string): void {
   announcedTerminal.add(jobId);
+  try {
+    localStorage.setItem(ANNOUNCED_KEY, jobId);
+  } catch {
+    /* private mode / storage disabled — de-dupe degrades to per-session */
+  }
+}
+
+/**
+ * Whether a job's outcome was already announced, on this page load or a
+ * previous one.
+ * @param jobId Job id
+ */
+function alreadyAnnounced(jobId: string): boolean {
+  if (announcedTerminal.has(jobId)) return true;
+  try {
+    return localStorage.getItem(ANNOUNCED_KEY) === jobId;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -407,9 +434,9 @@ export async function resumeDiscordImport(
     // surface it — exactly once per job, per device.
     if (
       isTerminalStatus(recovered.status) &&
-      !announcedTerminal.has(recovered.jobId)
+      !alreadyAnnounced(recovered.jobId)
     ) {
-      announcedTerminal.add(recovered.jobId);
+      noteDiscordImportAnnounced(recovered.jobId);
       return recovered;
     }
   } catch {

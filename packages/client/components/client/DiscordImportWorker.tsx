@@ -77,6 +77,7 @@ export function DiscordImportWorker() {
         snackbar.show({
           message: t`Your Discord import finished.`,
           action: t`View`,
+          closeable: true,
           closeOnAction: true,
           onAction: () =>
             openModal({ type: "import_discord", client: currentClient }),
@@ -92,6 +93,7 @@ export function DiscordImportWorker() {
         snackbar.show({
           message: t`Your Discord import failed.`,
           action: t`Details`,
+          closeable: true,
           closeOnAction: true,
           onAction: () =>
             openModal({ type: "import_discord", client: currentClient }),
@@ -123,6 +125,7 @@ export function DiscordImportWorker() {
           ? t`Your Discord import failed.`
           : t`Your Discord import finished.`,
         action: failed ? t`Details` : t`View`,
+        closeable: true,
         closeOnAction: true,
         onAction: () =>
           openModal({ type: "import_discord", client: currentClient }),
