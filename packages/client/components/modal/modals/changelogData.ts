@@ -21,7 +21,6 @@ export const CHANGELOGS: ChangelogResponse[] = [
 - **Every category header now has a + button.** Hover it and click — the new channel lands in that category, where you asked for it.
 - **The server name has a + too**, next to the calendar and settings icons. It opens a little menu: **Create channel** or **Create category**. No more right-clicking around to find them.
 - **The create-channel box lets you pick the category** on the way in. Leave it on **No category** and the channel sits at the top level, same as before.
-- Thanks to the folks in our Discord who pointed out that this was hiding behind a right-click. It was.
 
 ### 🎚️ A sidebar that stays where you put it
 - **Drag the divider between your channels and the member list** to give either one more room. Double-click it to snap back.
@@ -32,7 +31,7 @@ export const CHANGELOGS: ChangelogResponse[] = [
 - **Hanging up while a call is still connecting actually cancels it** now, rather than dropping you into the call a second later.
 
 ### ⚽ Slogaball
-- **Bomb pegs.** Hit one and it takes its neighbours with it, in full colour.
+- **Bomb pegs.** Hit one and it takes its neighbors with it, in full color.
 
 ### 📥 Import from Discord
 - **A finished import stops announcing itself** every time you reload, and the notice has an X on it.
@@ -130,7 +129,7 @@ export const CHANGELOGS: ChangelogResponse[] = [
 - **A shared screen now takes the whole call** — everyone else moves into a column down the left instead of a strip across the bottom, so the picture fills the frame properly.
 - Shares focus themselves when they start, but only once, and never by dragging you off a share you're already watching.
 - Narrow windows, phones and the floating call window keep the layout they had.
-- With nobody sharing, the participant grid centres and wraps again instead of running down one edge.
+- With nobody sharing, the participant grid centers and wraps again instead of running down one edge.
 
 ### 💬 Messaging
 - **Every message shows its time**, not just the first of a run — and a new **Appearance** setting turns them all off if you'd rather have the clean look.
@@ -325,7 +324,7 @@ export const CHANGELOGS: ChangelogResponse[] = [
 - **Message or call someone you're not friends with** straight from their profile card or context menu — including a video call button.
 - **Double-click a friend** in the friends list to open the DM instead of the profile.
 - **Friend requests appear instantly** instead of needing a refresh.
-- **Staff usernames** render in Sloga's brand colours.
+- **Staff usernames** render in Sloga's brand colors.
 
 ### 🖼️ Animated server icons
 - Servers with animated icons now **play them in the server rail**.
