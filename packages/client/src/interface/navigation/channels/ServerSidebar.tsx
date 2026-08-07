@@ -45,6 +45,7 @@ import {
   iconSize,
   symbolSize,
   typography,
+  unreadTone,
 } from "@revolt/ui";
 import { VoiceChannelPreview } from "@revolt/ui/components/features/voice/VoiceChannelPreview";
 import { createDragHandle } from "@revolt/ui/components/utils/Draggable";
@@ -815,7 +816,16 @@ function Entry(
     () =>
       !props.active &&
       props.channel.unread &&
-      (props.channel.mentions?.size || true),
+      // A zero count means the server never supplied one — fall back to the
+      // plain dot rather than rendering a "0"
+      (props.channel.unreadCount || true),
+  );
+
+  const alertTone = createMemo(() =>
+    unreadTone(
+      props.channel.mentions?.size ?? 0,
+      props.channel.unreadHasAttachments,
+    ),
   );
 
   const inCall = () => props.channel.id === voice.channel()?.id;
@@ -850,6 +860,7 @@ function Entry(
         use:floating={props.menuGenerator(props.channel)}
         size="normal"
         alert={alertState()}
+        alertTone={alertTone()}
         attention={attentionState()}
         icon={
           <>
@@ -930,9 +941,9 @@ function Entry(
         {(thread) => {
           const threadActive = () => thread.id === props.channelId;
           const threadAlert = () =>
-            !threadActive() &&
-            thread.unread &&
-            (thread.mentions?.size || true);
+            !threadActive() && thread.unread && (thread.unreadCount || true);
+          const threadTone = () =>
+            unreadTone(thread.mentions?.size ?? 0, thread.unreadHasAttachments);
 
           return (
             <ThreadNest>
@@ -941,6 +952,7 @@ function Entry(
                 use:floating={props.menuGenerator(thread)}
                 size="normal"
                 alert={threadAlert()}
+                alertTone={threadTone()}
                 attention={
                   threadActive()
                     ? "selected"

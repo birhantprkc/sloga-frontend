@@ -20,6 +20,8 @@ import {
   UserStatus,
   iconSize,
   slogaBurstKeyframes,
+  unreadHolepunch,
+  unreadTone,
 } from "@revolt/ui";
 
 import MdAdd from "@material-design-icons/svg/filled/add.svg?component-solid";
@@ -291,11 +293,17 @@ export const ServerList = (props: Props) => {
             <Avatar
               size={42}
               fallback={<MdGroup />}
-              holepunch={props.pendingFriendRequests > 0 ? "top-right" : "none"}
+              holepunch={unreadHolepunch(
+                props.pendingFriendRequests,
+                props.pendingFriendRequests > 0,
+              )}
               overlay={
                 <Show when={props.pendingFriendRequests > 0}>
+                  {/* A pending request is a call to action, so it keeps the
+                      mention colour rather than the plain unread one. */}
                   <Unreads.Graphic
                     count={props.pendingFriendRequests}
+                    tone="mention"
                     unread
                   />
                 </Show>
@@ -364,12 +372,19 @@ export const ServerList = (props: Props) => {
                   size={42}
                   // TODO: fix this
                   src={conversation.iconURL}
-                  holepunch={conversation.unread ? "top-right" : "none"}
+                  holepunch={unreadHolepunch(
+                    conversation.unreadCount,
+                    conversation.unread,
+                  )}
                   overlay={
                     <>
                       <Show when={conversation.unread}>
                         <Unreads.Graphic
-                          count={conversation.mentions?.size ?? 0}
+                          count={conversation.unreadCount}
+                          tone={unreadTone(
+                            conversation.mentions?.size ?? 0,
+                            conversation.unreadHasAttachments,
+                          )}
                           unread
                         />
                       </Show>
@@ -485,19 +500,25 @@ export const ServerList = (props: Props) => {
                   <Avatar
                     size={42}
                     src={entry.item.animatedIconURL ?? entry.item.iconURL}
-                    holepunch={
-                      entry.item.mentions.length ? "top-right" : "none"
-                    }
+                    holepunch={unreadHolepunch(
+                      entry.item.unreadCount,
+                      entry.item.unread &&
+                        !state.notifications.isMuted(entry.item),
+                    )}
                     overlay={
                       <>
                         <Show
                           when={
-                            entry.item.mentions
-                              .length /* as opposed to item.unread */
+                            entry.item.unread &&
+                            !state.notifications.isMuted(entry.item)
                           }
                         >
                           <Unreads.Graphic
-                            count={entry.item.mentions.length}
+                            count={entry.item.unreadCount}
+                            tone={unreadTone(
+                              entry.item.mentions.length,
+                              entry.item.unreadHasAttachments,
+                            )}
                             unread
                           />
                         </Show>

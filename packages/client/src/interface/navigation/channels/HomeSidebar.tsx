@@ -21,6 +21,7 @@ import {
   UserStatus,
   iconSize,
   typography,
+  unreadTone,
 } from "@revolt/ui";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
@@ -301,8 +302,14 @@ function Entry(
         (!local.active && ringing()) ||
         (!local.active &&
           local.channel.unread &&
-          (local.channel.mentions?.size || true))
+          // A zero count means the server never supplied one — fall back to
+          // the plain dot rather than rendering a "0"
+          (local.channel.unreadCount || true))
       }
+      alertTone={unreadTone(
+        local.channel.mentions?.size ?? 0,
+        local.channel.unreadHasAttachments,
+      )}
       attention={
         local.active
           ? "selected"

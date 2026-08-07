@@ -13,6 +13,16 @@ export function Masks() {
           <rect x="0" y="0" width="32" height="32" fill="white" />
           <circle cx="27" cy="5" r="7" fill={"black"} />
         </mask>
+        {/* Wider cut-outs for the multi-digit unread badge — a stadium sized
+            to the badge plus its 2px ring, growing leftwards. */}
+        <mask id="holepunch-top-right-wide">
+          <rect x="0" y="0" width="32" height="32" fill="white" />
+          <rect x="16" y="-2" width="18" height="14" rx="7" fill={"black"} />
+        </mask>
+        <mask id="holepunch-top-right-wider">
+          <rect x="0" y="0" width="32" height="32" fill="white" />
+          <rect x="11" y="-2" width="23" height="14" rx="7" fill={"black"} />
+        </mask>
         <mask id="holepunch-bottom-right">
           <rect x="0" y="0" width="32" height="32" fill="white" />
           <circle cx="27" cy="27" r="7" fill={"black"} />

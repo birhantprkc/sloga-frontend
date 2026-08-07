@@ -7,7 +7,7 @@ import { styled } from "styled-system/jsx";
 import { useState } from "@revolt/state";
 import { SlideState } from "../navigation/SlideDrawer";
 import { Ripple } from "./Ripple";
-import { Unreads } from "./Unreads";
+import { Unreads, UnreadTone } from "./Unreads";
 
 export type Props = {
   /**
@@ -33,9 +33,15 @@ export type Props = {
   readonly children?: JSX.Element;
 
   /**
-   * Alert indicator
+   * Alert indicator — a number renders as a badge, `true` as a plain dot
    */
   readonly alert?: number | boolean;
+
+  /**
+   * Which signal the alert indicator colours for
+   * @default unread
+   */
+  readonly alertTone?: UnreadTone;
 
   /**
    * Hover actions
@@ -62,6 +68,7 @@ export function MenuButton(
     "icon",
     "children",
     "alert",
+    "alertTone",
     "actions",
   ]);
   let ripple: MdRipple | undefined;
@@ -89,6 +96,7 @@ export function MenuButton(
           <Unreads
             count={typeof local.alert === "number" ? local.alert : 0}
             size={typeof local.alert === "number" ? "0.85rem" : "0.4rem"}
+            tone={local.alertTone}
             unread
           />
         </span>

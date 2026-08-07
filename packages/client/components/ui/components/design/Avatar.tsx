@@ -39,6 +39,8 @@ export type Props = {
   holepunch?:
     | "bottom-right"
     | "top-right"
+    | "top-right-wide"
+    | "top-right-wider"
     | "right"
     | "overlap"
     | "overlap-subtle"
