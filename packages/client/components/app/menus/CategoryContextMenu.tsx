@@ -5,6 +5,7 @@ import type { API } from "stoat.js";
 import { Channel, Server } from "stoat.js";
 
 import { useModals } from "@revolt/modal";
+import { useNavigate } from "@revolt/routing";
 import { useState } from "@revolt/state";
 
 import MdBadge from "@material-design-icons/svg/outlined/badge.svg?component-solid";
@@ -24,6 +25,40 @@ export type CategoryData = Omit<API.Category, "channels"> & {
 };
 
 /**
+ * Open the create-channel modal and file the new channel into the given
+ * category once it exists — without the follow-up edit, new channels always
+ * land in the uncategorised block at the bottom of the sidebar.
+ */
+export function createChannelInCategory(
+  openModal: ReturnType<typeof useModals>["openModal"],
+  navigate: ReturnType<typeof useNavigate>,
+  server: Server,
+  categoryId: string,
+) {
+  openModal({
+    type: "create_channel",
+    server,
+    cb: (channel) => {
+      // Uncategorised channels already collect in the synthetic "default"
+      // bucket, so only real categories need the server edit.
+      if (categoryId !== "default") {
+        server.edit({
+          categories: server.orderedChannels.map((category) => ({
+            ...category,
+            channels: category.channels
+              .map((entry) => entry.id)
+              .filter((id) => id !== channel.id)
+              .concat(category.id === categoryId ? [channel.id] : []),
+          })),
+        });
+      }
+
+      navigate(`/server/${server.id}/channel/${channel.id}`);
+    },
+  });
+}
+
+/**
  * Context menu for categories
  */
 export function CategoryContextMenu(props: {
@@ -32,6 +67,19 @@ export function CategoryContextMenu(props: {
 }) {
   const state = useState();
   const { openModal } = useModals();
+  const navigate = useNavigate();
+
+  /**
+   * Create a new channel inside this category
+   */
+  function createChannel() {
+    createChannelInCategory(
+      openModal,
+      navigate,
+      props.server,
+      props.category.id,
+    );
+  }
 
   /**
    * Mark category as read
@@ -94,6 +142,14 @@ export function CategoryContextMenu(props: {
         <ContextMenuDivider />
       </Show>
 
+      <Show when={props.server.havePermission("ManageChannel")}>
+        <ContextMenuButton
+          icon={<Symbol size={16}>add</Symbol>}
+          onClick={createChannel}
+        >
+          <Trans>Create channel</Trans>
+        </ContextMenuButton>
+      </Show>
       <Show when={props.server.havePermission("ManageChannel")}>
         <ContextMenuButton icon={MdLibraryAdd} onClick={createCategory}>
           <Trans>Create category</Trans>

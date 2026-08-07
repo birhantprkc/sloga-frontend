@@ -1,4 +1,7 @@
-export { CategoryContextMenu } from "./CategoryContextMenu";
+export {
+  CategoryContextMenu,
+  createChannelInCategory,
+} from "./CategoryContextMenu";
 export { ChannelContextMenu } from "./ChannelContextMenu";
 export { MessageContextMenu } from "./MessageContextMenu";
 export { ServerContextMenu } from "./ServerContextMenu";

@@ -15,6 +15,7 @@ import { useLingui } from "@lingui-solid/solid/macro";
 import type { API, Channel, Server, ServerFlags } from "stoat.js";
 import { styled } from "styled-system/jsx";
 
+import { createChannelInCategory } from "@revolt/app";
 import { useClient } from "@revolt/client";
 import { useDevice } from "@revolt/common";
 import { KeybindAction, createKeybind } from "@revolt/keybinds";
@@ -496,6 +497,8 @@ function Category(
   const state = useState();
   const isOpen = () => state.layout.getSectionState(props.category.id, true);
   const { isMobile } = useDevice();
+  const { openModal } = useModals();
+  const navigate = useNavigate();
 
   const channels = createMemo(() =>
     props.category.channels.filter(
@@ -520,6 +523,28 @@ function Category(
           >
             {props.category.title}
             <MdChevronRight {...iconSize(12)} />
+            <Show
+              when={!isMobile && props.server.havePermission("ManageChannel")}
+            >
+              <a
+                class="category-add"
+                use:floating={{
+                  tooltip: { placement: "top", content: "Create Channel" },
+                }}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  createChannelInCategory(
+                    openModal,
+                    navigate,
+                    props.server,
+                    props.category.id,
+                  );
+                }}
+              >
+                <Symbol size={16}>add</Symbol>
+              </a>
+            </Show>
           </CategoryBase>
         </div>
       </Show>
@@ -594,6 +619,20 @@ const CategoryBase = styled("div", {
 
     "& svg": {
       transition: "var(--transitions-fast) transform",
+    },
+
+    // Discord-style create-channel action, revealed on header hover; sits at
+    // the far end of the row so the toggle chevron keeps its place.
+    "& .category-add": {
+      display: "flex",
+      alignItems: "center",
+      marginInlineStart: "auto",
+      opacity: 0,
+      transition: "var(--transitions-fast) opacity",
+    },
+
+    "&:hover .category-add": {
+      opacity: 1,
     },
   },
   variants: {
