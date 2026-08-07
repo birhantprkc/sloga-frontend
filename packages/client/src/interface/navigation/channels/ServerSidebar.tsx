@@ -384,12 +384,28 @@ function ServerInfo(
   },
 ) {
   const navigate = useNavigate();
+  const { openModal } = useModals();
   return (
     <Row align grow minWidth={0}>
       <ServerBadge flags={props.server.flags} />
       <ServerName onClick={props.openServerInfo}>
         <TextWithEmoji content={props.server.name} />
       </ServerName>
+      <Show when={props.server.havePermission("ManageChannel")}>
+        <IconButton
+          size="xs"
+          width="narrow"
+          variant={props.server.banner ? "_header" : "standard"}
+          onPress={() =>
+            openModal({ type: "create_channel", server: props.server })
+          }
+          use:floating={{
+            tooltip: { placement: "bottom", content: "Create Channel" },
+          }}
+        >
+          <Symbol>add</Symbol>
+        </IconButton>
+      </Show>
       <IconButton
         size="xs"
         width="narrow"
