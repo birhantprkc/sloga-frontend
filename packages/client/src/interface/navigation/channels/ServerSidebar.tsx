@@ -354,7 +354,12 @@ export const ServerSidebar = (props: Props) => {
           ref={memberScrollTarget}
           use:invisibleScrollable
           style={{
-            flex: "1 1 auto",
+            // Zero flex-basis: the member list fills whatever the channel
+            // list leaves over. With basis auto its content height entered
+            // the flex-shrink math and shrank the channel scroller below its
+            // specified height, so a drag re-reading the rendered height
+            // made the divider leap on the first pixel of movement.
+            flex: "1 1 0",
             "min-height": "48px",
             overflow: "auto",
           }}
