@@ -22,8 +22,13 @@ import { UserMenu } from "./servers/UserMenu";
  * the signed-in user (click for the presence menu) plus mute / deafen
  * toggles that work in and out of calls, per-toggle device pickers, and a
  * shortcut into voice settings.
+ *
+ * When the channel sidebar is collapsed only the server rail is left to
+ * sit on; `stacked` turns the pill into a vertical column narrow enough
+ * for the icons-only rail (names and device chevrons hidden — the pickers
+ * stay reachable through voice settings).
  */
-export function UserFooter() {
+export function UserFooter(props: { stacked?: boolean }) {
   const { t } = useLingui();
   const user = useUser();
   const voice = useVoice();
@@ -39,8 +44,8 @@ export function UserFooter() {
   const inCall = () => !!voice.room();
 
   return (
-    <Base data-user-footer>
-      <UserArea ref={setMenuAnchor}>
+    <Base data-user-footer stacked={props.stacked}>
+      <UserArea ref={setMenuAnchor} stacked={props.stacked}>
         <Avatar
           size={32}
           src={user()?.avatarURL}
@@ -49,7 +54,7 @@ export function UserFooter() {
           overlay={<UserStatus.Graphic status={user()?.presence} />}
           interactive
         />
-        <Show when={user()}>
+        <Show when={!props.stacked && user()}>
           <Names>
             <DisplayName>{user()?.displayName}</DisplayName>
             <Username>
@@ -72,7 +77,7 @@ export function UserFooter() {
         }
         use:floating={{
           tooltip: {
-            placement: "top",
+            placement: props.stacked ? "right" : "top",
             content:
               inCall() && !voice.speakingPermission
                 ? t`Missing permission`
@@ -86,17 +91,19 @@ export function UserFooter() {
           <Symbol>mic</Symbol>
         </Show>
       </IconButton>
-      <DevicePopover
-        kind="audioinput"
-        tooltip={t`Change input device`}
-        openSettings={() =>
-          openModal({
-            type: "settings",
-            config: "user",
-            context: { page: "voice" },
-          })
-        }
-      />
+      <Show when={!props.stacked}>
+        <DevicePopover
+          kind="audioinput"
+          tooltip={t`Change input device`}
+          openSettings={() =>
+            openModal({
+              type: "settings",
+              config: "user",
+              context: { page: "voice" },
+            })
+          }
+        />
+      </Show>
 
       <IconButton
         size="xs"
@@ -104,11 +111,13 @@ export function UserFooter() {
         onPress={() => voice.toggleDeafenAnywhere()}
         isDisabled={inCall() && !voice.listenPermission}
         style={
-          voice.deafen() ? { "--colour": "var(--md-sys-color-error)" } : undefined
+          voice.deafen()
+            ? { "--colour": "var(--md-sys-color-error)" }
+            : undefined
         }
         use:floating={{
           tooltip: {
-            placement: "top",
+            placement: props.stacked ? "right" : "top",
             content:
               inCall() && !voice.listenPermission
                 ? t`Missing permission`
@@ -122,17 +131,19 @@ export function UserFooter() {
           <Symbol>headset_off</Symbol>
         </Show>
       </IconButton>
-      <DevicePopover
-        kind="audiooutput"
-        tooltip={t`Change output device`}
-        openSettings={() =>
-          openModal({
-            type: "settings",
-            config: "user",
-            context: { page: "voice" },
-          })
-        }
-      />
+      <Show when={!props.stacked}>
+        <DevicePopover
+          kind="audiooutput"
+          tooltip={t`Change output device`}
+          openSettings={() =>
+            openModal({
+              type: "settings",
+              config: "user",
+              context: { page: "voice" },
+            })
+          }
+        />
+      </Show>
 
       <IconButton
         size="xs"
@@ -140,7 +151,7 @@ export function UserFooter() {
         onPress={() => openModal({ type: "settings", config: "user" })}
         use:floating={{
           tooltip: {
-            placement: "top",
+            placement: props.stacked ? "right" : "top",
             content: t`Settings`,
           },
         }}
@@ -232,7 +243,7 @@ function DevicePopover(props: {
 }
 
 // Floats over the bottom of the whole nav block (server rail + channel
-// list); the columns reserve matching space via MainBar's withFooter
+// list); the columns reserve matching space via MainBar's footer
 // variant so scrolled content is never trapped underneath.
 const Base = styled("div", {
   base: {
@@ -251,6 +262,21 @@ const Base = styled("div", {
     border: "1px solid var(--md-sys-color-outline-variant)",
     borderRadius: "var(--borderRadius-lg)",
     boxShadow: "0 4px 16px rgba(0,0,0,0.35)",
+  },
+  variants: {
+    // Vertical column narrow enough for the 56px icons-only rail.
+    stacked: {
+      true: {
+        left: "5px",
+        right: "5px",
+        flexDirection: "column",
+        padding: "var(--gap-sm) 2px",
+      },
+      false: {},
+    },
+  },
+  defaultVariants: {
+    stacked: false,
   },
 });
 
@@ -272,6 +298,17 @@ const UserArea = styled("div", {
     "&:hover": {
       background: "var(--md-sys-color-surface-container-high)",
     },
+  },
+  variants: {
+    stacked: {
+      true: {
+        flexGrow: 0,
+      },
+      false: {},
+    },
+  },
+  defaultVariants: {
+    stacked: false,
   },
 });
 

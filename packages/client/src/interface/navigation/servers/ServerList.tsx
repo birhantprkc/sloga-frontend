@@ -80,8 +80,10 @@ interface Props {
  * Default expanded state of the rail (before the user toggles it).
  * Must be passed to every get/set/toggle call for the section key so the
  * store's "only store the contrary" behaviour stays consistent.
+ * Exported so Sidebar reads the rail state with the same default when
+ * deciding which shape the floating user bar takes.
  */
-const RAIL_EXPANDED_DEFAULT = true;
+export const RAIL_EXPANDED_DEFAULT = true;
 
 /**
  * Sloga brand palette for the standalone "O" mark — green core in the middle,

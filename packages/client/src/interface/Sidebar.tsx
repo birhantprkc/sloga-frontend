@@ -16,6 +16,7 @@ import { LAYOUT_SECTIONS } from "@revolt/state/stores/Layout";
 
 import { HomeSidebar, ServerList, ServerSidebar } from "./navigation";
 import { UserFooter } from "./navigation/UserFooter";
+import { RAIL_EXPANDED_DEFAULT } from "./navigation/servers/ServerList";
 
 const MainBar = styled("div", {
   base: {
@@ -33,21 +34,30 @@ const MainBar = styled("div", {
   },
   variants: {
     /**
-     * Reserve room at the bottom of both columns (server rail + channel
-     * list) so their content can always scroll clear of the floating
-     * user bar, which overlays the bottom of the nav block.
+     * Reserve room at the bottom of the visible columns (server rail +
+     * channel list) so their content can always scroll clear of the
+     * floating user bar, which overlays the bottom of the nav block.
+     *
+     * "bar" is the horizontal pill; "stack" is the vertical variant used
+     * when only the icons-only server rail remains, which is taller than
+     * the pill so it reserves more.
      */
-    withFooter: {
-      true: {
+    footer: {
+      none: {},
+      bar: {
         "& > *:not([data-user-footer])": {
           paddingBottom: "var(--layout-height-user-footer)",
         },
       },
-      false: {},
+      stack: {
+        "& > *:not([data-user-footer])": {
+          paddingBottom: "168px",
+        },
+      },
     },
   },
   defaultVariants: {
-    withFooter: false,
+    footer: "none",
   },
 });
 
@@ -68,13 +78,36 @@ export const Sidebar = (props: {
   const params = useParams<{ server: string }>();
   const location = useLocation();
 
-  /** Whether the channel sidebar (and with it the user bar) is shown. */
+  /** Whether the channel sidebar is shown. */
   const showSidebar = () =>
     state.layout.getSectionState(LAYOUT_SECTIONS.PRIMARY_SIDEBAR, true) &&
     !location.pathname.startsWith("/discover");
 
+  /**
+   * The user bar stays mounted when the channel sidebar collapses — it
+   * shrinks onto the server rail instead, mirroring how it already
+   * follows the rail's own expand/collapse. /discover keeps no bar.
+   */
+  const showFooter = () => !location.pathname.startsWith("/discover");
+
+  /**
+   * With the channel sidebar collapsed and the rail icons-only, 56px is
+   * all that is left — the pill goes vertical. (On phone the rail is
+   * forced collapsed but the channel sidebar is always "shown", so this
+   * never triggers there.)
+   */
+  const footerStacked = () =>
+    !showSidebar() &&
+    !state.layout.getSectionState(
+      LAYOUT_SECTIONS.SERVER_RAIL_EXPANDED,
+      RAIL_EXPANDED_DEFAULT,
+    );
+
   return (
-    <MainBar class="main_bar" withFooter={showSidebar()}>
+    <MainBar
+      class="main_bar"
+      footer={showFooter() ? (footerStacked() ? "stack" : "bar") : "none"}
+    >
       <ServerList
         orderedServers={state.ordering.orderedServers(client())}
         setServerOrder={state.ordering.setServerOrder}
@@ -105,7 +138,9 @@ export const Sidebar = (props: {
             <Server />
           </Match>
         </Switch>
-        <UserFooter />
+      </Show>
+      <Show when={showFooter()}>
+        <UserFooter stacked={footerStacked()} />
       </Show>
     </MainBar>
   );
