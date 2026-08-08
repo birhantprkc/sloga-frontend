@@ -223,6 +223,14 @@ type ScreenShareQuality = {
   fullName: string;
   contentHint: string;
   /**
+   * What the encoder should protect when it cannot afford both. Mirrors
+   * `contentHint`: tiers the user picked FOR resolution keep pixels and shed
+   * frames, while the 720p fallback and the 60FPS tier keep frames and shed
+   * pixels. Left unset the sender defaults to "balanced", which silently
+   * downscales screen content and is what made shared text look soft.
+   */
+  degradationPreference: RTCDegradationPreference;
+  /**
    * Upper bound on the encoded bitrate (kbps). Without this, LiveKit picks an
    * effectively-uncapped default from the source resolution; at 1440p/4K that
    * saturates a relayed (TURN) publisher path and collapses the peer
@@ -2971,6 +2979,7 @@ class Voice {
         resolution: ScreenSharePresets.h720fps30.resolution,
         fullName: `720p 30FPS`,
         contentHint: "motion",
+        degradationPreference: "maintain-framerate",
         maxBitrateKbps: 3000,
       },
     };
@@ -2991,7 +3000,8 @@ class Voice {
             name: "high",
             resolution: ScreenSharePresets.h1080fps30.resolution,
             fullName: `1080p 30FPS`,
-            contentHint: "motion",
+            contentHint: "detail",
+            degradationPreference: "maintain-resolution",
             maxBitrateKbps: 5000,
           };
           // Clone before mutating — ScreenSharePresets.original is a shared
@@ -3025,6 +3035,7 @@ class Voice {
             resolution: originalResolution,
             fullName: `Source 5FPS`,
             contentHint: "text",
+            degradationPreference: "maintain-resolution",
             maxBitrateKbps: 3000,
           };
         }
@@ -3042,6 +3053,7 @@ class Voice {
       }),
       fullName: `1080p 60FPS`,
       contentHint: "motion",
+      degradationPreference: "maintain-framerate",
       maxBitrateKbps: 8000,
     };
     qualities.qhd = {
@@ -3052,7 +3064,8 @@ class Voice {
         frameRate: 30,
       }),
       fullName: `1440p 30FPS`,
-      contentHint: "motion",
+      contentHint: "detail",
+      degradationPreference: "maintain-resolution",
       maxBitrateKbps: 8000,
     };
     qualities.uhd = {
@@ -3063,7 +3076,8 @@ class Voice {
         frameRate: 30,
       }),
       fullName: `4K 30FPS`,
-      contentHint: "motion",
+      contentHint: "detail",
+      degradationPreference: "maintain-resolution",
       maxBitrateKbps: 16000,
     };
 
@@ -3132,6 +3146,7 @@ class Voice {
               maxBitrate: initialQuality.maxBitrateKbps * 1000, // kbps -> bps
               maxFramerate: initialQuality.resolution.frameRate,
             },
+            degradationPreference: initialQuality.degradationPreference,
           },
         );
 
@@ -3142,6 +3157,17 @@ class Voice {
         this.#setScreenshare(room.localParticipant.isScreenShareEnabled);
 
         if (localTrack) {
+          // Tell the encoder what to protect BEFORE anything else. `callback`
+          // below sets this too, but it only runs when the picker returned a
+          // quality or the ask-dialog is on — a share started from a stored
+          // quality would otherwise publish with the browser's default hint,
+          // which treats screen content as motion and spends the bitrate on
+          // holding framerate instead of keeping text legible.
+          if (localTrack.videoTrack) {
+            localTrack.videoTrack.mediaStreamTrack.contentHint =
+              initialQuality.contentHint;
+          }
+
           // This event is only fired if the screen share is ended by closing the window being streamed.
           // This catches the ending and disables screen sharing on our side. If this weren't here,
           // livekit would still share stream audio after closing the window being streamed.
@@ -3185,6 +3211,12 @@ class Voice {
                 localTrack.videoTrack,
                 quality,
               );
+              // Tiers disagree about what to protect, so this has to move with
+              // the tier rather than being set once at publish. Best-effort:
+              // a failure just leaves the previous preference in place.
+              await localTrack.videoTrack
+                .setDegradationPreference(quality.degradationPreference)
+                .catch(() => undefined);
               if (!audio && screenAudioTrack?.track) {
                 room.localParticipant.unpublishTrack(screenAudioTrack.track);
               }
