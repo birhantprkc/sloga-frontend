@@ -8,9 +8,31 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
-  // NB the original v0.21.0 draft headlined remote control; it is preserved
-  // in git history and stays OUT until the RC prod flag is deliberately
-  // reopened — never announce a dark feature.
+  // The remote-control section below is the v0.21.0 draft (c9d2f53a) that was
+  // held back under "never announce a dark feature". It is no longer dark:
+  // desktop 0.23.0 is the first installer built with
+  // VITE_CFG_ENABLE_REMOTE_CONTROL=true, and the instance flag has been on
+  // since 2026-08-07. Restored near-verbatim, but every claim was re-checked
+  // against the shipping build rather than trusted from the draft. The
+  // UseRemoteControl permission bit is deliberately NOT mentioned: it is
+  // code-verified for server channels and has never run a live leg.
+  {
+    id: "sloga-2026-08-08-4",
+    title: "Patch Notes",
+    published_at: "2026-08-08T18:30:00.000Z",
+    markdown_content: `## v0.27.0 — Hand someone your keyboard
+
+### 🖥️ Give control of your screen
+- **While you're sharing your whole screen, you can hand someone your mouse and keyboard.** Click the monitor icon in the call bar, pick the person, and they can help you directly instead of talking you through it.
+- **It only ever starts with you.** Nobody can request or take control — you choose the person, and Windows itself asks you to confirm before anything is handed over.
+- **Stop instantly, any time.** A bar stays pinned to the top of your screen for the whole session with a Stop button, and **Ctrl+Shift+Alt+Q** ends it from anywhere — even mid-click.
+- **Your mouse and keyboard input is encrypted between the two computers.** We relay it and can't read it. The confirmation you'll see spells out exactly what that does and doesn't cover.
+- **Whole-screen shares only.** If you're sharing a single window we won't offer it, because control reaches the whole screen behind that window — including what you didn't share.
+- ⚠️ **Nobody from Sloga support will ever ask you for control of your computer.** If someone claiming to be staff or support asks, it's a scam — refuse, and tell us at report@sloga.gg.
+- **Windows desktop only** for now — it needs the native app.
+
+*Sloga — Hop on.*`,
+  },
   {
     id: "sloga-2026-08-08-3",
     title: "Patch Notes",
