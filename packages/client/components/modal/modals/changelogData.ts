@@ -12,6 +12,28 @@ export const CHANGELOGS: ChangelogResponse[] = [
   // in git history and stays OUT until the RC prod flag is deliberately
   // reopened — never announce a dark feature.
   {
+    id: "sloga-2026-08-08",
+    title: "Patch Notes",
+    published_at: "2026-08-08T06:30:00.000Z",
+    markdown_content: `## v0.24.0 — Screen share you can actually read
+
+### 🖥️ Sharper screen sharing
+- **Shared screens go up to 4K now.** Every quality tier was quietly capped at 720p before, whichever one you picked.
+- **Roughly double the bitrate at every tier**, so fine detail survives instead of dissolving.
+- **The encoder protects detail instead of framerate** at 1080p and above. Small text stays readable while the picture moves, rather than smearing.
+- Sharing at 60FPS, or on the 720p fallback, still favors smoothness — those are the settings where you asked for motion.
+
+### ⬇️ One-click updates on Windows desktop
+- **A green arrow appears next to your name when an update is ready.** Click it and Sloga installs the update and restarts itself — no installer to click through.
+- **The arrow stays until you use it**, so "later" no longer means "ask me again next launch".
+
+### 👥 Friends and profiles
+- **Add Friend moved to the left**, next to the tabs, with a smaller search box beside it.
+- **A refused display name now tells you why** instead of quietly doing nothing, and the message clears the moment you edit the name again.
+
+*Sloga — Hop on.*`,
+  },
+  {
     id: "sloga-2026-08-07-2",
     title: "Patch Notes",
     published_at: "2026-08-07T22:15:00.000Z",
