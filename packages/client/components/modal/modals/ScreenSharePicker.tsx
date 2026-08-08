@@ -7,6 +7,7 @@ import { Avatar, Column, Dialog, DialogProps, Form2, Ripple } from "@revolt/ui";
 
 import { createMemo } from "solid-js";
 import { styled } from "styled-system/jsx";
+import { ScreenShareQualityLabel } from "./ScreenShareQualityLabel";
 import { Modals } from "../types";
 
 export function ScreenSharePickerModal(
@@ -93,18 +94,8 @@ export function ScreenSharePickerModal(
             control={group.controls.qualityName}
             buttonDefinitions={props.qualities.map((quality) => {
               return {
-                // Without this the button, narrower than the word, splits
-                // "Source" into "Sourc"/"e". Both properties are needed: one
-                // beats overflow-wrap:break-word, the other word-break:break-all.
                 children: (
-                  <span
-                    style={{
-                      "word-break": "keep-all",
-                      "overflow-wrap": "normal",
-                    }}
-                  >
-                    {quality.fullName}
-                  </span>
+                  <ScreenShareQualityLabel fullName={quality.fullName} />
                 ),
                 value: quality.name,
               };

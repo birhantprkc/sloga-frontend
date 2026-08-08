@@ -7,6 +7,7 @@ import { Column, Dialog, DialogProps, Form2 } from "@revolt/ui";
 import { VideoTrack } from "solid-livekit-components";
 
 import { Show } from "solid-js";
+import { ScreenShareQualityLabel } from "./ScreenShareQualityLabel";
 import { Modals } from "../types";
 
 export function ScreenShareSettingsModal(
@@ -84,18 +85,8 @@ export function ScreenShareSettingsModal(
             control={group.controls.qualityName}
             buttonDefinitions={props.qualities.map((quality) => {
               return {
-                // Without this the button, narrower than the word, splits
-                // "Source" into "Sourc"/"e". Both properties are needed: one
-                // beats overflow-wrap:break-word, the other word-break:break-all.
                 children: (
-                  <span
-                    style={{
-                      "word-break": "keep-all",
-                      "overflow-wrap": "normal",
-                    }}
-                  >
-                    {quality.fullName}
-                  </span>
+                  <ScreenShareQualityLabel fullName={quality.fullName} />
                 ),
                 value: quality.name,
               };
