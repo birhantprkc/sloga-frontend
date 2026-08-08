@@ -1,5 +1,12 @@
 import { useFloating } from "solid-floating-ui";
-import { Show, createEffect, createSignal, on, onCleanup } from "solid-js";
+import {
+  Show,
+  createEffect,
+  createSignal,
+  on,
+  onCleanup,
+  onMount,
+} from "solid-js";
 import { Portal } from "solid-js/web";
 
 import { autoUpdate, flip, offset, shift } from "@floating-ui/dom";
@@ -8,6 +15,12 @@ import { css } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 
 import { useUser } from "@revolt/client";
+import {
+  desktopUpdateInstalling,
+  desktopUpdatePending,
+  installDesktopUpdate,
+  watchDesktopUpdate,
+} from "@revolt/common";
 import { useModals } from "@revolt/modal";
 import { useVoice } from "@revolt/rtc";
 import { Avatar, UserStatus } from "@revolt/ui";
@@ -42,6 +55,10 @@ export function UserFooter(props: { stacked?: boolean }) {
    * (they only flip the persisted preference).
    */
   const inCall = () => !!voice.room();
+
+  // No-op off the Windows desktop shell, and idempotent, so the footer
+  // remounting (collapsing the sidebar swaps variants) starts no second poll.
+  onMount(watchDesktopUpdate);
 
   return (
     <Base data-user-footer stacked={props.stacked}>
@@ -143,6 +160,35 @@ export function UserFooter(props: { stacked?: boolean }) {
             })
           }
         />
+      </Show>
+
+      {/*
+        Desktop update arrow. Sits inside the same icon row as the toggles so
+        the collapsed rail gets it for free — `stacked` turns the row into a
+        column and this comes along, where a separate surface (a titlebar
+        strip, say) would have vanished at exactly the width where the footer
+        is the only chrome left.
+
+        One press and the shell is gone: it downloads, installs silently and
+        relaunches. That is the whole point of the button, so the tooltip says
+        so rather than a dialog asking again.
+      */}
+      <Show when={desktopUpdatePending()}>
+        <IconButton
+          size="xs"
+          variant="standard"
+          onPress={installDesktopUpdate}
+          isDisabled={desktopUpdateInstalling()}
+          style={{ "--colour": "var(--customColours-success-color)" }}
+          use:floating={{
+            tooltip: {
+              placement: props.stacked ? "right" : "top",
+              content: t`Update to ${desktopUpdatePending()} and restart Sloga`,
+            },
+          }}
+        >
+          <Symbol>download</Symbol>
+        </IconButton>
       </Show>
 
       <IconButton
