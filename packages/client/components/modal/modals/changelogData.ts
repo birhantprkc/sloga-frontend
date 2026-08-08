@@ -12,6 +12,27 @@ export const CHANGELOGS: ChangelogResponse[] = [
   // in git history and stays OUT until the RC prod flag is deliberately
   // reopened — never announce a dark feature.
   {
+    id: "sloga-2026-08-08-3",
+    title: "Patch Notes",
+    published_at: "2026-08-08T16:10:00.000Z",
+    markdown_content: `## v0.26.0 — Settings you can find, and a button you could not see
+
+### ⚙️ Settings, rearranged
+- **The pages you actually change are at the top now.** Account holds your profile, sessions and connections — and My Bots, which used to sit off on its own.
+- **App Settings opens with Appearance and Notifications.** It was called Client Settings, it sat below a block of links, and Advanced used to share a row with Sign out.
+- **Everything that leaves Sloga is grouped under About at the bottom**, and those entries tell you they open outside the app *before* you click rather than after.
+
+### 🎨 The colors behind two small things
+- **The button on a success message is visible again.** It had been drawing completely transparent, with near-black text on a near-black background — present, but impossible to read. Success and warning now use real colors, matched to the same green as an online dot.
+- **Text boxes show their focus and error outlines again.** They pointed at the same missing colors.
+
+### ⬇️ Updates that turn up on their own (Windows desktop)
+- **The update arrow appears while Sloga is open.** It only looked for updates at launch and then once an hour, so unless you quit and reopened, you could sit next to a released update for a long time without seeing it.
+- **Sloga also checks the moment you come back to the window** — usually the moment you would want to know.
+
+*Sloga — Hop on.*`,
+  },
+  {
     id: "sloga-2026-08-08-2",
     title: "Patch Notes",
     published_at: "2026-08-08T13:20:00.000Z",
