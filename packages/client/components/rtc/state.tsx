@@ -2984,6 +2984,11 @@ class Voice {
       },
     };
 
+    // Built inside the >=1080p gate below (it needs the same server limit)
+    // but assigned AFTER the resolution tiers, so it lists last: it is the
+    // odd one out, a static-content option rather than a rung on the ladder.
+    let sourceQuality: ScreenShareQuality | undefined;
+
     if (this.getClient().configured()) {
       // TODO: Use new user limits if the user is new - I don't think there's a way to do that now?
       const limit =
@@ -3030,7 +3035,7 @@ class Voice {
               }
             }
           }
-          qualities.text = {
+          sourceQuality = {
             name: "text",
             resolution: originalResolution,
             fullName: `Source 5FPS`,
@@ -3080,6 +3085,9 @@ class Voice {
       degradationPreference: "maintain-resolution",
       maxBitrateKbps: 16000,
     };
+
+    // Last in the picker, after the resolution ladder.
+    if (sourceQuality) qualities.text = sourceQuality;
 
     return qualities;
   }

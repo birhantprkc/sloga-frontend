@@ -41,8 +41,15 @@ export function ScreenSharePickerModal(
   );
 
   return (
+    // 700 is deliberately past Dialog's own 560px maxWidth -- an inline
+    // min-width beats max-width in CSS, which is the only way to widen this.
+    // It has to be wide: Form2.ButtonGroup renders its Row with
+    // justify="stretch", i.e. `& * { flex: 1 }`, so every tier button is
+    // forced to an identical flex-basis:0 width no matter what it says.
+    // Content width is ignored, so total dialog width is the ONLY lever, and
+    // below ~700px the button is narrower than "Source" and splits the word.
     <Dialog
-      minWidth={420}
+      minWidth={700}
       show={props.show}
       onClose={() => {
         props.onCancel();
@@ -86,7 +93,19 @@ export function ScreenSharePickerModal(
             control={group.controls.qualityName}
             buttonDefinitions={props.qualities.map((quality) => {
               return {
-                children: quality.fullName,
+                // Without this the button, narrower than the word, splits
+                // "Source" into "Sourc"/"e". Both properties are needed: one
+                // beats overflow-wrap:break-word, the other word-break:break-all.
+                children: (
+                  <span
+                    style={{
+                      "word-break": "keep-all",
+                      "overflow-wrap": "normal",
+                    }}
+                  >
+                    {quality.fullName}
+                  </span>
+                ),
                 value: quality.name,
               };
             })}
