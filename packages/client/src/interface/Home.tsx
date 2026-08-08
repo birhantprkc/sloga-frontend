@@ -257,7 +257,7 @@ export function HomePage() {
         </Column>
         <Buttons>
           <SeparatedColumn>
-            <div style={{"--md-sys-color-primary": "#00B2FF", "--md-sys-color-on-primary": "#ffffff"}}>
+            <div style={{"--md-sys-color-primary": "#00B2FF", "--md-sys-color-on-primary": "#05090F"}}>
             <CategoryButton
               variant="filled"
               onClick={() =>
@@ -318,7 +318,7 @@ export function HomePage() {
                 Play payments-policy grey area and Sloga is not a registered
                 nonprofit. Web, desktop and the sloga.gg APK still show it. */}
             <Show when={allowsDonationLinks()}>
-            <div style={{"--md-sys-color-primary": "#FF8A00", "--md-sys-color-on-primary": "#ffffff"}}>
+            <div style={{"--md-sys-color-primary": "#FF8A00", "--md-sys-color-on-primary": "#05090F"}}>
             <CategoryButton
               variant="filled"
               onClick={() => window.open("https://ko-fi.com/slogatech")}
@@ -333,7 +333,7 @@ export function HomePage() {
             </Show>
           </SeparatedColumn>
           <SeparatedColumn>
-            <div style={{"--md-sys-color-primary": "#00B2FF", "--md-sys-color-on-primary": "#ffffff"}}>
+            <div style={{"--md-sys-color-primary": "#00B2FF", "--md-sys-color-on-primary": "#05090F"}}>
             <CategoryButton
               variant="filled"
               onClick={() => openModal({ type: "add_friend", client: client()! })}
@@ -369,7 +369,7 @@ export function HomePage() {
                 <Trans>Report queue</Trans>
               </CategoryButton>
             </Show>
-            <div style={{"--md-sys-color-primary": "#00B2FF", "--md-sys-color-on-primary": "#ffffff"}}>
+            <div style={{"--md-sys-color-primary": "#00B2FF", "--md-sys-color-on-primary": "#05090F"}}>
             <CategoryButton
               variant="filled"
               onClick={() => openModal({ type: "settings", config: "user" })}

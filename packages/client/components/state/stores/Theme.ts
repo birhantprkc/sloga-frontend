@@ -6,6 +6,10 @@ import {
   MONOSPACE_FONT_KEYS,
   MonospaceFonts,
 } from "@revolt/ui/themes/fonts";
+import {
+  BRAND_ACCENT,
+  BRAND_VARIANT,
+} from "@revolt/ui/themes/materialTheme";
 
 import { State } from "..";
 
@@ -14,8 +18,19 @@ import { AbstractStore } from ".";
 export type TypeTheme = {
   /**
    * Base theme preset
+   *
+   * "stoat" is Sloga's hand-tuned palette; "you" generates the whole scheme
+   * from the accent/contrast/variant controls. The appearance menu only shows
+   * those controls under "you", because under "stoat" they have nothing to do.
    */
-  preset: "you";
+  preset: "stoat" | "you";
+
+  /**
+   * Whether `preset` has been through the one-time migration below
+   *
+   * Not a user-facing setting; see `clean()`.
+   */
+  presetMigrated: boolean;
 
   /**
    * Light/dark mode
@@ -83,7 +98,7 @@ export type SelectedTheme = Pick<
   | "messageSize"
   | "messageGroupSpacing"
 > & {
-  preset: "you";
+  preset: "stoat" | "you";
   darkMode: boolean;
 
   accent: string;
@@ -131,12 +146,14 @@ export class Theme extends AbstractStore<"theme", TypeTheme> {
    */
   default(): TypeTheme {
     return {
-      preset: "you",
+      preset: "stoat",
+      // Fresh profiles start where the migration would put them.
+      presetMigrated: true,
       mode: "dark",
 
-      m3Accent: "#00B2FF",
+      m3Accent: BRAND_ACCENT,
       m3Contrast: 0.0,
-      m3Variant: "expressive",
+      m3Variant: BRAND_VARIANT,
 
       interfaceFont: "Inter",
       monospaceFont: "Fira Code",
@@ -157,9 +174,26 @@ export class Theme extends AbstractStore<"theme", TypeTheme> {
       data.mode = input.mode!;
     }
 
-    if (["you", "neutral"].includes(input.preset!)) {
-      data.preset = input.preset!;
+    // "you" was the old default and the toggle that selects it was commented
+    // out of the appearance menu, so nobody could have picked it on purpose —
+    // every stored "you" is an inherited default. Left alone it would flip the
+    // whole installed base off the brand palette onto a generated one, so it
+    // is migrated across once. The flag is what makes it once: after this runs
+    // a genuine "Material You" choice survives the next load.
+    //
+    // "neutral" used to be accepted here too, but `activeTheme` only ever had
+    // a `case "you"`, so a stored "neutral" fell out of the switch as
+    // undefined and every theme variable was read off it — a white screen on
+    // boot that nothing short of clearing storage could recover. Only presets
+    // `activeTheme` can actually build are allowed through.
+    if (input.presetMigrated) {
+      if (["stoat", "you"].includes(input.preset!)) {
+        data.preset = input.preset!;
+      }
+    } else {
+      data.preset = "stoat";
     }
+    data.presetMigrated = true;
 
     if (typeof input.m3Contrast === "number") {
       data.m3Contrast = input.m3Contrast;
@@ -223,24 +257,40 @@ export class Theme extends AbstractStore<"theme", TypeTheme> {
   get activeTheme(): SelectedTheme {
     const opts = this.get();
 
-    switch (opts.preset) {
-      case "you":
-        return {
-          blur: opts.blur,
-          interfaceFont: opts.interfaceFont,
-          monospaceFont: opts.monospaceFont,
-          messageSize: opts.messageSize,
-          messageGroupSpacing: opts.messageGroupSpacing,
-          preset: "you",
-          darkMode:
-            opts.mode === "dark" ||
-            (opts.mode === "system" && this.prefersDark()),
+    const common = {
+      blur: opts.blur,
+      interfaceFont: opts.interfaceFont,
+      monospaceFont: opts.monospaceFont,
+      messageSize: opts.messageSize,
+      messageGroupSpacing: opts.messageGroupSpacing,
+      darkMode:
+        opts.mode === "dark" || (opts.mode === "system" && this.prefersDark()),
+    };
 
+    // Deliberately a branch and not a switch: this getter feeds every colour
+    // variable in the app, and the switch it replaces had no default, so a
+    // preset it did not recognise returned undefined and took the whole UI
+    // down rather than falling back.
+    //
+    // Sloga seeds its base scheme from fixed brand values rather than the
+    // user's — the accent/contrast/variant controls are hidden under this
+    // preset precisely because they do not apply. The roles the brand palette
+    // leaves alone (error, outline, inverse) are still derived from these.
+    return opts.preset === "stoat"
+      ? {
+          ...common,
+          preset: "stoat",
+          accent: BRAND_ACCENT,
+          contrast: 0,
+          variant: BRAND_VARIANT,
+        }
+      : {
+          ...common,
+          preset: "you",
           accent: opts.m3Accent,
           contrast: opts.m3Contrast,
           variant: opts.m3Variant,
         };
-    }
   }
 
   /**

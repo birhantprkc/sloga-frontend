@@ -124,7 +124,10 @@ export default function FlowLogin() {
                 }
               }}
             />
-            <div style={{"--md-sys-color-primary": "#FF8A00", "--mdui-color-primary": "255, 138, 0", "display": "contents"}}>
+            {/* The pinned orange does not follow light/dark, so its label must
+                not either: inheriting the theme's on-primary gave white on
+                #FF8A00 in light mode, 2.36:1. Pinned dark is 8.44:1 in both. */}
+            <div style={{"--md-sys-color-primary": "#FF8A00", "--mdui-color-primary": "255, 138, 0", "--md-sys-color-on-primary": "#05090F", "--mdui-color-on-primary": "5, 9, 15", "display": "contents"}}>
             <Form onSubmit={performLogin}>
               <Fields fields={["email", "password"]} />
               <div

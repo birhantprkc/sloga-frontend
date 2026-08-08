@@ -41,26 +41,23 @@ export function LoadTheme() {
       ...createMaterialColourVariables(activeTheme, "--md-sys-color-"),
       // mount --mdui-color triplet variables
       ...createMduiColourTriplets(activeTheme, "--mdui-color-"),
-      // Sloga brand overrides
-      "--md-sys-color-surface": "#05090F",
-      "--md-sys-color-surface-dim": "#05090F",
-      "--md-sys-color-surface-bright": "#0d1825",
-      "--md-sys-color-surface-container-lowest": "#030608",
-      "--md-sys-color-surface-container-low": "#070d15",
-      "--md-sys-color-surface-container": "#090f1a",
-      "--md-sys-color-surface-container-high": "#0d1825",
-      "--md-sys-color-surface-container-highest": "#111e2e",
-      "--md-sys-color-primary": "#00B2FF",
-      "--md-sys-color-primary-container": "#00B2FF",
-      "--md-sys-color-on-primary": "#ffffff",
-      "--md-sys-color-on-primary-container": "#ffffff",
-      "--md-sys-color-secondary-container": "#0d1825",
-      "--md-sys-color-on-secondary-container": "#c8d8e8",
-      "--mdui-color-primary": "0, 178, 255",
-      "--mdui-color-on-primary": "255, 255, 255",
+      // The Sloga brand palette used to be pinned here, as a block of literals
+      // written over the generated scheme after the fact. That is what broke
+      // the appearance menu: the pins ignored light/dark, so light mode kept a
+      // dark canvas under its now-dark text, and they ignored the accent, so
+      // every swatch, contrast level and variant regenerated a scheme whose
+      // visible roles were immediately overwritten. The palette now lives in
+      // materialTheme as the "stoat" preset, which folds it into the scheme
+      // per-mode. --sloga-highlight stays because it is a brand constant with
+      // no Material role behind it.
       "--sloga-highlight": "#FF8A00",
     })) {
-      document.body.style.setProperty(key, value);
+      // Mounted on <html>, not <body>: styles.css paints the page canvas from
+      // `html:root` (it has to — iOS Safari draws overscroll from <html>), and
+      // a variable set on <body> is invisible to <html>, which is its parent.
+      // Everything under <body> still sees these by inheritance, and an inline
+      // style on the root element outranks mdui.css's own `:root` defaults.
+      document.documentElement.style.setProperty(key, value);
     }
   });
 

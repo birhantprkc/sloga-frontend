@@ -68,7 +68,12 @@ export default function FlowHome() {
               </a>
               <a href="/login/create">
                 <Column>
-                  <div style={{"--md-sys-color-on-secondary-container":"#ffffff", "width": "100%", "display": "flex", "flex-direction": "column"}}>
+                  {/* `bg` overrides the tonal background but not its ink, which
+                      still comes from on-secondary-container. #3BB8ED is fixed
+                      in both modes, so the ink has to be too: white was 2.27:1.
+                      #04222E is the pairing Unreads.tsx already uses for this
+                      exact blue, at 7.28:1. */}
+                  <div style={{"--md-sys-color-on-secondary-container":"#04222E", "width": "100%", "display": "flex", "flex-direction": "column"}}>
                     <Button variant="tonal" bg="#3BB8ED">
                       <b><Trans>Sign Up</Trans></b>
                     </Button>

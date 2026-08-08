@@ -13,7 +13,71 @@ import {
   hexFromArgb,
 } from "@material/material-color-utilities";
 
-import { SelectedTheme, TypeTheme } from "@revolt/state/stores/Theme";
+import type { SelectedTheme, TypeTheme } from "@revolt/state/stores/Theme";
+
+/**
+ * Seed colour for the Sloga preset, and the default accent for Material You.
+ */
+export const BRAND_ACCENT = "#00B2FF";
+
+/**
+ * Variant the Sloga preset generates its base scheme from.
+ *
+ * Also the Material You default: the previous default, "expressive", turns a
+ * blue seed into a yellow-green primary (#bdcf77), and it is not one of the
+ * variants the appearance menu offers, so it left every fresh profile with no
+ * variant button selected.
+ */
+export const BRAND_VARIANT: TypeTheme["m3Variant"] = "tonal_spot";
+
+/**
+ * Sloga's hand-tuned palette, applied over a generated scheme rather than
+ * replacing it: every role these tables do not name — error, outline, inverse,
+ * the fixed roles — still comes from Material, so the result stays internally
+ * consistent and mode-correct.
+ *
+ * Only dark has a hand-picked surface ramp; the navy chrome is the brand.
+ * Light deliberately keeps Material's generated surfaces, because pinning a
+ * dark canvas in both modes is exactly what used to leave light mode painting
+ * near-black text on a near-black page.
+ */
+const BRAND_DARK: Partial<MaterialColours> = {
+  surface: "#05090F",
+  "surface-dim": "#05090F",
+  "surface-bright": "#0d1825",
+  "surface-container-lowest": "#030608",
+  "surface-container-low": "#070d15",
+  "surface-container": "#090f1a",
+  "surface-container-high": "#0d1825",
+  "surface-container-highest": "#111e2e",
+
+  primary: BRAND_ACCENT,
+  "primary-container": BRAND_ACCENT,
+  // Near-black, not white. #00B2FF is a tone-69 blue: white on it is 2.38:1,
+  // which fails WCAG AA (4.5:1) and even AA-large (3:1) — every filled button,
+  // mention pill, unread divider and selected-channel label in the default
+  // theme was text you had to squint at. The brand navy is 8.37:1 on the same
+  // blue and is already the surface colour, so the pairing stays in-palette.
+  // Light mode keeps white: #006492 is dark enough to carry it at 6.49:1.
+  "on-primary": "#05090F",
+  "on-primary-container": "#05090F",
+
+  "secondary-container": "#0d1825",
+  "on-secondary-container": "#c8d8e8",
+};
+
+/**
+ * Light counterpart. The accent roles keep the brand's own hue (241.8) and
+ * chroma (58.8) but take the tone Material wants for a light-mode primary
+ * (40), which lands on #006492 — still recognisably Sloga blue, and 6.49:1
+ * against its white label where the raw #00B2FF manages only 2.38:1.
+ */
+const BRAND_LIGHT: Partial<MaterialColours> = {
+  primary: "#006492",
+  "primary-container": "#006492",
+  "on-primary": "#ffffff",
+  "on-primary-container": "#ffffff",
+};
 
 /**
  * Generate the Material variables from the given properties
@@ -24,25 +88,25 @@ export function createMaterialColourVariables<P extends string>(
   theme: SelectedTheme,
   prefix: P,
 ): addPrefixToObject<MaterialColours, P> {
-  switch (theme.preset) {
-    case "you":
-      return Object.entries(
-        generateMaterialYouScheme(
-          theme.accent,
-          theme.darkMode,
-          theme.contrast,
-          theme.variant,
-        ),
-      ).reduce(
-        (d, [key, value]) => ({
-          ...d,
-          [`${prefix}${key}`]: value,
-        }),
-        {} as addPrefixToObject<MaterialColours, P>,
-      );
-    default:
-      return {} as never;
-  }
+  const scheme = generateMaterialYouScheme(
+    theme.accent,
+    theme.darkMode,
+    theme.contrast,
+    theme.variant,
+  );
+
+  const colours =
+    theme.preset === "stoat"
+      ? { ...scheme, ...(theme.darkMode ? BRAND_DARK : BRAND_LIGHT) }
+      : scheme;
+
+  return Object.entries(colours).reduce(
+    (d, [key, value]) => ({
+      ...d,
+      [`${prefix}${key}`]: value,
+    }),
+    {} as addPrefixToObject<MaterialColours, P>,
+  );
 }
 
 /**

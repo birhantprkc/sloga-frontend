@@ -3373,6 +3373,10 @@ msgstr "Mark as mature"
 msgid "Mark as Mature"
 msgstr "Mark as Mature"
 
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Material You"
+msgstr "Material You"
+
 #: components/app/menus/ServerContextMenu.tsx
 #: components/app/menus/ChannelContextMenu.tsx
 #: components/app/menus/CategoryContextMenu.tsx
@@ -5202,6 +5206,10 @@ msgstr "Skip one of the two system confirmations for this person next time"
 #: src/interface/channels/text/Composition.tsx
 msgid "Slash commands are unavailable in encrypted conversations."
 msgstr "Slash commands are unavailable in encrypted conversations."
+
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Sloga"
+msgstr "Sloga"
 
 #: components/app/interface/settings/user/SecurityAndPrivacy.tsx
 msgid "Sloga asks you once instead of twice before this person can use your mouse and keyboard. Select to undo."

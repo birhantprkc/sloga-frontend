@@ -40,7 +40,7 @@ export function AppearanceMenu() {
   const user = useUser();
   const state = useState();
   const { t } = useLingui();
-  const [pickerRef, setPickerRef] = createSignal<HTMLDivElement>();
+  const [pickerRef, setPickerRef] = createSignal<HTMLInputElement>();
 
   return (
     <Column gap="lg">
@@ -81,7 +81,7 @@ export function AppearanceMenu() {
           </Button>
         </Row>
 
-        {/* <Row justify="stretch">
+        <Row justify="stretch">
           <Button
             group="connected-start"
             groupActive={state.theme.preset === "stoat"}
@@ -96,12 +96,15 @@ export function AppearanceMenu() {
           >
             <Trans>Material You</Trans>
           </Button>
-        </Row> */}
+        </Row>
 
         <Show when={state.theme.preset === "you"}>
           <Row align justify wrap>
+            {/* The swatch button and the hidden colour input shared one ref
+                signal, so which element `pickerRef()` ended up pointing at was
+                just whichever Solid created last. It happened to be the input,
+                which is the one we want to click — only by accident. */}
             <IconButton
-              ref={setPickerRef}
               variant="filled"
               shape="square"
               size="md"

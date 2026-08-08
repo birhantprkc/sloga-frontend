@@ -14,15 +14,21 @@
  * <html>, not <body> — and mdui.css ships `.mdui-theme-light, :root` with
  * Material's LIGHT background (#FEF7FF), which is exactly the white strip
  * that shows through around the app on iPhones. `html:root` outweighs it
- * (0,1,1 vs 0,1,0) no matter the stylesheet order. Hardcoded to match the
- * body/#root base below. */
+ * (0,1,1 vs 0,1,0) no matter the stylesheet order.
+ *
+ * The value has to track the theme, not a constant: a hardcoded dark canvas
+ * is what left light mode painting near-black text on a near-black page.
+ * LoadTheme mounts --md-sys-color-surface on <html> for exactly this rule.
+ * The literal stays as the fallback only — it covers the frames before the
+ * theme effect first runs, so boot still flashes brand navy rather than
+ * white. */
 html:root {
-  background: #05090F;
+  background: var(--md-sys-color-surface, #05090F);
 }
 
 body {
   margin: 0;
-  background: #05090F;
+  background: var(--md-sys-color-surface, #05090F);
   font-family: var(--fonts-primary);
 }
 
@@ -32,7 +38,7 @@ body {
   left: env(safe-area-inset-left);
   right: env(safe-area-inset-right);
   bottom: env(safe-area-inset-bottom);
-  background: #05090F;
+  background: var(--md-sys-color-surface, #05090F);
 }
 
 /*
