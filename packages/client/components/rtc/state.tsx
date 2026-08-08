@@ -2971,7 +2971,7 @@ class Voice {
         resolution: ScreenSharePresets.h720fps30.resolution,
         fullName: `720p 30FPS`,
         contentHint: "motion",
-        maxBitrateKbps: 1500,
+        maxBitrateKbps: 3000,
       },
     };
 
@@ -2992,7 +2992,7 @@ class Voice {
             resolution: ScreenSharePresets.h1080fps30.resolution,
             fullName: `1080p 30FPS`,
             contentHint: "motion",
-            maxBitrateKbps: 2500,
+            maxBitrateKbps: 5000,
           };
           // Clone before mutating — ScreenSharePresets.original is a shared
           // livekit-client singleton; writing to it in place corrupts it
@@ -3025,7 +3025,7 @@ class Voice {
             resolution: originalResolution,
             fullName: `Source 5FPS`,
             contentHint: "text",
-            maxBitrateKbps: 1500,
+            maxBitrateKbps: 3000,
           };
         }
       }
@@ -3042,7 +3042,7 @@ class Voice {
       }),
       fullName: `1080p 60FPS`,
       contentHint: "motion",
-      maxBitrateKbps: 4000,
+      maxBitrateKbps: 8000,
     };
     qualities.qhd = {
       name: "qhd",
@@ -3053,7 +3053,7 @@ class Voice {
       }),
       fullName: `1440p 30FPS`,
       contentHint: "motion",
-      maxBitrateKbps: 4000,
+      maxBitrateKbps: 8000,
     };
     qualities.uhd = {
       name: "uhd",
@@ -3064,7 +3064,7 @@ class Voice {
       }),
       fullName: `4K 30FPS`,
       contentHint: "motion",
-      maxBitrateKbps: 8000,
+      maxBitrateKbps: 16000,
     };
 
     return qualities;
