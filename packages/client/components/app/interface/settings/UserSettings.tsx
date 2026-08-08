@@ -169,7 +169,7 @@ const Config: SettingsConfiguration<{ server: Server }> = {
       ),
       entries: [
         {
-          title: <Trans>User Settings</Trans>,
+          title: <Trans>Account</Trans>,
           entries: [
             {
               id: "account",
@@ -182,15 +182,12 @@ const Config: SettingsConfiguration<{ server: Server }> = {
               icon: <MdAccountCircle {...iconSize(20)} />,
               title: <Trans>Profile</Trans>,
             },
+            // Sessions and E2E Encryption are adjacent on purpose: both answer
+            // "who can get at this account", so they read as one idea.
             {
               id: "sessions",
               icon: <MdVerifiedUser {...iconSize(20)} />,
               title: <Trans>Sessions</Trans>,
-            },
-            {
-              id: "connections",
-              icon: <Symbol size={20}>link</Symbol>,
-              title: <Trans>Connections</Trans>,
             },
             {
               id: "security",
@@ -200,62 +197,17 @@ const Config: SettingsConfiguration<{ server: Server }> = {
               // the web build has no key material.
               hidden: !nativeE2EEAvailable(),
             },
-          ],
-        },
-        {
-          title: "Sloga",
-          entries: [
+            {
+              id: "connections",
+              icon: <Symbol size={20}>link</Symbol>,
+              title: <Trans>Connections</Trans>,
+            },
+            // Bots belong to the account that made them, not to the block of
+            // about-the-app links they used to sit in.
             {
               id: "bots",
               icon: <MdSmartToy {...iconSize(20)} />,
               title: <Trans>My Bots</Trans>,
-            },
-            {
-              id: "feedback",
-              icon: <MdRateReview {...iconSize(20)} />,
-              title: <Trans>Feedback</Trans>,
-            },
-            {
-              id: "donate",
-              // Google Play treats linking out to donations as a payments-policy
-              // grey area and Sloga is not a registered nonprofit, so this is
-              // hidden in Play builds only — web, desktop and the sloga.gg APK
-              // all still show it.
-              hidden: !allowsDonationLinks(),
-              // Brand orange, matching the Home screen donate button and the
-              // sloga.gg header — this entry is meant to stand out.
-              icon: <MdCoffee {...iconSize(20)} fill="#FF8A00" />,
-              title: (
-                <ColouredText colour="#FF8A00">
-                  <Trans>Donate to Sloga</Trans>
-                </ColouredText>
-              ),
-              href: "https://ko-fi.com/slogatech",
-            },
-            // Reachable copies of the policies a user accepted at registration.
-            // Play expects them findable in-app, not only on the website.
-            {
-              id: "terms",
-              icon: <MdGavel {...iconSize(20)} />,
-              title: <Trans>Terms of Service</Trans>,
-              href: "https://sloga.gg/legal/terms.html",
-            },
-            {
-              id: "privacy",
-              icon: <MdPolicy {...iconSize(20)} />,
-              title: <Trans>Privacy Policy</Trans>,
-              href: "https://sloga.gg/legal/privacy.html",
-            },
-            {
-              id: "changelog",
-              icon: <MdCampaign {...iconSize(20)} />,
-              title: <Trans>Patch Notes</Trans>,
-              async onClick() {
-                const changelogs = await fetchAllChangelogs();
-                if (changelogs.length) {
-                  openModal({ type: "changelog_history", changelogs });
-                }
-              },
             },
           ],
         },
@@ -271,7 +223,7 @@ const Config: SettingsConfiguration<{ server: Server }> = {
           ],
         },
         {
-          title: <Trans>Client Settings</Trans>,
+          title: <Trans>App Settings</Trans>,
           entries: [
             // {
             //   id: "audio",
@@ -280,15 +232,8 @@ const Config: SettingsConfiguration<{ server: Server }> = {
             //   hidden:
             //     !getController("state").experiments.isEnabled("voice_chat"),
             // },
-            {
-              id: "voice",
-              icon: <MdMic {...iconSize(20)} />,
-              title: CONFIGURATION.ENABLE_VIDEO ? (
-                <Trans>Voice & Video</Trans>
-              ) : (
-                <Trans>Voice</Trans>
-              ),
-            },
+            // Ordered by how often they actually get opened — Appearance and
+            // Notifications are changed far more than anything below them.
             {
               id: "appearance",
               icon: <MdPalette {...iconSize(20)} />,
@@ -309,6 +254,15 @@ const Config: SettingsConfiguration<{ server: Server }> = {
               id: "notifications",
               icon: <MdNotifications {...iconSize(20)} />,
               title: <Trans>Notifications</Trans>,
+            },
+            {
+              id: "voice",
+              icon: <MdMic {...iconSize(20)} />,
+              title: CONFIGURATION.ENABLE_VIDEO ? (
+                <Trans>Voice & Video</Trans>
+              ) : (
+                <Trans>Voice</Trans>
+              ),
             },
             {
               id: "streamer",
@@ -343,15 +297,72 @@ const Config: SettingsConfiguration<{ server: Server }> = {
             //   icon: <MdScience {...iconSize(20)} />,
             //   title: <Trans>Experiments</Trans>,
             // },
-          ],
-        },
-        {
-          entries: [
+            // Advanced closes out the settings proper. It used to share a
+            // group with Sign out, which read as if the two belonged together.
             {
               id: "advanced",
               icon: <MdScience {...iconSize(20)} />,
               title: <Trans>Advanced</Trans>,
             },
+          ],
+        },
+        {
+          // Everything here leaves the app or opens a one-shot dialog — none of
+          // it is a setting, which is why it sits below the settings instead of
+          // in the middle of them.
+          title: <Trans>About</Trans>,
+          entries: [
+            {
+              id: "donate",
+              // Google Play treats linking out to donations as a payments-policy
+              // grey area and Sloga is not a registered nonprofit, so this is
+              // hidden in Play builds only — web, desktop and the sloga.gg APK
+              // all still show it.
+              hidden: !allowsDonationLinks(),
+              // Brand orange, matching the Home screen donate button and the
+              // sloga.gg header — this entry is meant to stand out.
+              icon: <MdCoffee {...iconSize(20)} fill="#FF8A00" />,
+              title: (
+                <ColouredText colour="#FF8A00">
+                  <Trans>Donate to Sloga</Trans>
+                </ColouredText>
+              ),
+              href: "https://ko-fi.com/slogatech",
+            },
+            {
+              id: "changelog",
+              icon: <MdCampaign {...iconSize(20)} />,
+              title: <Trans>Patch Notes</Trans>,
+              async onClick() {
+                const changelogs = await fetchAllChangelogs();
+                if (changelogs.length) {
+                  openModal({ type: "changelog_history", changelogs });
+                }
+              },
+            },
+            {
+              id: "feedback",
+              icon: <MdRateReview {...iconSize(20)} />,
+              title: <Trans>Feedback</Trans>,
+            },
+            // Reachable copies of the policies a user accepted at registration.
+            // Play expects them findable in-app, not only on the website.
+            {
+              id: "terms",
+              icon: <MdGavel {...iconSize(20)} />,
+              title: <Trans>Terms of Service</Trans>,
+              href: "https://sloga.gg/legal/terms.html",
+            },
+            {
+              id: "privacy",
+              icon: <MdPolicy {...iconSize(20)} />,
+              title: <Trans>Privacy Policy</Trans>,
+              href: "https://sloga.gg/legal/privacy.html",
+            },
+          ],
+        },
+        {
+          entries: [
             {
               id: "logout",
               icon: (

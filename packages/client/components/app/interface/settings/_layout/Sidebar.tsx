@@ -2,16 +2,18 @@ import { Accessor, For, Setter, Show, onMount } from "solid-js";
 
 import { styled } from "styled-system/jsx";
 
-import { Column, OverflowingText } from "@revolt/ui";
+import { Column, OverflowingText, iconSize } from "@revolt/ui";
 
 // import MdError from "@material-design-icons/svg/filled/error.svg?component-solid";
-// import MdOpenInNew from "@material-design-icons/svg/filled/open_in_new.svg?component-solid";
+import MdOpenInNew from "@material-design-icons/svg/filled/open_in_new.svg?component-solid";
+
 import { SettingsList } from "..";
 import { useSettingsNavigation } from "../Settings";
 
 import {
   SidebarButton,
   SidebarButtonContent,
+  SidebarButtonIcon,
   SidebarButtonTitle,
 } from "./SidebarButton";
 
@@ -27,10 +29,20 @@ export function SettingsSidebar(props: {
 
   /**
    * Select first page on load
+   *
+   * Skips hidden categories and entries. The first entry of the first category
+   * is a hidden stub on the user settings list, and category order is not
+   * fixed, so taking [0][0] blindly can land on a page with no sidebar row.
    */
   onMount(() => {
     if (!props.page()) {
-      props.setPage(props.list().entries[0].entries[0].id);
+      const firstVisible = props
+        .list()
+        .entries.filter((category) => !category.hidden)
+        .flatMap((category) => category.entries)
+        .find((entry) => !entry.hidden && entry.id);
+
+      props.setPage(firstVisible?.id);
     }
   });
 
@@ -66,16 +78,16 @@ export function SettingsSidebar(props: {
                                   </OverflowingText>
                                 </SidebarButtonContent>
                               </SidebarButtonTitle>
-                              {/*<SidebarButtonIcon>
-                                <MdOpenInNew
-                                  {...iconSize(20)}
-                                  fill={theme!.colour("primary")}
-                                />
-                                <MdError
-                                  {...iconSize(20)}
-                                  fill={theme!.colour("primary")}
-                                />
-                              </SidebarButtonIcon>*/}
+                              {/* An href entry leaves the app entirely; say so
+                                  before the click rather than after it. */}
+                              <Show when={entry.href}>
+                                <SidebarButtonIcon>
+                                  <MdOpenInNew
+                                    {...iconSize(16)}
+                                    fill="var(--md-sys-color-outline)"
+                                  />
+                                </SidebarButtonIcon>
+                              </Show>
                             </SidebarButton>
                           </Show>
                         )}

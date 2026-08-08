@@ -519,6 +519,10 @@ msgstr "Able to access this channel"
 msgid "Able to speak in voice call"
 msgstr "Able to speak in voice call"
 
+#: components/app/interface/settings/UserSettings.tsx
+msgid "About"
+msgstr "About"
+
 #: src/interface/ServerEvents.tsx
 #: components/ui/components/features/voice/IncomingCallOverlay.tsx
 #: components/ui/components/features/voice/callCard/RemoteControlOverlays.tsx
@@ -533,6 +537,10 @@ msgstr "Accept friend request"
 #: components/modal/modals/E2EEIdentityChange.tsx
 msgid "Accept new identity"
 msgstr "Accept new identity"
+
+#: components/app/interface/settings/UserSettings.tsx
+msgid "Account"
+msgstr "Account"
 
 #: components/modal/modals/PolicyChange.tsx
 msgid "Acknowledge"
@@ -720,6 +728,10 @@ msgstr "Answers"
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
 msgid "Anyone you give control to can use your mouse and keyboard, run commands and open your files. Nobody from support will ever ask you for control."
 msgstr "Anyone you give control to can use your mouse and keyboard, run commands and open your files. Nobody from support will ever ask you for control."
+
+#: components/app/interface/settings/UserSettings.tsx
+msgid "App Settings"
+msgstr "App Settings"
 
 #: components/app/interface/settings/UserSettings.tsx
 #: components/app/interface/settings/user/Sync.tsx
