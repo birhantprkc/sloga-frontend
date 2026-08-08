@@ -12,6 +12,20 @@ export const CHANGELOGS: ChangelogResponse[] = [
   // in git history and stays OUT until the RC prod flag is deliberately
   // reopened — never announce a dark feature.
   {
+    id: "sloga-2026-08-08-2",
+    title: "Patch Notes",
+    published_at: "2026-08-08T13:20:00.000Z",
+    markdown_content: `## v0.25.0 — Light mode, and colors that do something
+
+### 🎨 The appearance menu works
+- **Light mode is actually light.** It used to turn the text dark but leave the background dark too, which made most of the app unreadable. The colors were being overwritten right after the theme worked them out, so only half the switch ever happened.
+- **Pick a palette.** *Sloga* is the look you already know, and it is still the default. *Material You* builds every color in the app out of one accent you choose.
+- **The accent swatches, contrast levels and color styles all do something now.** They were being calculated and then thrown away. They live under Material You, and they are hidden under Sloga, where they had nothing to change.
+- **Labels on buttons are readable.** White text on the Sloga blue was well under the contrast a small label needs, so text on bright buttons is dark now instead of white. You will notice this on the sign-up button and anywhere a channel is selected.
+
+*Sloga — Hop on.*`,
+  },
+  {
     id: "sloga-2026-08-08",
     title: "Patch Notes",
     published_at: "2026-08-08T06:30:00.000Z",
