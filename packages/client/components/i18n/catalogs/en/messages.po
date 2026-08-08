@@ -6064,6 +6064,11 @@ msgstr "Upcoming"
 msgid "Update reserve"
 msgstr "Update reserve"
 
+#. placeholder {0}: desktopUpdatePending()
+#: src/interface/navigation/UserFooter.tsx
+msgid "Update to {0} and restart Sloga"
+msgstr "Update to {0} and restart Sloga"
+
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Upload Files"
 msgstr "Upload Files"
