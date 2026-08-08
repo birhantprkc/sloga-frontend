@@ -75,6 +75,20 @@ export function UserProfileEditor(props: Props) {
     ),
   );
 
+  // Drop a refusal as soon as the name is edited again. Clearing it on submit
+  // is not enough on its own: typing the original name back makes the form
+  // clean, which disables Save, so no submit ever runs and the old error would
+  // sit there next to a name that is perfectly fine.
+  createEffect(
+    on(
+      () => editGroup.controls.displayName.value,
+      () => {
+        if (editGroup.errors?.error) editGroup.setErrors(null);
+      },
+      { defer: true },
+    ),
+  );
+
   function onReset() {
     editGroup.controls.displayName.setValue(props.user.displayName);
     editGroup.controls.avatar.setValue(props.user.animatedAvatarURL);
