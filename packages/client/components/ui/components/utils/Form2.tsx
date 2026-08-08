@@ -470,6 +470,10 @@ function useSubmitHandler(
 
     if (!canSubmit(group)) return;
 
+    // Clear whatever the last attempt left behind — nothing else does, so a
+    // form that failed once would keep showing that error over every later
+    // attempt, including the ones that succeed.
+    group.setErrors(null);
     group.markPending(true);
 
     try {

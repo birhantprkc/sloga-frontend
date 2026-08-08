@@ -1,5 +1,5 @@
 import { createFormControl, createFormGroup } from "solid-forms";
-import { Show, createEffect, createSignal, on } from "solid-js";
+import { Match, Show, Switch, createEffect, createSignal, on } from "solid-js";
 
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import { useQuery, useQueryClient } from "@tanstack/solid-query";
@@ -7,6 +7,7 @@ import { API, User } from "stoat.js";
 
 import { useClient } from "@revolt/client";
 import { CONFIGURATION } from "@revolt/common";
+import { useError } from "@revolt/i18n";
 import {
   CategoryButton,
   CircularProgress,
@@ -26,6 +27,7 @@ interface Props {
 
 export function UserProfileEditor(props: Props) {
   const { t } = useLingui();
+  const err = useError();
   const client = useClient();
   const queryClient = useQueryClient();
 
@@ -196,14 +198,22 @@ export function UserProfileEditor(props: Props) {
           placeholder={t`Something cool about me...`}
         />
 
-        <Row>
+        <Row align>
           <Form2.Reset group={editGroup} onReset={onReset} />
           <Form2.Submit group={editGroup} requireDirty>
             <Trans>Save</Trans>
           </Form2.Submit>
-          <Show when={editGroup.isPending}>
-            <CircularProgress />
-          </Show>
+          {/* The submit handler stores a rejected save on the group but
+              nothing rendered it, so a refused display name looked like the
+              button simply did nothing. */}
+          <Switch>
+            <Match when={editGroup.errors?.error}>
+              {err(editGroup.errors!.error)}
+            </Match>
+            <Match when={editGroup.isPending}>
+              <CircularProgress />
+            </Match>
+          </Switch>
         </Row>
       </Column>
     </form>
