@@ -179,7 +179,14 @@ export function UserFooter(props: { stacked?: boolean }) {
           variant="standard"
           onPress={installDesktopUpdate}
           isDisabled={desktopUpdateInstalling()}
-          style={{ "--colour": "var(--customColours-success-color)" }}
+          // The active theme exposes no semantic "success" colour -- the
+          // customColours success/warning/error keys exist in the legacy
+          // generator's TYPE only, and are emitted just for themes that
+          // actually declare them, so var(--customColours-success-color)
+          // resolves to nothing and the icon falls back to the row's grey.
+          // --brand-presence-online is the one green the theme really
+          // defines; the arrow tracks it deliberately.
+          style={{ "--colour": "var(--brand-presence-online)" }}
           use:floating={{
             tooltip: {
               placement: props.stacked ? "right" : "top",
