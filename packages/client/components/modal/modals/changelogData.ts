@@ -8,6 +8,41 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // The voice-awareness and Slogatron sections ship lit in this build, but
+  // neither has been seen in a real call -- the badge needs a second account
+  // screensharing, the picker needs a logged-in session. Claims here are
+  // written from the code that ships, and nothing is promised that a reader
+  // could not check on their own screen. The multi-instance row is Windows
+  // only because the Electron shell has no such command; the client hides it
+  // on a shell that does not report it, so no note is needed for Linux.
+  {
+    id: "sloga-2026-08-09",
+    title: "Patch Notes",
+    published_at: "2026-08-09T22:00:00.000Z",
+    markdown_content: `## v0.28.0 — See who's already talking
+
+### 👀 Know before you join
+- **A red LIVE badge marks anyone sharing their screen** in a voice channel, so you can tell there is something worth joining before you join it.
+- **The badge no longer disappears the moment you join.** It used to show only to people standing outside the channel, so the sidebar said one thing before you joined and another after.
+- **The share icon now means a screen is actually on.** Stopping your video but leaving screen audio running used to keep the icon lit with nothing behind it.
+- **Friends and DMs show "Voice" when someone is already in a call**, so you can see not to ring somebody mid-conversation. It covers the channels you can see — a friend sitting in a server you are not in still reads as free, because that roster never reaches you.
+- **There is deliberately no hover preview.** Call video is end-to-end encrypted: the server holds no picture to show you, and watching would mean joining. The tooltip tells you video is live instead of pretending to show it.
+
+### 🕹️ Slogatron
+- **A second game for waiting out a call.** Ride the rim of a segmented web, shoot down your own lane at whatever climbs it, then dive through to the next web past whatever is left standing. Three lives, one superzapper per web, eight web shapes.
+- **The game chip opens a picker now**, since it can no longer mean one game. Slogaball is still there, and each game keeps its own paused field per channel — switching games never drops you back into the wrong one.
+
+### 🪟 Run two Slogas at once (Windows desktop)
+- **A checkbox in desktop settings lets a second copy of Sloga start**, so you can be signed into two accounts on one PC at the same time.
+- **Each copy gets its own login, its own encryption store and its own window layout.** The first one keeps everything exactly where it already was, so turning this back off puts you where you were.
+- **It takes effect at next launch**, because the shell has to decide which copy it is before the window exists.
+
+### 🔐 A clearer encryption failure
+- **If this device's encryption store belongs to a different account, Sloga now says so.** It used to show the call as "Not encrypted" and a screen share that connected and then sent nothing, with no reason given anywhere.
+- **That message carries a Reset encryption button.** Staying unencrypted for the call you are in is still a legitimate choice; the reset is the thing that fixes the next one. It asks you to prove the account is yours first, and it warns you that encrypted messages stored on this device go with it.
+
+*Sloga — Hop on.*`,
+  },
   // The remote-control section below is the v0.21.0 draft (c9d2f53a) that was
   // held back under "never announce a dark feature". It is no longer dark:
   // desktop 0.23.0 is the first installer built with
