@@ -651,6 +651,10 @@ msgstr "Allow members to change name and avatar per-message"
 msgid "Allow multiple answers"
 msgstr "Allow multiple answers"
 
+#: components/app/interface/settings/user/Native.tsx
+msgid "Allow Multiple Instances"
+msgstr "Allow Multiple Instances"
+
 #: components/app/interface/settings/user/bots/ViewBot.tsx
 msgid "Allow others to add your bot to their servers from Discover"
 msgstr "Allow others to add your bot to their servers from Discover"
@@ -3231,6 +3235,7 @@ msgid "Live"
 msgstr "Live"
 
 #: src/interface/channels/text/MemberSidebar.tsx
+#: components/ui/components/features/voice/VoiceChannelPreview.tsx
 #: components/ui/components/features/profiles/ProfileConnections.tsx
 #: components/app/interface/settings/user/Connections.tsx
 msgid "LIVE"
@@ -4063,6 +4068,10 @@ msgstr "Open server settings"
 #: src/interface/Home.tsx
 msgid "Open settings"
 msgstr "Open settings"
+
+#: components/app/interface/settings/user/Native.tsx
+msgid "Open Sloga more than once to use a second account. Takes effect next time you launch; the first window you open is always your main account."
+msgstr "Open Sloga more than once to use a second account. Takes effect next time you launch; the first window you open is always your main account."
 
 #: components/modal/modals/ScheduleMessage.tsx
 msgid "Or pick a time"
@@ -5140,6 +5149,10 @@ msgstr "Share Game Activity"
 #: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx
 msgid "Share screen"
 msgstr "Share screen"
+
+#: components/ui/components/features/voice/VoiceChannelPreview.tsx
+msgid "Sharing their screen — join to watch"
+msgstr "Sharing their screen — join to watch"
 
 #: components/app/interface/settings/user/Native.tsx
 msgid "Show corrections and suggestions as you type."
@@ -6288,6 +6301,8 @@ msgstr "Viewing older messages"
 msgid "Virtual background"
 msgstr "Virtual background"
 
+#: src/interface/navigation/channels/HomeSidebar.tsx
+#: src/interface/Friends.tsx
 #: components/app/interface/settings/UserSettings.tsx
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Voice"
@@ -6766,3 +6781,43 @@ msgstr "No category"
 #: components/i18n/errors.ts
 msgid "This name is not allowed."
 msgstr "This name is not allowed."
+
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Play while you wait"
+msgstr "Play while you wait"
+
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Drop the ball, clear the pegs."
+msgstr "Drop the ball, clear the pegs."
+
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Hold the rim, clear the web."
+msgstr "Hold the rim, clear the web."
+
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Back to games"
+msgstr "Back to games"
+
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Slogatron minigame"
+msgstr "Slogatron minigame"
+
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Game over"
+msgstr "Game over"
+
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Web cleared!"
+msgstr "Web cleared!"
+
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Zap"
+msgstr "Zap"
+
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Click to start"
+msgstr "Click to start"
+
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Web {n}"
+msgstr "Web {n}"
