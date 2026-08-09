@@ -37,6 +37,7 @@ export { type DialogProps, Dialog } from "./Dialog";
 export { FloatingSelect } from "./FloatingSelect";
 export { IconButton } from "./IconButton";
 export { List } from "./List";
+export { livePill } from "./LivePill";
 export { CircularProgress, slogaBurstKeyframes } from "./LoadingProgress";
 export { MenuItem } from "./Menu";
 export { MenuButton } from "./MenuButton";

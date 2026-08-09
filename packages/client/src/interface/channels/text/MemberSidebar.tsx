@@ -20,6 +20,7 @@ import { userInformation } from "@revolt/markdown/users";
 import {
   Avatar,
   Deferred,
+  livePill,
   MenuButton,
   OverflowingText,
   Row,
@@ -435,24 +436,6 @@ const MemberTitle = styled("div", {
 });
 
 /**
- * Red LIVE pill shown next to the username while a linked streaming
- * channel is live
- */
-const LivePill = styled("span", {
-  base: {
-    ...typography.raw({ class: "label", size: "small" }),
-    background: "#e91916",
-    color: "#fff",
-    borderRadius: "var(--borderRadius-sm)",
-    padding: "0 var(--gap-sm)",
-    marginInlineStart: "var(--gap-sm)",
-    fontWeight: 700,
-    lineHeight: "1.4",
-    verticalAlign: "middle",
-  },
-});
-
-/**
  * Styles required to correctly display name and status
  */
 const NameStatusStack = styled("div", {
@@ -542,9 +525,9 @@ function Member(props: {
           <OverflowingText>
             <Username username={user().username} colour={user().colour!} />
             <Show when={liveConnection()}>
-              <LivePill>
+              <span class={livePill()}>
                 <Trans>LIVE</Trans>
-              </LivePill>
+              </span>
             </Show>
           </OverflowingText>
           <Show when={status()}>

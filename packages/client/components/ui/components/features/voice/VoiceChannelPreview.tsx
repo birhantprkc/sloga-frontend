@@ -7,6 +7,7 @@ import {
   useTracks,
 } from "solid-livekit-components";
 
+import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import { Track } from "livekit-client";
 import { Channel, VoiceParticipant } from "stoat.js";
 import { cva } from "styled-system/css";
@@ -16,7 +17,7 @@ import { UserContextMenu } from "@revolt/app";
 import { useUser } from "@revolt/markdown/users";
 import { InRoom } from "@revolt/rtc";
 
-import { Avatar, Ripple, typography } from "../../design";
+import { Avatar, Ripple, livePill, typography } from "../../design";
 import { Row } from "../../layout";
 
 import { participantUserId } from "./participantIdentity";
@@ -34,15 +35,17 @@ export function VoiceChannelPreview(props: { channel: Channel }) {
       channelId={props.channel.id}
       fallback={<VariantPreview channel={props.channel} />}
     >
-      <VariantLive />
+      <VariantLive channel={props.channel} />
     </InRoom>
   );
 }
 
 /**
- * Use API as the source of truth
+ * Use LiveKit as the source of truth for who is present
+ *
+ * Track state still comes from the channel roster — see `ParticipantLive`.
  */
-function VariantLive() {
+function VariantLive(props: { channel: Channel }) {
   const tracks = useTracks(
     [{ source: Track.Source.Camera, withPlaceholder: true }],
     { onlySubscribed: false },
@@ -50,13 +53,15 @@ function VariantLive() {
 
   return (
     <Base>
-      <TrackLoop tracks={tracks}>{() => <ParticipantLive />}</TrackLoop>
+      <TrackLoop tracks={tracks}>
+        {() => <ParticipantLive channel={props.channel} />}
+      </TrackLoop>
     </Base>
   );
 }
 
 /**
- * Use LiveKit as the source of truth
+ * Use the API as the source of truth
  */
 function VariantPreview(props: { channel: Channel }) {
   return (
@@ -71,9 +76,26 @@ function VariantPreview(props: { channel: Channel }) {
 }
 
 /**
- * Live variant of participant
+ * A screen-AUDIO-only share.
+ *
+ * The historical `screensharing` flag is set for both the screen video and the
+ * screen audio track, so on its own it can mean "sharing" with nothing to look
+ * at. Splitting the two is what lets the LIVE badge promise video and only
+ * video; what is left over still deserves the quieter share glyph.
  */
-function ParticipantLive() {
+function screenAudioOnly(state: VoiceParticipant | undefined) {
+  return !!state && state.isScreensharing() && !state.isScreenVideo();
+}
+
+/**
+ * Live variant of participant
+ *
+ * LiveKit supplies presence and the real-time speaking/mute signals, but camera
+ * and screenshare are read from the channel roster: it is the same state
+ * everyone outside the call sees, so the badges cannot say one thing in the
+ * sidebar and another the moment you join.
+ */
+function ParticipantLive(props: { channel: Channel }) {
   const participant = useEnsureParticipant();
 
   const isMuted = useIsMuted({
@@ -83,14 +105,20 @@ function ParticipantLive() {
 
   const isSpeaking = useIsSpeaking(participant);
 
+  const state = () =>
+    props.channel.voiceParticipants.get(
+      participantUserId(participant.identity),
+    );
+
   return (
     <CommonUser
       userId={participant.identity}
       speaking={isSpeaking()}
       muted={isMuted()}
       deafened={false}
-      camera={false}
-      screenshare={false}
+      camera={state()?.isCamera() ?? false}
+      screenshare={screenAudioOnly(state())}
+      sharingScreen={state()?.isScreenVideo() ?? false}
       isLive
     />
   );
@@ -107,7 +135,8 @@ function ParticipantPreview(props: { participant: VoiceParticipant }) {
       muted={!props.participant.isPublishing()}
       deafened={!props.participant.isReceiving()}
       camera={props.participant.isCamera()}
-      screenshare={props.participant.isScreensharing()}
+      screenshare={screenAudioOnly(props.participant)}
+      sharingScreen={props.participant.isScreenVideo()}
     />
   );
 }
@@ -122,8 +151,12 @@ function CommonUser(props: {
   deafened: boolean;
   camera: boolean;
   screenshare: boolean;
+  /** Screen VIDEO is live — this is what earns the LIVE badge */
+  sharingScreen?: boolean;
   isLive?: boolean;
 }) {
+  const { t } = useLingui();
+
   const [iconProps, rest] = splitProps(props, [
     "muted",
     "deafened",
@@ -152,7 +185,26 @@ function CommonUser(props: {
     >
       <Ripple />
       <Avatar size={24} src={user().avatar} fallback={user().username} />{" "}
-      <PreviewUsername>{user().username}</PreviewUsername>
+      <NameRow>
+        <PreviewUsername>{user().username}</PreviewUsername>
+        <Show when={rest.sharingScreen}>
+          {/* No thumbnail: call media is end-to-end encrypted, so nobody
+              outside the call holds a key to the frames and the server never
+              sees them at all. The badge says that video is live and what to
+              do about it; it does not pretend to show what. */}
+          <span
+            class={livePill()}
+            use:floating={{
+              tooltip: {
+                placement: "top",
+                content: t`Sharing their screen — join to watch`,
+              },
+            }}
+          >
+            <Trans>LIVE</Trans>
+          </span>
+        </Show>
+      </NameRow>
       <Row gap="sm">
         <VoiceStatefulUserIcons {...iconProps} userId={rest.userId} />
       </Row>
@@ -200,11 +252,27 @@ const previewUser = cva({
   },
 });
 
+/**
+ * Name and badge, hugging each other at the start of the row.
+ *
+ * This is the element that grows, not the username — otherwise the badge would
+ * be shoved across the row to sit against the state icons instead of beside the
+ * name it belongs to.
+ */
+const NameRow = styled("div", {
+  base: {
+    minWidth: 0,
+    flexGrow: 1,
+    display: "flex",
+    alignItems: "center",
+  },
+});
+
 const PreviewUsername = styled("span", {
   base: {
     ...typography.raw(),
 
-    flexGrow: 1,
+    minWidth: 0,
     overflow: "hidden",
     whiteSpace: "nowrap",
     textOverflow: "ellipsis",
