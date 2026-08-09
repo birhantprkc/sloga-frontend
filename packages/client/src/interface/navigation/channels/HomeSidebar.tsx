@@ -8,6 +8,7 @@ import { styled } from "styled-system/jsx";
 
 import { ChannelContextMenu, UserContextMenu } from "@revolt/app";
 import { useClient } from "@revolt/client";
+import { voiceChannelOf } from "@revolt/client/voicePresence";
 import { TextWithEmoji } from "@revolt/markdown";
 import { useModals } from "@revolt/modal";
 import { useLocation, useNavigate } from "@revolt/routing";
@@ -267,6 +268,7 @@ function Entry(
 
   const { t } = useLingui();
   const { openModal } = useModals();
+  const client = useClient();
 
   /**
    * Whether this conversation has a call ringing us right now
@@ -274,10 +276,25 @@ function Entry(
   const ringing = () => incomingCall()?.channel.id === local.channel.id;
 
   /**
+   * Whether the person on the other end of this DM is sitting in a call.
+   *
+   * Same purpose as the friends list: you can see not to ring someone who is
+   * already talking to people. Only calls in channels we can see count — see
+   * `voiceChannelOf` for what that misses.
+   */
+  const inVoice = createMemo(() => {
+    const recipient = local.channel.recipient;
+    return !!recipient && !!voiceChannelOf(client(), recipient.id);
+  });
+
+  /**
    * Determine user status if present
    */
   const status = () => {
     if (ringing()) return t`Incoming Call`;
+    // Below a call ringing US, but above everything else: a broadcast or a
+    // custom status does not change whether it is a good moment to call.
+    if (inVoice()) return t`Voice`;
     const activity = local.channel.recipient?.activity;
     if (activity) return t`Playing ${activity.name}`;
     return local.channel.recipient?.statusMessage((s) =>

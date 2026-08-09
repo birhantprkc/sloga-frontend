@@ -18,6 +18,7 @@ import { styled } from "styled-system/jsx";
 import { UserContextMenu } from "@revolt/app";
 import { useClient, useUser } from "@revolt/client";
 import { IS_POPOUT_WINDOW } from "@revolt/client/popout";
+import { voiceChannelOf } from "@revolt/client/voicePresence";
 import { tauriInvoke } from "@revolt/common";
 import { useModals } from "@revolt/modal";
 import { useState } from "@revolt/state";
@@ -477,6 +478,7 @@ function Entry(props: { user: User; tabIndex?: number }) {
   const navigate = useNavigate();
   const state = useState();
   const snackbar = useSnackbar();
+  const client = useClient();
 
   // Delay single-click so a double-click can cancel it and open the DM instead
   let clickTimer: number | undefined;
@@ -521,6 +523,18 @@ function Entry(props: { user: User; tabIndex?: number }) {
   const favourite = () => state.friends.isFavourite(props.user.id);
 
   /**
+   * Whether this user is sitting in a call.
+   *
+   * The point of surfacing it here is the decision it saves: you can see not to
+   * ring someone who is already talking to people. Only calls in channels we
+   * can see are visible — see `voiceChannelOf` for exactly what that misses.
+   *
+   * Memoised because the lookup walks every channel we know about, and both
+   * the label and the accent colour below read it.
+   */
+  const inVoice = createMemo(() => !!voiceChannelOf(client(), props.user.id));
+
+  /**
    * Stream or game the user is broadcasting, if any — these read as
    * activity rather than presence, so they take the online accent colour
    */
@@ -537,8 +551,16 @@ function Entry(props: { user: User; tabIndex?: number }) {
     return undefined;
   };
 
+  /**
+   * Being in a call outranks a broadcast or a custom status: it is the one
+   * line here that changes what you are about to do.
+   */
   const status = () =>
-    activity() ?? props.user.status?.text ?? presenceLabel(props.user.presence);
+    inVoice()
+      ? t`Voice`
+      : (activity() ??
+        props.user.status?.text ??
+        presenceLabel(props.user.presence));
 
   return (
     <div
@@ -567,7 +589,9 @@ function Entry(props: { user: User; tabIndex?: number }) {
         <div class={`name ${name()} ${ellipsis()}`}>
           {props.user.displayName}
         </div>
-        <div class={`${statusText({ accent: !!activity() })} ${ellipsis()}`}>
+        <div
+          class={`${statusText({ accent: inVoice() || !!activity() })} ${ellipsis()}`}
+        >
           {status()}
         </div>
       </div>
