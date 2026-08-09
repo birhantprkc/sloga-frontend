@@ -3,8 +3,11 @@ import { Show, createMemo, createSignal, onCleanup } from "solid-js";
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import { styled } from "styled-system/jsx";
 
+import { useClient, useE2EE } from "@revolt/client";
 import { useUsers } from "@revolt/markdown/users";
+import { useModals } from "@revolt/modal";
 import { useVoice } from "@revolt/rtc";
+import { storeOwnerMismatch } from "@revolt/rtc/e2eeStoreOwner";
 import { Button } from "@revolt/ui/components/design";
 
 import { participantUserId } from "../participantIdentity";
@@ -72,47 +75,116 @@ export function VoiceCallDowngradeBanner() {
     return m?.kind === "interlude" && m.localConfirmed;
   };
 
+  // The call failed to secure because THIS INSTALL's E2EE store belongs to a
+  // different account — a device-level fault no call-level control can fix.
+  // "Stay unencrypted" would work for this one call and the next call would
+  // fail identically, so the banner also offers the only real remedy.
+  const e2ee = useE2EE();
+  const client = useClient();
+  const { mfaFlow, showError } = useModals();
+  const ownerMismatch = () => storeOwnerMismatch(voice.callEncryptionError());
+
+  const [resetting, setResetting] = createSignal(false);
+
+  /**
+   * Reset this device's encryption so it can enrol under the signed-in
+   * account. Uses `E2EEBridge.disable` rather than raw `e2ee_wipe`: the wipe
+   * alone leaves the device in the server's key directory, so peers keep
+   * encrypting to a device that can no longer decrypt.
+   *
+   * Two deliberate gates, both cancellable with nothing changed: MFA proves
+   * account ownership, then native shows a BLOCKING OS confirm (design §9a —
+   * a webview can never destroy this on its own). Declining either is a
+   * silent no-op, not an error worth a toast.
+   */
+  const resetDevice = async () => {
+    if (resetting() || !e2ee) return;
+    setResetting(true);
+    try {
+      const mfa = await client().account.mfa();
+      const ticket = await mfaFlow(mfa);
+      if (!ticket?.token) return; // cancelled at the re-auth step
+      await e2ee.disable(ticket.token);
+    } catch (error) {
+      // The native decline is typed `declined` and means "user said no".
+      // Anything else is a genuine failure the user should see, because they
+      // just asked for something destructive and it did not happen.
+      if ((error as { type?: string } | null)?.type !== "declined") {
+        showError(error);
+      }
+    } finally {
+      setResetting(false);
+    }
+  };
+
   return (
     <Show when={visible()}>
       <Banner interlude={mode()?.kind === "interlude"}>
         <Text>
           <Show
-            when={voice.callTerminalLoud()}
+            when={ownerMismatch()}
             fallback={
               <Show
-                when={mode()?.kind === "interlude" && voice.callAnnouncedBy()}
+                when={voice.callTerminalLoud()}
                 fallback={
                   <Show
-                    when={names().length}
+                    when={
+                      mode()?.kind === "interlude" && voice.callAnnouncedBy()
+                    }
                     fallback={
-                      <Trans>
-                        Someone in this call is not using encrypted calls. Your
-                        audio and video stay paused until you turn off
-                        encryption.
-                      </Trans>
+                      <Show
+                        when={names().length}
+                        fallback={
+                          <Trans>
+                            Someone in this call is not using encrypted calls.
+                            Your audio and video stay paused until you turn off
+                            encryption.
+                          </Trans>
+                        }
+                      >
+                        <Trans>
+                          {names().join(", ")} is not using encrypted calls.
+                          Your audio and video stay paused until you turn off
+                          encryption.
+                        </Trans>
+                      </Show>
                     }
                   >
                     <Trans>
-                      {names().join(", ")} is not using encrypted calls. Your
-                      audio and video stay paused until you turn off encryption.
+                      A participant turned off encryption for this call. Resume
+                      to be heard — the server will be able to read this call.
                     </Trans>
                   </Show>
                 }
               >
                 <Trans>
-                  A participant turned off encryption for this call. Resume to
-                  be heard — the server will be able to read this call.
+                  This call could not be secured. Your audio and video stay
+                  paused — leave, or continue without encryption.
                 </Trans>
               </Show>
             }
           >
             <Trans>
-              This call could not be secured. Your audio and video stay paused —
-              leave, or continue without encryption.
+              Encryption on this device is set up for a different account, so
+              calls here cannot be encrypted. Resetting clears this device's
+              encryption — including encrypted messages stored on it — and sets
+              it up again for the account you are signed in as.
             </Trans>
           </Show>
         </Text>
         <Actions>
+          {/* Offered, never forced: this destroys local E2EE state, so it sits
+              alongside "Stay unencrypted" rather than replacing it. */}
+          <Show when={ownerMismatch()}>
+            <Button
+              size="sm"
+              variant="text"
+              isDisabled={resetting()}
+              onPress={() => void resetDevice()}
+            >
+              <Trans>Reset encryption</Trans>
+            </Button>
+          </Show>
           <Show when={!localConfirmed()}>
             <Button
               size="sm"

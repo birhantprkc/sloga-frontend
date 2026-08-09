@@ -2288,6 +2288,10 @@ msgstr "Encrypted messaging is on"
 msgid "Encryption is off for this device. New direct messages are no longer end-to-end encrypted, and your contacts have been told this device no longer uses encryption."
 msgstr "Encryption is off for this device. New direct messages are no longer end-to-end encrypted, and your contacts have been told this device no longer uses encryption."
 
+#: components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
+msgid "Encryption on this device is set up for a different account, so calls here cannot be encrypted. Resetting clears this device's encryption — including encrypted messages stored on it — and sets it up again for the account you are signed in as."
+msgstr "Encryption on this device is set up for a different account, so calls here cannot be encrypted. Resetting clears this device's encryption — including encrypted messages stored on it — and sets it up again for the account you are signed in as."
+
 #: src/interface/channels/text/Composition.tsx
 #: src/interface/channels/text/Composition.tsx
 #: components/app/interface/channels/text/MessageComponents.tsx
@@ -4701,6 +4705,10 @@ msgstr "Reset Recovery Codes"
 #: components/app/interface/settings/user/bots/ViewBot.tsx
 msgid "Reset Token"
 msgstr "Reset Token"
+
+#: components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
+msgid "Reset encryption"
+msgstr "Reset encryption"
 
 #: components/modal/modals/ReportQueue.tsx
 msgid "Resolve"
