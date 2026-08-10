@@ -8,6 +8,28 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // Meadow and Space are code-verified (rendered in a bundled harness; the
+  // Space frames were checked frame-against-frame), but the animation has not
+  // been exercised against a live camera track, so the copy describes the
+  // scene, not call behavior. The retired Arcade/Gamepad ids fall back to
+  // "no background" by design.
+  {
+    id: "sloga-2026-08-10-2",
+    title: "Patch Notes",
+    published_at: "2026-08-10T08:30:00.000Z",
+    markdown_content: `## v0.30.0 — Fresh scenery
+
+### 🌄 A meadow and the night sky
+- **Meadow** — a rolling green hill under a summer sky, hand-drawn in the style of a certain classic desktop wallpaper.
+- **Space** — our first *animated* background: a deep-space scene where the stars genuinely twinkle behind you while you talk.
+- These replace the Arcade and Gamepad backgrounds. If you had one of those selected, your camera quietly falls back to no background — pick a new favorite in Settings → Voice & Video.
+
+### 🖼️ Bring your own background
+- **The upload button under the background picker works now.** It opens a real file picker instead of doing nothing. Your image stays on your device — backgrounds are composited locally before your video is encrypted and sent.
+- Also fixed: the camera preview's Stop button wore a gradient that belonged to no theme. It dresses like the rest of the app now.
+
+*Sloga — Hop on.*`,
+  },
   // The four camera presets are code-verified (all render in a bundled
   // harness) but nobody has applied one to a live camera track in the real
   // settings screen yet, so the copy describes what they look like, not how
