@@ -282,16 +282,23 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
 
   return (
     <Show when={canOffer()}>
-      {/* A filled PILL, not another tonal circle: in this row the circles
-          are toggles and the pills are one-shot actions (End call is the
-          other one). This is the row's most consequential action and it only
-          mounts while a share is live, so the extra visual weight appears
-          exactly when it is relevant and never clutters an idle call. The
-          cursor glyph says "hand over the pointer"; the old desktop_windows
-          monitor read as just another screen control. */}
+      {/* A LABELLED pill, and deliberately not `filled`.
+
+          Shape alone did not carry it: `filled` resolves to the same
+          primary/on-primary pair as IconButton's active state, so the first
+          attempt rendered as a third lit circle indistinguishable from an
+          unmuted mic — observed in a real call. Three things separate it now:
+          the tertiary colour (neither a lit toggle nor destructive red), the
+          width a label gives it, and the label itself.
+
+          The words matter beyond styling. This hands over a mouse and
+          keyboard, and an unlabelled glyph asks someone to recognise that
+          from an icon; Teams and Zoom both spell it out. It only mounts while
+          a whole-screen share is live, so the extra width is never present on
+          an idle call. */}
       <Button
         size={props.size}
-        variant="filled"
+        variant="_tertiary"
         onPress={() =>
           setOpen((was) => {
             // Reset on every open, not on close: a checkbox that stayed
@@ -312,6 +319,7 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
         }}
       >
         <Symbol>arrow_selector_tool</Symbol>
+        <Trans>Give control</Trans>
       </Button>
 
       <Show when={open()}>

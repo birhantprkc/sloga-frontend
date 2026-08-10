@@ -2697,6 +2697,10 @@ msgid "Getting a link"
 msgstr "Getting a link"
 
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
+msgid "Give control"
+msgstr "Give control"
+
+#: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
 msgid "Give control of this computer"
 msgstr "Give control of this computer"
 

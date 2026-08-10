@@ -207,6 +207,26 @@ const button = cva({
         background: "var(--md-sys-color-error)",
         "--color": "var(--md-sys-color-on-error)",
       },
+      /**
+       * Tertiary-container fill, for a consequential ACTION sitting in a row
+       * of toggles.
+       *
+       * `filled` cannot do this job: it resolves to the same
+       * `primary`/`on-primary` pair as IconButton's *active* state, so a
+       * filled Button next to a lit filled IconButton reads as "this is on"
+       * rather than "press this to act". Tertiary is the only mounted
+       * container colour that is neither of those, nor the error red that
+       * means destructive.
+       *
+       * Carries its own `gap` because this variant is meant to be used with
+       * an icon AND a label — the base has no gap, and adding one there would
+       * reach every button in the app.
+       */
+      _tertiary: {
+        background: "var(--md-sys-color-tertiary-container)",
+        "--color": "var(--md-sys-color-on-tertiary-container)",
+        gap: "var(--gap-sm)",
+      },
 
       // Old entries:
 
