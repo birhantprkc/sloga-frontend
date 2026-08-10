@@ -8,6 +8,25 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // The four camera presets are code-verified (all render in a bundled
+  // harness) but nobody has applied one to a live camera track in the real
+  // settings screen yet, so the copy describes what they look like, not how
+  // they behave on a call.
+  {
+    id: "sloga-2026-08-10",
+    title: "Patch Notes",
+    published_at: "2026-08-10T04:30:00.000Z",
+    markdown_content: `## v0.29.0 — Dress up your camera
+
+### 🎨 Four new camera backgrounds
+- **A Sloga wallpaper and three game themes join the background picker**: the Sloga "O" tiled on black, a synthwave sun over a grid, a spread of pixel hearts and stars, and tone-on-tone controller silhouettes.
+- **They render on your machine, like every background.** Your real room never leaves your computer — the replacement happens before the video is encrypted and sent.
+
+### 🕹️ Slogaball, tightened up
+- **A run is now 5 balls instead of 10.** Rounds were outlasting the wait they were built to fill; a shorter rack keeps every shot worth lining up, and the bucket still pays a free ball.
+
+*Sloga — Hop on.*`,
+  },
   // The voice-awareness and Slogatron sections ship lit in this build, but
   // neither has been seen in a real call -- the badge needs a second account
   // screensharing, the picker needs a logged-in session. Claims here are
