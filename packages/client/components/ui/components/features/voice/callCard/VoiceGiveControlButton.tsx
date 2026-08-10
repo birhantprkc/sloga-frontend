@@ -19,7 +19,7 @@ import {
   REMOTE_CONTROL_TRUST_NOTE,
   useVoice,
 } from "@revolt/rtc";
-import { Button, IconButton } from "@revolt/ui/components/design";
+import { Button } from "@revolt/ui/components/design";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
 import { participantUserId } from "../participantIdentity";
@@ -282,9 +282,16 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
 
   return (
     <Show when={canOffer()}>
-      <IconButton
+      {/* A filled PILL, not another tonal circle: in this row the circles
+          are toggles and the pills are one-shot actions (End call is the
+          other one). This is the row's most consequential action and it only
+          mounts while a share is live, so the extra visual weight appears
+          exactly when it is relevant and never clutters an idle call. The
+          cursor glyph says "hand over the pointer"; the old desktop_windows
+          monitor read as just another screen control. */}
+      <Button
         size={props.size}
-        variant="tonal"
+        variant="filled"
         onPress={() =>
           setOpen((was) => {
             // Reset on every open, not on close: a checkbox that stayed
@@ -304,8 +311,8 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
           },
         }}
       >
-        <Symbol>desktop_windows</Symbol>
-      </IconButton>
+        <Symbol>arrow_selector_tool</Symbol>
+      </Button>
 
       <Show when={open()}>
         <Popover>

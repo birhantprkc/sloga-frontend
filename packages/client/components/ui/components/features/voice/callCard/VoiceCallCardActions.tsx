@@ -166,6 +166,14 @@ export function VoiceCallCardActions(props: { size: "xs" | "sm" }) {
           <Symbol>screen_share</Symbol>
         </Show>
       </IconButton>
+      {/* "Give control" sits on the sharer's own share, Teams-style, so it
+          renders right beside the share button it acts on. The component
+          gates itself on `CONFIGURATION.ENABLE_VIDEO`, a native command
+          probe, and an actually-live screenshare, so it simply is not there
+          on a shell that cannot do it. */}
+      <Show when={!compact()}>
+        <VoiceGiveControlButton size={props.size} />
+      </Show>
       <Show
         when={
           !compact() &&
@@ -174,13 +182,6 @@ export function VoiceCallCardActions(props: { size: "xs" | "sm" }) {
         }
       >
         <VoiceSoundboardButton size={props.size} />
-      </Show>
-      {/* "Give control" sits on the sharer's own share, Teams-style. The
-          component gates itself on `CONFIGURATION.ENABLE_VIDEO`, a native
-          command probe, and an actually-live screenshare, so it simply is
-          not there on a shell that cannot do it. */}
-      <Show when={!compact()}>
-        <VoiceGiveControlButton size={props.size} />
       </Show>
       {/* Recording stays OFF the compact PiP card. The 300px card only fits
           the essentials, and a control whose side effect is telling everyone
