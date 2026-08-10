@@ -211,6 +211,11 @@ export class CameraEffectsController {
   #facePending: FaceFilterProcessor | undefined;
   #brightness: BrightnessVideoProcessor | undefined;
   #revokeImg: (() => void) | undefined;
+  /** Animated virtual background: pre-rendered frame URLs being cycled. */
+  #animFrames: string[] | undefined;
+  #animIndex = 0;
+  #animTimer: ReturnType<typeof setInterval> | undefined;
+  #animPending = false;
   #hwSupported = false;
   /**
    * Generation token. Bumped by reset()/detach() so that an `apply` whose
@@ -400,12 +405,57 @@ export class CameraEffectsController {
     }
   }
 
+  /** Stop cycling animated-background frames (if running). */
+  #stopBgAnimation() {
+    if (this.#animTimer !== undefined) clearInterval(this.#animTimer);
+    this.#animTimer = undefined;
+    this.#animFrames = undefined;
+    this.#animPending = false;
+  }
+
+  /**
+   * Cycle pre-rendered frames through the background wrapper (animated presets,
+   * e.g. twinkling stars). Each tick is queued on #chain, so a frame swap can
+   * NEVER interleave with an apply()'s switchTo — any new apply stops the timer
+   * first (#ensureBackground / #teardownBackground / reset), and a tick that
+   * was already queued re-checks the wrapper + generation + frame set before
+   * touching anything.
+   */
+  #startBgAnimation(frames: string[], intervalMs: number) {
+    this.#stopBgAnimation();
+    this.#animFrames = frames;
+    this.#animIndex = 0;
+    const myGen = this.#gen;
+    this.#animTimer = setInterval(() => {
+      if (this.#animPending) return; // previous tick still queued/in flight
+      this.#animPending = true;
+      this.#chain = this.#chain
+        .catch(() => {})
+        .then(async () => {
+          this.#animPending = false;
+          const bg = this.#bg;
+          if (!bg || myGen !== this.#gen || this.#animFrames !== frames) return;
+          this.#animIndex = (this.#animIndex + 1) % frames.length;
+          try {
+            await bg.switchTo({
+              mode: "virtual-background",
+              imagePath: frames[this.#animIndex],
+            });
+          } catch {
+            this.#stopBgAnimation(); // wrapper died mid-swap — stop quietly
+          }
+        });
+    }, intervalMs);
+  }
+
   /** Create or (within a live session) switch the single background processor. */
   async #ensureBackground(
     track: LocalVideoTrack,
     myGen: number,
     settings: CameraEffectSettings,
   ) {
+    // Any settings change re-establishes (or drops) the animation below.
+    this.#stopBgAnimation();
     const mode = settings.backgroundMode as "blur" | "image";
     const blurRadius = settings.blurRadius;
 
@@ -417,6 +467,8 @@ export class CameraEffectsController {
     }
 
     let imagePath: string | undefined;
+    let animFrames: string[] | undefined;
+    let animInterval = 200;
     if (mode === "image") {
       this.#revokeImg?.();
       this.#revokeImg = undefined;
@@ -433,6 +485,10 @@ export class CameraEffectsController {
       }
       imagePath = resolved.url;
       this.#revokeImg = resolved.revoke;
+      if (resolved.frames && resolved.frames.length > 1) {
+        animFrames = resolved.frames;
+        animInterval = resolved.frameIntervalMs ?? 200;
+      }
     }
 
     if (this.#bg) {
@@ -468,10 +524,13 @@ export class CameraEffectsController {
       }
       this.#bg = proc;
     }
+
+    if (animFrames) this.#startBgAnimation(animFrames, animInterval);
   }
 
   /** Remove the background processor (if any) and release its image URL. */
   async #teardownBackground(track: LocalVideoTrack) {
+    this.#stopBgAnimation();
     if (this.#bg) {
       try {
         await track.stopProcessor();
@@ -613,6 +672,7 @@ export class CameraEffectsController {
    */
   reset() {
     this.#gen++; // supersede any apply still initializing (destroy-on-resolve)
+    this.#stopBgAnimation();
     this.#bg = undefined;
     this.#face = undefined;
     this.#facePending = undefined; // close the status-forward window too

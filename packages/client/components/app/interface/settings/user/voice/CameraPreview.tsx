@@ -188,7 +188,7 @@ export function CameraPreview() {
               }
             >
               <Button
-                variant={testing() ? "secondary" : "filled"}
+                variant={testing() ? "tonal" : "filled"}
                 onPress={() => setTesting((v) => !v)}
               >
                 <Show when={testing()} fallback={<Trans>Test camera</Trans>}>

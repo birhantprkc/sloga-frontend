@@ -534,13 +534,38 @@ function CameraBackgroundOptions() {
                     </div>
                   )}
                 </For>
+                <button
+                  title={t`Upload Files`}
+                  onClick={(e) => {
+                    // CategoryButton preventDefault()s bubbled clicks (which
+                    // kills a native file input's picker) — so the input stays
+                    // hidden and this tile opens it programmatically.
+                    e.stopPropagation();
+                    fileInput?.click();
+                  }}
+                  style={{
+                    width: "96px",
+                    height: "54px",
+                    "border-radius": "6px",
+                    cursor: "pointer",
+                    border: "1px dashed var(--md-sys-color-outline-variant)",
+                    background: "var(--md-sys-color-surface-container-high)",
+                    color: "var(--md-sys-color-on-surface-variant)",
+                    display: "flex",
+                    "align-items": "center",
+                    "justify-content": "center",
+                  }}
+                >
+                  <Symbol>add_photo_alternate</Symbol>
+                </button>
               </div>
               <input
                 ref={fileInput}
                 type="file"
                 accept="image/*"
                 onChange={onUpload}
-                style={{ "font-size": "0.85em" }}
+                onClick={(e) => e.stopPropagation()}
+                style={{ display: "none" }}
               />
             </Column>
           }
