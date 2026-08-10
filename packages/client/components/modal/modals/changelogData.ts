@@ -8,6 +8,30 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // The share-icon repair was observed directly (the wrong glyph was read out
+  // of a live call's DOM before the fix). The other two rows were NOT seen
+  // rendered: Give control needs a live whole-screen share plus the native
+  // probe, and the encryption message only appears on an install whose keys
+  // belong to another account. Both are described as what the code does, and
+  // neither promises an appearance. The reset itself IS proven — an operator
+  // ran the same underlying flow from Settings on a mismatched install and
+  // came back encrypted; only the in-call entry point to it is unobserved.
+  {
+    id: "sloga-2026-08-10-3",
+    title: "Patch Notes",
+    published_at: "2026-08-10T09:00:00.000Z",
+    markdown_content: `## v0.31.0 — Buttons that tell the truth
+
+### 🖱️ Give control moved next to Share screen
+- **It now sits directly beside the share button**, instead of further along the call bar away from the thing it acts on.
+- **It looks like an action instead of another toggle** — a filled pill with a cursor on it, replacing the monitor icon that disappeared into a row of identical circles. It still only shows up while you're sharing your whole screen. *(Windows desktop only.)*
+
+### 🔧 Two repairs
+- **The share-screen button was wearing the wrong icon.** It showed the crossed-out "stop sharing" symbol when you weren't sharing, and the plain one while you were — exactly backwards. The tooltip was right the whole time, which is probably why it survived this long.
+- **One encrypted-call failure now explains itself.** If this device's encryption keys were set up under a *different* account, calls here can never be encrypted. That used to show up as a red "Not encrypted" badge and nothing else — no reason, no way forward. The call now tells you what happened and offers to reset this device's encryption so it can be set up again under the account you're signed in as. *(Resetting erases encrypted messages stored on this device — it asks twice before doing anything.)*
+
+*Sloga — Hop on.*`,
+  },
   // Meadow and Space are code-verified (rendered in a bundled harness; the
   // Space frames were checked frame-against-frame), but the animation has not
   // been exercised against a live camera track, so the copy describes the
