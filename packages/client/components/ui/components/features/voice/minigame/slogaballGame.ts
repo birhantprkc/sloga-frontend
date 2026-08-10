@@ -47,7 +47,7 @@ const FIXED_DT = 1 / 240;
  * would make the ball leap, so it is simply dropped. */
 const MAX_FRAME = 0.05;
 
-const START_BALLS = 10;
+const START_BALLS = 5;
 const SCORE_PEG = 10;
 const SCORE_TARGET = 100;
 /** The Sloga-"O" peg itself; the pegs it blasts score their own values. */
