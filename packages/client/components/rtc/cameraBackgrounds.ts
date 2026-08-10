@@ -83,24 +83,6 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-/** Rounded-rect path — hand-rolled since ctx.roundRect is missing on older Safari. */
-function roundedRectPath(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  r: number,
-) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
-}
-
 /**
  * Sloga "O" mark, static geometry from the brand loader (LoadingProgress.tsx):
  * green core with eight coloured satellites, clockwise from the top, in the
@@ -159,273 +141,76 @@ function drawSlogaPattern(ctx: CanvasRenderingContext2D, w: number, h: number) {
   ctx.globalAlpha = 1;
 }
 
-/** Muted, homely book-spine colours shared by every shelf. */
-const BOOK_COLORS = [
-  "#7d8c69",
-  "#b3583e",
-  "#41597a",
-  "#c9a227",
-  "#6b4f8e",
-  "#8d8d85",
-];
+/**
+ * Rolling green hill under a summer sky — a stylized, hand-drawn nod to the
+ * classic desktop-wallpaper look (drawn procedurally; no photo is bundled).
+ */
+function drawMeadow(ctx: CanvasRenderingContext2D, w: number, h: number) {
+  const sky = ctx.createLinearGradient(0, 0, 0, h * 0.75);
+  sky.addColorStop(0, "#1f6ec9");
+  sky.addColorStop(0.6, "#5ea4e0");
+  sky.addColorStop(1, "#b8dcf2");
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, w, h);
 
-/** A floating wooden shelf board with a soft drop shadow. */
-function drawShelf(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  width: number,
-) {
-  ctx.save();
-  ctx.shadowColor = "rgba(70,50,30,0.35)";
-  ctx.shadowBlur = 10;
-  ctx.shadowOffsetY = 6;
-  const wood = ctx.createLinearGradient(0, y, 0, y + 14);
-  wood.addColorStop(0, "#b98a5c");
-  wood.addColorStop(1, "#93683f");
-  ctx.fillStyle = wood;
-  roundedRectPath(ctx, x, y, width, 14, 4);
-  ctx.fill();
-  ctx.restore();
-}
-
-/** A tidy row of book spines standing on `baseY`, one leaning at the end. */
-function drawBooks(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  baseY: number,
-  heights: number[],
-) {
-  let cur = x;
-  heights.forEach((bh, i) => {
-    const bw = 10 + (i % 3) * 2;
-    ctx.fillStyle = BOOK_COLORS[i % BOOK_COLORS.length];
-    roundedRectPath(ctx, cur, baseY - bh, bw, bh, 2);
-    ctx.fill();
-    cur += bw + 3;
-  });
-  ctx.save();
-  ctx.translate(cur + 2, baseY);
-  ctx.rotate(-0.18);
-  ctx.fillStyle = BOOK_COLORS[(heights.length + 1) % BOOK_COLORS.length];
-  roundedRectPath(ctx, 0, -40, 11, 40, 2);
-  ctx.fill();
-  ctx.restore();
-}
-
-/** A potted plant standing on `baseY`: fanned leaves over a tapered pot. */
-function drawPottedPlant(
-  ctx: CanvasRenderingContext2D,
-  cx: number,
-  baseY: number,
-  potW: number,
-  leafColor: string,
-  potColor: string,
-) {
-  const potH = potW * 0.78;
-  const tip = baseY - potH - potW * 0.1;
-  ctx.fillStyle = leafColor;
-  for (let i = -2; i <= 2; i++) {
+  // Puffy clouds: clusters of soft white ellipses with a shaded underside
+  const rand = mulberry32(0xb115);
+  const cloud = (cx: number, cy: number, s: number) => {
     ctx.save();
-    ctx.translate(cx, tip);
-    ctx.rotate(i * 0.45);
-    ctx.beginPath();
-    ctx.ellipse(0, -potW * 0.55, potW * 0.16, potW * 0.6, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  }
-  ctx.fillStyle = potColor;
-  ctx.beginPath();
-  ctx.moveTo(cx - potW / 2, baseY - potH);
-  ctx.lineTo(cx + potW / 2, baseY - potH);
-  ctx.lineTo(cx + potW * 0.38, baseY);
-  ctx.lineTo(cx - potW * 0.38, baseY);
-  ctx.closePath();
-  ctx.fill();
-  roundedRectPath(ctx, cx - potW / 2 - 2, baseY - potH - 6, potW + 4, 9, 3);
-  ctx.fill();
-}
-
-/** A ceramic pot on the shelf edge with vines trailing down the wall. */
-function drawTrailingPlant(
-  ctx: CanvasRenderingContext2D,
-  cx: number,
-  shelfY: number,
-) {
-  ctx.fillStyle = "#e0d6c4";
-  roundedRectPath(ctx, cx - 15, shelfY - 24, 30, 24, 4);
-  ctx.fill();
-  ctx.strokeStyle = "#5d8a55";
-  ctx.fillStyle = "#6d9a63";
-  ctx.lineWidth = 2;
-  for (const [dx, len, sway] of [
-    [-10, 90, 14],
-    [2, 130, -12],
-    [12, 70, 10],
-  ]) {
-    const sx = cx + dx;
-    const midX = sx + sway;
-    const midY = shelfY + len * 0.5;
-    const endX = sx + sway * 0.4;
-    const endY = shelfY + len;
-    ctx.beginPath();
-    ctx.moveTo(sx, shelfY - 20);
-    ctx.quadraticCurveTo(midX, midY, endX, endY);
-    ctx.stroke();
-    for (let i = 1; i <= 4; i++) {
-      const tt = i / 4;
-      const a = 1 - tt;
-      const qx = a * a * sx + 2 * a * tt * midX + tt * tt * endX;
-      const qy = a * a * (shelfY - 20) + 2 * a * tt * midY + tt * tt * endY;
+    ctx.translate(cx, cy);
+    ctx.scale(s, s);
+    ctx.fillStyle = "rgba(255,255,255,0.95)";
+    for (const [ox, oy, rx, ry] of [
+      [0, 0, 46, 26],
+      [-38, 8, 30, 18],
+      [38, 6, 32, 20],
+      [-12, -14, 30, 20],
+      [16, -12, 26, 17],
+    ] as const) {
       ctx.beginPath();
-      ctx.ellipse(qx, qy, 5, 3.5, tt * 1.2, 0, Math.PI * 2);
+      ctx.ellipse(ox, oy, rx, ry, 0, 0, Math.PI * 2);
       ctx.fill();
     }
-  }
-}
-
-/** A framed abstract print (soft hills + sun) in a wooden frame. */
-function drawWallArt(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-) {
-  ctx.save();
-  ctx.shadowColor = "rgba(70,50,30,0.3)";
-  ctx.shadowBlur = 8;
-  ctx.shadowOffsetY = 4;
-  ctx.fillStyle = "#8a6f52";
-  roundedRectPath(ctx, x, y, w, h, 3);
-  ctx.fill();
-  ctx.restore();
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(x + 5, y + 5, w - 10, h - 10);
-  ctx.clip();
-  ctx.fillStyle = "#f2ecdf";
-  ctx.fillRect(x + 5, y + 5, w - 10, h - 10);
-  ctx.fillStyle = "#a8b79b";
-  ctx.beginPath();
-  ctx.arc(x + w * 0.35, y + h, w * 0.34, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = "#c98d63";
-  ctx.beginPath();
-  ctx.arc(x + w * 0.72, y + h, w * 0.26, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = "#e3c25c";
-  ctx.beginPath();
-  ctx.arc(x + w * 0.7, y + h * 0.32, w * 0.07, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-}
-
-/** A tall floor plant: arching stems with big leaves out of a planter. */
-function drawTallPlant(
-  ctx: CanvasRenderingContext2D,
-  cx: number,
-  baseY: number,
-) {
-  ctx.fillStyle = "rgba(60,45,25,0.18)";
-  ctx.beginPath();
-  ctx.ellipse(cx, baseY + 4, 64, 12, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = "#3f6b3c";
-  const leaves = ["#4e7d49", "#5d8f54", "#40663d", "#6b9c60", "#48764a"];
-  (
-    [
-      [-0.5, 150],
-      [-0.25, 195],
-      [0, 220],
-      [0.22, 185],
-      [0.45, 145],
-    ] as const
-  ).forEach(([lean, len], i) => {
-    const tipX = cx + lean * 160;
-    const tipY = baseY - 70 - len;
-    ctx.lineWidth = 5;
+    ctx.fillStyle = "rgba(150,180,210,0.35)";
     ctx.beginPath();
-    ctx.moveTo(cx, baseY - 40);
-    ctx.quadraticCurveTo(cx + lean * 50, baseY - 60 - len * 0.5, tipX, tipY);
-    ctx.stroke();
-    ctx.save();
-    ctx.translate(tipX, tipY);
-    ctx.rotate(lean * 1.1);
-    ctx.fillStyle = leaves[i];
-    ctx.beginPath();
-    ctx.ellipse(0, -34, 22, 44, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 16, 52, 10, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
-  });
-  const potW = 96;
-  ctx.fillStyle = "#c4703f";
+  };
+  for (let i = 0; i < 9; i++) {
+    const cx = rand() * w;
+    const cy = 40 + rand() * (h * 0.4);
+    cloud(cx, cy, 0.5 + rand() * 0.9);
+  }
+
+  // The hill: crests left of centre and rolls away to the right, lit from
+  // the upper left
+  const hill = ctx.createLinearGradient(0, h * 0.4, w * 0.6, h);
+  hill.addColorStop(0, "#9ed454");
+  hill.addColorStop(0.55, "#63b32e");
+  hill.addColorStop(1, "#3c8a1e");
+  ctx.fillStyle = hill;
   ctx.beginPath();
-  ctx.moveTo(cx - potW / 2, baseY - 78);
-  ctx.lineTo(cx + potW / 2, baseY - 78);
-  ctx.lineTo(cx + potW * 0.4, baseY);
-  ctx.lineTo(cx - potW * 0.4, baseY);
+  ctx.moveTo(0, h * 0.62);
+  ctx.bezierCurveTo(w * 0.15, h * 0.42, w * 0.38, h * 0.44, w * 0.62, h * 0.62);
+  ctx.bezierCurveTo(w * 0.8, h * 0.76, w * 0.92, h * 0.84, w, h * 0.88);
+  ctx.lineTo(w, h);
+  ctx.lineTo(0, h);
   ctx.closePath();
   ctx.fill();
-  roundedRectPath(ctx, cx - potW / 2 - 3, baseY - 88, potW + 6, 14, 4);
+
+  // Foreground swell for depth
+  const fore = ctx.createLinearGradient(0, h * 0.78, 0, h);
+  fore.addColorStop(0, "#57a527");
+  fore.addColorStop(1, "#2e7215");
+  ctx.fillStyle = fore;
+  ctx.beginPath();
+  ctx.moveTo(0, h * 0.9);
+  ctx.bezierCurveTo(w * 0.3, h * 0.8, w * 0.7, h * 0.86, w, h * 0.94);
+  ctx.lineTo(w, h);
+  ctx.lineTo(0, h);
+  ctx.closePath();
   ctx.fill();
-}
-
-/**
- * Tidy home wall: warm paint, wooden shelves with books and plants, soft
- * daylight from the left. Shelves and plants hug the edges so the person in
- * the centre stays clear of the detail.
- */
-function drawHomeRoom(ctx: CanvasRenderingContext2D, w: number, h: number) {
-  const wall = ctx.createLinearGradient(0, 0, 0, h);
-  wall.addColorStop(0, "#ede5d8");
-  wall.addColorStop(1, "#dbd1c0");
-  ctx.fillStyle = wall;
-  ctx.fillRect(0, 0, w, h);
-
-  const light = ctx.createLinearGradient(0, 0, w * 0.6, h * 0.35);
-  light.addColorStop(0, "rgba(255,250,238,0.55)");
-  light.addColorStop(1, "rgba(255,250,238,0)");
-  ctx.fillStyle = light;
-  ctx.fillRect(0, 0, w, h);
-
-  // Baseboard
-  ctx.fillStyle = "#cfc2ab";
-  ctx.fillRect(0, h - 30, w, 30);
-  ctx.fillStyle = "#bbac92";
-  ctx.fillRect(0, h - 30, w, 4);
-
-  drawShelf(ctx, 70, 168, 330);
-  drawBooks(ctx, 92, 168, [38, 46, 34, 42, 30, 44]);
-  drawPottedPlant(ctx, 320, 168, 34, "#5d8f54", "#c4703f");
-
-  drawShelf(ctx, 880, 132, 330);
-  drawTrailingPlant(ctx, 925, 132);
-  drawBooks(ctx, 985, 132, [40, 32, 44, 36, 42]);
-  drawWallArt(ctx, 1135, 88, 52, 42);
-
-  drawShelf(ctx, 990, 330, 230);
-  drawPottedPlant(ctx, 1030, 330, 28, "#6b9c60", "#e0d6c4");
-  drawBooks(ctx, 1080, 330, [30, 38, 28, 34]);
-
-  drawWallArt(ctx, 585, 64, 110, 84);
-
-  drawTallPlant(ctx, 1180, h - 34);
-  drawPottedPlant(ctx, 95, h - 34, 64, "#4e7d49", "#b2593b");
-
-  // Soft vignette keeps the focus on the person
-  const vig = ctx.createRadialGradient(
-    w / 2,
-    h / 2,
-    h * 0.4,
-    w / 2,
-    h / 2,
-    h * 0.95,
-  );
-  vig.addColorStop(0, "rgba(0,0,0,0)");
-  vig.addColorStop(1, "rgba(60,45,25,0.14)");
-  ctx.fillStyle = vig;
-  ctx.fillRect(0, 0, w, h);
 }
 
 /** Tiny sprite bitmaps for the pixel preset ("." = empty, "X" = filled). */
@@ -599,7 +384,7 @@ const PRESET_DEFS: Record<string, PresetDef> = {
   forest: { name: "Forest", stops: ["#2f9e5f", "#0f3d2e"], angleDeg: 145 },
   studio: { name: "Studio", stops: ["#5a5f66", "#2a2d31"], angleDeg: 180 },
   sloga: { name: "Sloga", stops: ["#000000"], draw: drawSlogaPattern },
-  home: { name: "Home", stops: ["#ede5d8"], draw: drawHomeRoom },
+  meadow: { name: "Meadow", stops: ["#5ea4e0"], draw: drawMeadow },
   pixel: { name: "Pixel", stops: ["#101426"], draw: drawPixelScatter },
   space: {
     name: "Space",
