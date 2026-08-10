@@ -376,6 +376,32 @@ export function chipState(inputs: ChipInputs): ChipState {
   return allVerified ? "e2ee" : "e2ee_unverified";
 }
 
+/**
+ * ME-10 terminal-loud (slice 6.5): the call FAILED to secure — the banner
+ * offers the blocking Leave / Stay-unencrypted choice, plus Reset encryption
+ * on a store-owner mismatch.
+ *
+ * Two shapes count. `negotiating` is the original one: retry exhaustion or a
+ * loud failure while the verdict was still pending. `mode === undefined` with
+ * a latched error is the same state seen one step earlier: a refusal thrown
+ * inside establish() (the store-owner mismatch is exactly this) fails the
+ * session before it ever emits a mode verdict, so the UI's mode signal still
+ * reads undefined — requiring `negotiating` made the banner, and with it the
+ * only Reset-encryption control in a call, unreachable on precisely the
+ * install it was built for. The latched-error requirement keeps this off
+ * web/plaintext calls: their chip also reads not_encrypted (open-group
+ * attribution, no session), but nothing ever latches there.
+ */
+export function isTerminalLoud(
+  mode: CallMode | undefined,
+  chip: ChipState,
+  latchedError: boolean,
+): boolean {
+  if (chip !== "not_encrypted") return false;
+  if (mode?.kind === "negotiating") return true;
+  return mode === undefined && latchedError;
+}
+
 // ---- ctl-announce payload parsing (default-closed forward-compat) ----------
 
 /** The one recognised ctl semantics: a mode change to plaintext (§3.4). */

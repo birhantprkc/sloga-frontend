@@ -13,6 +13,7 @@ import {
   callModeTransition,
   chipState,
   classifyEncryptionError,
+  isTerminalLoud,
   parseCtlPayload,
 } from "./mlsCallModePolicy.ts";
 
@@ -389,6 +390,40 @@ test("chip negotiating with an open group → amber (not green, not none)", () =
     ),
     "resecuring",
   );
+});
+
+// ---- terminal-loud banner predicate (ME-10) ---------------------------------
+
+test("terminal-loud: loud failure while negotiating (original ME-10 shape)", () => {
+  assert.equal(isTerminalLoud(NEGOTIATING, "not_encrypted", true), true);
+  // Retry exhaustion can go loud without a structured error latched while
+  // the mode still reads negotiating — the original condition, unchanged.
+  assert.equal(isTerminalLoud(NEGOTIATING, "not_encrypted", false), true);
+});
+
+test("terminal-loud: refusal inside establish() — failed before ANY mode verdict (store-owner mismatch)", () => {
+  // The session dies before onCallModeChanged ever fires, so the UI's mode
+  // signal still reads undefined. This is the case the banner's Reset
+  // encryption leg exists for; requiring `negotiating` made it unreachable.
+  assert.equal(isTerminalLoud(undefined, "not_encrypted", true), true);
+});
+
+test("terminal-loud: attribution chips without a latched error never raise the banner", () => {
+  // chipState reads not_encrypted with NO session for the ME-7/§0.2#9
+  // branches (web participant, toggle-off self). Without a latched error
+  // that is attribution, not a failure — no banner.
+  assert.equal(isTerminalLoud(undefined, "not_encrypted", false), false);
+});
+
+test("terminal-loud: any emitted mode verdict other than negotiating is not terminal", () => {
+  // mixed/interlude have their own banner arms; off is a quiet plain call.
+  assert.equal(isTerminalLoud({ kind: "off" }, "not_encrypted", true), false);
+  assert.equal(isTerminalLoud(MIXED, "not_encrypted", true), false);
+});
+
+test("terminal-loud: requires the loud chip", () => {
+  assert.equal(isTerminalLoud(NEGOTIATING, "resecuring", true), false);
+  assert.equal(isTerminalLoud(undefined, "none", true), false);
 });
 
 // ---- ctl parser (default-closed) -------------------------------------------

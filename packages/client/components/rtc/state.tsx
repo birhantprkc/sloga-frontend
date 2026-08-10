@@ -144,7 +144,12 @@ import { RoomAudioManager } from "./components/RoomAudioManager";
 import { isDiceRollMessage, summariseDiceRoll } from "./diceRoll";
 import { faceSettingsActive } from "./faceFilterCatalog";
 import { MlsKeyProvider } from "./mlsCallKeys";
-import { type CallMode, type ChipState, chipState } from "./mlsCallModePolicy";
+import {
+  type CallMode,
+  type ChipState,
+  chipState,
+  isTerminalLoud,
+} from "./mlsCallModePolicy";
 import {
   type MlsMediaBinding,
   type MlsRosterMember,
@@ -3518,15 +3523,18 @@ class Voice {
 
   /**
    * ME-10 terminal-loud state (slice 6.5): the call FAILED to secure while
-   * still negotiating (retry exhaustion / loud failure) — publishing is gated
-   * and the banner offers the blocking Leave / Stay-unencrypted choice (the
-   * "stay" leg runs the same native-confirmed plaintext path as a mixed-call
-   * downgrade). Distinct from mixed/interlude, which have their own banner.
+   * still negotiating — or before the session ever emitted a mode verdict,
+   * which is where a refusal thrown inside establish() (store-owner mismatch)
+   * lands. Publishing is gated and the banner offers the blocking Leave /
+   * Stay-unencrypted choice (the "stay" leg runs the same native-confirmed
+   * plaintext path as a mixed-call downgrade). Distinct from mixed/interlude,
+   * which have their own banner.
    */
   callTerminalLoud(): boolean {
-    return (
-      this.callMode()?.kind === "negotiating" &&
-      this.callEncryptionChip() === "not_encrypted"
+    return isTerminalLoud(
+      this.callMode(),
+      this.callEncryptionChip(),
+      this.callEncryptionError() !== undefined,
     );
   }
 
