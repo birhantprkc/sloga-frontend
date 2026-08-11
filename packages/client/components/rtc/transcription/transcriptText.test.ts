@@ -71,6 +71,48 @@ test("a short lone word needs real speech behind it", () => {
   assert.equal(isLikelyHallucination("hm"), false);
 });
 
+test("text that outruns its audio is rejected — the 2026-08-10 field cases", () => {
+  // Reported from a SOLO call: fluent lines the speaker never said, which the
+  // denylist can never enumerate. What convicts them is arithmetic: "I'm very
+  // fine." is four syllables, and four syllables do not fit in 340 ms.
+  assert.equal(isLikelyHallucination("I'm very fine.", 340), true);
+  assert.equal(isLikelyHallucination("Hello, hello! How are you?", 600), true);
+  assert.equal(cleanTranscript("I'm very fine.", 340), undefined);
+});
+
+test("the same words are kept when there was time to say them", () => {
+  assert.equal(isLikelyHallucination("I'm very fine.", 1500), false);
+  assert.equal(
+    isLikelyHallucination("Hello, hello! How are you?", 1200),
+    false,
+  );
+});
+
+test("fast real speech stays under the ceiling", () => {
+  // Six syllables in 800 ms of voiced audio is a genuinely quick speaker
+  // (7.5/s); the ceiling must sit above people, not among them.
+  assert.equal(isLikelyHallucination("what do you want to do", 800), false);
+  // Silent trailing "e" must not inflate the estimate into a false reject:
+  // four spoken syllables here, not eight.
+  assert.equal(isLikelyHallucination("make time nice place", 700), false);
+});
+
+test("a quick interjection is never length-convicted", () => {
+  // "Oh, no." fits in 340 ms when a person actually says it, so a
+  // hallucinated one is temporally indistinguishable — the rate gate
+  // deliberately abstains at two syllables and below.
+  assert.equal(isLikelyHallucination("Oh, no.", 340), false);
+});
+
+test("the rate gate abstains without a duration and on non-Latin scripts", () => {
+  // No measured duration: nothing to disagree with.
+  assert.equal(isLikelyHallucination("I'm very fine."), false);
+  // The syllable estimate is Latin-only; for scripts it cannot measure it
+  // must fail OPEN, never guess.
+  assert.equal(isLikelyHallucination("こんにちは 元気ですか", 340), false);
+  assert.equal(isLikelyHallucination("привет как дела", 340), false);
+});
+
 test("cleanTranscript returns undefined for anything discarded", () => {
   assert.equal(cleanTranscript(" you"), undefined);
   assert.equal(cleanTranscript("   "), undefined);

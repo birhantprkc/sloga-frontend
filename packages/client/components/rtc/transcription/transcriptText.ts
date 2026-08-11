@@ -11,13 +11,18 @@
  * `no_speech_prob` per segment, but the transformers.js pipeline surfaces only
  * `{ text }` (and `chunks` with timestamps when asked) — no probabilities, no
  * average log-probability, no scores. Verified against v4.2.0. So there is
- * nothing to threshold on, and the defence has to be two cruder layers:
+ * nothing to threshold on, and the defence has to be three cruder layers:
  *
  * 1. **Energy gating before the model** — `vadSegmenter.ts` is the real guard,
  *    and it is why silence normally never reaches inference at all.
- * 2. **This module, after the model** — a backstop for the narrow case where a
- *    segment clears the energy gates but still contains no speech (a slammed
- *    door, a chair, a burst of line noise).
+ * 2. **This module's denylist, after the model** — a backstop for the narrow
+ *    case where a segment clears the energy gates but still contains no speech
+ *    (a slammed door, a chair, a burst of line noise).
+ * 3. **A speaking-rate ceiling, also here** — the denylist can only name
+ *    artefacts already seen, and a 2026-08-10 field report showed novel ones
+ *    ("I'm very fine.", "Oh, no.") attributed to a user in a SOLO call. Text
+ *    that packs more syllables than a human can produce in the measured voiced
+ *    duration cannot be a transcription of that audio, whatever the words are.
  *
  * **The trade-off is deliberate and asymmetric.** Rejecting a genuine one-word
  * "You?" costs a line of transcript. Accepting a hallucination puts words in a
@@ -59,6 +64,50 @@ const SILENCE_ARTEFACTS = new Set([
 const SOUND_EVENT = /^[[(*][^\])*]*[\])*]$/;
 
 /**
+ * The fastest a voice is allowed to have spoken, in syllables per voiced
+ * second, before the output is judged impossible for its audio.
+ *
+ * Sustained fast conversation runs ~6-7 syllables/s and short bursts ~8-9;
+ * `spokenMs` counts only VOICED frames, which shaves the gaps between words
+ * and inflates the apparent rate by maybe another fifth. Ten is above all of
+ * that — a real speaker should never trip it — while the field cases this
+ * exists for sit far beyond it ("I'm very fine.", 4 syllables, from a segment
+ * as short as 340 ms, is ~12/s).
+ */
+const MAX_SYLLABLES_PER_SECOND = 10;
+
+/**
+ * Syllables any output may carry regardless of duration. A quick real
+ * interjection — "oh no", "okay" — fits in under half a second, and a
+ * hallucinated one of the same shape is acoustically indistinguishable from
+ * it, so length gives this layer nothing to work with down there. Catching
+ * those stays the denylist's job.
+ */
+const FREE_SYLLABLES = 2;
+
+/**
+ * Rough syllable count for Latin-script text: vowel groups per word, minus
+ * the classic silent trailing "e" ("make", "fine" — but not "-le", "little").
+ *
+ * Deliberately crude, and errs toward UNDER-counting on accented Latin text
+ * (é, ü and friends are not in the class), which only ever makes the gate
+ * more permissive. Non-Latin scripts (CJK, Cyrillic, Arabic…) contain no
+ * ASCII vowels at all and estimate to ZERO — the gate abstains entirely
+ * rather than guess at languages it cannot measure.
+ */
+function estimateSyllables(normalised: string): number {
+  let count = 0;
+  for (const word of normalised.split(" ")) {
+    const groups = word.match(/[aeiouy]+/g)?.length ?? 0;
+    count +=
+      groups > 1 && word.endsWith("e") && !word.endsWith("le")
+        ? groups - 1
+        : groups;
+  }
+  return count;
+}
+
+/**
  * Strip Whisper's leading space and any surrounding punctuation, for comparison
  * only — the text kept in the transcript kept its original punctuation.
  */
@@ -97,6 +146,24 @@ export function isLikelyHallucination(
     normalised.length <= 3
   ) {
     return spokenMs < 700;
+  }
+
+  // Text that outruns the audio. A sentence needs time to be said, and the
+  // segmenter measured exactly how much voiced time there was — output whose
+  // syllable count could not fit into that window is invention, not
+  // transcription, no matter how fluent it reads. This is what catches the
+  // novel phrases the denylist has never seen; what it deliberately cannot
+  // catch is a hallucination short enough to be sayable in the time
+  // available, because from here that is indistinguishable from someone
+  // actually saying it.
+  if (spokenMs !== undefined) {
+    const syllables = estimateSyllables(normalised);
+    if (
+      syllables > FREE_SYLLABLES &&
+      syllables > (spokenMs / 1000) * MAX_SYLLABLES_PER_SECOND
+    ) {
+      return true;
+    }
   }
 
   return false;
