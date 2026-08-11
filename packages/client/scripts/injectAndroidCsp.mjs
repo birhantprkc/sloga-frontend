@@ -44,6 +44,13 @@
  *    (script-src), api.stripe.com (connect-src), js/hooks.stripe.com
  *    (frame-src) AND re-run this gate on that exposure;
  *  - + connect-src https://translate.googleapis.com (message translation);
+ *  - + connect-src https://api.drand.sh (timelock messages): tlock only ever
+ *    GETs public beacon values — chain info and a round's randomness — with
+ *    the round number in the PATH and no request body. It is strictly lower
+ *    risk than the translate origin already allowed above: no user content is
+ *    sent, and the response is a global public value identical for everyone,
+ *    so it is not an attacker-READABLE exfil sink the way Stripe/Sentry would
+ *    be. Read-only, no account, no back-channel;
  *  - + manifest-src 'self' (index.html links the PWA manifest);
  *  - Sentry ingest is DELIBERATELY absent from connect-src: a *.ingest
  *    allowance would hand an XSS foothold a data-exfil channel. If Sentry is
@@ -67,7 +74,7 @@ const CSP = [
   "img-src 'self' data: blob: https://app.sloga.gg",
   "media-src 'self' blob: https://app.sloga.gg",
   "font-src 'self' data:",
-  "connect-src 'self' blob: https://app.sloga.gg wss://app.sloga.gg https://translate.googleapis.com https://hcaptcha.com https://*.hcaptcha.com",
+  "connect-src 'self' blob: https://app.sloga.gg wss://app.sloga.gg https://translate.googleapis.com https://api.drand.sh https://hcaptcha.com https://*.hcaptcha.com",
   "worker-src 'self' blob:",
   "manifest-src 'self'",
   "frame-src https://hcaptcha.com https://*.hcaptcha.com https://www.youtube.com https://www.youtube-nocookie.com https://player.twitch.tv https://open.spotify.com https://w.soundcloud.com https://bandcamp.com https://new.lightspeed.tv",
