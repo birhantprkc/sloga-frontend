@@ -8,6 +8,27 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // All three rows shipped without a live two-account leg (user's call: they
+  // bug-check in prod). Server side is test-proven under both DB drivers;
+  // the note row, private-profile card and spoiler gate have never been
+  // watched rendered. Copy promises behavior, not appearance.
+  {
+    id: "sloga-2026-08-11-2",
+    title: "Patch Notes",
+    published_at: "2026-08-11T19:00:00.000Z",
+    markdown_content: `## v0.34.0 — A note, a curtain, a warning
+
+### 🤝 Friend requests can say why
+- **Attach a note when sending a friend request** so your future friend isn't left asking "who is this?". The note shows on the incoming request and on the profile card, and it disappears once the request is accepted or declined.
+
+### 🔒 Profiles can go friends-only
+- **A new Profile visibility setting** (Settings → Profile) limits your bio, banner and linked channels to friends. People in your servers still see your name and avatar; everyone else is told the profile is private — enforced by the server, not just hidden in the app.
+
+### 🙈 Spoiler channels
+- **Mark a text channel as a spoiler** (Channel settings → Overview) and members must choose to reveal it before anything is shown — no more marking a channel as mature just to hide episode discussion. Each device remembers what you've revealed.
+
+*Sloga — Hop on.*`,
+  },
   // Both rows are unit-proven and, for translation, live-proven against the
   // real endpoint — but neither has been watched in a live call. The
   // transcription row deliberately promises only that impossible lines are
