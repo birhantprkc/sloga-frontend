@@ -2,7 +2,7 @@ import { Show, createEffect, createResource, createSignal, onCleanup } from "sol
 
 import { styled } from "styled-system/jsx";
 
-import { translateText } from "@revolt/common";
+import { translateLanguageName, translateText } from "@revolt/common";
 import { useVoice } from "@revolt/rtc";
 import { useState } from "@revolt/state";
 
@@ -48,13 +48,25 @@ export function ParticipantCaption(props: { identity: string }) {
       const result = await translateText(input.text, input.target);
       // translateText returns null when already in the target language or on
       // error — fall back to the original transcript so something still shows.
-      return result?.text ?? input.text;
+      if (!result) return { text: input.text, original: null, source: null };
+      return {
+        text: result.text,
+        original: input.text,
+        source: translateLanguageName(result.detectedSource),
+      };
     },
   );
 
   return (
     <Show when={enabled() && pending() && caption.latest}>
-      <CaptionBar>{caption.latest}</CaptionBar>
+      <CaptionBar>
+        <TranslatedText>{caption.latest!.text}</TranslatedText>
+        <Show when={caption.latest!.original}>
+          <OriginalLine>
+            {caption.latest!.source}: {caption.latest!.original}
+          </OriginalLine>
+        </Show>
+      </CaptionBar>
     </Show>
   );
 }
@@ -77,11 +89,27 @@ const CaptionBar = styled("div", {
     textAlign: "center",
     wordBreak: "break-word",
 
+    pointerEvents: "none",
+    zIndex: 5,
+  },
+});
+
+const TranslatedText = styled("div", {
+  base: {
     // Bound the overlay so a long caption can't cover the tile/chrome.
     maxHeight: "4.4em",
     overflow: "hidden",
+  },
+});
 
-    pointerEvents: "none",
-    zIndex: 5,
+const OriginalLine = styled("div", {
+  base: {
+    // Pre-translation transcript, one dimmed line under the translation.
+    fontSize: "11px",
+    color: "rgba(255,255,255,0.65)",
+    whiteSpace: "nowrap",
+    textOverflow: "ellipsis",
+    overflow: "hidden",
+    maxWidth: "100%",
   },
 });

@@ -10,6 +10,7 @@ import { useVoice } from "@revolt/rtc";
 import { useState } from "@revolt/state";
 import { Button, IconButton } from "@revolt/ui/components/design";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
+import { VoiceCaptionsButton } from "./VoiceCaptionsButton";
 import { VoiceDeviceSelector } from "./VoiceDeviceSelector";
 import { VoiceGiveControlButton } from "./VoiceGiveControlButton";
 import { VoiceRecordButton } from "./VoiceRecordButton";
@@ -196,6 +197,11 @@ export function VoiceCallCardActions(props: { size: "xs" | "sm" }) {
           something, which is a poor fit for a cramped row. */}
       <Show when={!compact()}>
         <VoiceTranscribeButton size={props.size} />
+      </Show>
+      {/* Captions share transcription's reasoning: enabling them broadcasts
+          your speech as text to the call. */}
+      <Show when={!compact()}>
+        <VoiceCaptionsButton size={props.size} />
       </Show>
       <Show when={!compact()}>
         <VoiceDeviceSelector size={props.size} />
