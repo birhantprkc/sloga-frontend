@@ -6912,3 +6912,7 @@ msgstr "Whisper"
 #: components/ui/components/features/voice/callCard/VoiceCallWhisperBanner.tsx
 msgid "Whispering to {0} — only they hear you"
 msgstr "Whispering to {0} — only they hear you"
+
+#: components/modal/modals/ScreenShareSettings.tsx
+msgid "Privacy shield — hide pop-up notifications (blurs the corner of full-screen shares when something appears there)"
+msgstr "Privacy shield — hide pop-up notifications (blurs the corner of full-screen shares when something appears there)"

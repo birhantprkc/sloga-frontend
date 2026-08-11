@@ -165,6 +165,8 @@ export interface TypeVoice extends TypeVoiceOverlay {
   screenShareQuality: ScreenShareQualityName;
   screenShareQualityAsk: boolean;
   screenShareAudio: boolean;
+  /** Pixelate the OS-toast corner of monitor shares when something pops in. */
+  screenShareShield: boolean;
 
   microphoneGain: number;
   cameraBrightness: number;
@@ -239,6 +241,7 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
       screenShareQuality: "low",
       screenShareQualityAsk: true,
       screenShareAudio: true,
+      screenShareShield: false,
       microphoneGain: 100,
       cameraBrightness: 100,
       cameraQuality: "auto",
@@ -359,6 +362,10 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
 
     if (typeof input.screenShareAudio === "boolean") {
       data.screenShareAudio = input.screenShareAudio;
+    }
+
+    if (typeof input.screenShareShield === "boolean") {
+      data.screenShareShield = input.screenShareShield;
     }
 
     if (typeof input.microphoneGain === "number") {
@@ -632,6 +639,11 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
     this.set("screenShareAudio", value);
   }
 
+  /** Set the screenshare privacy shield */
+  set screenShareShield(value: boolean) {
+    this.set("screenShareShield", value);
+  }
+
   set microphoneGain(value: number) {
     this.set("microphoneGain", value);
   }
@@ -865,6 +877,12 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
    */
   get screenShareAudio(): boolean {
     return this.get().screenShareAudio;
+  }
+
+  /** Get the screenshare privacy shield (default off: it redraws the share
+   * through a canvas, which is not free at high resolutions) */
+  get screenShareShield(): boolean {
+    return this.get().screenShareShield ?? false;
   }
 
   get microphoneGain(): number {

@@ -1,6 +1,7 @@
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import { createFormControl, createFormGroup } from "solid-forms";
 
+import { useVoice } from "@revolt/rtc";
 import { useState } from "@revolt/state";
 import { ScreenShareQualityName } from "@revolt/state/stores/Voice";
 import { Column, Dialog, DialogProps, Form2 } from "@revolt/ui";
@@ -14,6 +15,7 @@ export function ScreenShareSettingsModal(
   props: DialogProps & Modals & { type: "screen_share_settings" },
 ) {
   const { voice } = useState();
+  const voiceContext = useVoice();
   const { t } = useLingui();
 
   const group = createFormGroup({
@@ -24,6 +26,7 @@ export function ScreenShareSettingsModal(
     audio: createFormControl(props.audio && voice.screenShareAudio, {
       disabled: !props.audio,
     }),
+    shield: createFormControl(voice.screenShareShield),
     dontAsk: createFormControl(false),
   });
 
@@ -33,6 +36,12 @@ export function ScreenShareSettingsModal(
       voice.screenShareQualityAsk = false;
       voice.screenShareAudio = group.controls.audio.value;
     }
+
+    // The shield persists unconditionally (unlike quality, it is a privacy
+    // preference, not a per-share tweak) and syncs the LIVE track — this
+    // modal opens after the track has already published.
+    voice.screenShareShield = group.controls.shield.value;
+    void voiceContext.applyScreenShareShield();
 
     props.callback(
       group.controls.qualityName.value,
@@ -97,6 +106,12 @@ export function ScreenShareSettingsModal(
               <Trans>Share audio</Trans>
             </Form2.Checkbox>
           </Show>
+          <Form2.Checkbox control={group.controls.shield}>
+            <Trans>
+              Privacy shield — hide pop-up notifications (blurs the corner of
+              full-screen shares when something appears there)
+            </Trans>
+          </Form2.Checkbox>
           <Form2.Checkbox control={group.controls.dontAsk}>
             <Trans>Don't ask me again</Trans>
           </Form2.Checkbox>

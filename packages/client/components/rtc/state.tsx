@@ -137,6 +137,7 @@ import {
 } from "./cameraEffects";
 import { createCaptionEngine } from "./captions/captionEngine";
 import { LiveCaptions } from "./captions/liveCaptions";
+import { ScreenShieldProcessor } from "./screenShieldProcessor";
 import { WhisperController } from "./whisper";
 import { CaptionPublisher } from "./components/CaptionPublisher";
 import { CaptionSpeaker } from "./components/CaptionSpeaker";
@@ -443,6 +444,9 @@ class Voice {
    * receiving-side indicator. */
   incomingWhisperFrom: Accessor<string | undefined>;
   #setIncomingWhisperFrom: Setter<string | undefined>;
+  /** Live screenshare privacy-shield processor, when attached (the handle is
+   * ours because livekit exposes no reliable current-processor getter). */
+  #screenShield: ScreenShieldProcessor | undefined;
   /**
    * Remote desktop control during screen share. Owned by this class rather
    * than by any component, because a tile is destroyed and rebuilt by
@@ -1753,6 +1757,7 @@ class Voice {
       // is nothing to unpublish or restore — just stop the capture.
       this.whisper.reset();
       this.#setIncomingWhisperFrom(undefined);
+      this.#screenShield = undefined;
       // Ends the capture surface and releases every held key and button. A
       // controller who leaves the call while holding Ctrl must not leave it
       // held down on someone else's machine — the sharer's native watchdog
@@ -2110,6 +2115,41 @@ class Voice {
    * one place addressed whisper tracks surface). */
   noteIncomingWhisper(identity: string | undefined) {
     this.#setIncomingWhisperFrom(identity);
+  }
+
+  /**
+   * Sync the privacy shield on a LIVE screenshare to the stored setting
+   * (the pre-share modal's checkbox lands after the track has published, so
+   * flipping it must attach/detach in place). No-op without a live share.
+   */
+  async applyScreenShareShield() {
+    const room = this.room();
+    const track = room?.localParticipant.getTrackPublication(
+      Track.Source.ScreenShare,
+    )?.videoTrack as LocalVideoTrack | undefined;
+    if (!track) return;
+
+    const want = this.#settings.screenShareShield;
+    try {
+      if (want && !this.#screenShield) {
+        const surface = (
+          track.mediaStreamTrack.getSettings() as MediaTrackSettings & {
+            displaySurface?: string;
+          }
+        ).displaySurface;
+        // Same monitor gate as the attach at publish time.
+        if (surface !== "monitor" && surface !== undefined) return;
+        const shield = new ScreenShieldProcessor();
+        await track.setProcessor(shield);
+        this.#screenShield = shield;
+      } else if (!want && this.#screenShield) {
+        await track.stopProcessor();
+        this.#screenShield = undefined;
+      }
+    } catch (error) {
+      console.error("screen shield sync failed", error);
+      this.#screenShield = undefined;
+    }
   }
 
   async toggleCamera() {
@@ -3152,6 +3192,10 @@ class Voice {
     if (this.screenshare()) {
       await room.localParticipant.setScreenShareEnabled(false);
 
+      // The track's stop() already tore the processor down; just drop the
+      // handle so the next share starts from a clean slate.
+      this.#screenShield = undefined;
+
       this.#setScreenshare(room.localParticipant.isScreenShareEnabled);
 
       this.sound.playSound("streamEnd");
@@ -3227,6 +3271,34 @@ class Voice {
           if (localTrack.videoTrack) {
             localTrack.videoTrack.mediaStreamTrack.contentHint =
               initialQuality.contentHint;
+          }
+
+          // Privacy shield: pixelates the OS-toast corner when something
+          // pops in, before frames reach the encoder (and therefore before
+          // E2EE/SFU — the shielded frame is the only frame that exists off
+          // this machine). Monitor shares only: a window share does not
+          // capture other apps' toasts, and its corner is ordinary content
+          // that would false-trigger. Attach failure is logged and the share
+          // continues RAW — the user chose to share; silently blocking the
+          // share would be the worse surprise. The gate's
+          // TrackProcessorUpdate handler squares this with pause/resume.
+          if (this.#settings.screenShareShield && localTrack.videoTrack) {
+            const surface = (
+              localTrack.videoTrack.mediaStreamTrack.getSettings() as MediaTrackSettings & {
+                displaySurface?: string;
+              }
+            ).displaySurface;
+            if (surface === "monitor" || surface === undefined) {
+              try {
+                const shield = new ScreenShieldProcessor();
+                await (localTrack.videoTrack as LocalVideoTrack).setProcessor(
+                  shield,
+                );
+                this.#screenShield = shield;
+              } catch (error) {
+                console.error("screen shield attach failed", error);
+              }
+            }
           }
 
           // This event is only fired if the screen share is ended by closing the window being streamed.
