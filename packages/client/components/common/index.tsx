@@ -12,12 +12,13 @@ export { tauriInvoke } from "./lib/tauriInvoke";
 export type { TauriInvoke } from "./lib/tauriInvoke";
 export {
   MAX_TIMELOCK_HORIZON_MS,
-  MAX_TIMELOCK_PLAINTEXT,
+  MAX_TIMELOCK_PLAINTEXT_BYTES,
   TimelockNotReadyError,
   decryptTimelockMessage,
   encryptTimelockMessage,
   isTimelockMessage,
   parseTimelockContent,
+  timelockPlaintextBytes,
 } from "./lib/timelock";
 export type { TimelockPayload } from "./lib/timelock";
 export {

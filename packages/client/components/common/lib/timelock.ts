@@ -30,10 +30,17 @@
 const MARKER_PREFIX = "⏳ Timelocked message — unlocks ";
 const MACHINE_RE = /^tlock:v1:(\d{1,15}):([A-Za-z0-9+/=]{64,8192})$/;
 
-/** Longest plaintext the compose dialog accepts. Armor overhead is ~1.37x
- * plus a ~420-char age/tlock header, so this stays well inside the default
- * 2000-char message cap. */
-export const MAX_TIMELOCK_PLAINTEXT = 600;
+/** Longest plaintext the compose dialog accepts, measured in UTF-8 BYTES —
+ * armor grows with encoded bytes, not code units, so a code-unit cap would
+ * let 600 CJK characters (~1800 bytes) overflow the 2000-char message cap.
+ * At ~1.37x armor overhead plus a ~420-char header, 1000 bytes stays inside
+ * it for every script. */
+export const MAX_TIMELOCK_PLAINTEXT_BYTES = 1000;
+
+/** Bytes a string will occupy once UTF-8 encoded. */
+export function timelockPlaintextBytes(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
 
 /** Furthest allowed unlock: 5 years. drand has no expiry, but a typo'd year
  * would otherwise seal a message effectively forever. */

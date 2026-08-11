@@ -468,10 +468,7 @@ export function Message(props: Props) {
               on clients that predate the feature. A malformed payload fails
               the parse and falls through to plain markdown. */}
           <Match when={isTimelockMessage(props.message.content)}>
-            <TimelockMessage
-              messageId={props.message.id}
-              content={props.message.content!}
-            />
+            <TimelockMessage content={props.message.content!} />
           </Match>
           {/* Forwarded messages have no content of their own — the whole
               body is the immutable server-copied snapshot */}

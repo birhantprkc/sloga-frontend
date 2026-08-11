@@ -6,8 +6,9 @@ import { styled } from "styled-system/jsx";
 
 import {
   MAX_TIMELOCK_HORIZON_MS,
-  MAX_TIMELOCK_PLAINTEXT,
+  MAX_TIMELOCK_PLAINTEXT_BYTES,
   encryptTimelockMessage,
+  timelockPlaintextBytes,
 } from "@revolt/common";
 import { useState } from "@revolt/state";
 import { Column, Dialog, DialogProps } from "@revolt/ui";
@@ -68,7 +69,8 @@ export function TimelockComposeModal(
   };
 
   const tooLong = () =>
-    (draft().content?.trim().length ?? 0) > MAX_TIMELOCK_PLAINTEXT;
+    timelockPlaintextBytes(draft().content?.trim() ?? "") >
+    MAX_TIMELOCK_PLAINTEXT_BYTES;
 
   const canSeal = () =>
     !pending() && !!draft().content?.trim() && !tooLong() && validWindow();
@@ -160,10 +162,7 @@ export function TimelockComposeModal(
         <Show when={tooLong()}>
           <Warning>
             <Symbol size={16}>error</Symbol>
-            <Trans>
-              Timelocked messages are limited to {MAX_TIMELOCK_PLAINTEXT}{" "}
-              characters.
-            </Trans>
+            <Trans>This message is too long to timelock.</Trans>
           </Warning>
         </Show>
 

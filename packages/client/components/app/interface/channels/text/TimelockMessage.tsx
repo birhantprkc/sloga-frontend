@@ -21,11 +21,23 @@ import { Symbol } from "@revolt/ui/components/utils/Symbol";
 export { isTimelockMessage } from "@revolt/common";
 
 /**
- * Decrypted plaintext by message id. Sealed messages re-enter the viewport
- * constantly while scrolling; the beacon fetch + pairing math must run once,
- * not per mount.
+ * Decrypted plaintext keyed by the ciphertext itself (armor body), NOT the
+ * message id. Sealed messages re-enter the viewport constantly while
+ * scrolling, so the beacon fetch + pairing math must run once, not per mount
+ * — but keying by id would render an EDITED timelock message with the old
+ * plaintext, so the key is the payload. Bounded so a long session can't grow
+ * it without limit.
  */
 const openedCache = new Map<string, string>();
+const OPENED_CACHE_MAX = 200;
+
+function cacheOpened(armorBody: string, plain: string) {
+  if (openedCache.size >= OPENED_CACHE_MAX) {
+    const oldest = openedCache.keys().next().value;
+    if (oldest !== undefined) openedCache.delete(oldest);
+  }
+  openedCache.set(armorBody, plain);
+}
 
 /**
  * Sealed-envelope renderer for timelocked messages (see
@@ -35,7 +47,7 @@ const openedCache = new Map<string, string>();
  * "too early" response near the boundary retries quietly instead of alarming
  * anyone.
  */
-export function TimelockMessage(props: { messageId: string; content: string }) {
+export function TimelockMessage(props: { content: string }) {
   const payload = () => parseTimelockContent(props.content)!;
 
   const [now, setNow] = createSignal(Date.now());
@@ -43,7 +55,7 @@ export function TimelockMessage(props: { messageId: string; content: string }) {
   onCleanup(() => clearInterval(timer));
 
   const [opened, setOpened] = createSignal(
-    openedCache.get(props.messageId) ?? null,
+    openedCache.get(payload().armorBody) ?? null,
   );
   const [busy, setBusy] = createSignal(false);
   const [failed, setFailed] = createSignal(false);
@@ -52,19 +64,22 @@ export function TimelockMessage(props: { messageId: string; content: string }) {
   const unlocked = () => remainingMs() <= 0;
 
   let retries = 0;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => clearTimeout(retryTimer));
+
   async function attempt() {
     if (busy() || opened() !== null) return;
     setBusy(true);
     setFailed(false);
     try {
       const plain = await decryptTimelockMessage(payload());
-      openedCache.set(props.messageId, plain);
+      cacheOpened(payload().armorBody, plain);
       setOpened(plain);
     } catch (error) {
       if (error instanceof TimelockNotReadyError && retries < 5) {
         // Beacon lag near the boundary: try again shortly, silently.
         retries += 1;
-        setTimeout(() => void attempt(), 4000);
+        retryTimer = setTimeout(() => void attempt(), 4000);
       } else {
         setFailed(true);
       }
