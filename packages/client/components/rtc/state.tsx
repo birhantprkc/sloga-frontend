@@ -137,6 +137,7 @@ import {
 } from "./cameraEffects";
 import { createCaptionEngine } from "./captions/captionEngine";
 import { LiveCaptions } from "./captions/liveCaptions";
+import { WhisperController } from "./whisper";
 import { CaptionPublisher } from "./components/CaptionPublisher";
 import { CaptionSpeaker } from "./components/CaptionSpeaker";
 import { InRoom } from "./components/InRoom";
@@ -432,6 +433,17 @@ class Voice {
    */
   readonly captions = new LiveCaptions(createCaptionEngine);
   /**
+   * Private-aside audio to one participant (second published audio track,
+   * SFU-restricted via subscription permissions — see whisper.ts for the
+   * fail-closed ordering and the honest privacy model).
+   */
+  readonly whisper = new WhisperController();
+  /** Identity of a participant currently whispering TO US (from the audio
+   * manager, which is where addressed whisper tracks surface), for the
+   * receiving-side indicator. */
+  incomingWhisperFrom: Accessor<string | undefined>;
+  #setIncomingWhisperFrom: Setter<string | undefined>;
+  /**
    * Remote desktop control during screen share. Owned by this class rather
    * than by any component, because a tile is destroyed and rebuilt by
    * ordinary actions — the grid and the focus box are DIFFERENT `TrackLoop`s,
@@ -690,6 +702,11 @@ class Voice {
     const [diceRolls, setDiceRolls] = createSignal<DiceRollToast[]>([]);
     this.diceRolls = diceRolls;
     this.#setDiceRolls = setDiceRolls;
+
+    const [incomingWhisperFrom, setIncomingWhisperFrom] =
+      createSignal<string>();
+    this.incomingWhisperFrom = incomingWhisperFrom;
+    this.#setIncomingWhisperFrom = setIncomingWhisperFrom;
 
     const [hwBrightness, setHwBrightness] = createSignal(false);
     this.cameraHwBrightness = hwBrightness;
@@ -1732,6 +1749,10 @@ class Voice {
       this.#e2eeWorker = undefined;
       this.#mlsKeyProvider = undefined;
       this.captions.detach();
+      // Whisper state dies with the call: the room is going away, so there
+      // is nothing to unpublish or restore — just stop the capture.
+      this.whisper.reset();
+      this.#setIncomingWhisperFrom(undefined);
       // Ends the capture surface and releases every held key and button. A
       // controller who leaves the call while holding Ctrl must not leave it
       // held down on someone else's machine — the sharer's native watchdog
@@ -2062,6 +2083,33 @@ class Voice {
     if (this.#liveToggleReady()) return this.toggleDeafen();
     this.#settings.deafen = !this.#settings.deafen;
     this.sound.playSound(this.#settings.deafen ? "deafen" : "undeafen");
+  }
+
+  /**
+   * Start (or retarget) a whisper to the given user. Refused while the
+   * publish gate is held: the whisper track would sit upstream-paused and
+   * the whisperer would be talking to nobody without knowing it.
+   */
+  async startWhisper(targetUserId: string) {
+    try {
+      const room = this.room();
+      if (!room || this.state() !== "CONNECTED") throw "invalid state";
+      if (this.#publishGate.size > 0) throw "call still negotiating";
+      await this.whisper.start(room, targetUserId);
+    } catch (e) {
+      this.onErr(e);
+    }
+  }
+
+  /** End the active whisper, restoring default subscription permissions. */
+  async stopWhisper() {
+    await this.whisper.stop();
+  }
+
+  /** Receiving-side indicator plumbing, written by RoomAudioManager (the
+   * one place addressed whisper tracks surface). */
+  noteIncomingWhisper(identity: string | undefined) {
+    this.#setIncomingWhisperFrom(identity);
   }
 
   async toggleCamera() {

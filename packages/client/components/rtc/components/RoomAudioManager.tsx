@@ -8,10 +8,16 @@ import { RemoteTrackPublication, Track } from "livekit-client";
 import { useState } from "@revolt/state";
 
 import { useVoice } from "../state";
+import { identityUserId, whisperTarget } from "../whisperPermissions";
 
 export function RoomAudioManager() {
   const voice = useVoice();
   const state = useState();
+
+  const myUserId = () => {
+    const identity = voice.room()?.localParticipant.identity;
+    return identity ? identityUserId(identity) : undefined;
+  };
 
   const tracks = useTracks(
     [
@@ -38,12 +44,26 @@ export function RoomAudioManager() {
   );
 
   const filteredTracks = createMemo(() =>
-    tracks().filter(
-      (track) =>
-        !isLocal(track.participant) &&
-        track.publication.kind === Track.Kind.Audio,
-    ),
+    tracks().filter((track) => {
+      if (isLocal(track.participant)) return false;
+      if (track.publication.kind !== Track.Kind.Audio) return false;
+      // Whisper tracks addressed to someone else: the SFU already refuses us
+      // the subscription, but don't even try — a permission gap must not
+      // become audible here, and the retry churn is pointless.
+      const addressee = whisperTarget(track.publication.trackName);
+      if (addressee && addressee !== myUserId()) return false;
+      return true;
+    }),
   );
+
+  // Receiving-side whisper indicator: the first whisper track addressed to
+  // us that is actually flowing. Cleared when it goes away.
+  createEffect(() => {
+    const whisper = filteredTracks().find(
+      (track) => whisperTarget(track.publication.trackName) === myUserId(),
+    );
+    voice.noteIncomingWhisper(whisper?.participant.identity);
+  });
 
   const filteredVideoTracks = createMemo(() =>
     videoTracks().filter((track) => !isLocal(track.participant)),

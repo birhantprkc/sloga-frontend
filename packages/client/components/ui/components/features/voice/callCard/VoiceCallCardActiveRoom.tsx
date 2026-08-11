@@ -23,6 +23,7 @@ import {
 } from "./VoiceCallCardStatus";
 import { VoiceCallDowngradeBanner } from "./VoiceCallDowngradeBanner";
 import { VoiceCallRecordingBanner } from "./VoiceCallRecordingBanner";
+import { VoiceCallWhisperBanner } from "./VoiceCallWhisperBanner";
 import { VoiceCallRosterPanel } from "./VoiceCallRosterPanel";
 
 /**
@@ -48,6 +49,7 @@ export function VoiceCallCardActiveRoom() {
       <TopBanners>
         <VoiceCallDowngradeBanner />
         <VoiceCallRecordingBanner />
+        <VoiceCallWhisperBanner />
       </TopBanners>
       <VoiceCallRosterPanel />
       {/* The transcript panel is NOT here — it lives in

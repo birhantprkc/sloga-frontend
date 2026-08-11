@@ -24,6 +24,7 @@ import MdChat from "@material-design-icons/svg/outlined/chat.svg?component-solid
 import MdClose from "@material-design-icons/svg/outlined/close.svg?component-solid";
 import MdDoNotDisturbOn from "@material-design-icons/svg/outlined/do_not_disturb_on.svg?component-solid";
 import MdFace from "@material-design-icons/svg/outlined/face.svg?component-solid";
+import MdHearing from "@material-design-icons/svg/outlined/hearing.svg?component-solid";
 import MdMicOff from "@material-design-icons/svg/outlined/mic_off.svg?component-solid";
 import MdPersonAddAlt from "@material-design-icons/svg/outlined/person_add_alt.svg?component-solid";
 import MdPersonRemove from "@material-design-icons/svg/outlined/person_remove.svg?component-solid";
@@ -458,6 +459,21 @@ export function UserContextMenu(props: {
           }
         >
           <Trans>Mute</Trans>
+        </ContextMenuButton>
+        <ContextMenuButton
+          icon={MdHearing}
+          onClick={() =>
+            voice.whisper.target() === props.user.id
+              ? void voice.stopWhisper()
+              : void voice.startWhisper(props.user.id)
+          }
+        >
+          <Show
+            when={voice.whisper.target() === props.user.id}
+            fallback={<Trans>Whisper</Trans>}
+          >
+            <Trans>Stop whispering</Trans>
+          </Show>
         </ContextMenuButton>
         <ContextMenuDivider />
       </Show>
