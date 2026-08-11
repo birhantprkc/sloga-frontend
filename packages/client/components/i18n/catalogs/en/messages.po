@@ -6916,3 +6916,11 @@ msgstr "Whispering to {0} — only they hear you"
 #: components/modal/modals/ScreenShareSettings.tsx
 msgid "Privacy shield — hide pop-up notifications (blurs the corner of full-screen shares when something appears there)"
 msgstr "Privacy shield — hide pop-up notifications (blurs the corner of full-screen shares when something appears there)"
+
+#: components/modal/modals/ScreenShareSettings.tsx
+msgid "Privacy shield — hide pop-up notifications (pixelates the corner of full-screen shares when something appears there)"
+msgstr "Privacy shield — hide pop-up notifications (pixelates the corner of full-screen shares when something appears there)"
+
+#: components/modal/modals/TimelockCompose.tsx
+msgid "This message is too long to timelock."
+msgstr "This message is too long to timelock."
