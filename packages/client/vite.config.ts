@@ -52,7 +52,15 @@ export default defineConfig({
         // THE BUILD on any globbed asset over the cap rather than skipping it.
         // Never precache it: transcription fetches its runtime from `/models/`
         // at toggle time, so the bundled copy is never even loaded.
-        globIgnores: ["**/mediapipe/**", "**/ort-wasm*", "**/*.wasm"],
+        // The transcription worker chunk carries transformers.js (~900KB) for
+        // an opt-in feature; keep it out of every PWA install. No runtime SW
+        // route exists, so the page fetches it straight from the network.
+        globIgnores: [
+          "**/mediapipe/**",
+          "**/ort-wasm*",
+          "**/*.wasm",
+          "**/transcriptionWorker*",
+        ],
       },
       devOptions: {
         enabled: true,
