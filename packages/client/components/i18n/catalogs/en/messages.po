@@ -6825,3 +6825,90 @@ msgstr "Click to start"
 #: components/ui/components/features/voice/minigame/MinigameChip.tsx
 msgid "Web {n}"
 msgstr "Web {n}"
+
+#: components/ui/components/features/voice/callCard/VoiceCaptionsButton.tsx
+msgid "Captions aren't available on end-to-end encrypted calls"
+msgstr "Captions aren't available on end-to-end encrypted calls"
+
+#: components/app/interface/channels/text/TimelockMessage.tsx
+msgid "Couldn't unlock this message yet."
+msgstr "Couldn't unlock this message yet."
+
+#: components/modal/modals/TimelockCompose.tsx
+msgid "In 24 hours"
+msgstr "In 24 hours"
+
+#: components/modal/modals/TimelockCompose.tsx
+msgid "In 30 days"
+msgstr "In 30 days"
+
+#: components/modal/modals/TimelockCompose.tsx
+msgid "In a year"
+msgstr "In a year"
+
+#: components/modal/modals/TimelockCompose.tsx
+msgid "Pick a time between 1 minute and 5 years from now."
+msgstr "Pick a time between 1 minute and 5 years from now."
+
+#: components/modal/modals/TimelockCompose.tsx
+msgid "Seal & send"
+msgstr "Seal & send"
+
+#: components/modal/modals/TimelockCompose.tsx
+msgid "Sealed on your device using timelock encryption against the drand randomness beacon. Nobody — not the recipients, not the server, not even you — can open it before the chosen time. It unlocks for everyone at once."
+msgstr "Sealed on your device using timelock encryption against the drand randomness beacon. Nobody — not the recipients, not the server, not even you — can open it before the chosen time. It unlocks for everyone at once."
+
+#: components/app/interface/channels/text/TimelockMessage.tsx
+msgid "Sealed with timelock encryption — the key to open it will not exist anywhere until the drand beacon reaches the unlock round."
+msgstr "Sealed with timelock encryption — the key to open it will not exist anywhere until the drand beacon reaches the unlock round."
+
+#: components/ui/components/features/voice/callCard/VoiceCaptionsButton.tsx
+msgid "Show live captions, translated into your chosen language"
+msgstr "Show live captions, translated into your chosen language"
+
+#: src/interface/channels/text/Composition.tsx
+#: components/modal/modals/TimelockCompose.tsx
+msgid "Timelock message"
+msgstr "Timelock message"
+
+#: components/app/interface/channels/text/TimelockMessage.tsx
+msgid "Timelocked message"
+msgstr "Timelocked message"
+
+#: components/modal/modals/TimelockCompose.tsx
+msgid "Timelocked messages are limited to {MAX_TIMELOCK_PLAINTEXT} characters."
+msgstr "Timelocked messages are limited to {MAX_TIMELOCK_PLAINTEXT} characters."
+
+#: components/app/interface/channels/text/TimelockMessage.tsx
+msgid "Timelocked until"
+msgstr "Timelocked until"
+
+#: components/ui/components/features/voice/callCard/VoiceCaptionsButton.tsx
+msgid "Turn off live captions"
+msgstr "Turn off live captions"
+
+#: components/app/interface/channels/text/TimelockMessage.tsx
+msgid "Unlocking…"
+msgstr "Unlocking…"
+
+#: components/app/interface/channels/text/TimelockMessage.tsx
+msgid "Unlocks in"
+msgstr "Unlocks in"
+
+#. placeholder {0}: senderName()
+#: components/ui/components/features/voice/callCard/VoiceCallWhisperBanner.tsx
+msgid "{0} is whispering to you"
+msgstr "{0} is whispering to you"
+
+#: components/app/menus/UserContextMenu.tsx
+msgid "Stop whispering"
+msgstr "Stop whispering"
+
+#: components/app/menus/UserContextMenu.tsx
+msgid "Whisper"
+msgstr "Whisper"
+
+#. placeholder {0}: targetName()
+#: components/ui/components/features/voice/callCard/VoiceCallWhisperBanner.tsx
+msgid "Whispering to {0} — only they hear you"
+msgstr "Whispering to {0} — only they hear you"
