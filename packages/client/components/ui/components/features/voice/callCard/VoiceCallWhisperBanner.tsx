@@ -1,6 +1,6 @@
 import { Show } from "solid-js";
 
-import { Trans } from "@lingui-solid/solid/macro";
+import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import { styled } from "styled-system/jsx";
 
 import { useUsers } from "@revolt/markdown/users";
@@ -22,6 +22,7 @@ import { participantUserId } from "../participantIdentity";
  */
 export function VoiceCallWhisperBanner() {
   const voice = useVoice();
+  const { t } = useLingui();
 
   const targetUsers = useUsers(() => {
     const target = voice.whisper.target();
@@ -41,7 +42,7 @@ export function VoiceCallWhisperBanner() {
         <WhisperChip
           type="button"
           onClick={() => void voice.stopWhisper()}
-          title="Stop whispering"
+          title={t`Stop whispering`}
         >
           <Symbol size={14}>hearing</Symbol>
           <Trans>Whispering to {targetName()} — only they hear you</Trans>

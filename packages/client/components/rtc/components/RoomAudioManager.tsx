@@ -57,11 +57,17 @@ export function RoomAudioManager() {
   );
 
   // Receiving-side whisper indicator: the first whisper track addressed to
-  // us that is actually flowing. Cleared when it goes away.
+  // us that is actually flowing. Cleared when it goes away. Skip entirely
+  // until our own identity is known — during connect/teardown it is
+  // undefined, and `whisperTarget(...) === undefined` would tag a plain
+  // (non-whisper) mic track as an incoming whisper.
   createEffect(() => {
-    const whisper = filteredTracks().find(
-      (track) => whisperTarget(track.publication.trackName) === myUserId(),
-    );
+    const me = myUserId();
+    const whisper = me
+      ? filteredTracks().find(
+          (track) => whisperTarget(track.publication.trackName) === me,
+        )
+      : undefined;
     voice.noteIncomingWhisper(whisper?.participant.identity);
   });
 

@@ -436,9 +436,10 @@ class Voice {
   /**
    * Private-aside audio to one participant (second published audio track,
    * SFU-restricted via subscription permissions — see whisper.ts for the
-   * fail-closed ordering and the honest privacy model).
+   * fail-closed ordering and the honest privacy model). Auto-ends (restoring
+   * the mic) if the target leaves the call.
    */
-  readonly whisper = new WhisperController();
+  readonly whisper = new WhisperController(() => void this.stopWhisper());
   /** Identity of a participant currently whispering TO US (from the audio
    * manager, which is where addressed whisper tracks surface), for the
    * receiving-side indicator. */
@@ -447,6 +448,8 @@ class Voice {
   /** Live screenshare privacy-shield processor, when attached (the handle is
    * ours because livekit exposes no reliable current-processor getter). */
   #screenShield: ScreenShieldProcessor | undefined;
+  /** Primary-mic state captured when a whisper began, to restore on stop. */
+  #whisperPriorMic = false;
   /**
    * Remote desktop control during screen share. Owned by this class rather
    * than by any component, because a tile is destroyed and rebuilt by
@@ -660,7 +663,13 @@ class Voice {
     this.#setState = setState;
 
     this.deafen = () => voiceSettings.deafen;
-    this.microphone = () => voiceSettings.micOn && !voiceSettings.deafen;
+    // Whispering suppresses the primary room mic (the aside rides its own
+    // track), so `microphone()` reports off for its duration. This is the
+    // single source the mute button AND the caption publisher both read, so
+    // one term keeps the button honest and stops captions broadcasting the
+    // aside to the whole call.
+    this.microphone = () =>
+      voiceSettings.micOn && !voiceSettings.deafen && !this.whisper.target();
 
     const [video, setVideo] = createSignal(false);
     this.video = video;
@@ -2030,6 +2039,14 @@ class Voice {
   }
 
   async toggleMute() {
+    // While whispering, the primary mic is intentionally suppressed and the
+    // button reads "muted". Pressing it ends the aside and restores the mic
+    // rather than toggling the room mic underneath the whisper — otherwise a
+    // mute press would silently make the room hot mid-whisper.
+    if (this.whisper.target()) {
+      await this.stopWhisper();
+      return;
+    }
     if (this.#settings.deafen) {
       this.toggleDeafen(true);
       return;
@@ -2094,21 +2111,44 @@ class Voice {
    * Start (or retarget) a whisper to the given user. Refused while the
    * publish gate is held: the whisper track would sit upstream-paused and
    * the whisperer would be talking to nobody without knowing it.
+   *
+   * Suppresses the primary room mic through the pin-aware `#setMicEnabled`
+   * (so a vanished pinned device rescues rather than silently sticking off)
+   * and remembers its prior state to restore on stop.
    */
   async startWhisper(targetUserId: string) {
+    const room = this.room();
     try {
-      const room = this.room();
       if (!room || this.state() !== "CONNECTED") throw "invalid state";
       if (this.#publishGate.size > 0) throw "call still negotiating";
+
+      this.#whisperPriorMic = room.localParticipant.isMicrophoneEnabled;
+      if (this.#whisperPriorMic) await this.#setMicEnabled(room, false);
+
       await this.whisper.start(room, targetUserId);
+
+      // Aborted mid-start (a stop landed during setup) — undo the mute.
+      if (!this.whisper.target()) await this.#restoreWhisperMic(room);
     } catch (e) {
+      if (room) await this.#restoreWhisperMic(room).catch(() => undefined);
       this.onErr(e);
     }
   }
 
-  /** End the active whisper, restoring default subscription permissions. */
+  /** End the active whisper, restoring default subscription permissions and
+   * the primary mic. */
   async stopWhisper() {
     await this.whisper.stop();
+    const room = this.room();
+    if (room) await this.#restoreWhisperMic(room);
+  }
+
+  /** Re-enable the primary mic to its pre-whisper state, if it was on. */
+  async #restoreWhisperMic(room: Room) {
+    if (this.#whisperPriorMic && !room.localParticipant.isMicrophoneEnabled) {
+      await this.#setMicEnabled(room, true).catch(() => undefined);
+    }
+    this.#whisperPriorMic = false;
   }
 
   /** Receiving-side indicator plumbing, written by RoomAudioManager (the
@@ -3683,6 +3723,9 @@ class Voice {
       // so a focused keydown is the perfect lazy re-arm point for the
       // global hook (covers mid-call enable + keybind changes).
       void this.#ensureNativePtt(room);
+      // While whispering the room mic is deliberately suppressed; the talk
+      // key must not unmute it into the room behind the aside.
+      if (this.whisper.target()) return;
       if (room.localParticipant.isMicrophoneEnabled) return;
       void this.#setMicEnabled(room, true).catch(() => {});
     };
@@ -3745,6 +3788,8 @@ class Voice {
             void this.#disarmNativePtt();
             return;
           }
+          // Suppressed during a whisper, same as the focused handler.
+          if (this.whisper.target()) return;
           if (room.localParticipant.isMicrophoneEnabled) return;
           void this.#setMicEnabled(room, true).catch(() => {});
         });
@@ -3836,7 +3881,9 @@ class Voice {
         const level = Math.min(100, avg * 2.5);
         const threshold = this.#settings.vadThreshold;
 
-        if (level > threshold) {
+        if (level > threshold && !this.whisper.target()) {
+          // Voice-activity must not open the room mic while whispering — the
+          // aside would otherwise be spoken to the whole call.
           clearTimeout(this.#vadSilenceTimer);
           this.#vadSilenceTimer = undefined;
           if (!room.localParticipant.isMicrophoneEnabled) {

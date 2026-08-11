@@ -26,6 +26,7 @@ import { type Accessor, type Setter, createSignal } from "solid-js";
 
 import {
   computeWhisperPermissions,
+  identityUserId,
   whisperTarget,
   whisperTrackName,
 } from "./whisperPermissions";
@@ -43,13 +44,25 @@ export class WhisperController {
 
   #room: Room | undefined;
   #track: LocalAudioTrack | undefined;
-  #micWasEnabled = false;
   #busy = false;
+  /** A stop requested while start() was mid-flight; honored when it settles,
+   * so a banner-chip click during the getUserMedia window is never dropped. */
+  #stopRequested = false;
+  /** Invoked when the whisper's target leaves the call, so the owner can tear
+   * the whisper down (and restore the mic) rather than keep an aside alive
+   * addressed to nobody. */
+  #onTargetGone: (() => void) | undefined;
 
-  constructor() {
+  constructor(onTargetGone?: () => void) {
     const [target, setTarget] = createSignal<string | undefined>(undefined);
     this.target = target;
     this.#setTarget = setTarget;
+    this.#onTargetGone = onTargetGone;
+  }
+
+  /** Whether a whisper is currently active or being set up. */
+  active(): boolean {
+    return this.target() !== undefined || this.#busy;
   }
 
   /** Sids of every local publication EXCEPT the whisper track itself. */
@@ -76,11 +89,33 @@ export class WhisperController {
     );
   };
 
-  #onParticipantChange = () => this.#push();
+  #onParticipantChange = () => {
+    const target = this.target();
+    const room = this.#room;
+    if (!target || !room) return;
+    // If the target's last device has left, the aside has no audience — hand
+    // back to the owner to tear down rather than re-fence a whisper nobody
+    // can receive.
+    const present = Array.from(room.remoteParticipants.values()).some(
+      (p) => identityUserId(p.identity) === target,
+    );
+    if (!present) {
+      this.#onTargetGone?.();
+      return;
+    }
+    this.#push();
+  };
 
+  /**
+   * Publish a whisper track to `targetUserId`. The caller (Voice) owns muting
+   * the primary room mic through its pin-aware path; this manages only the
+   * track and its subscription fence. Returns having torn everything back down
+   * if a stop was requested while it was setting up.
+   */
   async start(room: Room, targetUserId: string): Promise<void> {
     if (this.#busy) return;
     this.#busy = true;
+    this.#stopRequested = false;
     try {
       if (this.target()) await this.#stopInner();
 
@@ -95,31 +130,38 @@ export class WhisperController {
       room.on(RoomEvent.LocalTrackPublished, this.#onParticipantChange);
       room.on(RoomEvent.LocalTrackUnpublished, this.#onParticipantChange);
 
-      // A whisper is an aside: the room must not hear it through the open
-      // mic. Remembered and restored on stop; if the user unmutes mid-whisper
-      // that is their call and we leave it alone.
-      this.#micWasEnabled = room.localParticipant.isMicrophoneEnabled;
-      if (this.#micWasEnabled)
-        await room.localParticipant.setMicrophoneEnabled(false);
-
       const track = await createLocalAudioTrack({
         deviceId: room.getActiveDevice("audioinput") ?? undefined,
       });
+      // A stop landing during the getUserMedia grant window must win — abort
+      // before the track ever reaches the SFU.
+      if (this.#stopRequested) {
+        track.stop();
+        await this.#stopInner();
+        return;
+      }
       this.#track = track;
       await room.localParticipant.publishTrack(track, {
         source: Track.Source.Unknown,
         name: whisperTrackName(targetUserId),
       });
+      if (this.#stopRequested) await this.#stopInner();
     } catch (error) {
       await this.#stopInner();
       throw error;
     } finally {
       this.#busy = false;
+      this.#stopRequested = false;
     }
   }
 
   async stop(): Promise<void> {
-    if (this.#busy) return;
+    // A stop mid-start latches and is honored when start() settles, rather
+    // than being silently dropped.
+    if (this.#busy) {
+      this.#stopRequested = true;
+      return;
+    }
     this.#busy = true;
     try {
       await this.#stopInner();
@@ -139,6 +181,10 @@ export class WhisperController {
       room.off(RoomEvent.LocalTrackUnpublished, this.#onParticipantChange);
     }
 
+    // Unpublish the whisper track BEFORE reopening permissions, so there is no
+    // window where the fence is down while a whisper publication still exists.
+    // stop() always runs (unpublishTrack's `true` stops it) even if the
+    // unpublish message itself throws.
     if (this.#track) {
       try {
         await room?.localParticipant.unpublishTrack(this.#track, true);
@@ -151,12 +197,7 @@ export class WhisperController {
     if (room) {
       // Back to the default: everyone may subscribe to everything published.
       room.localParticipant.setTrackSubscriptionPermissions(true, []);
-      if (this.#micWasEnabled && !room.localParticipant.isMicrophoneEnabled)
-        await room.localParticipant
-          .setMicrophoneEnabled(true)
-          .catch(() => undefined);
     }
-    this.#micWasEnabled = false;
     this.#room = undefined;
   }
 
@@ -168,7 +209,7 @@ export class WhisperController {
     this.#track?.stop();
     this.#track = undefined;
     this.#room = undefined;
-    this.#micWasEnabled = false;
     this.#busy = false;
+    this.#stopRequested = false;
   }
 }
