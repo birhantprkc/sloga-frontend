@@ -60,11 +60,6 @@ export class WhisperController {
     this.#onTargetGone = onTargetGone;
   }
 
-  /** Whether a whisper is currently active or being set up. */
-  active(): boolean {
-    return this.target() !== undefined || this.#busy;
-  }
-
   /** Sids of every local publication EXCEPT the whisper track itself. */
   #normalTrackSids(room: Room): string[] {
     const sids: string[] = [];
