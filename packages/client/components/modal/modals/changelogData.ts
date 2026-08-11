@@ -8,6 +8,26 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // The worker move is live-verified against the built bundle (model loaded,
+  // inference completed in the worker, main thread serviced work mid-inference,
+  // all model/runtime fetches same-origin) — but not yet in a real multi-party
+  // call. The freeze it fixes was reported from the field on 2026-08-10. The
+  // Give control label row below still describes code, not observed UI.
+  {
+    id: "sloga-2026-08-10-4",
+    title: "Patch Notes",
+    published_at: "2026-08-10T22:00:00.000Z",
+    markdown_content: `## v0.32.0 — Transcription minds its manners
+
+### 🎙️ Transcribing a call no longer freezes the app
+- **The speech-to-text model now runs on its own thread.** On computers where transcription ran slower than the conversation, turning it on could freeze the whole app and eventually crash it. The app now stays responsive no matter how hard the model is working — worst case the transcript falls behind, and it tells you when it does.
+- **If transcription breaks, it breaks alone.** A failure in the transcriber now ends transcription, not your call — and turning it on again starts clean.
+
+### 🖱️ Give control says so
+- **The Give control button now carries its label** instead of being one more blue circle that read exactly like an unmuted mic. *(Windows desktop only, while sharing your whole screen.)*
+
+*Sloga — Hop on.*`,
+  },
   // The share-icon repair was observed directly (the wrong glyph was read out
   // of a live call's DOM before the fix). The other two rows were NOT seen
   // rendered: Give control needs a live whole-screen share plus the native
