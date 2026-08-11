@@ -176,8 +176,10 @@ export class ScreenShieldProcessor {
     ) {
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
-      // Old-resolution baseline would read as one giant change.
-      this.#detector.reset();
+      // Drop the pre-resize baseline (it would read as one giant change) but
+      // KEEP the detector's phase: a resolution change (window resize, quality
+      // re-tier, monitor switch) must not unshield a toast that is still on
+      // screen. The next sample simply re-establishes the baseline.
       this.#lastSample = undefined;
     }
 

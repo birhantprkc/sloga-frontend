@@ -108,8 +108,8 @@ export function ScreenShareSettingsModal(
           </Show>
           <Form2.Checkbox control={group.controls.shield}>
             <Trans>
-              Privacy shield — hide pop-up notifications (blurs the corner of
-              full-screen shares when something appears there)
+              Privacy shield — hide pop-up notifications (pixelates the corner
+              of full-screen shares when something appears there)
             </Trans>
           </Form2.Checkbox>
           <Form2.Checkbox control={group.controls.dontAsk}>
