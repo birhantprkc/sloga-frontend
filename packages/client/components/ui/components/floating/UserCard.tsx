@@ -7,7 +7,7 @@ import { styled } from "styled-system/jsx";
 import { useDevice } from "@revolt/common";
 import { useModals } from "@revolt/modal";
 
-import { Profile } from "../features";
+import { Profile, isProfilePrivateError } from "../features";
 
 /**
  * Base element for the card
@@ -39,6 +39,8 @@ export function UserCard(
   const query = useQuery(() => ({
     queryKey: ["profile", props.user.id],
     queryFn: () => props.user.fetchProfile(),
+    retry: (failureCount, error) =>
+      !isProfilePrivateError(error) && failureCount < 3,
   }));
 
   function openFull() {
@@ -78,7 +80,11 @@ export function UserCard(
           <Profile.Badges user={props.user} />
           <Profile.Status user={props.user} />
           <Profile.Joined user={props.user} member={props.member} />
-          <Profile.Bio content={query.data?.content} onClick={openFull} />
+          <Profile.Bio
+            content={query.data?.content}
+            isPrivate={isProfilePrivateError(query.error)}
+            onClick={openFull}
+          />
         </Grid>
       </div>
     </Show>

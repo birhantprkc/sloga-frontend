@@ -3929,6 +3929,7 @@ msgstr "Not of minimum age to use the platform"
 msgid "Note"
 msgstr "Note"
 
+#: components/modal/modals/AddFriend.tsx
 #: components/modal/modals/CreateSoftRes.tsx
 msgid "Note (optional)"
 msgstr "Note (optional)"
@@ -6802,6 +6803,10 @@ msgstr "Hold the rim, clear the web."
 msgid "Back to games"
 msgstr "Back to games"
 
+#: components/app/interface/settings/user/profile/UserProfileEditor.tsx
+msgid "Choose who can see your bio, banner, and connections. People you share a server or group with can always see your name and avatar."
+msgstr "Choose who can see your bio, banner, and connections. People you share a server or group with can always see your name and avatar."
+
 #: components/ui/components/features/voice/minigame/MinigameChip.tsx
 msgid "Slogatron minigame"
 msgstr "Slogatron minigame"
@@ -6821,6 +6826,50 @@ msgstr "Zap"
 #: components/ui/components/features/voice/minigame/MinigameChip.tsx
 msgid "Click to start"
 msgstr "Click to start"
+
+#: components/app/interface/settings/user/profile/UserProfileEditor.tsx
+msgid "Everyone"
+msgstr "Everyone"
+
+#: components/app/interface/settings/user/profile/UserProfileEditor.tsx
+msgid "Friends only"
+msgstr "Friends only"
+
+#: components/app/interface/settings/channel/Overview.tsx
+msgid "Mark as Spoiler"
+msgstr "Mark as Spoiler"
+
+#: components/app/interface/settings/channel/Overview.tsx
+msgid "Members must choose to reveal a spoiler channel before its contents are shown, without marking the channel as mature."
+msgstr "Members must choose to reveal a spoiler channel before its contents are shown, without marking the channel as mature."
+
+#: components/app/interface/settings/user/profile/UserProfileEditor.tsx
+msgid "Profile visibility"
+msgstr "Profile visibility"
+
+#: components/app/interface/settings/channel/Overview.tsx
+msgid "Remove Spoiler Mark"
+msgstr "Remove Spoiler Mark"
+
+#: src/interface/channels/SpoilerGate.tsx
+msgid "Reveal Channel"
+msgstr "Reveal Channel"
+
+#: components/app/interface/settings/channel/Overview.tsx
+msgid "Spoiler Channel"
+msgstr "Spoiler Channel"
+
+#: components/modal/modals/AddFriend.tsx
+msgid "Tell them why you're adding them"
+msgstr "Tell them why you're adding them"
+
+#: src/interface/channels/SpoilerGate.tsx
+msgid "This channel may contain spoilers."
+msgstr "This channel may contain spoilers."
+
+#: components/i18n/errors.ts
+msgid "This profile is private."
+msgstr "This profile is private."
 
 #: components/ui/components/features/voice/minigame/MinigameChip.tsx
 msgid "Web {n}"

@@ -117,6 +117,9 @@ export function ProfileActions(props: {
         <Button onPress={() => props.user.addFriend()}>Add Friend</Button>
       </Show>
       <Show when={props.user.relationship === "Incoming"}>
+        <Show when={props.user.relationshipNote}>
+          <RequestNote>“{props.user.relationshipNote}”</RequestNote>
+        </Show>
         <Button onPress={() => props.user.addFriend()}>
           Accept friend request
         </Button>
@@ -202,5 +205,16 @@ const Actions = styled("div", {
         gridColumn: "1 / 3",
       },
     },
+  },
+});
+
+/** Note attached to the incoming friend request (own row above the buttons) */
+const RequestNote = styled("div", {
+  base: {
+    flexBasis: "100%",
+    fontSize: "12px",
+    fontStyle: "italic",
+    color: "var(--md-sys-color-on-surface-variant)",
+    overflowWrap: "anywhere",
   },
 });

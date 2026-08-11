@@ -59,6 +59,21 @@ export default function ChannelOverview(props: ChannelSettingsProps) {
     }
   }
 
+  const [spoilerSaving, setSpoilerSaving] = createSignal(false);
+
+  /** Toggle this channel's click-to-reveal spoiler flag. */
+  async function toggleSpoiler() {
+    setSpoilerSaving(true);
+    try {
+      await props.channel.edit({
+        // stoat-api predates `spoiler` — pass it through verbatim.
+        spoiler: !props.channel.isSpoiler,
+      } as never);
+    } finally {
+      setSpoilerSaving(false);
+    }
+  }
+
   // Follower list (source-side): refetched on the source-topic
   // channelFollowersUpdate signal and on any follow deletion.
   const [followers, { refetch: refetchFollowers }] = createResource(
@@ -349,6 +364,29 @@ export default function ChannelOverview(props: ChannelSettingsProps) {
               >
                 <Match when={props.channel.isAnnouncement}>
                   <Trans>Stop being an Announcement Channel</Trans>
+                </Match>
+              </Switch>
+            </Button>
+          </div>
+        </Column>
+      </Show>
+
+      <Show when={props.channel.type === "TextChannel" && canManageChannel()}>
+        <Column>
+          <Text class="label">
+            <Trans>Spoiler Channel</Trans>
+          </Text>
+          <Text>
+            <Trans>
+              Members must choose to reveal a spoiler channel before its
+              contents are shown, without marking the channel as mature.
+            </Trans>
+          </Text>
+          <div>
+            <Button onPress={toggleSpoiler} isDisabled={spoilerSaving()}>
+              <Switch fallback={<Trans>Mark as Spoiler</Trans>}>
+                <Match when={props.channel.isSpoiler}>
+                  <Trans>Remove Spoiler Mark</Trans>
                 </Match>
               </Switch>
             </Button>

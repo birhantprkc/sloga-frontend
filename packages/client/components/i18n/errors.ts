@@ -52,6 +52,8 @@ export function useError() {
         return t`You're publishing too fast — up to ${errMax} announcements can be published per hour.`;
       if (errType === "DisallowedName")
         return t`This name is not allowed.`;
+      if (errType === "ProfileIsPrivate")
+        return t`This profile is private.`;
 
       switch (err.type) {
         case "AccountDisabled":

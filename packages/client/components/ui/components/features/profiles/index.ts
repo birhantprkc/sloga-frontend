@@ -2,6 +2,8 @@ import { ProfileActions } from "./ProfileActions";
 import { ProfileBadges } from "./ProfileBadges";
 import { ProfileBanner } from "./ProfileBanner";
 import { ProfileBio } from "./ProfileBio";
+
+export { isProfilePrivateError } from "./ProfileBio";
 import { ProfileCard } from "./ProfileCard";
 import { ProfileConnections } from "./ProfileConnections";
 import { ProfileJoined } from "./ProfileJoined";
