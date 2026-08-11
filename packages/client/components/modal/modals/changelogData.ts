@@ -8,6 +8,28 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // Both rows are unit-proven and, for translation, live-proven against the
+  // real endpoint — but neither has been watched in a live call. The
+  // transcription row deliberately promises only that impossible lines are
+  // dropped: a hallucination short enough to be sayable in the time available
+  // is indistinguishable from speech and still gets through, so the copy does
+  // not claim the invented lines are gone.
+  {
+    id: "sloga-2026-08-11",
+    title: "Patch Notes",
+    published_at: "2026-08-11T09:00:00.000Z",
+    markdown_content: `## v0.33.0 — Fewer words nobody said
+
+### 🎙️ Transcription stops inventing sentences
+- **Lines that could not physically have been spoken are now thrown away.** The speech model fills silence with fluent, confident sentences — people testing a call alone were seeing replies they never said, attributed to them by name. The transcript now checks whether there was actually enough speech in the audio to fit the words that came back, and drops what does not add up.
+- Short interjections are still taken at their word, because a real "oh, no" and an invented one look exactly the same to a clock.
+
+### 🌍 Live translation gets out of its own way
+- **Translation that is going to fail now fails instantly**, showing the original text, instead of stalling for seconds first. When the translation service starts refusing requests, the app backs off for a moment rather than queueing into the wall — which is what made captions crawl.
+- Requests that hang are given up on, a few are allowed at a time instead of all at once, and a genuine hiccup is retried once.
+
+*Sloga — Hop on.*`,
+  },
   // The worker move is live-verified against the built bundle (model loaded,
   // inference completed in the worker, main thread serviced work mid-inference,
   // all model/runtime fetches same-origin) — but not yet in a real multi-party
