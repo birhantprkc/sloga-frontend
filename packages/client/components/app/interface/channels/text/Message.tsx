@@ -50,6 +50,7 @@ import {
 import { startsWithPackPUA } from "@revolt/markdown/emoji/UnicodeEmoji";
 import { MediaPickerProps } from "@revolt/ui/components/features/messaging/composition/picker/CompositionMediaPicker";
 import { DiceRollMessage, isDiceRollMessage } from "./DiceRollMessage";
+import { TimelockMessage, isTimelockMessage } from "./TimelockMessage";
 import { EditMessage } from "./EditMessage";
 import { ForwardedMessage } from "./ForwardedMessage";
 import { InteractionContext } from "./InteractionContext";
@@ -461,6 +462,16 @@ export function Message(props: Props) {
             )}
           >
             <SoftResMessage message={props.message} />
+          </Match>
+          {/* Timelocked messages render the sealed envelope INSTEAD of the
+              markdown branch; the raw content doubles as a legible fallback
+              on clients that predate the feature. A malformed payload fails
+              the parse and falls through to plain markdown. */}
+          <Match when={isTimelockMessage(props.message.content)}>
+            <TimelockMessage
+              messageId={props.message.id}
+              content={props.message.content!}
+            />
           </Match>
           {/* Forwarded messages have no content of their own — the whole
               body is the immutable server-copied snapshot */}

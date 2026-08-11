@@ -156,6 +156,11 @@ export type Modals =
       channel: Channel;
     }
   | {
+      type: "timelock_compose";
+      /** Channel whose current draft should be sealed until a chosen time */
+      channel: Channel;
+    }
+  | {
       type: "follow_channel";
       /** Announcement channel to follow from another server's channel */
       channel: Channel;

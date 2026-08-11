@@ -11,6 +11,16 @@ export { default as CONFIGURATION } from "./lib/env";
 export { tauriInvoke } from "./lib/tauriInvoke";
 export type { TauriInvoke } from "./lib/tauriInvoke";
 export {
+  MAX_TIMELOCK_HORIZON_MS,
+  MAX_TIMELOCK_PLAINTEXT,
+  TimelockNotReadyError,
+  decryptTimelockMessage,
+  encryptTimelockMessage,
+  isTimelockMessage,
+  parseTimelockContent,
+} from "./lib/timelock";
+export type { TimelockPayload } from "./lib/timelock";
+export {
   TRANSLATE_LANGUAGES,
   TRANSLATE_LANGUAGE_CODES,
   translateLanguageName,

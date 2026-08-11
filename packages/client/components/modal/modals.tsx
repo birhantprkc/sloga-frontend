@@ -75,6 +75,7 @@ import { ServerIdentityModal } from "./modals/ServerIdentity";
 import { ServerInfoModal } from "./modals/ServerInfo";
 import { SettingsModal } from "./modals/Settings";
 import { SignOutModal } from "./modals/SignOut";
+import { TimelockComposeModal } from "./modals/TimelockCompose";
 import { SignOutSessionsModal } from "./modals/SignOutSessions";
 import { SignedOutModal } from "./modals/SignedOut";
 import { SoftResExportModal } from "./modals/SoftResExport";
@@ -160,6 +161,8 @@ export function RenderModal(props: ActiveModal & { onClose: () => void }) {
       return <ForwardMessageModal {...modalProps} />;
     case "schedule_message":
       return <ScheduleMessageModal {...modalProps} />;
+    case "timelock_compose":
+      return <TimelockComposeModal {...modalProps} />;
     case "follow_channel":
       return <FollowChannelModal {...modalProps} />;
     case "create_webhook":

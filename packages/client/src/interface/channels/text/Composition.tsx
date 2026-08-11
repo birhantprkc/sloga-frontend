@@ -231,6 +231,21 @@ export function MessageComposition(props: Props) {
       e2eeMode() !== "peer_downgraded",
   );
 
+  /**
+   * Timelocked messages are sealed ON DEVICE before they ever leave the
+   * composer, so unlike polls/scheduling there is no plaintext-on-server
+   * concern and no E2EE exclusion: the sealed content rides the normal send
+   * path (and through message E2EE, where active) as ordinary text.
+   */
+  const timelockAllowed = createMemo(
+    () =>
+      ["TextChannel", "Thread", "Group", "DirectMessage"].includes(
+        props.channel.type,
+      ) &&
+      props.channel.havePermission("SendMessage") &&
+      !currentSlowmode(),
+  );
+
   // Prime the send-mode cache when the conversation opens so the indicator
   // is correct before the first send
   createEffect(
@@ -1199,7 +1214,7 @@ export function MessageComposition(props: Props) {
                         display: "flex",
                         "align-items": "center",
                         overflow: "hidden",
-                        "max-width": showMoreActions() ? "240px" : "0px",
+                        "max-width": showMoreActions() ? "288px" : "0px",
                         opacity: showMoreActions() ? "1" : "0",
                         transition: "max-width 0.25s ease, opacity 0.2s ease",
                       }}
@@ -1343,6 +1358,25 @@ export function MessageComposition(props: Props) {
                               }
                             >
                               <Symbol>shield</Symbol>
+                            </IconButton>
+                          </Tooltip>
+                        </MessageBox.InlineIcon>
+                      </Show>
+                      <Show when={timelockAllowed()}>
+                        <MessageBox.InlineIcon>
+                          <Tooltip
+                            content={t`Timelock message`}
+                            placement="top"
+                          >
+                            <IconButton
+                              onPress={() =>
+                                openModal({
+                                  type: "timelock_compose",
+                                  channel: props.channel,
+                                })
+                              }
+                            >
+                              <Symbol>lock_clock</Symbol>
                             </IconButton>
                           </Tooltip>
                         </MessageBox.InlineIcon>
