@@ -8,6 +8,31 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // Pass-the-controller slice 0 (controller VISIBILITY only). Copy
+  // constraints that are load-bearing: this is a display, never a
+  // protection — it must not be worded as if it stops or limits anyone,
+  // and it must never imply the server is kept out of anything (a
+  // compromised sharer renderer is equivalent to the server). Remote
+  // control itself is still Windows-desktop-to-desktop; the BADGE is
+  // cross-platform because it rides plain channel events, so the copy
+  // says "see", never "take". The last row is the honest limit: the map
+  // is event-sourced and resets when you leave a call, so a mid-session
+  // join can miss it until the next handoff — a reconnect backfills.
+  {
+    id: "sloga-2026-08-12-2",
+    title: "Patch Notes",
+    published_at: "2026-08-12T19:30:00.000Z",
+    markdown_content: `## v0.36.0 — Everyone can see who's driving
+
+### 🖱️ You can see who holds the controller
+- **When someone is controlling a shared screen, the tile says so.** A "Controlled by …" badge sits on the screen-share for as long as the session lasts — always visible, no hovering required, so nobody has to wonder who just moved that mouse.
+- **The call roster now lists every control session in the channel**, naming who is driving whose screen.
+- **You don't have to be in the call to see it.** Anyone who can view the channel sees the same thing, so a moderator can tell who is driving without joining first.
+- The badge is hidden from the person doing the driving — their own capture bar already says so.
+- If you join a call that already has a session running, the badge may not appear until control next changes hands. Reopening Sloga always shows the current state.
+
+*Sloga — Hop on.*`,
+  },
   // All four rows shipped unit-proven but without a live leg (user's call:
   // they bug-check in prod). Copy constraints that are load-bearing: the
   // whisper row must never claim the server can't hear it — its privacy is
