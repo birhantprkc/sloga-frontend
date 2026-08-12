@@ -283,6 +283,10 @@ msgstr "{m} minutes"
 msgid "{minutes}m left"
 msgstr "{minutes}m left"
 
+#: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
+msgid "{name} didn't take the controller. Remote control needs the desktop app — press Next to move on."
+msgstr "{name} didn't take the controller. Remote control needs the desktop app — press Next to move on."
+
 #: src/interface/channels/text/Composition.tsx
 msgid "{sec} seconds"
 msgstr "{sec} seconds"
@@ -590,6 +594,10 @@ msgstr "Add friends to group"
 msgid "Add new members to the group"
 msgstr "Add new members to the group"
 
+#: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
+msgid "Add players below to build a rotation. Each turn still asks you on this computer before anyone can type or click."
+msgstr "Add players below to build a rotation. Each turn still asks you on this computer before anyone can type or click."
+
 #: src/interface/navigation/servers/UserMenu.tsx
 msgid "Add status text"
 msgstr "Add status text"
@@ -601,6 +609,10 @@ msgstr "Add tag"
 #: components/modal/modals/ImportDiscord.tsx
 msgid "Add the importer bot on Discord"
 msgstr "Add the importer bot on Discord"
+
+#: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
+msgid "Add to the rotation"
+msgstr "Add to the rotation"
 
 #: components/app/interface/settings/server/apps/AppsList.tsx
 msgid "Added ✓"
@@ -781,6 +793,10 @@ msgstr "Ask for this server to be shown in the public directory. Its name, icon,
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
 msgid "Ask them to move their mouse. Their pointer should move on the screen you are sharing. Keys and clicks are still blocked until you confirm."
 msgstr "Ask them to move their mouse. Their pointer should move on the screen you are sharing. Keys and clicks are still blocked until you confirm."
+
+#: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
+msgid "asks twice"
+msgstr "asks twice"
 
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Assign lower-ranked roles to lower-ranking members"
@@ -1297,6 +1313,10 @@ msgstr "Choose a username"
 msgid "Choose username"
 msgstr "Choose username"
 
+#: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
+msgid "Clear"
+msgstr "Clear"
+
 #: src/interface/navigation/servers/UserMenu.tsx
 msgid "Clear status"
 msgstr "Clear status"
@@ -1633,6 +1653,10 @@ msgstr "Could not unlink the channel, try again."
 #: components/app/interface/settings/server/apps/AppsList.tsx
 msgid "Couldn't add the app — try again."
 msgstr "Couldn't add the app — try again."
+
+#: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
+msgid "Couldn't hand over. The last turn has ended — press Next to try again."
+msgstr "Couldn't hand over. The last turn has ended — press Next to try again."
 
 #: src/interface/ServerEvents.tsx
 msgid "Couldn't load events"
@@ -2119,6 +2143,10 @@ msgstr "Done"
 msgid "Downloading the speech model… {0}%"
 msgstr "Downloading the speech model… {0}%"
 
+#: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
+msgid "driving"
+msgstr "driving"
+
 #: components/modal/modals/ReportContent.tsx
 msgid "Drugs or illegal goods"
 msgstr "Drugs or illegal goods"
@@ -2426,6 +2454,10 @@ msgstr "Export soft reserves"
 #: components/app/interface/settings/user/SecurityAndPrivacy.tsx
 msgid "Express Connect"
 msgstr "Express Connect"
+
+#: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
+msgid "Express Connect is on, so a handoff would not show a verification code. Turn it off in Settings to use the rotation."
+msgstr "Express Connect is on, so a handoff would not show a verification code. Turn it off in Settings to use the rotation."
 
 #: components/modal/modals/LinkWarning.tsx
 msgid "External links can be dangerous!"
@@ -2752,6 +2784,10 @@ msgstr "Grants {0} permissions and denies {1} permissions"
 #: components/modal/modals/CreateGroup.tsx
 msgid "Group Name"
 msgstr "Group Name"
+
+#: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
+msgid "Handing off… nobody is driving right now."
+msgstr "Handing off… nobody is driving right now."
 
 #: components/modal/modals/ReportContent.tsx
 msgid "Harassment or cyberbullying"
@@ -3769,6 +3805,14 @@ msgstr "New to Sloga"
 msgid "New to the server"
 msgstr "New to the server"
 
+#: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
+msgid "next"
+msgstr "next"
+
+#: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
+msgid "Next turn"
+msgstr "Next turn"
+
 #: components/modal/modals/ServerIdentity.tsx
 msgid "Nickname"
 msgstr "Nickname"
@@ -4122,6 +4166,14 @@ msgstr "Overview"
 #: components/app/interface/settings/server/bans/ListBans.tsx
 msgid "Pardon User"
 msgstr "Pardon User"
+
+#: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
+msgid "Pass the controller"
+msgstr "Pass the controller"
+
+#: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
+msgid "Passing the controller lets that person type and click on this computer for real — everything you can see, they can drive."
+msgstr "Passing the controller lets that person type and click on this computer for real — everything you can see, they can drive."
 
 #: components/modal/modals/MFAFlow.tsx
 #: components/modal/modals/MFAFlow.tsx
@@ -4520,6 +4572,10 @@ msgstr "Release control"
 #: src/interface/channels/text/TextSearchSidebar.tsx
 msgid "Relevance"
 msgstr "Relevance"
+
+#: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
+msgid "Remember each player on this computer, so their next turn asks once instead of twice"
+msgstr "Remember each player on this computer, so their next turn asks once instead of twice"
 
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
 msgid "Remote control needs a whole-screen share."
@@ -5645,6 +5701,10 @@ msgstr "That bot is currently offline — try again once it reconnects."
 msgid "That doesn't look like a Discord server template link."
 msgstr "That doesn't look like a Discord server template link."
 
+#: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
+msgid "That turn already ended. Offer control again to restart the rotation."
+msgstr "That turn already ended. Offer control again to restart the rotation."
+
 #: src/interface/channels/text/Composition.tsx
 #: components/app/interface/channels/text/MessageComponents.tsx
 msgid "The bot did not respond in time."
@@ -5980,6 +6040,15 @@ msgstr "Try again"
 msgid "Turn emoticons like :D into emoji"
 msgstr "Turn emoticons like :D into emoji"
 
+#. placeholder {0}: clock(remaining()!)
+#: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
+msgid "Turn ends in {0}"
+msgstr "Turn ends in {0}"
+
+#: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
+msgid "Turn length"
+msgstr "Turn length"
+
 #: components/modal/modals/E2EEDisable.tsx
 msgid "Turn off"
 msgstr "Turn off"
@@ -5995,6 +6064,10 @@ msgstr "Turn off encryption"
 #: components/modal/modals/E2EEVerify.tsx
 msgid "Turn off encryption for this conversation"
 msgstr "Turn off encryption for this conversation"
+
+#: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
+msgid "Turn off Express Connect in Settings to pass the controller — with it on, a handoff would not show a verification code."
+msgstr "Turn off Express Connect in Settings to pass the controller — with it on, a handoff would not show a verification code."
 
 #: components/modal/modals/E2EEEnable.tsx
 msgid "Turn on"

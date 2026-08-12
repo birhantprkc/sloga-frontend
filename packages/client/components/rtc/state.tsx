@@ -108,6 +108,13 @@ import { CaptureClaim } from "./captureClaim";
 import { watchLocalUserId } from "./localUserIdentity";
 import { RemoteControl } from "./remoteControl";
 import {
+  type RemoteControlQueue,
+  addToQueue,
+  EMPTY_REMOTE_CONTROL_QUEUE,
+  removeFromQueue,
+  retainPresent,
+} from "./remoteControlQueue";
+import {
   type RemoteControlSessionMap,
   applyRemoteControlActive,
   applyRemoteControlEnded,
@@ -548,6 +555,35 @@ class Voice {
   remoteControlSessions: Accessor<RemoteControlSessionMap>;
   #setRemoteControlSessions: Setter<RemoteControlSessionMap>;
 
+  /**
+   * The streamer's rotation order (pass-the-controller slice 1).
+   *
+   * Local to THIS client and never sent anywhere. A server-ordered rotation
+   * would be a server-chosen controller, and §0.4's claim discipline is that
+   * nothing the server says about who is on the other end means anything —
+   * so the queue is an ORDER the sharer keeps, not an authorization. Every
+   * turn still costs a native `RcArm` on the sharer's own machine.
+   *
+   * Only meaningful while this user is the sharer; it is simply empty for
+   * everyone else. Resets on disconnect with the rest of the call state.
+   */
+  controllerQueue: Accessor<RemoteControlQueue>;
+  #setControllerQueue: Setter<RemoteControlQueue>;
+
+  /**
+   * Wall-clock ms after which the current turn should auto-advance, or
+   * `undefined` for no timer (the default — an automatic handoff is a
+   * session ending on a schedule the person driving did not choose, so it
+   * is opt-in).
+   */
+  turnDeadline: Accessor<number | undefined>;
+  #setTurnDeadline: Setter<number | undefined>;
+
+  /** Turn length in ms the streamer picked, kept so each new turn can be
+   *  re-armed with the same length. `undefined` = timer off. */
+  turnLengthMs: Accessor<number | undefined>;
+  #setTurnLengthMs: Setter<number | undefined>;
+
   // --- Local call recording (call-recording plan §1) -----------------
   /**
    * Whether THIS client is recording. Set only once the server has accepted
@@ -854,6 +890,19 @@ class Voice {
       createSignal<RemoteControlSessionMap>(EMPTY_REMOTE_CONTROL_SESSIONS);
     this.remoteControlSessions = remoteControlSessions;
     this.#setRemoteControlSessions = setRemoteControlSessions;
+
+    const [controllerQueue, setControllerQueue] =
+      createSignal<RemoteControlQueue>(EMPTY_REMOTE_CONTROL_QUEUE);
+    this.controllerQueue = controllerQueue;
+    this.#setControllerQueue = setControllerQueue;
+
+    const [turnDeadline, setTurnDeadline] = createSignal<number | undefined>();
+    this.turnDeadline = turnDeadline;
+    this.#setTurnDeadline = setTurnDeadline;
+
+    const [turnLengthMs, setTurnLengthMs] = createSignal<number | undefined>();
+    this.turnLengthMs = turnLengthMs;
+    this.#setTurnLengthMs = setTurnLengthMs;
 
     this.#cameraEffects.onHwSupportChange = (hw) =>
       this.#setCameraHwBrightness(hw);
@@ -1878,6 +1927,12 @@ class Voice {
       // slice-0 limit; a Ready-payload/on-join snapshot in a later slice is
       // the fix, not retaining state we can no longer trust here.
       this.#setRemoteControlSessions(EMPTY_REMOTE_CONTROL_SESSIONS);
+      // The rotation queue is per-call by definition — it names participants
+      // of the call being left. Carrying it into the next one would offer
+      // turns to people who are not there.
+      this.#setControllerQueue(EMPTY_REMOTE_CONTROL_QUEUE);
+      this.#setTurnDeadline(undefined);
+      this.#setTurnLengthMs(undefined);
 
       const room = this.room();
       if (!room) return;
@@ -3768,6 +3823,65 @@ class Voice {
   /** Toggle the call roster / verification panel (chip click, slice 6.5). */
   toggleCallRosterPanel(): void {
     this.#setCallRosterPanelOpen((open) => !open);
+  }
+
+  // --- pass-the-controller rotation queue (slice 1) -------------------
+  //
+  // Plain mutators over the pure module. Nothing here talks to the server:
+  // the queue is the sharer's own running order and grants no authority
+  // (see the `controllerQueue` doc-comment).
+
+  /** Put someone in the rotation, at the back. Idempotent. */
+  enqueueController(userId: string): void {
+    this.#setControllerQueue((queue) => addToQueue(queue, userId));
+  }
+
+  /** Take someone out of the rotation. */
+  dequeueController(userId: string): void {
+    this.#setControllerQueue((queue) => removeFromQueue(queue, userId));
+  }
+
+  /**
+   * Drop anyone who has left the call.
+   *
+   * Called from the rotation panel against the same deduped participant list
+   * the offer picker builds, rather than from a room event: a queue member
+   * who left would otherwise stall the rotation at the 90 s offer TTL, which
+   * reads as the app being stuck.
+   */
+  retainPresentControllers(present: Iterable<string>): void {
+    this.#setControllerQueue((queue) => retainPresent(queue, present));
+  }
+
+  /** Empty the rotation (the panel's "clear" affordance). */
+  clearControllerQueue(): void {
+    this.#setControllerQueue(EMPTY_REMOTE_CONTROL_QUEUE);
+  }
+
+  /**
+   * Set the turn length, or `undefined` to switch the timer off.
+   *
+   * Switching it off also drops any deadline already armed — otherwise the
+   * current turn would still auto-advance once after the streamer turned
+   * the timer off, which is the opposite of what they asked for.
+   */
+  setTurnLength(ms: number | undefined): void {
+    this.#setTurnLengthMs(ms);
+    if (ms === undefined) this.#setTurnDeadline(undefined);
+  }
+
+  /**
+   * Start the clock for a turn that just began, if a timer is configured.
+   * `now` is a parameter so the caller (and tests) own the clock.
+   */
+  armTurnDeadline(now: number): void {
+    const length = this.turnLengthMs();
+    this.#setTurnDeadline(length === undefined ? undefined : now + length);
+  }
+
+  /** Stop the clock without touching the configured length. */
+  clearTurnDeadline(): void {
+    this.#setTurnDeadline(undefined);
   }
 
   /**

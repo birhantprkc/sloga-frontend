@@ -22,7 +22,10 @@ import {
 import { Button } from "@revolt/ui/components/design";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
-import { participantUserId } from "../participantIdentity";
+import {
+  identityForUserId,
+  remoteParticipantUserIds,
+} from "../participantIdentity";
 
 /**
  * "Give control" — the sharer's affordance, on their own screen share.
@@ -121,51 +124,23 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
   const surface = () => voice.screenShareSurface();
   const fullScreenShare = () => surface() === "monitor";
 
+  // One named participant, never "anyone who wants it". The dedupe-by-user
+  // rule and why it exists now live in `remoteParticipantUserIds`, which the
+  // slice-1 rotation panel shares — it cannot reuse this one, because this
+  // whole subtree unmounts once `rc.sharing()` is truthy.
   const eligible = () => {
     const room = voice.room();
     const self = client()?.user?.id;
     if (!room || !self) return [];
-    // One named participant, never "anyone who wants it".
-    //
-    // DEDUPED BY USER, not by participant: identities are device-qualified
-    // since media E2EE, so someone in the call on both their desktop and
-    // their phone was listed twice with the same name and no way to tell the
-    // rows apart. The offer is addressed to a USER — the server picks the
-    // session — so the second row was never a different choice.
-    const seen = new Set<string>();
-    const users: string[] = [];
-    for (const participant of room.remoteParticipants.values()) {
-      const userId = participantUserId(participant.identity);
-      if (userId === self || seen.has(userId)) continue;
-      seen.add(userId);
-      users.push(userId);
-    }
-    return users;
+    return remoteParticipantUserIds(room.remoteParticipants.values(), self);
   };
 
-  /**
-   * The peer's FULL device-qualified LiveKit identity, which per-peer trust
-   * is bound to.
-   *
-   * `eligible()` deliberately dedupes to bare user ids because the OFFER is
-   * addressed to a user and the server picks the session — but trust is
-   * bound to a device, so it needs the identity back. Where the same person
-   * is in the call on two devices this takes the first, which is the same
-   * arbitrary-but-consistent choice the deduped row already represents.
-   *
-   * Returns `""` for a participant with no device half (a non-E2EE
-   * participant carries a bare user id). Native refuses to remember that,
-   * which is correct: "any device of theirs" is not what the dialog asks.
-   */
+  // The device-qualified identity per-peer trust binds to. Shared with the
+  // rotation panel; the reasoning lives on `identityForUserId`.
   const identityOf = (userId: string) => {
     const room = voice.room();
     if (!room) return "";
-    for (const participant of room.remoteParticipants.values()) {
-      if (participantUserId(participant.identity) === userId) {
-        return participant.identity;
-      }
-    }
-    return "";
+    return identityForUserId(room.remoteParticipants.values(), userId);
   };
 
   // `ENABLE_REMOTE_CONTROL` is already folded into `supported()`, which is
@@ -215,7 +190,12 @@ export function VoiceGiveControlButton(props: { size: "xs" | "sm" }) {
     supported() === true &&
     voice.screenshare() &&
     serverSeesShare() &&
-    !rc.sharing();
+    !rc.sharing() &&
+    // A "pass the controller" handoff (slice 1) genuinely has no session
+    // for a moment — the old turn is released before the next is offered.
+    // Without this the picker would pop back for that instant, which both
+    // flashes the wrong control and implies the rotation ended.
+    !rc.handingOff();
 
   async function offer(userId: string, name: string) {
     // One offer in flight at a time. `e2ee_rc_offer` mints an ephemeral and

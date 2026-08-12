@@ -79,8 +79,12 @@ const HEARTBEAT_AUTH_GRACE_MS = 75_000;
 /**
  * Client-side offer expiry, matching the server's shipped
  * `REMOTE_CONTROL_OFFER_TTL_SECS` and native's pending-offer lifetime.
+ *
+ * Exported for the sharer side too (slice 1): an offer to someone who can
+ * never accept — anyone not on the desktop app — is answered by nothing at
+ * all, so the OUTBOUND side needs the same number to notice.
  */
-const REMOTE_CONTROL_OFFER_TTL_MS = 90_000;
+export const REMOTE_CONTROL_OFFER_TTL_MS = 90_000;
 
 /**
  * The approved claim wording, pinned verbatim. Rendered where a user decides
@@ -386,6 +390,20 @@ export class RemoteControl {
   readonly error;
   readonly #setError;
 
+  /**
+   * A "pass the controller" handoff is mid-flight (slice 1).
+   *
+   * There is a REAL control gap between releasing one turn and arming the
+   * next — §1 says a handoff is necessarily teardown-and-re-offer, so for a
+   * moment nobody is driving and `sharing()` is legitimately `undefined`.
+   * Without this flag that gap reads as "the session just ended": the
+   * sharer panel unmounts and the give-control picker pops back, which is
+   * both a flash of the wrong UI and a lie about what is happening. The
+   * plan is explicit that the gap must be shown, not hidden (§4).
+   */
+  readonly handingOff;
+  readonly #setHandingOff;
+
   constructor() {
     [this.offer, this.#setOffer] = createSignal<RcOffer | undefined>();
     [this.sharing, this.#setSharing] = createSignal<
@@ -435,6 +453,9 @@ export class RemoteControl {
     [this.serverEnabled, this.#setServerEnabled] = createSignal<
       boolean | undefined
     >();
+    // Explicit type param, like every other signal here: an inferred one
+    // makes the untyped class field circular (TS7022).
+    [this.handingOff, this.#setHandingOff] = createSignal<boolean>(false);
   }
 
   // -- room binding (LiveKit) -------------------------------------------
@@ -1087,6 +1108,74 @@ export class RemoteControl {
     } catch (err) {
       this.#setError(String(err));
       return false;
+    }
+  }
+
+  /**
+   * "Pass the controller" (slice 1): end the current turn, then offer the
+   * next one.
+   *
+   * 🔴 THIS IS NOT A TRANSFER, and it cannot be made into one. Every layer
+   * binds a session to exactly one controller identity permanently — the
+   * controller id is inside the HKDF transcript, `(channel, rc_session_id)`
+   * is burned role-agnostically at arm, the offer ephemeral is single-use,
+   * and the server refuses a second grant while one is live. So a handoff
+   * is necessarily release → fresh offer → fresh `RcArm`, with a brief gap
+   * where nobody is driving. `handingOff()` exists to SHOW that gap rather
+   * than paper over it.
+   *
+   * Each turn therefore still costs one native dialog on this machine. That
+   * is the feature's safety, not an oversight: nothing may hand someone
+   * else the keyboard without the owner's OS-level yes.
+   *
+   * 🔴 Deliberately does NOT wait for a `RemoteControlEnded` caused by our
+   * own release. The current grant can end by another path FIRST — the
+   * controller leaves, the screenshare stops, the reaper fires — in which
+   * case Ended is already in the past and our `DELETE` returns `NotFound`.
+   * Blocking on a self-caused Ended would deadlock on an event that has
+   * already happened. `endSharing` swallows the DELETE result for exactly
+   * this reason, so "already ended" and "we ended it" both fall through to
+   * the offer.
+   *
+   * Returns whether the NEXT turn was successfully offered. A `false` leaves
+   * no session live: the previous turn really did end. The queue position is
+   * untouched, so the caller can simply offer again — this never auto-
+   * retries, because a retry re-runs `e2ee_rc_offer` and puts a SECOND
+   * native dialog on screen unannounced. A race with a still-tearing-down
+   * grant (the server answers the offer `409 RemoteControlGrantActive`)
+   * surfaces as an error the streamer can act on with one click, which is
+   * recoverable without being startling.
+   */
+  async passControlTo(args: {
+    apiBase: string;
+    authHeader: [string, string];
+    channelId: string;
+    sharerId: string;
+    controllerId: string;
+    controllerIdentity: string;
+    controllerName: string;
+    display: string;
+    remember: boolean;
+  }): Promise<boolean> {
+    // One handoff at a time. Two overlapping rotations would release the
+    // session the other just offered.
+    if (this.handingOff()) return false;
+
+    const current = this.sharing();
+    if (current && current.controllerId === args.controllerId) {
+      // Tearing down a live session and spending a native dialog to arrive
+      // exactly where it started. `nextInQueue` already returns undefined
+      // for the sole-member case; this is the backstop for the tile menu.
+      this.#setError(undefined);
+      return false;
+    }
+
+    this.#setHandingOff(true);
+    try {
+      if (current) await this.endSharing("turn_ended");
+      return await this.offerControl(args);
+    } finally {
+      this.#setHandingOff(false);
     }
   }
 

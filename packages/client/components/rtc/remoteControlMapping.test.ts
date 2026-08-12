@@ -302,6 +302,11 @@ test("release causes map onto the server's audit vocabulary", () => {
   ]) {
     assert.equal(releaseCause(verbatim), verbatim);
   }
+  // Slice 1: a rotation handoff must NOT fall through to the role default,
+  // which for a sharer is `revoked_by_sharer` — i.e. "the machine's owner
+  // yanked control back". A passed controller and a revoked one are
+  // materially different events and the audit has to tell them apart.
+  assert.equal(releaseCause("turn_ended"), "turn_ended");
 });
 
 test("unmapped reasons defer to the server's role default", () => {

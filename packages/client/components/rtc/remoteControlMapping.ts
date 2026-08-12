@@ -239,6 +239,20 @@ export function releaseCause(reason: string): string | undefined {
     case "display_topology_changed":
     case "calibration_rejected":
       return reason;
+    // A "pass the controller" handoff (slice 1) — the turn ended, either
+    // because the streamer pressed Next or because the turn timer ran out.
+    // It has its OWN cause because the fallback for a sharer-initiated
+    // release is `revoked_by_sharer`, which is the audit's way of saying the
+    // machine's owner yanked control back. A rotation is the opposite kind
+    // of event, and an audit that cannot tell them apart is the exact defect
+    // the sharer/controller split was introduced to fix.
+    //
+    // 🔴 The server must know this string too. It is re-validated against
+    // `release_audit_reason`'s allowlist, so against an OLDER backend it
+    // falls back to `revoked_by_sharer` — wrong in the audit, harmless to
+    // the teardown itself.
+    case "turn_ended":
+      return "turn_ended";
     default:
       return undefined;
   }

@@ -19,6 +19,7 @@ import { REMOTE_CONTROL_CLAIM, isPanicCombo, useVoice } from "@revolt/rtc";
 import { useState } from "@revolt/state";
 import { Button } from "@revolt/ui/components/design";
 import { VoiceGiveControlPanel } from "./VoiceGiveControlButton";
+import { VoicePassControlPanel } from "./VoicePassControlPanel";
 
 /**
  * The two remote-control surfaces that are not the sharer's own panel: the
@@ -120,6 +121,13 @@ export function RemoteControlOverlays() {
             window arrangement no fixed offset can solve. */}
         <SharerStack>
           <VoiceGiveControlPanel />
+          {/* The rotation panel is a SIBLING, not a child of the picker: the
+              picker's subtree is gated on `canOffer()`, which requires
+              `!rc.sharing()`, so it unmounts the moment a session goes
+              active — exactly when passing the controller becomes possible.
+              Both are sharer-only by construction (`rc.sharing()` is only
+              ever set on the machine being controlled). */}
+          <VoicePassControlPanel />
         </SharerStack>
       </Portal>
     </Show>
