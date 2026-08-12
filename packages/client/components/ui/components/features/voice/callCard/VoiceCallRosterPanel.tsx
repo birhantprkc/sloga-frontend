@@ -3,7 +3,7 @@ import { For, Show } from "solid-js";
 import { Trans } from "@lingui-solid/solid/macro";
 import { styled } from "styled-system/jsx";
 
-import { useUsers } from "@revolt/markdown/users";
+import { useUser, useUsers } from "@revolt/markdown/users";
 import { useModals } from "@revolt/modal";
 import { useVoice } from "@revolt/rtc";
 import { Avatar, Text } from "@revolt/ui/components/design";
@@ -31,6 +31,23 @@ export function VoiceCallRosterPanel() {
   const nonEnrolledIds = () =>
     nonEnrolled().map((identity) => participantUserId(identity));
   const nonEnrolledUsers = useUsers(nonEnrolledIds);
+
+  /**
+   * Active control sessions in THIS call's channel, from the channel-wide
+   * redacted `RemoteControlActive`/`Ended` map (pass-the-controller slice 0,
+   * §2.2) — sessions we are not a party to included; that is the
+   * third-party/moderator visibility this panel exists to give.
+   */
+  const controlSessions = () => {
+    const channelId = voice.channel()?.id;
+    if (!channelId) return [];
+    const sessions = voice.remoteControlSessions().get(channelId);
+    if (!sessions) return [];
+    return [...sessions].map(([sharerId, controllerId]) => ({
+      sharerId,
+      controllerId,
+    }));
+  };
 
   return (
     <Show when={voice.callRosterPanelOpen()}>
@@ -115,8 +132,61 @@ export function VoiceCallRosterPanel() {
             )}
           </For>
         </List>
+
+        {/* Live remote-control sessions in this channel (slice 0). Not part
+            of the MLS roster above — control can run on a plaintext call —
+            and shown to every viewer of this panel, party to the session or
+            not. */}
+        <Show when={controlSessions().length > 0}>
+          <Header>
+            <Text class="title">
+              <Trans>Remote control</Trans>
+            </Text>
+          </Header>
+          <List>
+            <For each={controlSessions()}>
+              {(session) => (
+                <ControlSessionRow
+                  sharerId={session.sharerId}
+                  controllerId={session.controllerId}
+                />
+              )}
+            </For>
+          </List>
+        </Show>
       </Panel>
     </Show>
+  );
+}
+
+/**
+ * One active control session: "controller is controlling sharer's screen".
+ * Both ends resolve through the user cache; ids we have never seen (a
+ * moderator watching from the text channel) fall back to "Unknown User"
+ * rather than hiding the row — the visibility is the point.
+ */
+function ControlSessionRow(props: { sharerId: string; controllerId: string }) {
+  const sharer = useUser(() => props.sharerId);
+  const controller = useUser(() => props.controllerId);
+
+  return (
+    <Row inert>
+      <Avatar
+        size={28}
+        src={controller().avatar}
+        fallback={controller().username}
+      />
+      <RowText>
+        <Text class="body">
+          <Trans>
+            {controller().username} is controlling {sharer().username}'s screen
+          </Trans>
+        </Text>
+      </RowText>
+      <Symbol size={18} color="var(--md-sys-color-primary)">
+        arrow_selector_tool
+      </Symbol>
+    </Row>
   );
 }
 

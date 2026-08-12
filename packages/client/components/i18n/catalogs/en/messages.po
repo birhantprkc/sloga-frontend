@@ -6973,3 +6973,18 @@ msgstr "Privacy shield — hide pop-up notifications (pixelates the corner of fu
 #: components/modal/modals/TimelockCompose.tsx
 msgid "This message is too long to timelock."
 msgstr "This message is too long to timelock."
+
+#. placeholder {0}: controller().username
+#. placeholder {1}: sharer().username
+#: components/ui/components/features/voice/callCard/VoiceCallRosterPanel.tsx
+msgid "{0} is controlling {1}'s screen"
+msgstr "{0} is controlling {1}'s screen"
+
+#. placeholder {0}: controllerUser().username
+#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
+msgid "Controlled by {0}"
+msgstr "Controlled by {0}"
+
+#: components/ui/components/features/voice/callCard/VoiceCallRosterPanel.tsx
+msgid "Remote control"
+msgstr "Remote control"

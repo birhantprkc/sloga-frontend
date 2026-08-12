@@ -1,4 +1,6 @@
 import { createSignal, onCleanup, Show } from "solid-js";
+
+import { Trans } from "@lingui-solid/solid/macro";
 import {
   TrackReference,
   useEnsureParticipant,
@@ -91,6 +93,24 @@ export function ParticipantTile(props: TileProps) {
     if (!session) return false;
     return participantUserId(participant.identity) === session.sharerId;
   };
+
+  /**
+   * Who is driving THIS screenshare, whoever they are — from the channel-wide
+   * redacted `RemoteControlActive`/`Ended` map, so it covers sessions we are
+   * not a party to (unlike `controlling()` above, which is only ever us).
+   * This is the §2.2 "everyone can see whose turn it is" badge, and the
+   * moderator-visibility surface.
+   */
+  const controlledBy = () => {
+    if (!isScreenShare()) return undefined;
+    const channelId = voice.channel()?.id;
+    if (!channelId) return undefined;
+    return voice
+      .remoteControlSessions()
+      .get(channelId)
+      ?.get(participantUserId(participant.identity));
+  };
+  const controllerUser = useUser(() => controlledBy() ?? "");
   const isSpeaking = useIsSpeaking(participant);
 
   /**
@@ -362,6 +382,18 @@ export function ParticipantTile(props: TileProps) {
             sharerIdentity={participant.identity}
           />
         </Show>
+        {/* Channel-wide control indicator (§2.2). ALWAYS visible while a
+            session is live on this share — unlike the hover chrome, because
+            its whole job is that nobody has to hover to notice someone is
+            driving. After `Overlay` so it stacks above the hover gradient;
+            `pointer-events: none` (in the styles) keeps click-to-focus and
+            the capture surface's hit-testing untouched. */}
+        <Show when={controlledBy()}>
+          <ControlledByBadge>
+            <Symbol size={14}>arrow_selector_tool</Symbol>
+            <Trans>Controlled by {controllerUser().username}</Trans>
+          </ControlledByBadge>
+        </Show>
         <Show when={!isScreenShare()}>
           <ParticipantCaption identity={participant.identity} />
         </Show>
@@ -517,6 +549,30 @@ const PingDot = styled("div", {
     height: "6px",
     borderRadius: "50%",
     flexShrink: 0,
+  },
+});
+
+const ControlledByBadge = styled("div", {
+  base: {
+    gridArea: "1/1",
+    justifySelf: "start",
+    alignSelf: "start",
+    margin: "var(--gap-md)",
+
+    display: "flex",
+    alignItems: "center",
+    gap: "4px",
+    minWidth: 0,
+    maxWidth: "calc(100% - 2 * var(--gap-md))",
+
+    fontSize: "10px",
+    fontWeight: 600,
+    padding: "2px 6px",
+    borderRadius: "var(--borderRadius-full)",
+    color: "#fff",
+    background: "rgba(0,0,0,0.45)",
+
+    pointerEvents: "none",
   },
 });
 

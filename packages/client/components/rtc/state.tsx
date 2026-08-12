@@ -107,6 +107,12 @@ import { ReactiveMap } from "@solid-primitives/map";
 import { CaptureClaim } from "./captureClaim";
 import { watchLocalUserId } from "./localUserIdentity";
 import { RemoteControl } from "./remoteControl";
+import {
+  type RemoteControlSessionMap,
+  applyRemoteControlActive,
+  applyRemoteControlEnded,
+  EMPTY_REMOTE_CONTROL_SESSIONS,
+} from "./remoteControlVisibility";
 import { CallTranscriber } from "./transcription/callTranscriber";
 import {
   type TranscriptFormat,
@@ -530,6 +536,18 @@ class Voice {
   callRosterPanelOpen: Accessor<boolean>;
   #setCallRosterPanelOpen: Setter<boolean>;
 
+  /**
+   * Channel-wide "who is controlling whom" (pass-the-controller slice 0):
+   * `channelId → (sharerId → controllerId)`, fed by the redacted
+   * channel-topic `remoteControlActive`/`remoteControlEnded` pair. Read by
+   * the screenshare tile badge and the roster panel; unlike
+   * `remoteControl.sharing()`/`controlling()` this covers sessions we are
+   * not a party to — that reach is the §2.2 third-party/moderator
+   * visibility, not a leak.
+   */
+  remoteControlSessions: Accessor<RemoteControlSessionMap>;
+  #setRemoteControlSessions: Setter<RemoteControlSessionMap>;
+
   // --- Local call recording (call-recording plan §1) -----------------
   /**
    * Whether THIS client is recording. Set only once the server has accepted
@@ -832,6 +850,11 @@ class Voice {
     this.callRosterPanelOpen = callRosterPanelOpen;
     this.#setCallRosterPanelOpen = setCallRosterPanelOpen;
 
+    const [remoteControlSessions, setRemoteControlSessions] =
+      createSignal<RemoteControlSessionMap>(EMPTY_REMOTE_CONTROL_SESSIONS);
+    this.remoteControlSessions = remoteControlSessions;
+    this.#setRemoteControlSessions = setRemoteControlSessions;
+
     this.#cameraEffects.onHwSupportChange = (hw) =>
       this.#setCameraHwBrightness(hw);
     this.#cameraEffects.onImageMissing = () => {
@@ -1078,6 +1101,48 @@ class Voice {
         client.removeListener("remoteControlAccepted", onAccepted);
         client.removeListener("remoteControlDeclined", onDeclined);
         client.removeListener("remoteControlEnded", onEnded);
+      });
+    });
+
+    // Channel-wide "who is controlling whom" visibility (pass-the-controller
+    // slice 0). App-lifetime like the soundboard above, and its OWN
+    // `remoteControlEnded` listener — deliberately additive to the one in the
+    // session effect: that handler tears down OUR OWN sharing session (it
+    // compares against `client.user?.id`); this one only maintains the
+    // channel-keyed map every `ViewChannel` subscriber is meant to see.
+    //
+    // No call-membership filter, unlike captions: both events arrive on the
+    // CHANNEL topic, already server-scoped to `ViewChannel`, and reaching
+    // text members who never joined the call is the intended third-party /
+    // moderator visibility. Scoping is the channel key itself; readers pick
+    // the channel they render.
+    createEffect(() => {
+      const client = this.getClient();
+      if (!client) return;
+      const onActive = (detail: {
+        channelId: string;
+        sharerId: string;
+        controllerId: string;
+      }) =>
+        this.#setRemoteControlSessions((map) =>
+          applyRemoteControlActive(map, detail),
+        );
+      // `reason` is an OPEN string (the server keeps growing the vocabulary
+      // and the doc-comment enumeration is already stale) — never switch on
+      // it here; any end clears the entry.
+      const onEndedVisibility = (detail: {
+        channelId: string;
+        sharerId: string;
+        reason: string;
+      }) =>
+        this.#setRemoteControlSessions((map) =>
+          applyRemoteControlEnded(map, detail),
+        );
+      client.addListener("remoteControlActive", onActive);
+      client.addListener("remoteControlEnded", onEndedVisibility);
+      onCleanup(() => {
+        client.removeListener("remoteControlActive", onActive);
+        client.removeListener("remoteControlEnded", onEndedVisibility);
       });
     });
 
@@ -1789,6 +1854,12 @@ class Voice {
       this.#setCallChannelHasOpenGroup(false);
       this.#setCallRosterPanelOpen(false);
       this.#openGroupProbe = "pending";
+      // Whole-map reset, not just this channel: the surfaces that read it
+      // (tile badge, roster panel) render only inside the active call UI,
+      // which is going away — and after a gap offline we may have missed the
+      // `Ended` that would have cleared another channel's entry. Rebuilt from
+      // the next `remoteControlActive` either way.
+      this.#setRemoteControlSessions(EMPTY_REMOTE_CONTROL_SESSIONS);
 
       const room = this.room();
       if (!room) return;

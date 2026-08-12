@@ -6713,3 +6713,18 @@ msgstr ""
 #: components/i18n/errors.ts
 msgid "Your user has already been created? Try logging in again or refreshing the app."
 msgstr ""
+
+#. placeholder {0}: controller().username
+#. placeholder {1}: sharer().username
+#: components/ui/components/features/voice/callCard/VoiceCallRosterPanel.tsx
+msgid "{0} is controlling {1}'s screen"
+msgstr ""
+
+#. placeholder {0}: controllerUser().username
+#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
+msgid "Controlled by {0}"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoiceCallRosterPanel.tsx
+msgid "Remote control"
+msgstr ""
