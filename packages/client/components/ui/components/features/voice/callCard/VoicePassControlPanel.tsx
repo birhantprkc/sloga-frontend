@@ -83,6 +83,13 @@ export function VoicePassControlPanel() {
 
   /** Everyone else in the call, deduped by user. */
   const present = () => {
+    // 🔴 `room.remoteParticipants` is a plain LiveKit Map, NOT a Solid
+    // source, so a join/leave alone re-runs nothing. Read the version signal
+    // the store bumps on `participantConnected`/`participantDisconnected`
+    // (state.tsx) — the same reactive-dependency idiom the encryption chip
+    // uses. Without this the prune effect below never fires on a leave, and
+    // the turn timer can auto-hand-off to someone who has already left.
+    voice.callParticipantsVersion();
     const room = voice.room();
     const me = self();
     if (!room || !me) return [];
@@ -206,6 +213,13 @@ export function VoicePassControlPanel() {
    * session as its first step.
    */
   async function handoff(userId: string) {
+    // A handoff is already in flight — e.g. the turn timer expired at the
+    // same instant a manual Next was pressed. `passControlTo`'s own guard
+    // would reject this one and it would then set a misleading "couldn't
+    // hand over" banner while the WINNING handoff is succeeding. Bail
+    // quietly; the guard in the store is the authoritative one.
+    if (rc.handingOff()) return;
+
     const api = client();
     const channel = voice.channel();
     const me = self();
@@ -228,7 +242,16 @@ export function VoicePassControlPanel() {
       );
       return;
     }
-    if (expressBlocks()) {
+    // 🔴 Re-read Express LIVE at the enforcement point, not from the
+    // per-session resource. `expressBlocks()` (the resource) is keyed on the
+    // session id, so a mid-turn toggle in Settings is not seen until the id
+    // rolls — and this gate is security-relevant: with Express on, the sole
+    // surviving dialog for a remembered peer is `RcGive`, which carries no
+    // verification code. A stale `false` here would mint exactly that
+    // no-SAS handoff. The reactive `expressBlocks()` still drives the Next
+    // button's disabled state and the warning banner; this is the check
+    // right before a new session is minted.
+    if (await rc.expressEnabled()) {
       setError(
         t`Turn off Express Connect in Settings to pass the controller — with it on, a handoff would not show a verification code.`,
       );
@@ -253,6 +276,13 @@ export function VoicePassControlPanel() {
     });
 
     if (!passed) {
+      // Suppress the banner if a DIFFERENT handoff is now in flight: the
+      // entry guard bails when one is already running, but two callers can
+      // both pass it and interleave across the `await` above, and the loser
+      // must not accuse the winner of failing. `passControlTo` clears its
+      // own `handingOff` in a finally before returning, so a truthy value
+      // here can only be someone else's live handoff.
+      if (rc.handingOff()) return;
       // The previous turn really did end — this is not a no-op. Say so, and
       // leave the queue untouched so the same click retries cleanly.
       setError(
