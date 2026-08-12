@@ -16,15 +16,24 @@ export function AddFriendModal(
   const { t } = useLingui();
   const { showError } = useModals();
 
+  // Opened from a context menu / profile the target is already known:
+  // prefill and lock the username so only the note is left to write.
   const group = createFormGroup({
-    username: createFormControl("", { required: true }),
+    username: createFormControl(
+      props.user ? `${props.user.username}#${props.user.discriminator}` : "",
+      { required: true, disabled: !!props.user },
+    ),
+    note: createFormControl(""),
   });
 
   async function onSubmit() {
     try {
+      const note = group.controls.note.value.trim();
       await props.client.api.post(`/users/friend`, {
         username: group.controls.username.value,
-      });
+        // `note` is additive; stoat-api 0.13.5 predates it
+        ...(note ? { note } : {}),
+      } as { username: string });
 
       props.onClose();
     } catch (error) {
@@ -58,6 +67,13 @@ export function AddFriendModal(
           control={group.controls.username}
           label={t`Username`}
           placeholder={t`username#1234`}
+        />
+        <Form2.TextField
+          name="note"
+          control={group.controls.note}
+          label={t`Note (optional)`}
+          placeholder={t`Tell them why you're adding them`}
+          maxlength={200}
         />
       </form>
     </Dialog>

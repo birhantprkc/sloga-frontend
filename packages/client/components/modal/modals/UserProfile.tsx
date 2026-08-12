@@ -1,7 +1,12 @@
 import { useQuery } from "@tanstack/solid-query";
 import { styled } from "styled-system/jsx";
 
-import { Dialog, DialogProps, Profile } from "@revolt/ui";
+import {
+  Dialog,
+  DialogProps,
+  Profile,
+  isProfilePrivateError,
+} from "@revolt/ui";
 
 import { useModals } from "..";
 import { Modals } from "../types";
@@ -14,6 +19,8 @@ export function UserProfileModal(
   const query = useQuery(() => ({
     queryKey: ["profile", props.user.id],
     queryFn: () => props.user.fetchProfile(),
+    retry: (failureCount, error) =>
+      !isProfilePrivateError(error) && failureCount < 3,
   }));
 
   return (
@@ -56,7 +63,11 @@ export function UserProfileModal(
         <Profile.Badges user={props.user} />
         <Profile.Joined user={props.user} member={props.member} />
         <Profile.Mutuals user={props.user} member={props.member} />
-        <Profile.Bio content={query.data?.content} full />
+        <Profile.Bio
+          content={query.data?.content}
+          isPrivate={isProfilePrivateError(query.error)}
+          full
+        />
       </Grid>
     </Dialog>
   );

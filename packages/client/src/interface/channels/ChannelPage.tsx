@@ -15,6 +15,7 @@ import { Navigate, useParams } from "@revolt/routing";
 import { parseChannelPassword } from "../../lib/channelPassword";
 import { AgeGate } from "./AgeGate";
 import { PasswordGate } from "./PasswordGate";
+import { SpoilerGate } from "./SpoilerGate";
 import { ForumChannel } from "./forum/ForumChannel";
 import { TextChannel } from "./text/TextChannel";
 
@@ -90,7 +91,13 @@ export const ChannelPage: Component = () => {
               channelId={channel()!.id}
               channelName={channel()!.name!}
             >
-              <TextChannel channel={channel()!} />
+              <SpoilerGate
+                enabled={channel()!.isSpoiler}
+                channelId={channel()!.id}
+                channelName={"#" + channel()!.name}
+              >
+                <TextChannel channel={channel()!} />
+              </SpoilerGate>
             </PasswordGate>
           </AgeGate>
         </Match>
@@ -108,7 +115,13 @@ export const ChannelPage: Component = () => {
               channelId={channel()!.id}
               channelName={channel()!.name!}
             >
-              <ForumChannel channel={channel()!} />
+              <SpoilerGate
+                enabled={channel()!.isSpoiler}
+                channelId={channel()!.id}
+                channelName={"#" + channel()!.name}
+              >
+                <ForumChannel channel={channel()!} />
+              </SpoilerGate>
             </PasswordGate>
           </AgeGate>
         </Match>

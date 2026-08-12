@@ -589,11 +589,25 @@ function Entry(props: { user: User; tabIndex?: number }) {
         <div class={`name ${name()} ${ellipsis()}`}>
           {props.user.displayName}
         </div>
-        <div
-          class={`${statusText({ accent: inVoice() || !!activity() })} ${ellipsis()}`}
+        {/* The note REPLACES the status line on incoming requests — the row
+            is a fixed-height virtualized item, so a third line would clip */}
+        <Show
+          when={
+            props.user.relationship === "Incoming" &&
+            props.user.relationshipNote
+          }
+          fallback={
+            <div
+              class={`${statusText({ accent: inVoice() || !!activity() })} ${ellipsis()}`}
+            >
+              {status()}
+            </div>
+          }
         >
-          {status()}
-        </div>
+          <div class={`${noteText()} ${ellipsis()}`}>
+            “{props.user.relationshipNote}”
+          </div>
+        </Show>
       </div>
 
       <Show when={isFriend()}>
@@ -792,6 +806,15 @@ const statusText = cva({
         color: "var(--brand-presence-online)",
       },
     },
+  },
+});
+
+/** Note attached to an incoming friend request */
+const noteText = cva({
+  base: {
+    fontSize: "12px",
+    fontStyle: "italic",
+    color: "var(--md-sys-color-on-surface-variant)",
   },
 });
 

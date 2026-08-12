@@ -37,6 +37,9 @@ export type Modals =
   | {
       type: "add_friend";
       client: Client;
+      /** Prefill and lock the username (e.g. from a context menu), leaving
+       *  only the note to fill in */
+      user?: User;
     }
   | {
       type: "add_members_to_group";
