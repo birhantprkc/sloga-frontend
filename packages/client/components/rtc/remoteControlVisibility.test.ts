@@ -82,6 +82,11 @@ test("an ended for an unknown session returns the SAME reference (no notify)", (
   );
 });
 
+test("a re-delivered identical active returns the SAME reference (no notify)", () => {
+  const map = applyRemoteControlActive(EMPTY_REMOTE_CONTROL_SESSIONS, ACTIVE_A);
+  assert.equal(applyRemoteControlActive(map, ACTIVE_A), map);
+});
+
 test("updates never mutate the input map", () => {
   const map = applyRemoteControlActive(EMPTY_REMOTE_CONTROL_SESSIONS, ACTIVE_A);
   applyRemoteControlActive(map, { ...ACTIVE_A, controllerId: "carol" });

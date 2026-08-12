@@ -385,13 +385,18 @@ export function ParticipantTile(props: TileProps) {
         {/* Channel-wide control indicator (§2.2). ALWAYS visible while a
             session is live on this share — unlike the hover chrome, because
             its whole job is that nobody has to hover to notice someone is
-            driving. After `Overlay` so it stacks above the hover gradient;
-            `pointer-events: none` (in the styles) keeps click-to-focus and
-            the capture surface's hit-testing untouched. */}
-        <Show when={controlledBy()}>
+            driving. Suppressed for the active controller only: while WE are
+            driving, the capture chrome already says so, and the badge would
+            sit over the top-left of the very screen being driven (where the
+            menus live). After `Overlay` so it stacks above the hover
+            gradient; `pointer-events: none` (in the styles) keeps
+            click-to-focus and the capture surface's hit-testing untouched. */}
+        <Show when={controlledBy() && !controlling()}>
           <ControlledByBadge>
             <Symbol size={14}>arrow_selector_tool</Symbol>
-            <Trans>Controlled by {controllerUser().username}</Trans>
+            <OverflowingText>
+              <Trans>Controlled by {controllerUser().username}</Trans>
+            </OverflowingText>
           </ControlledByBadge>
         </Show>
         <Show when={!isScreenShare()}>

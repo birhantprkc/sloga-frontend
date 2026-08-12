@@ -21,11 +21,20 @@ export type RemoteControlSessionMap = ReadonlyMap<
 
 export const EMPTY_REMOTE_CONTROL_SESSIONS: RemoteControlSessionMap = new Map();
 
-/** A control session went active: record who is driving whose screen. */
+/**
+ * A control session went active: record who is driving whose screen.
+ *
+ * Returns the same reference when the exact session is already recorded
+ * (a re-delivered event, or a future reconnect backfill), so a signal
+ * setter fed with this can skip notifying subscribers — the same contract
+ * as `applyRemoteControlEnded`.
+ */
 export function applyRemoteControlActive(
   map: RemoteControlSessionMap,
   detail: { channelId: string; sharerId: string; controllerId: string },
 ): RemoteControlSessionMap {
+  if (map.get(detail.channelId)?.get(detail.sharerId) === detail.controllerId)
+    return map;
   const channel = new Map(map.get(detail.channelId));
   channel.set(detail.sharerId, detail.controllerId);
   const next = new Map(map);

@@ -133,10 +133,13 @@ export function VoiceCallRosterPanel() {
           </For>
         </List>
 
-        {/* Live remote-control sessions in this channel (slice 0). Not part
-            of the MLS roster above — control can run on a plaintext call —
-            and shown to every viewer of this panel, party to the session or
-            not. */}
+        {/* Live remote-control sessions in this channel (slice 0), shown to
+            every viewer of this panel, party to the session or not. Not part
+            of the MLS roster above — the map is not crypto truth. Note the
+            reach limit: this panel's only entry point today is the
+            encryption chip, which does not mount on a chip-less plain call,
+            so there the tile badge is the sole surface; a dedicated entry
+            point is a later-slice question. */}
         <Show when={controlSessions().length > 0}>
           <Header>
             <Text class="title">

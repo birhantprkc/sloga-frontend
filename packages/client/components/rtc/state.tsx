@@ -1146,6 +1146,22 @@ class Voice {
       });
     });
 
+    // The map above is event-sourced with no backfill, so an `Ended` missed
+    // across a WS gap would leave a permanently stale "X is controlling"
+    // claim — the worst failure mode an abuse-visibility surface can have.
+    // `ready()` resets on every (re)connect, so whenever the socket is down
+    // or re-establishing, drop everything and let live events rebuild it: a
+    // false-negative until the next `RemoteControlActive`, never a
+    // false-positive. Its OWN effect, not a `ready()` read in the listener
+    // effect above — that would re-bind the listeners on every reconnect
+    // (see the serverEnabled effect's comment).
+    createEffect(() => {
+      const client = this.getClient();
+      if (!client?.ready()) {
+        this.#setRemoteControlSessions(EMPTY_REMOTE_CONTROL_SESSIONS);
+      }
+    });
+
     // Dice-roll toasts. A server-authoritative /roll is just a flagged message
     // on the channel, which every call participant already receives — so, like
     // the soundboard, subscribe app-lifetime here and scope in the handler
@@ -1854,11 +1870,13 @@ class Voice {
       this.#setCallChannelHasOpenGroup(false);
       this.#setCallRosterPanelOpen(false);
       this.#openGroupProbe = "pending";
-      // Whole-map reset, not just this channel: the surfaces that read it
-      // (tile badge, roster panel) render only inside the active call UI,
-      // which is going away — and after a gap offline we may have missed the
-      // `Ended` that would have cleared another channel's entry. Rebuilt from
-      // the next `remoteControlActive` either way.
+      // Reset on disconnect (the audited slice-0 shape): prefer a
+      // false-negative over any chance of a stale claim. The cost is real —
+      // leaving and rejoining a call whose session is still live shows no
+      // badge until the NEXT `remoteControlActive`, because the map is
+      // event-sourced with no backfill. That late-joiner gap is a known
+      // slice-0 limit; a Ready-payload/on-join snapshot in a later slice is
+      // the fix, not retaining state we can no longer trust here.
       this.#setRemoteControlSessions(EMPTY_REMOTE_CONTROL_SESSIONS);
 
       const room = this.room();
