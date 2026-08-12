@@ -16,8 +16,13 @@ export function AddFriendModal(
   const { t } = useLingui();
   const { showError } = useModals();
 
+  // Opened from a context menu / profile the target is already known:
+  // prefill and lock the username so only the note is left to write.
   const group = createFormGroup({
-    username: createFormControl("", { required: true }),
+    username: createFormControl(
+      props.user ? `${props.user.username}#${props.user.discriminator}` : "",
+      { required: true, disabled: !!props.user },
+    ),
     note: createFormControl(""),
   });
 

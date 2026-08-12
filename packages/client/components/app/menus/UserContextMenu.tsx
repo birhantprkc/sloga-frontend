@@ -291,10 +291,21 @@ export function UserContextMenu(props: {
   }
 
   /**
-   * Add friend
+   * Add friend (used for ACCEPTING an incoming request — instant, no dialog)
    */
   function addFriend() {
     props.user.addFriend();
+  }
+
+  /**
+   * Send a new friend request through the dialog, so a note can be attached
+   */
+  function sendFriendRequest() {
+    openModal({
+      type: "add_friend",
+      client: client(),
+      user: props.user,
+    });
   }
 
   /**
@@ -576,7 +587,7 @@ export function UserContextMenu(props: {
       >
         <ContextMenuDivider />
         <Show when={props.user.relationship === "None"}>
-          <ContextMenuButton icon={MdPersonAddAlt} onClick={addFriend}>
+          <ContextMenuButton icon={MdPersonAddAlt} onClick={sendFriendRequest}>
             <Trans>Add friend</Trans>
           </ContextMenuButton>
         </Show>
