@@ -8,6 +8,36 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // All four rows shipped unit-proven but without a live leg (user's call:
+  // they bug-check in prod). Copy constraints that are load-bearing: the
+  // whisper row must never claim the server can't hear it — its privacy is
+  // SFU-enforced, not cryptographic. The timelock row MAY claim nobody
+  // including us can open early; that one is a real cryptographic gate
+  // (drand round in the age header). The banner caveat for whispering to
+  // older clients is deliberate: old builds hear the track but have no
+  // banner UI.
+  {
+    id: "sloga-2026-08-12",
+    title: "Patch Notes",
+    published_at: "2026-08-12T03:30:00.000Z",
+    markdown_content: `## v0.35.0 — A whisper, a seal, a subtitle, a shield
+
+### ⏳ Messages that refuse to open early
+- **Seal a message until a time you choose.** The composer tray has a new lock-clock button: write your message, pick the moment, and until then nobody can read it — not the recipient, not Sloga, not even you. That's not a policy, it's cryptography: the message is locked to a public randomness beacon that only produces the key when the time arrives. Recipients see a countdown that opens on its own.
+
+### 🤫 Whisper to one person in a call
+- **Pick someone in a voice call and whisper — only they hear you.** While you whisper, your normal mic goes quiet for everyone else (push-to-talk and captions included), and the person you're whispering to sees a banner naming you. When you stop, your mic comes back exactly as it was.
+- If the person you whisper to hasn't updated yet, they're still the only one who hears you — they just won't see the banner until they update.
+
+### 💬 Captions keep the original line
+- **Translated captions now show what was actually said** in the speaker's language underneath the translation, so you can check the machine's work.
+- **A closed-captions button now lives in the call controls**, so you can turn captions on or off mid-call. On end-to-end encrypted calls it stays off and says why, instead of pretending.
+
+### 🛡️ Screenshare privacy shield
+- **Sudden pop-ups on a shared screen get pixelated before your viewers read them.** Turn on the shield in the screen-share dialog when sharing a whole monitor: it watches the corner where notifications appear, and anything that shows up abruptly is mosaicked until it's gone. A corner that's always busy is left alone — it only reacts to surprises.
+
+*Sloga — Hop on.*`,
+  },
   // All three rows shipped without a live two-account leg (user's call: they
   // bug-check in prod). Server side is test-proven under both DB drivers;
   // the note row, private-profile card and spoiler gate have never been
