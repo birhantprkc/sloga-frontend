@@ -83,6 +83,12 @@ interface Props {
   autoCompleteSearchSpace?: Accessor<AutoCompleteSearchSpace>;
 
   /**
+   * Icon tone: "encrypted" turns the standard action icons the E2EE green
+   * so an encrypted conversation is recognisable from the composer itself.
+   */
+  tone?: "plain" | "encrypted";
+
+  /**
    * Update the current draft selection
    *
    * @deprecated have to hook into ProseMirror instance now!
@@ -114,9 +120,22 @@ const Base = styled("div", {
         borderEndRadius: "var(--borderRadius-xl)",
       },
     },
+    // Tones every standard-variant IconButton inside the composer so the
+    // action icons themselves signal the conversation's encryption state:
+    // the same green as the E2EEIndicator's encrypted notice (#3BA55D —
+    // keep in sync), or the plain on-surface foreground when unencrypted.
+    tone: {
+      encrypted: {
+        "--icon-button-colour": "#3BA55D",
+      },
+      plain: {
+        "--icon-button-colour": "var(--md-sys-color-on-surface)",
+      },
+    },
   },
   defaultVariants: {
     hasActionsAppend: false,
+    tone: "plain",
   },
 });
 
@@ -168,6 +187,20 @@ const ActionBar = styled("div", {
     touchAction: "pan-x",
     scrollbarWidth: "none",
     "&::-webkit-scrollbar": { display: "none" },
+  },
+  // Same tone pair as Base — the phone layout hosts the actions here.
+  variants: {
+    tone: {
+      encrypted: {
+        "--icon-button-colour": "#3BA55D",
+      },
+      plain: {
+        "--icon-button-colour": "var(--md-sys-color-on-surface)",
+      },
+    },
+  },
+  defaultVariants: {
+    tone: "plain",
   },
 });
 
@@ -322,13 +355,13 @@ export function MessageBox(props: Props) {
       <Show when={twoRow()}>
         <StackedParent>
           <Show when={props.sendingAllowed}>
-            <ActionBar>
+            <ActionBar tone={props.tone}>
               {props.actionsStart}
               {props.actionsEnd}
             </ActionBar>
           </Show>
           <InputRow>
-            <Base hasActionsAppend={props.hasActionsAppend}>
+            <Base hasActionsAppend={props.hasActionsAppend} tone={props.tone}>
               <Show when={!props.sendingAllowed}>
                 <InlineIcon>
                   <Blocked>
@@ -346,7 +379,7 @@ export function MessageBox(props: Props) {
       {/* Desktop / tablet: everything on a single row */}
       <Show when={!twoRow()}>
         <Parent>
-          <Base hasActionsAppend={props.hasActionsAppend}>
+          <Base hasActionsAppend={props.hasActionsAppend} tone={props.tone}>
             <Switch fallback={props.actionsStart}>
               <Match when={!props.sendingAllowed}>
                 <InlineIcon>

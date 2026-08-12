@@ -1155,6 +1155,7 @@ export function MessageComposition(props: Props) {
         }}
       </For>
       <MessageBox
+        tone={e2eeMode() === "encrypt" ? "encrypted" : "plain"}
         initialValue={initialValue()}
         nodeReplacement={nodeReplacement()}
         onSendMessage={() => sendMessage()}

@@ -109,7 +109,12 @@ const iconButton2 = cva({
         "--colour": "var(--md-sys-color-on-surface-variant)",
       },
       standard: {
-        "--colour": "var(--md-sys-color-on-surface-variant)",
+        // Overridable so a container can tone a whole group of standard
+        // icon buttons at once (the composer turns its actions green while
+        // the conversation is end-to-end encrypted). Filled/tonal/outlined
+        // variants keep their own colours.
+        "--colour":
+          "var(--icon-button-colour, var(--md-sys-color-on-surface-variant))",
       },
 
       _header: {
