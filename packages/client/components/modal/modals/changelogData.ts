@@ -8,6 +8,35 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // Pass-the-controller slice 1 (the rotation queue). DESKTOP-ONLY: the panel
+  // is gated on ENABLE_REMOTE_CONTROL, which is lit only in the desktop
+  // build, so this ships in the desktop installer and NOT to web/android/
+  // linux (where it would be dark). Copy constraints, all load-bearing:
+  // - It is REAL input on a REAL machine — never dress it up as a game
+  //   abstraction that hides that (plan §3). Say "type and click on your
+  //   computer".
+  // - Every turn costs a native OS confirmation on the sharer's machine, and
+  //   that dialog IS the safety — the copy must present it as the point, not
+  //   a nuisance, and must not imply it can be skipped.
+  // - The queue is the streamer's own local order; never imply it is
+  //   server-verified, and never imply remote control is protected from the
+  //   server (a compromised sharer renderer is equivalent to it).
+  // - The control gap is real and is stated, not hidden.
+  {
+    id: "sloga-2026-08-13",
+    title: "Patch Notes",
+    published_at: "2026-08-13T00:30:00.000Z",
+    markdown_content: `## v0.37.0 — Pass the controller
+
+### 🎮 Hand the controller around your screen share
+- **On the desktop app, when you share your whole screen you can now pass control of your keyboard and mouse around the group like a physical controller.** Build a rotation from the people in the call and press Next to hand over; everyone can see whose turn it is.
+- **Every turn asks you on your own computer first.** Handing someone the controller means letting them really type and click on your machine — so Sloga puts a confirmation on your screen before anyone can, and there is no way around that. That prompt is the point, not a nuisance.
+- **Set an optional turn timer** and control passes to the next person on its own when the time is up.
+- During each handoff there's a brief moment where nobody is driving — that's the controller being passed from one person to the next, not a glitch.
+- Remote control is desktop-to-desktop: people on the web or their phone show up in the call, but can't take a turn.
+
+*Sloga — Hop on.*`,
+  },
   // Pass-the-controller slice 0 (controller VISIBILITY only). Copy
   // constraints that are load-bearing: this is a display, never a
   // protection — it must not be worded as if it stops or limits anyone,
