@@ -8,6 +8,35 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // Screen-share annotation (tech-support-mode plan §2), published only AFTER
+  // the two-account live leg passed (2026-08-13). Copy constraints, all
+  // load-bearing (reviewed 2026-08-13):
+  // - The ink transits the SERVER in plaintext, like captions. Sitting under
+  //   the v0.39.0 E2EE headline, this entry must SAY so — silence inherits an
+  //   encryption halo drawing is not entitled to. Never private/E2EE/verified.
+  // - The banner names "who the server says is drawing" — server-ASSERTED
+  //   attribution, never presented as proven.
+  // - Consent enforcement is attributed to the SERVER ("checks every stroke"),
+  //   not worded as an unattributed absolute.
+  // - The escalation step (remote control) stays desktop-to-desktop and the
+  //   copy says so wherever it points at it; drawing itself is cross-platform.
+  // - A stroke is a picture, never input — "can't click, type, or touch" is
+  //   the honest capability statement, not a protection claim.
+  {
+    id: "sloga-2026-08-13-4",
+    title: "Patch Notes",
+    published_at: "2026-08-13T07:30:00.000Z",
+    markdown_content: `## v0.40.0 — Draw on their screen
+
+### ✏️ Point at things instead of taking the mouse
+- **When someone shares their screen, they can now let you draw on it.** Circle the button, cross out the wrong menu, sketch an arrow — everyone in the call sees the ink right on the share, and it fades away after a few seconds.
+- **It's the step before Tech support mode hands over the mouse.** Most of the time you don't need someone's keyboard — you need "no — **that** one." Drawing points; it can't click, type, or touch anything on their computer. The ink itself travels through Sloga to reach everyone, like live captions do — it's the mouse-and-keyboard channel that's end-to-end encrypted, not the drawing.
+- **Nobody draws uninvited.** Drawing is off by default. The person sharing picks each helper by name — the server checks every stroke against that list — and a banner on their screen always names who the server says is drawing.
+- **One button stops everything.** "Stop all drawing" instantly clears the ink and revokes everyone at once — and permission ends by itself when the share ends, so the next share always starts from zero.
+- **On the web today.** The desktop and mobile apps pick it up with their next update — drawing works wherever the call does, while handing over the mouse itself stays desktop-to-desktop.
+
+*Sloga — Hop on.*`,
+  },
   // Positioning entry: names the ALREADY-SHIPPED remote control (public since
   // desktop 0.23.0) as the flagship "tech support mode". No feature ships with
   // this entry. Copy constraints, all load-bearing (reviewed 2026-08-13):
