@@ -3718,6 +3718,23 @@ class Voice {
             }
           }
 
+          // A Muted event on the local screenshare VIDEO can only be the
+          // server: no client path calls mute() on it (the quality dialog
+          // and the E2EE publish gate pause upstream, a different event, and
+          // a browser capture stall also only pauses upstream). voice-ingress
+          // muting the track — an out-of-band aspect ratio, or the call being
+          // over the video cap — was previously invisible to the sharer:
+          // their preview kept playing while nobody received a frame. Tell
+          // them. `once`: the server never unmutes, so a second fire is
+          // impossible and a stale listener must not survive a later share.
+          localTrack.once(TrackEvent.Muted, () => {
+            this.onErr(
+              new Error(
+                "The server turned off your screenshare video — the share may be an unsupported shape, or the call may be full for video. You're still in the call.",
+              ),
+            );
+          });
+
           // This event is only fired if the screen share is ended by closing the window being streamed.
           // This catches the ending and disables screen sharing on our side. If this weren't here,
           // livekit would still share stream audio after closing the window being streamed.
