@@ -23,6 +23,7 @@ import {
   isE2EESupported,
   LocalVideoTrack,
   Room,
+  RoomEvent,
   ScreenSharePresets,
   Track,
   TrackEvent,
@@ -1527,6 +1528,26 @@ class Voice {
       videoCaptureDefaults: {
         deviceId: this.#settings.preferredVideoDevice,
       },
+    });
+
+    // A Muted event on OUR OWN screenshare video can only be the server: no
+    // client path calls mute() on it (the quality dialog and the E2EE
+    // publish gate pause upstream, a different event, and a browser capture
+    // stall also only pauses upstream — verified against livekit-client
+    // 2.15.13). voice-ingress muting the track — an out-of-band aspect
+    // ratio, or the call being over the video cap — was previously invisible
+    // to the sharer: their preview kept playing while nobody received a
+    // frame. Room-level rather than per-publication so it survives a
+    // reconnect's republish (which creates a fresh publication and would
+    // strand a listener on the old one).
+    room.on(RoomEvent.TrackMuted, (publication, participant) => {
+      if (participant !== room.localParticipant) return;
+      if (publication.source !== Track.Source.ScreenShare) return;
+      this.onErr(
+        new Error(
+          "The server turned off your screenshare video — the share may be an unsupported shape, or the call may be full for video. You're still in the call.",
+        ),
+      );
     });
 
     this.disposeTrackRoot?.();
@@ -3401,31 +3422,51 @@ class Voice {
       // encodings[0] put the picker's bitrate/framerate on the half-res rung
       // while full res kept the 15fps default — the "1080p 60FPS never
       // delivers 1080p60" inversion.
+      //
+      // `active` is deliberately never touched, even for a single-encoding
+      // tier (Game) picked mid-share: dynacast owns layer activation, and a
+      // unilateral setParameters write desyncs livekit's bookkeeping (the
+      // SFU still believes the layer exists and re-enables it with stale
+      // caps on a SubscribedQualityUpdate) — and Firefox rejects
+      // `active: false` outright, which would atomically discard the
+      // full-res write in the same setParameters call. With one viewer on
+      // the full-res layer dynacast pauses the unwatched rung anyway, which
+      // is the same encode outcome Game's single-encoding publish buys; the
+      // rung still carries tier-scaled caps below so any reactivation is
+      // honest.
       const scaleOf = (e: RTCRtpEncodingParameters) =>
         e.scaleResolutionDownBy ?? 1;
-      const fullScale = Math.min(...params.encodings.map(scaleOf));
-      for (const encoding of params.encodings) {
-        const relativeScale = scaleOf(encoding) / fullScale;
-        if (relativeScale === 1) {
-          encoding.maxBitrate = quality.maxBitrateKbps * 1000;
-          if (quality.resolution.frameRate) {
-            encoding.maxFramerate = quality.resolution.frameRate;
+      const scales = params.encodings.map(scaleOf);
+      const fullScale = Math.min(...scales);
+      if (
+        params.encodings.length > 1 &&
+        scales.every((s) => s === fullScale)
+      ) {
+        // Defensive: a browser that omits scaleResolutionDownBy from
+        // getParameters() makes the rungs indistinguishable, and treating
+        // them all as full-res would hand every layer the full tier budget.
+        // Fall back to livekit's low-first ordering convention: write the
+        // tier onto the LAST encoding only and leave the rest untouched.
+        const full = params.encodings[params.encodings.length - 1];
+        full.maxBitrate = quality.maxBitrateKbps * 1000;
+        if (quality.resolution.frameRate) {
+          full.maxFramerate = quality.resolution.frameRate;
+        }
+      } else {
+        for (const encoding of params.encodings) {
+          const relativeScale = scaleOf(encoding) / fullScale;
+          if (relativeScale === 1) {
+            encoding.maxBitrate = quality.maxBitrateKbps * 1000;
+          } else {
+            // Downscaled rung: livekit's own screenshare ladder — the
+            // tier's framerate at bitrate ÷ scale², floored at 150 kbps.
+            encoding.maxBitrate = Math.max(
+              150_000,
+              Math.floor(
+                (quality.maxBitrateKbps * 1000) / relativeScale ** 2,
+              ),
+            );
           }
-        } else if (quality.simulcast === false) {
-          // setParameters cannot change the negotiated encoding count, so a
-          // single-encoding tier picked mid-share deactivates the extra rungs
-          // instead — same wire effect. Dynacast may reactivate one on a
-          // subscriber's request; the clean single-encoding publish happens
-          // on the next share start.
-          encoding.active = false;
-        } else {
-          // Downscaled rung: livekit's own screenshare ladder — the tier's
-          // framerate at bitrate ÷ scale², floored at 150 kbps. `active` is
-          // deliberately untouched: dynacast owns pausing/resuming layers.
-          encoding.maxBitrate = Math.max(
-            150_000,
-            Math.floor((quality.maxBitrateKbps * 1000) / relativeScale ** 2),
-          );
           if (quality.resolution.frameRate) {
             encoding.maxFramerate = quality.resolution.frameRate;
           }
@@ -3546,6 +3587,15 @@ class Voice {
     // watching you play (couch co-op); wrong for a big audience, which loses
     // the quality-adaptation rung, hence a separate tier and not a change to
     // `fhd`.
+    //
+    // The encoding COUNT is fixed at publish time from the STORED quality
+    // (setParameters can't add or remove negotiated encodings), so
+    // `simulcast: false` only takes effect when Game is the stored tier at
+    // share start. Picked mid-share (either dialog), Game rides the ladder
+    // re-apply instead: full-res gets the whole tier budget and dynacast
+    // pauses the unwatched rung — the same encode outcome with one viewer.
+    // The mirror also holds: with Game stored, a simulcast tier picked
+    // mid-share keeps the single encoding for that share.
     qualities.game = {
       name: "game",
       resolution: this.#clampResolutionToServerLimit({
@@ -3717,23 +3767,6 @@ class Voice {
               }
             }
           }
-
-          // A Muted event on the local screenshare VIDEO can only be the
-          // server: no client path calls mute() on it (the quality dialog
-          // and the E2EE publish gate pause upstream, a different event, and
-          // a browser capture stall also only pauses upstream). voice-ingress
-          // muting the track — an out-of-band aspect ratio, or the call being
-          // over the video cap — was previously invisible to the sharer:
-          // their preview kept playing while nobody received a frame. Tell
-          // them. `once`: the server never unmutes, so a second fire is
-          // impossible and a stale listener must not survive a later share.
-          localTrack.once(TrackEvent.Muted, () => {
-            this.onErr(
-              new Error(
-                "The server turned off your screenshare video — the share may be an unsupported shape, or the call may be full for video. You're still in the call.",
-              ),
-            );
-          });
 
           // This event is only fired if the screen share is ended by closing the window being streamed.
           // This catches the ending and disables screen sharing on our side. If this weren't here,

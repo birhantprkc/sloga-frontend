@@ -64,8 +64,12 @@ export function Dialog(props: Props) {
             >
               <Container
                 style={{
+                  // Clamped to the viewport: the screenshare modals ask for
+                  // 820px to fit seven equal-width tier buttons, which would
+                  // otherwise overflow phones and half-snapped desktop
+                  // windows with no way to reach the action buttons.
                   "min-width": props.minWidth
-                    ? `${props.minWidth}px`
+                    ? `min(${props.minWidth}px, calc(100vw - 2 * var(--gap-md)))`
                     : undefined,
                   padding: props.padding ? `${props.padding}px` : undefined,
                 }}
