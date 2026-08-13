@@ -42,15 +42,16 @@ export function ScreenSharePickerModal(
   );
 
   return (
-    // 700 is deliberately past Dialog's own 560px maxWidth -- an inline
+    // 820 is deliberately past Dialog's own 560px maxWidth -- an inline
     // min-width beats max-width in CSS, which is the only way to widen this.
     // It has to be wide: Form2.ButtonGroup renders its Row with
     // justify="stretch", i.e. `& * { flex: 1 }`, so every tier button is
     // forced to an identical flex-basis:0 width no matter what it says.
-    // Content width is ignored, so total dialog width is the ONLY lever, and
-    // below ~700px the button is narrower than "Source" and splits the word.
+    // Content width is ignored, so total dialog width is the ONLY lever;
+    // below ~117px/button the button is narrower than "Source" and splits
+    // the word. 700 covered six tiers; the Game tier makes seven.
     <Dialog
-      minWidth={700}
+      minWidth={820}
       show={props.show}
       onClose={() => {
         props.onCancel();

@@ -34,13 +34,17 @@ const NoiseSuppresionStates: NoiseSuppresionState[] = [
 export type MicrophoneMode = "openMic" | "vad" | "pushToTalk";
 
 /**
- * Possible screen share qualities. Low is 720p@30fps, high 1080p@30fps and text is source@5fps.
+ * Possible screen share qualities. Low is 720p@30fps, high 1080p@30fps and
+ * text is source@5fps. "game" is 1080p@60fps published as a single encoding
+ * (no simulcast) so the full bitrate budget lands on the layer a single
+ * viewer actually watches.
  */
 export type ScreenShareQualityName =
   | "low"
   | "high"
   | "text"
   | "fhd"
+  | "game"
   | "qhd"
   | "uhd";
 
@@ -52,6 +56,7 @@ export const ScreenShareQualityNames: ScreenShareQualityName[] = [
   "high",
   "text",
   "fhd",
+  "game",
   "qhd",
   "uhd",
 ];

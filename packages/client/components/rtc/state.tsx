@@ -266,6 +266,14 @@ type ScreenShareQuality = {
    * option usable over the relay. LAN publishers rarely hit the cap.
    */
   maxBitrateKbps: number;
+  /**
+   * Set false to publish a single encoding instead of a simulcast ladder.
+   * With one subscriber (the couch co-op / game-night case) the downscaled
+   * rung is encode spent on a layer nobody watches; a single encoding gets
+   * the full bitrate budget. Costs multi-viewer quality adaptation, so only
+   * the Game tier opts out.
+   */
+  simulcast?: boolean;
 };
 
 class Voice {
@@ -3385,9 +3393,43 @@ class Voice {
       if (!params.encodings || params.encodings.length === 0) {
         params.encodings = [{}];
       }
-      params.encodings[0].maxBitrate = quality.maxBitrateKbps * 1000;
-      if (quality.resolution.frameRate) {
-        params.encodings[0].maxFramerate = quality.resolution.frameRate;
+      // A simulcast share has multiple encodings, and which index is the
+      // full-res layer is a livekit-client convention (low-first), not a
+      // WebRTC guarantee — and the rid letters actively lie (`h` is the
+      // FULL-res layer). Key off scaleResolutionDownBy: the smallest scale
+      // is the layer the tier's numbers were chosen for. Writing them onto
+      // encodings[0] put the picker's bitrate/framerate on the half-res rung
+      // while full res kept the 15fps default — the "1080p 60FPS never
+      // delivers 1080p60" inversion.
+      const scaleOf = (e: RTCRtpEncodingParameters) =>
+        e.scaleResolutionDownBy ?? 1;
+      const fullScale = Math.min(...params.encodings.map(scaleOf));
+      for (const encoding of params.encodings) {
+        const relativeScale = scaleOf(encoding) / fullScale;
+        if (relativeScale === 1) {
+          encoding.maxBitrate = quality.maxBitrateKbps * 1000;
+          if (quality.resolution.frameRate) {
+            encoding.maxFramerate = quality.resolution.frameRate;
+          }
+        } else if (quality.simulcast === false) {
+          // setParameters cannot change the negotiated encoding count, so a
+          // single-encoding tier picked mid-share deactivates the extra rungs
+          // instead — same wire effect. Dynacast may reactivate one on a
+          // subscriber's request; the clean single-encoding publish happens
+          // on the next share start.
+          encoding.active = false;
+        } else {
+          // Downscaled rung: livekit's own screenshare ladder — the tier's
+          // framerate at bitrate ÷ scale², floored at 150 kbps. `active` is
+          // deliberately untouched: dynacast owns pausing/resuming layers.
+          encoding.maxBitrate = Math.max(
+            150_000,
+            Math.floor((quality.maxBitrateKbps * 1000) / relativeScale ** 2),
+          );
+          if (quality.resolution.frameRate) {
+            encoding.maxFramerate = quality.resolution.frameRate;
+          }
+        }
       }
       await sender.setParameters(params);
     } catch (e) {
@@ -3498,6 +3540,28 @@ class Voice {
       degradationPreference: "maintain-framerate",
       maxBitrateKbps: 8000,
     };
+    // What `fhd` promises, actually delivered: `fhd` splits its budget across
+    // a simulcast ladder, so a viewer gets full res OR full framerate. One
+    // encoding puts the whole 8 Mbps at 1080p60 — right when one person is
+    // watching you play (couch co-op); wrong for a big audience, which loses
+    // the quality-adaptation rung, hence a separate tier and not a change to
+    // `fhd`.
+    qualities.game = {
+      name: "game",
+      resolution: this.#clampResolutionToServerLimit({
+        width: 1920,
+        height: 1080,
+        frameRate: 60,
+      }),
+      // No parens: ScreenShareQualityLabel splits on the LAST space, so
+      // "Game 1080p 60FPS" renders "Game 1080p" over "60FPS" like the
+      // other tiers; parens would strand one on each line.
+      fullName: `Game 1080p 60FPS`,
+      contentHint: "motion",
+      degradationPreference: "maintain-framerate",
+      maxBitrateKbps: 8000,
+      simulcast: false,
+    };
     qualities.qhd = {
       name: "qhd",
       resolution: this.#clampResolutionToServerLimit({
@@ -3591,10 +3655,19 @@ class Voice {
             audio: true,
           },
           {
-            videoEncoding: {
+            // MUST be screenShareEncoding: livekit-client silently ignores
+            // `videoEncoding` for screenshare tracks (computeVideoEncodings
+            // reads options.screenShareEncoding for them), so passing the
+            // tier as videoEncoding left every share seeded from the
+            // h1080fps15 default — 15 fps / 2.5 Mbps at full res, whatever
+            // the picker said. With this set, livekit scales the whole
+            // ladder from the tier natively (full res carries the tier; the
+            // downscaled rung gets tier ÷ 4 at tier fps).
+            screenShareEncoding: {
               maxBitrate: initialQuality.maxBitrateKbps * 1000, // kbps -> bps
               maxFramerate: initialQuality.resolution.frameRate,
             },
+            simulcast: initialQuality.simulcast !== false,
             degradationPreference: initialQuality.degradationPreference,
           },
         );
