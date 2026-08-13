@@ -8,6 +8,34 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // Pass-the-controller slice 2 ("ask for a turn" + the capability beacon).
+  // DESKTOP-ONLY for the same reason as slice 1 — every surface it adds sits
+  // inside the ENABLE_REMOTE_CONTROL gate, lit only in the desktop build.
+  // Copy constraints, all load-bearing:
+  // - ASKING GRANTS NOTHING. It is a request the streamer chooses to act on;
+  //   never word it as joining the rotation, or as if it takes a turn itself.
+  // - Every turn still costs the native confirmation on the streamer's own
+  //   machine. That dialog is the point, not friction, and must never read as
+  //   something the feature can skip.
+  // - The "on desktop" marker is a SELF-REPORT each client makes about itself
+  //   and the server relays unverified. Never say verified/confirmed/checked;
+  //   its absence means "hasn't said", never "can't". Saying that plainly is
+  //   also what keeps the copy honest that the server is not a trust anchor.
+  // - Real input on a real machine — never dressed up as a game abstraction.
+  {
+    id: "sloga-2026-08-13-2",
+    title: "Patch Notes",
+    published_at: "2026-08-13T02:00:00.000Z",
+    markdown_content: `## v0.38.0 — Ask for a turn
+
+### 🙋 Ask for the controller instead of waiting to be offered
+- **When someone is sharing their screen on the desktop app, you can now ask them for a turn.** Your request appears next to their rotation queue, and they decide whether to add you — asking never takes control on its own.
+- **The person sharing is still asked on their own computer before anyone can type or click.** That happens on every single turn and there is no way around it. It is the point of the feature, not a formality.
+- **The rotation now marks who is on desktop**, so the streamer can see at a glance who is able to take a turn at all. That marker is what each person's app says about itself — Sloga passes it along rather than checking it.
+- Taking a turn stays desktop-to-desktop; people on the web or their phone are in the call as normal, they just can't drive.
+
+*Sloga — Hop on.*`,
+  },
   // Pass-the-controller slice 1 (the rotation queue). DESKTOP-ONLY: the panel
   // is gated on ENABLE_REMOTE_CONTROL, which is lit only in the desktop
   // build, so this ships in the desktop installer and NOT to web/android/
