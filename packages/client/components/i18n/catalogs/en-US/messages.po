@@ -6817,3 +6817,32 @@ msgstr ""
 #: components/ui/components/features/voice/callCard/ParticipantTile.tsx
 msgid "Asked"
 msgstr ""
+
+#. placeholder {0}: activeAnnotator().username
+#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
+msgid "{0} is drawing on your screen"
+msgstr "{0} is drawing on your screen"
+
+#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
+msgid "Draw"
+msgstr "Draw"
+
+#: components/app/menus/UserContextMenu.tsx
+msgid "Let them draw on my shared screen"
+msgstr "Let them draw on my shared screen"
+
+#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
+msgid "People can draw on your screen"
+msgstr "People can draw on your screen"
+
+#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
+msgid "Stop all drawing"
+msgstr "Stop all drawing"
+
+#: components/app/menus/UserContextMenu.tsx
+msgid "Stop all drawing on my screen"
+msgstr "Stop all drawing on my screen"
+
+#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
+msgid "Stop drawing"
+msgstr "Stop drawing"

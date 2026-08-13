@@ -23,6 +23,7 @@ import MdCancel from "@material-design-icons/svg/outlined/cancel.svg?component-s
 import MdChat from "@material-design-icons/svg/outlined/chat.svg?component-solid";
 import MdClose from "@material-design-icons/svg/outlined/close.svg?component-solid";
 import MdDoNotDisturbOn from "@material-design-icons/svg/outlined/do_not_disturb_on.svg?component-solid";
+import MdDraw from "@material-design-icons/svg/outlined/draw.svg?component-solid";
 import MdFace from "@material-design-icons/svg/outlined/face.svg?component-solid";
 import MdHearing from "@material-design-icons/svg/outlined/hearing.svg?component-solid";
 import MdMicOff from "@material-design-icons/svg/outlined/mic_off.svg?component-solid";
@@ -486,6 +487,36 @@ export function UserContextMenu(props: {
             <Trans>Stop whispering</Trans>
           </Show>
         </ContextMenuButton>
+        {/* Draw consent (tech-support mode §2.4): only while I am sharing my
+            screen. OFF by default, granted per NAMED person; the server
+            enforces the allowlist on every stroke. The revoke here is the
+            one-action clear-ALL, and its label says so — per-person removal
+            deliberately does not exist. */}
+        <Show when={voice.screenshare()}>
+          <Show
+            when={voice.annotations.mayDraw(
+              voice.annotations.localUserId,
+              props.user.id,
+            )}
+            fallback={
+              <ContextMenuButton
+                icon={MdDraw}
+                onClick={() =>
+                  void voice.channel()?.allowAnnotator(props.user.id)
+                }
+              >
+                <Trans>Let them draw on my shared screen</Trans>
+              </ContextMenuButton>
+            }
+          >
+            <ContextMenuButton
+              icon={MdDraw}
+              onClick={() => void voice.channel()?.revokeAnnotators()}
+            >
+              <Trans>Stop all drawing on my screen</Trans>
+            </ContextMenuButton>
+          </Show>
+        </Show>
         <ContextMenuDivider />
       </Show>
       <Show when={props.isScreenshare && !props.user.self}>

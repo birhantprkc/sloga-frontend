@@ -1,4 +1,4 @@
-import { createSignal, onCleanup, Show } from "solid-js";
+import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 
 import { Trans } from "@lingui-solid/solid/macro";
 import {
@@ -31,6 +31,8 @@ import { Symbol } from "@revolt/ui/components/utils/Symbol";
 import { participantUserId } from "../participantIdentity";
 import { VoiceStatefulUserIcons } from "../VoiceStatefulUserIcons";
 
+import { AnnotationCapture } from "./AnnotationCapture";
+import { AnnotationLayer } from "./AnnotationLayer";
 import { ParticipantCaption } from "./ParticipantCaption";
 import { RemoteControlCapture } from "./RemoteControlCapture";
 
@@ -158,6 +160,40 @@ export function ParticipantTile(props: TileProps) {
     clearTimeout(reAskTimer);
     reAskTimer = setTimeout(() => setAsked(false), RE_ASK_COOLDOWN_MS);
   }
+
+  /**
+   * Screen-share annotation (tech-support mode §2). `canDraw` mirrors the
+   * server-enforced consent: the draw affordance appears only while this
+   * sharer's allowlist names us — and never while we are CONTROLLING this
+   * share (the z20 RC capture surface keeps exclusive input). The server
+   * refuses regardless; the mirror only drives the UI.
+   */
+  const [drawMode, setDrawMode] = createSignal(false);
+  const sharerUserId = () => participantUserId(participant.identity);
+  const canDraw = () =>
+    isScreenShare() &&
+    !participant.isLocal &&
+    !controlling() &&
+    voice.annotations.mayDraw(sharerUserId(), voice.annotations.localUserId);
+  // Consent revoked (or the share/control state changed): leave draw mode
+  // immediately — the surface must not sit armed over a tile it may no
+  // longer draw on.
+  createEffect(() => {
+    if (!canDraw()) setDrawMode(false);
+  });
+  /** Sharer side: whose ink is currently live on MY OWN share. */
+  const activeAnnotatorId = () => {
+    if (!participant.isLocal || !isScreenShare()) return undefined;
+    const batches = voice.annotations.batches.get(participant.identity);
+    return batches?.at(-1)?.annotatorId;
+  };
+  const activeAnnotator = useUser(() => activeAnnotatorId() ?? "");
+  /** Sharer side: is my allowlist non-empty (the revoke affordance gate)? */
+  const hasAllowedAnnotators = () =>
+    participant.isLocal &&
+    isScreenShare() &&
+    (voice.annotations.consent.get(voice.annotations.localUserId)?.length ??
+      0) > 0;
 
   /**
    * Whether THIS tile's video publication is subscribed. Only consulted for
@@ -428,6 +464,73 @@ export function ParticipantTile(props: TileProps) {
             sharerIdentity={participant.identity}
           />
         </Show>
+        {/* Annotation ink (tech-support mode §2.5) — the SCREEN-SHARE branch
+            on purpose: the whole feature draws on the shared screen, and the
+            camera branch was the rev-2 review's whole-feature-defeating
+            placement bug. Passive at z5 (the ParticipantCaption precedent):
+            above video and hover chrome, below the z8 draw surface and the
+            z20 RC capture, never intercepting a click. Renders on EVERY
+            viewer's tile for this share, including the sharer's own. */}
+        <Show when={isScreenShare()}>
+          <AnnotationLayer
+            identity={participant.identity}
+            videoDims={videoDims}
+          />
+        </Show>
+        {/* Draw surface — only while this sharer's server-enforced allowlist
+            names us, draw mode is on, and no RC session holds the tile. */}
+        <Show when={canDraw() && drawMode() && feedSubscribed()}>
+          <AnnotationCapture
+            video={videoRef}
+            videoDims={videoDims}
+            sharerIdentity={participant.identity}
+            sharerUserId={sharerUserId()}
+            onRefused={() => setDrawMode(false)}
+          />
+        </Show>
+        {/* Draw toggle, top-right on an allowed share (the AskTurnButton
+            family). Toggling OFF just unmounts the surface. */}
+        <Show when={canDraw()}>
+          <DrawToggleButton
+            data-active={drawMode() ? "" : undefined}
+            onClick={(e) => {
+              e.stopPropagation();
+              setDrawMode(!drawMode());
+            }}
+          >
+            <Symbol size={14}>stylus_note</Symbol>
+            <Show when={drawMode()} fallback={<Trans>Draw</Trans>}>
+              <Trans>Stop drawing</Trans>
+            </Show>
+          </DrawToggleButton>
+        </Show>
+        {/* Sharer side (§2.4): who the server says is drawing on MY share,
+            plus the ONE-ACTION revoke — the phishing backstop, deliberately
+            a single always-there button rather than list management. Shown
+            whenever my allowlist is non-empty, named whenever ink is live. */}
+        <Show when={hasAllowedAnnotators()}>
+          <DrawingBanner>
+            <Symbol size={14}>stylus_note</Symbol>
+            <OverflowingText>
+              <Show
+                when={activeAnnotatorId()}
+                fallback={<Trans>People can draw on your screen</Trans>}
+              >
+                <Trans>
+                  {activeAnnotator().username} is drawing on your screen
+                </Trans>
+              </Show>
+            </OverflowingText>
+            <StopDrawingButton
+              onClick={(e) => {
+                e.stopPropagation();
+                void voice.channel()?.revokeAnnotators();
+              }}
+            >
+              <Trans>Stop all drawing</Trans>
+            </StopDrawingButton>
+          </DrawingBanner>
+        </Show>
         {/* Channel-wide control indicator (§2.2). ALWAYS visible while a
             session is live on this share — unlike the hover chrome, because
             its whole job is that nobody has to hover to notice someone is
@@ -672,6 +775,72 @@ const AskTurnButton = styled("button", {
       color: "var(--md-sys-color-on-surface-variant)",
       background: "rgba(0,0,0,0.45)",
     },
+  },
+});
+
+const DrawToggleButton = styled("button", {
+  base: {
+    gridArea: "1/1",
+    justifySelf: "end",
+    alignSelf: "start",
+    margin: "var(--gap-md)",
+    // Above the z8 draw surface so "Stop drawing" stays clickable mid-draw.
+    zIndex: 9,
+
+    display: "flex",
+    alignItems: "center",
+    gap: "4px",
+
+    fontSize: "11px",
+    fontWeight: 600,
+    padding: "4px 8px",
+    borderRadius: "var(--borderRadius-full)",
+    border: "none",
+    cursor: "pointer",
+    color: "var(--md-sys-color-on-primary)",
+    background: "var(--md-sys-color-primary)",
+
+    "&[data-active]": {
+      color: "#fff",
+      background: "rgba(0,0,0,0.65)",
+    },
+  },
+});
+
+const DrawingBanner = styled("div", {
+  base: {
+    gridArea: "1/1",
+    justifySelf: "center",
+    alignSelf: "start",
+    margin: "var(--gap-md)",
+    zIndex: 9,
+
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    minWidth: 0,
+    maxWidth: "calc(100% - 2 * var(--gap-md))",
+
+    fontSize: "11px",
+    fontWeight: 600,
+    padding: "4px 8px",
+    borderRadius: "var(--borderRadius-full)",
+    color: "#fff",
+    background: "rgba(0,0,0,0.65)",
+  },
+});
+
+const StopDrawingButton = styled("button", {
+  base: {
+    flexShrink: 0,
+    fontSize: "11px",
+    fontWeight: 700,
+    padding: "2px 8px",
+    borderRadius: "var(--borderRadius-full)",
+    border: "none",
+    cursor: "pointer",
+    color: "var(--md-sys-color-on-error)",
+    background: "var(--md-sys-color-error)",
   },
 });
 

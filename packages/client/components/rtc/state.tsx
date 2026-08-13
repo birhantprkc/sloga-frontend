@@ -140,6 +140,7 @@ import {
   retainPresentRequests,
 } from "./turnRequests";
 
+import { LiveAnnotations } from "./annotations/liveAnnotations";
 import {
   type RecordingTarget,
   CallRecorder,
@@ -157,8 +158,6 @@ import {
 } from "./cameraEffects";
 import { createCaptionEngine } from "./captions/captionEngine";
 import { LiveCaptions } from "./captions/liveCaptions";
-import { ScreenShieldProcessor } from "./screenShieldProcessor";
-import { WhisperController } from "./whisper";
 import { CaptionPublisher } from "./components/CaptionPublisher";
 import { CaptionSpeaker } from "./components/CaptionSpeaker";
 import { InRoom } from "./components/InRoom";
@@ -177,7 +176,9 @@ import {
   type MlsRosterMember,
   MlsCallSession,
 } from "./mlsCallSession";
+import { ScreenShieldProcessor } from "./screenShieldProcessor";
 import { SoundboardPlayback } from "./soundboardPlayback";
+import { WhisperController } from "./whisper";
 
 /**
  * A dice-roll result shown briefly over the call's video (e.g. "Jeff rolled
@@ -453,6 +454,22 @@ class Voice {
    * fans a `CallCaption` event to the call's participants.
    */
   readonly captions = new LiveCaptions(createCaptionEngine);
+  /**
+   * Screen-share annotations (tech-support mode §2): relayed ink batches
+   * per sharer surface + the mirrored draw-consent state. Attached on
+   * connect, torn down on disconnect; ingestion is app-lifetime client
+   * subscriptions in the constructor (the captions shape). Consent is
+   * ENFORCED server-side — the mirror here only drives affordances and
+   * closes the revoke-beats-stroke event race.
+   */
+  readonly annotations = new LiveAnnotations();
+  /** Palette INDEX the local user draws with (bounded by the fixed table). */
+  annotationColor: Accessor<number>;
+  #setAnnotationColor: Setter<number>;
+  /** Pick a palette index to draw with (clamped to the fixed table). */
+  setAnnotationColor(index: number) {
+    this.#setAnnotationColor(Math.max(0, Math.min(4, Math.floor(index))));
+  }
   /**
    * Private-aside audio to one participant (second published audio track,
    * SFU-restricted via subscription permissions — see whisper.ts for the
@@ -795,6 +812,10 @@ class Voice {
     this.incomingWhisperFrom = incomingWhisperFrom;
     this.#setIncomingWhisperFrom = setIncomingWhisperFrom;
 
+    const [annotationColor, setAnnotationColor] = createSignal(0);
+    this.annotationColor = annotationColor;
+    this.#setAnnotationColor = setAnnotationColor;
+
     const [hwBrightness, setHwBrightness] = createSignal(false);
     this.cameraHwBrightness = hwBrightness;
     this.#setCameraHwBrightness = setHwBrightness;
@@ -1059,6 +1080,45 @@ class Voice {
       };
       client.addListener("callControlRequest", handler);
       onCleanup(() => client.removeListener("callControlRequest", handler));
+    });
+
+    // Screen-share annotations + their consent state. Same app-lifetime,
+    // private-topic shape as captions: both events reach every session of
+    // this user, so drop anything that is not the call we are connected to.
+    // The store additionally drops stroke batches whose annotator is not on
+    // the mirrored allowlist (the server enforces consent regardless — the
+    // local check only closes the revoke-beats-stroke race).
+    createEffect(() => {
+      const client = this.getClient();
+      if (!client) return;
+      const strokeHandler = (detail: {
+        channelId: string;
+        annotatorIdentity: string;
+        annotatorId: string;
+        targetIdentity: string;
+        targetId: string;
+        strokes: { points: number[]; color: number; width: number }[];
+        seq: number;
+      }) => {
+        if (this.state() !== "CONNECTED") return;
+        if (this.channel()?.id !== detail.channelId) return;
+        this.annotations.handleRemoteAnnotation(detail);
+      };
+      const consentHandler = (detail: {
+        channelId: string;
+        sharerId: string;
+        allowed: string[];
+      }) => {
+        if (this.state() !== "CONNECTED") return;
+        if (this.channel()?.id !== detail.channelId) return;
+        this.annotations.handleConsent(detail);
+      };
+      client.addListener("callAnnotation", strokeHandler);
+      client.addListener("callAnnotationConsent", consentHandler);
+      onCleanup(() => {
+        client.removeListener("callAnnotation", strokeHandler);
+        client.removeListener("callAnnotationConsent", consentHandler);
+      });
     });
     // Re-point any in-flight soundboard playback when the output device
     // changes mid-call (future plays read the device per-play already).
@@ -1501,6 +1561,20 @@ class Voice {
           console.error("caption relay failed", error);
         });
       });
+      // Annotations: bind the local identity for the self-mirror, and seed
+      // the draw-consent mirror over REST — a client joining mid-call has
+      // missed every consent event, and without the seed it would neither
+      // show the draw affordance nor render already-allowed helpers' ink
+      // (the pass-the-controller slice-0 backfill lesson, applied on day
+      // one). Best-effort: the events keep it current from here.
+      this.annotations.attach(
+        room.localParticipant.identity,
+        this.getClient()?.user?.id ?? "",
+      );
+      void channel
+        .fetchAnnotationConsent()
+        .then((entries) => this.annotations.seedConsent(entries))
+        .catch(() => {});
       this.remoteControl.attach(room, room.localParticipant.identity);
       // Capability beacon (pass-the-controller slice 2): tell the call this
       // client could RECEIVE control, so a sharer's rotation queue can mark
@@ -1955,6 +2029,7 @@ class Voice {
       this.#e2eeWorker = undefined;
       this.#mlsKeyProvider = undefined;
       this.captions.detach();
+      this.annotations.detach();
       // Whisper state dies with the call: the room is going away, so there
       // is nothing to unpublish or restore — just stop the capture.
       this.whisper.reset();
