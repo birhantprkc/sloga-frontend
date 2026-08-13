@@ -8,6 +8,34 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // Positioning entry: names the ALREADY-SHIPPED remote control (public since
+  // desktop 0.23.0) as the flagship "tech support mode". No feature ships with
+  // this entry. Copy constraints, all load-bearing (reviewed 2026-08-13):
+  // - The E2EE claim stays scoped to MOUSE/KEYBOARD INPUT (the sealed pairwise
+  //   channel). Never "we can't see your screen" / "protected from Sloga" —
+  //   the SFU relays the screen media and the server introduces the parties.
+  // - The world-first claim keeps its qualifier: "end-to-end-encrypted remote
+  //   control" — bare "remote control" is contestable (Teams/Zoom give-control).
+  // - No unattended-access or IT-admin framing; every session starts with the
+  //   person being helped and costs a confirmation on their own computer.
+  // - Scam warning stays Sloga-scoped, per the shipped v0.27.0 precedent.
+  // - Never mention drawing/annotation (dark until it ships) or any
+  //   per-app/per-window claim (does not exist).
+  {
+    id: "sloga-2026-08-13-3",
+    title: "Patch Notes",
+    published_at: "2026-08-13T04:00:00.000Z",
+    markdown_content: `## v0.39.0 — Tech support mode
+
+### 🛠️ Call a friend, hand them your mouse
+- **This is the feature we'd tell your family about.** When someone you trust gets stuck, call them on Sloga: they share their screen, hand you their mouse and keyboard, and you fix it — instead of talking them through it button by button.
+- **It's built in, and your mouse and keyboard input is end-to-end encrypted.** It travels encrypted between the two computers; Sloga relays it and can't read it. No other mainstream chat app has end-to-end-encrypted remote control built in.
+- **The person being helped stays in charge, always.** It only ever starts with them: they pick the helper by name and confirm on their own computer before anything is handed over, a bar with a Stop button stays pinned to their screen the whole time, and **Ctrl+Shift+Alt+Q** ends it instantly from anywhere.
+- **It's for people you already trust — never for strangers.** ⚠️ Nobody from Sloga support will ever ask for control of your computer. If anyone asks for control while claiming to be staff or support, it's a scam — refuse, and tell us at report@sloga.gg.
+- **Windows desktop to Windows desktop**, whole-screen shares only — sharing a single window won't offer it, because control would reach the whole screen behind that window.
+
+*Sloga — Hop on.*`,
+  },
   // Pass-the-controller slice 2 ("ask for a turn" + the capability beacon).
   // DESKTOP-ONLY for the same reason as slice 1 — every surface it adds sits
   // inside the ENABLE_REMOTE_CONTROL gate, lit only in the desktop build.
