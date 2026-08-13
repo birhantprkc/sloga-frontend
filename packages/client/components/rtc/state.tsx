@@ -3438,10 +3438,7 @@ class Voice {
         e.scaleResolutionDownBy ?? 1;
       const scales = params.encodings.map(scaleOf);
       const fullScale = Math.min(...scales);
-      if (
-        params.encodings.length > 1 &&
-        scales.every((s) => s === fullScale)
-      ) {
+      if (params.encodings.length > 1 && scales.every((s) => s === fullScale)) {
         // Defensive: a browser that omits scaleResolutionDownBy from
         // getParameters() makes the rungs indistinguishable, and treating
         // them all as full-res would hand every layer the full tier budget.
@@ -3462,9 +3459,7 @@ class Voice {
             // tier's framerate at bitrate ÷ scale², floored at 150 kbps.
             encoding.maxBitrate = Math.max(
               150_000,
-              Math.floor(
-                (quality.maxBitrateKbps * 1000) / relativeScale ** 2,
-              ),
+              Math.floor((quality.maxBitrateKbps * 1000) / relativeScale ** 2),
             );
           }
           if (quality.resolution.frameRate) {
