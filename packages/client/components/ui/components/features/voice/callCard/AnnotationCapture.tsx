@@ -81,10 +81,13 @@ export function AnnotationCapture(props: {
       current = [current[current.length - 2], current[current.length - 1]];
     }
     if (pending.length === 0) return;
-    const batch = pending.slice(0, MAX_STROKES_PER_BATCH);
-    pending = pending.slice(MAX_STROKES_PER_BATCH);
+    // Channel gone (teardown race): keep the strokes queued rather than
+    // splicing them into the void — review nit: the old order dropped them
+    // without even a self-mirror.
     const channel = voice.channel();
     if (!channel) return;
+    const batch = pending.slice(0, MAX_STROKES_PER_BATCH);
+    pending = pending.slice(MAX_STROKES_PER_BATCH);
     seq += 1;
     const thisSeq = seq;
     // Local self-mirror first (the relay skips the sender).
@@ -100,7 +103,12 @@ export function AnnotationCapture(props: {
         // A refusal means consent went away mid-draw (or the share ended):
         // stop capturing rather than spamming refused requests.
         if (!ok) props.onRefused();
-      });
+      })
+      // A NETWORK failure gets the same conservative stop: a surface that
+      // stays armed while nothing sends is worse than one that asks the
+      // helper to toggle draw back on — and at 10 Hz an unhandled
+      // rejection per tick is its own noise (review L2).
+      .catch(() => props.onRefused());
   };
 
   const startFlushing = () => {

@@ -107,6 +107,13 @@ export class LiveAnnotations {
    * by identity for tile rendering, consent by user id — this is the join).
    */
   #targetUsers = new Map<string, string>();
+  /**
+   * Sharers whose consent a LIVE event has touched since attach. The REST
+   * seed races the event stream (a revoke can land before the GET response
+   * resolves), and events are always fresher — so the seed never overwrites
+   * a sharer an event has already spoken for (rev-3 review).
+   */
+  #consentTouched = new Set<string>();
   #now: () => number;
 
   /** @param now Injected clock so specs can drive the TTL deterministically. */
@@ -141,16 +148,20 @@ export class LiveAnnotations {
     this.batches.clear();
     this.consent.clear();
     this.#targetUsers.clear();
+    this.#consentTouched.clear();
     this.#localIdentity = "";
     this.#localUserId = "";
   }
 
   /**
    * Seed consent state from the GET route (a late joiner has missed the
-   * consent events; plan §2.2's backfill rule).
+   * consent events; plan §2.2's backfill rule). Skips any sharer a live
+   * event has already touched — the seed is a snapshot from before the
+   * request and must never resurrect a just-revoked entry.
    */
   seedConsent(entries: { sharer_id: string; allowed: string[] }[]) {
     for (const entry of entries) {
+      if (this.#consentTouched.has(entry.sharer_id)) continue;
       if (entry.allowed.length > 0) {
         this.consent.set(entry.sharer_id, [...entry.allowed]);
       }
@@ -212,6 +223,7 @@ export class LiveAnnotations {
    * strokes.
    */
   handleConsent(detail: { sharerId: string; allowed: string[] }): void {
+    this.#consentTouched.add(detail.sharerId);
     if (detail.allowed.length === 0) {
       this.consent.delete(detail.sharerId);
     } else {

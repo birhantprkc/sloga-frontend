@@ -181,12 +181,16 @@ export function ParticipantTile(props: TileProps) {
   createEffect(() => {
     if (!canDraw()) setDrawMode(false);
   });
-  /** Sharer side: whose ink is currently live on MY OWN share. */
-  const activeAnnotatorId = () => {
-    if (!participant.isLocal || !isScreenShare()) return undefined;
+  /** Sharer side: the DISTINCT annotators with live ink on MY OWN share —
+   *  §2.4 says the sharer sees WHO, and a last-batch-wins name would
+   *  mis-attribute concurrent helpers' ink to whoever flushed last. */
+  const activeAnnotatorIds = () => {
+    if (!participant.isLocal || !isScreenShare()) return [];
     const batches = voice.annotations.batches.get(participant.identity);
-    return batches?.at(-1)?.annotatorId;
+    if (!batches) return [];
+    return [...new Set(batches.map((batch) => batch.annotatorId))];
   };
+  const activeAnnotatorId = () => activeAnnotatorIds().at(0);
   const activeAnnotator = useUser(() => activeAnnotatorId() ?? "");
   /** Sharer side: is my allowlist non-empty (the revoke affordance gate)? */
   const hasAllowedAnnotators = () =>
@@ -513,12 +517,19 @@ export function ParticipantTile(props: TileProps) {
             <Symbol size={14}>stylus_note</Symbol>
             <OverflowingText>
               <Show
-                when={activeAnnotatorId()}
-                fallback={<Trans>People can draw on your screen</Trans>}
+                when={activeAnnotatorIds().length > 1}
+                fallback={
+                  <Show
+                    when={activeAnnotatorId()}
+                    fallback={<Trans>People can draw on your screen</Trans>}
+                  >
+                    <Trans>
+                      {activeAnnotator().username} is drawing on your screen
+                    </Trans>
+                  </Show>
+                }
               >
-                <Trans>
-                  {activeAnnotator().username} is drawing on your screen
-                </Trans>
+                <Trans>Several people are drawing on your screen</Trans>
               </Show>
             </OverflowingText>
             <StopDrawingButton

@@ -6846,3 +6846,7 @@ msgstr "Stop all drawing on my screen"
 #: components/ui/components/features/voice/callCard/ParticipantTile.tsx
 msgid "Stop drawing"
 msgstr "Stop drawing"
+
+#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
+msgid "Several people are drawing on your screen"
+msgstr "Several people are drawing on your screen"

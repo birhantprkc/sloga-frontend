@@ -61,22 +61,23 @@ export function AnnotationLayer(props: {
 
     // The video letterboxes (`object-fit: contain`), so stroke coordinates
     // map into the CONTENT box, not the element box — the same geometry
-    // `normalizeToContentBox` applies on capture, inverted.
+    // `normalizeToContentBox` applies on capture, inverted. Until the first
+    // `resize` populates `videoDims` we draw NOTHING rather than mis-scale
+    // full-frame for a frame or two (review: skip, don't approximate);
+    // the reactive kick redraws as soon as real dims land.
     const dims = props.videoDims();
-    let left = 0;
-    let top = 0;
-    let contentWidth = canvas.width;
-    let contentHeight = canvas.height;
-    if (dims && dims.width > 0 && dims.height > 0) {
-      const scale = Math.min(
-        canvas.width / dims.width,
-        canvas.height / dims.height,
-      );
-      contentWidth = dims.width * scale;
-      contentHeight = dims.height * scale;
-      left = (canvas.width - contentWidth) / 2;
-      top = (canvas.height - contentHeight) / 2;
+    if (!dims || dims.width <= 0 || dims.height <= 0) {
+      raf = requestAnimationFrame(draw);
+      return;
     }
+    const scale = Math.min(
+      canvas.width / dims.width,
+      canvas.height / dims.height,
+    );
+    const contentWidth = dims.width * scale;
+    const contentHeight = dims.height * scale;
+    const left = (canvas.width - contentWidth) / 2;
+    const top = (canvas.height - contentHeight) / 2;
 
     offscreen ??= document.createElement("canvas");
     if (offscreen.width !== canvas.width) offscreen.width = canvas.width;
@@ -132,10 +133,16 @@ export function AnnotationLayer(props: {
     }
     off.globalAlpha = 1;
 
-    // THE CAP: one composite at the fixed ceiling.
+    // THE CAP: one composite at the fixed ceiling — clipped to the video
+    // content box so edge strokes cannot bleed line-width into the
+    // letterbox (review: ink stays on the picture, nowhere else).
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(left, top, contentWidth, contentHeight);
+    ctx.clip();
     ctx.globalAlpha = ANNOTATION_LAYER_ALPHA;
     ctx.drawImage(offscreen, 0, 0);
-    ctx.globalAlpha = 1;
+    ctx.restore();
 
     if (anyLive && raf === undefined) {
       raf = requestAnimationFrame(draw);

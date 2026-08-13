@@ -143,6 +143,20 @@ test("seedConsent backfills a late joiner and skips empty allowlists", () => {
   assert.equal(store.consent.has("quiet"), false);
 });
 
+test("a live consent event beats a later-resolving seed (no resurrection)", () => {
+  // The REST seed is a snapshot from BEFORE the request went out; if a
+  // revoke event lands while it is in flight, the stale snapshot must not
+  // re-grant. Events always win for any sharer they have touched.
+  const { store } = makeStore();
+  store.handleConsent({ sharerId: "sharer", allowed: ["helper"] });
+  store.handleConsent({ sharerId: "sharer", allowed: [] });
+  store.seedConsent([{ sharer_id: "sharer", allowed: ["helper"] }]);
+  assert.equal(store.mayDraw("sharer", "helper"), false);
+  // An untouched sharer still seeds normally alongside.
+  store.seedConsent([{ sharer_id: "fresh", allowed: ["helper"] }]);
+  assert.equal(store.mayDraw("fresh", "helper"), true);
+});
+
 // ---- wire/render contracts ------------------------------------------------
 
 test("the palette length matches the server's refusal bound", () => {
