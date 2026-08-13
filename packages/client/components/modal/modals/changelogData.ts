@@ -8,6 +8,40 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // Screen-share quality ladder fix + the Game tier (couch-co-op plan slice
+  // G0), published after the two-account getStats leg passed (2026-08-13).
+  // Copy constraints, all load-bearing:
+  // - Claim the SETTING now lands where it was meant to, never that shares
+  //   are faster or lower-latency. Glass-to-glass has never been measured;
+  //   the fix is configuration reaching the right encoding, nothing more.
+  // - The CPU caveat is not hedging, it is the measured behavior: software
+  //   VP8 at 1080p60 gets scaled down mid-share under load, before and after
+  //   this change. Dropping that line would promise a framerate we cannot
+  //   deliver on the user's hardware.
+  // - The Game tier's cost is stated, not buried: one encoding means no
+  //   smaller rung for a viewer on a weak connection to fall back to.
+  // - The server-mute line says an unusual SHAPE or a full call, because
+  //   those are the paths that mute. An over-large share is still removed
+  //   from the call outright, which is not what this notice covers.
+  // - Never mention gamepads or couch co-op: unbuilt, gated on a hardware
+  //   latency test that has not run.
+  {
+    id: "sloga-2026-08-13-5",
+    title: "Patch Notes",
+    published_at: "2026-08-13T16:00:00.000Z",
+    markdown_content: `## v0.41.0 — Screen sharing at the quality you actually picked
+
+### 📺 The setting you choose now reaches the people watching
+- **"1080p 60FPS" now means 1080p at 60FPS.** A share goes out as two copies of your screen — a full-size one and a half-size one — and the quality you picked was landing on the *half-size* copy, or being skipped altogether, leaving the full-size picture on a 15FPS default. The sharpest option was quietly delivering full size at 15FPS or half size at 60FPS, never both. This fixes every quality option, not just that one.
+- **New option: "Game 1080p 60FPS".** One full-size 60FPS stream instead of splitting the budget across two — the one to pick when a friend is watching you play. The trade is real: with a single stream there's no smaller version to drop to, so a viewer on a weak connection has further to fall. For a room full of people, the regular options still adapt better.
+- **Your computer still has the last word.** Encoding a 1080p60 screen is genuinely hard work, and if yours can't keep up the picture still gets scaled down mid-share, exactly as before. What changed is that your setting now lands where it was always meant to.
+- **If Sloga switches your screen video off, it now says so.** An unusually shaped share — or a call that has already hit its video limit — gets switched off at the server. Until now your own preview kept playing as though all was well, while nobody was receiving anything.
+
+### Also arriving in the apps
+- **Drawing on a shared screen** (v0.40.0) was web-only last week. Reading this in the desktop, Android or Linux app? This is the update that brings it to you.
+
+*Sloga — Hop on.*`,
+  },
   // Screen-share annotation (tech-support-mode plan §2), published only AFTER
   // the two-account live leg passed (2026-08-13). Copy constraints, all
   // load-bearing (reviewed 2026-08-13):
