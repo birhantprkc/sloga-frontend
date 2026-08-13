@@ -132,6 +132,13 @@ import {
   getTranscriptionEngine,
   transcriptionSupported,
 } from "./transcription/transcriptionEngine";
+import {
+  type TurnRequests,
+  addTurnRequest,
+  EMPTY_TURN_REQUESTS,
+  removeTurnRequest,
+  retainPresentRequests,
+} from "./turnRequests";
 
 import {
   type RecordingTarget,
@@ -571,6 +578,19 @@ class Voice {
   #setControllerQueue: Setter<RemoteControlQueue>;
 
   /**
+   * Pending "ask for a turn" requests, on the SHARER's client only
+   * (pass-the-controller slice 2, §2.4).
+   *
+   * Fed by the private `callControlRequest` event, whose `requesterId` the
+   * server stamps from the authenticated asker. These are SUGGESTIONS: a
+   * request grants nothing and enters the rotation queue only if the sharer
+   * acts on it. Empty for anyone who is not being asked. Resets on disconnect
+   * with the rest of the call state.
+   */
+  pendingTurnRequests: Accessor<TurnRequests>;
+  #setPendingTurnRequests: Setter<TurnRequests>;
+
+  /**
    * Wall-clock ms after which the current turn should auto-advance, or
    * `undefined` for no timer (the default — an automatic handoff is a
    * session ending on a schedule the person driving did not choose, so it
@@ -896,6 +916,11 @@ class Voice {
     this.controllerQueue = controllerQueue;
     this.#setControllerQueue = setControllerQueue;
 
+    const [pendingTurnRequests, setPendingTurnRequests] =
+      createSignal<TurnRequests>(EMPTY_TURN_REQUESTS);
+    this.pendingTurnRequests = pendingTurnRequests;
+    this.#setPendingTurnRequests = setPendingTurnRequests;
+
     const [turnDeadline, setTurnDeadline] = createSignal<number | undefined>();
     this.turnDeadline = turnDeadline;
     this.#setTurnDeadline = setTurnDeadline;
@@ -1006,6 +1031,34 @@ class Voice {
       };
       client.addListener("callCaption", handler);
       onCleanup(() => client.removeListener("callCaption", handler));
+    });
+
+    // "Ask for a turn" requests (pass-the-controller slice 2). Same
+    // app-lifetime, private-topic shape as captions above — a
+    // `CallControlRequest` reaches every session of the sharer, so drop
+    // anything that is not the call we are connected to. Also drop anything
+    // not addressed to US as the sharer: the server addresses these privately
+    // by sharer id, but a client must never take a server-asserted "this is
+    // for you" as more than a hint, so re-check against our own id.
+    createEffect(() => {
+      const client = this.getClient();
+      if (!client) return;
+      const handler = (detail: {
+        channelId: string;
+        requesterId: string;
+        sharerId: string;
+      }) => {
+        if (this.state() !== "CONNECTED") return;
+        if (this.channel()?.id !== detail.channelId) return;
+        if (detail.sharerId !== client.user?.id) return;
+        // The requester id is server-stamped; the timestamp is ours (it only
+        // orders and ages the on-screen list, it is trusted for nothing).
+        this.#setPendingTurnRequests((requests) =>
+          addTurnRequest(requests, detail.requesterId, Date.now()),
+        );
+      };
+      client.addListener("callControlRequest", handler);
+      onCleanup(() => client.removeListener("callControlRequest", handler));
     });
     // Re-point any in-flight soundboard playback when the output device
     // changes mid-call (future plays read the device per-play already).
@@ -1449,6 +1502,16 @@ class Voice {
         });
       });
       this.remoteControl.attach(room, room.localParticipant.identity);
+      // Capability beacon (pass-the-controller slice 2): tell the call this
+      // client could RECEIVE control, so a sharer's rotation queue can mark
+      // desktop peers rather than discovering non-desktop ones via a 90 s
+      // offer timeout. Gated on the FULL native probe (server flag +
+      // ENABLE_REMOTE_CONTROL + Tauri + rc_status), not the build flag alone:
+      // a desktop build where injection is unsupported must not advertise.
+      // Best-effort with one retry, because we fire at connect and the
+      // voice-ingress webhook that creates our voice state can race this —
+      // an announce that lands before the state exists would 400.
+      void this.#announceRcCapable(channel, gen);
       this.#startPushToTalk(room);
       this.#startVAD(room);
       const isAfk = channel.name?.toLowerCase() === "afk";
@@ -1931,6 +1994,9 @@ class Voice {
       // of the call being left. Carrying it into the next one would offer
       // turns to people who are not there.
       this.#setControllerQueue(EMPTY_REMOTE_CONTROL_QUEUE);
+      // Turn requests name participants of the call being left — carrying
+      // them forward would show the next call a stale raised hand.
+      this.#setPendingTurnRequests(EMPTY_TURN_REQUESTS);
       this.#setTurnDeadline(undefined);
       this.#setTurnLengthMs(undefined);
 
@@ -2448,6 +2514,25 @@ class Voice {
       if (participant.isRecording()) ids.push(participant.userId);
     }
     return ids;
+  }
+
+  /**
+   * Whether a participant announced remote-control capability
+   * (pass-the-controller slice 2). Reactive — reads
+   * `VoiceParticipant.isRcCapable`.
+   *
+   * 🔴 TRUE means "said it can take control"; false is UNKNOWN, not "cannot".
+   * A capable desktop that predates the beacon (the slice-1 0.34 build) never
+   * announces, so its flag is false — the same value an absent participant
+   * has. Callers must therefore only ever use `true` to ADD an affordance (a
+   * "Desktop" chip), never to remove one: greying a row on false would hide a
+   * peer who can in fact take control. The slice-1 offer-TTL timeout stays the
+   * honest fallback for a peer who genuinely cannot.
+   */
+  participantRcCapable(userId: string): boolean {
+    const channel = this.channel();
+    if (!channel) return false;
+    return channel.voiceParticipants.get(userId)?.isRcCapable() ?? false;
   }
 
   /** Recorders this user has not dismissed the banner for. */
@@ -3856,6 +3941,78 @@ class Voice {
   /** Empty the rotation (the panel's "clear" affordance). */
   clearControllerQueue(): void {
     this.#setControllerQueue(EMPTY_REMOTE_CONTROL_QUEUE);
+  }
+
+  // --- pass-the-controller "ask for a turn" (slice 2) ----------------
+
+  /**
+   * Announce this client's remote-control capability once per join.
+   *
+   * Only if the native probe actually reports support — the beacon is a hint
+   * for other people's queue UIs, and announcing from a shell that cannot
+   * inject would make the queue offer to a peer who then dead-ends at the
+   * offer TTL, the exact failure the beacon exists to remove.
+   *
+   * One retry on failure: we fire this from the room `connected` handler, and
+   * the voice-ingress webhook that creates our server-side voice state can
+   * land just after, so a first announce can 400 with "not in the call". The
+   * `gen` guard drops the retry if the call was left/superseded meanwhile —
+   * announcing into a call we already left would be harmless (it 400s) but
+   * pointless.
+   */
+  async #announceRcCapable(channel: Channel, gen: number): Promise<void> {
+    if (!(await this.remoteControl.supported())) return;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (gen !== this.#connectGen) return;
+      try {
+        await channel.announceRcCapable();
+        return;
+      } catch (error) {
+        if (attempt === 1) {
+          console.error("rc capability announce failed", error);
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    }
+  }
+
+  /**
+   * Ask a streaming participant for a control turn ("raise hand").
+   *
+   * Fire-and-forget from the asker's tile button. Returns the HTTP status so
+   * the caller can distinguish a 429 (asked too often — the button should
+   * stay in its "asked" state and not surface an error) from a real failure.
+   * Grants nothing: the sharer sees a suggestion and decides.
+   */
+  async requestControlTurn(sharerId: string): Promise<number | undefined> {
+    const channel = this.channel();
+    if (!channel) return undefined;
+    try {
+      return await channel.requestControlTurn(sharerId);
+    } catch (error) {
+      console.error("control turn request failed", error);
+      return undefined;
+    }
+  }
+
+  /** Clear one pending request — the sharer queued the asker, or dismissed. */
+  clearTurnRequest(userId: string): void {
+    this.#setPendingTurnRequests((requests) =>
+      removeTurnRequest(requests, userId),
+    );
+  }
+
+  /**
+   * Drop requests from anyone who has left the call — mirror of
+   * `retainPresentControllers`, called from the panel against the same
+   * deduped participant list so a request from a departed asker cannot
+   * linger on the sharer's screen.
+   */
+  retainPresentTurnRequests(present: Iterable<string>): void {
+    this.#setPendingTurnRequests((requests) =>
+      retainPresentRequests(requests, present),
+    );
   }
 
   /**

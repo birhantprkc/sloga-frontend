@@ -121,6 +121,14 @@ export function VoicePassControlPanel() {
   // the app being stuck on someone who is not in the call.
   createEffect(() => voice.retainPresentControllers(present()));
 
+  // Same for pending "ask for a turn" requests: a raised hand from someone
+  // who has since left the call is nothing the streamer can act on.
+  createEffect(() => voice.retainPresentTurnRequests(present()));
+
+  /** Requesters not already in the rotation — the actionable ones. */
+  const requests = () =>
+    voice.pendingTurnRequests().filter((r) => !queue().includes(r.userId));
+
   // Whoever is driving belongs in the rotation, so that "next" wraps past
   // them instead of treating them as an outsider. Only once the session is
   // ACTIVE — an offer that is never accepted should not reserve a place.
@@ -348,6 +356,30 @@ export function VoicePassControlPanel() {
           </List>
         </Show>
 
+        {/* Raised hands. Suggestions only — adding one to the rotation is a
+            deliberate act, and it still costs the native dialog on the next
+            turn like any other. Nothing here auto-enqueues. */}
+        <Show when={requests().length > 0}>
+          <Label>
+            <Trans>Asked for a turn</Trans>
+          </Label>
+          <List>
+            <For each={requests()}>
+              {(request) => (
+                <RequestRow
+                  userId={request.userId}
+                  isCapable={voice.participantRcCapable(request.userId)}
+                  onAdd={() => {
+                    voice.enqueueController(request.userId);
+                    voice.clearTurnRequest(request.userId);
+                  }}
+                  onDismiss={() => voice.clearTurnRequest(request.userId)}
+                />
+              )}
+            </For>
+          </List>
+        </Show>
+
         {/* Everyone in the call who is not yet in the rotation. */}
         <Show when={present().some((id) => !queue().includes(id))}>
           <Label>
@@ -358,6 +390,7 @@ export function VoicePassControlPanel() {
               {(userId) => (
                 <AddButton
                   userId={userId}
+                  isCapable={voice.participantRcCapable(userId)}
                   onAdd={() => voice.enqueueController(userId)}
                 />
               )}
@@ -489,13 +522,54 @@ function QueueRow(props: {
   );
 }
 
-function AddButton(props: { userId: string; onAdd: () => void }) {
+function AddButton(props: {
+  userId: string;
+  isCapable: boolean;
+  onAdd: () => void;
+}) {
   const user = useUser(() => props.userId);
   const name = () => user()?.username ?? props.userId;
   return (
     <Button size="sm" variant="tonal" onPress={props.onAdd}>
       {name()}
+      {/* Additive only: a chip appears for a peer who ANNOUNCED desktop
+          capability. Its absence means "hasn't said", never "can't" — so
+          there is no greyed/blocked state here (see participantRcCapable). */}
+      <Show when={props.isCapable}>
+        {" "}
+        <DesktopChip>
+          <Trans>Desktop</Trans>
+        </DesktopChip>
+      </Show>
     </Button>
+  );
+}
+
+/** One raised hand awaiting the streamer's decision. */
+function RequestRow(props: {
+  userId: string;
+  isCapable: boolean;
+  onAdd: () => void;
+  onDismiss: () => void;
+}) {
+  const user = useUser(() => props.userId);
+  const name = () => user()?.username ?? props.userId;
+
+  return (
+    <RowItem>
+      <Name>{name()}</Name>
+      <Show when={props.isCapable}>
+        <DesktopChip>
+          <Trans>Desktop</Trans>
+        </DesktopChip>
+      </Show>
+      <Button size="sm" variant="tonal" onPress={props.onAdd}>
+        <Trans>Add to rotation</Trans>
+      </Button>
+      <Button size="sm" variant="text" onPress={props.onDismiss}>
+        <Trans>Dismiss</Trans>
+      </Button>
+    </RowItem>
   );
 }
 
@@ -583,5 +657,17 @@ const Remember = styled("label", {
     gap: "var(--gap-sm)",
     fontSize: "0.85em",
     cursor: "pointer",
+  },
+});
+
+const DesktopChip = styled("span", {
+  base: {
+    fontSize: "0.7em",
+    fontWeight: 600,
+    padding: "1px 6px",
+    borderRadius: "var(--borderRadius-full)",
+    background: "var(--md-sys-color-secondary-container)",
+    color: "var(--md-sys-color-on-secondary-container)",
+    whiteSpace: "nowrap",
   },
 });

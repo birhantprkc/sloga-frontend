@@ -6801,3 +6801,19 @@ msgstr ""
 #: components/ui/components/features/voice/callCard/VoiceCallRosterPanel.tsx
 msgid "Remote control"
 msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
+msgid "Add to rotation"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
+msgid "Ask for a turn"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
+msgid "Asked for a turn"
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
+msgid "Asked"
+msgstr ""

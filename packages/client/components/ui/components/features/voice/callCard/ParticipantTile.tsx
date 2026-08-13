@@ -38,6 +38,12 @@ type TileProps = {
   focus?: boolean;
 };
 
+/** How long the "Ask for a turn" button stays in its confirmed "Asked" state
+ *  before re-enabling. Long enough that it reads as sent and not spammable,
+ *  short enough that a missed request can be re-raised within the same
+ *  stream. */
+const RE_ASK_COOLDOWN_MS = 30_000;
+
 /**
  * Individual participant tile
  */
@@ -112,6 +118,46 @@ export function ParticipantTile(props: TileProps) {
   };
   const controllerUser = useUser(() => controlledBy() ?? "");
   const isSpeaking = useIsSpeaking(participant);
+
+  /**
+   * "Ask for a turn" (pass-the-controller slice 2). Shown on someone ELSE's
+   * screenshare when this client can actually take control — the same native
+   * probe the inbound offer path uses, which also covers the
+   * `ENABLE_REMOTE_CONTROL` release gate, so no separate config check here.
+   * A request grants nothing; it relays a suggestion the streamer may act on.
+   */
+  const [rcSupported, setRcSupported] = createSignal(false);
+  void voice.remoteControl.supported().then(setRcSupported);
+  const [asked, setAsked] = createSignal(false);
+  let reAskTimer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => clearTimeout(reAskTimer));
+
+  const canAsk = () =>
+    isScreenShare() && !participant.isLocal && rcSupported() && !controlling();
+
+  async function askForTurn() {
+    const sharerId = participantUserId(participant.identity);
+    // Optimistic: flip to "asked" immediately so a double-click cannot fire a
+    // second request. A real failure (not a 429, which MEANS "you asked too
+    // often" and should stay asked) rolls it back so they can retry.
+    setAsked(true);
+    const status = await voice.requestControlTurn(sharerId);
+    // 204 relayed; 429 means "asked too often" — both leave the button in its
+    // asked state. Anything else (a real error, or the network failure that
+    // surfaces as `undefined`) rolls back so they can try again.
+    const ok = status === 204 || status === 429;
+    if (!ok) {
+      setAsked(false);
+      return;
+    }
+    // Re-enable after a cooldown rather than locking for the whole stream: the
+    // streamer may have missed the first raised hand (panel closed), and the
+    // server's `control_request` bucket deliberately has headroom for a
+    // re-ask. The cooldown keeps a heckler from spamming while still letting a
+    // genuine second ask through.
+    clearTimeout(reAskTimer);
+    reAskTimer = setTimeout(() => setAsked(false), RE_ASK_COOLDOWN_MS);
+  }
 
   /**
    * Whether THIS tile's video publication is subscribed. Only consulted for
@@ -399,6 +445,26 @@ export function ParticipantTile(props: TileProps) {
             </OverflowingText>
           </ControlledByBadge>
         </Show>
+        {/* "Ask for a turn" on someone else's screenshare. After `Overlay`
+            so it stacks above the hover gradient, with its own pointer
+            events. Once asked it becomes a non-interactive confirmation —
+            the streamer decides, and re-asking is rate-limited server-side
+            anyway. */}
+        <Show when={canAsk()}>
+          <AskTurnButton
+            data-asked={asked() ? "" : undefined}
+            disabled={asked()}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!asked()) void askForTurn();
+            }}
+          >
+            <Symbol size={14}>pan_tool</Symbol>
+            <Show when={asked()} fallback={<Trans>Ask for a turn</Trans>}>
+              <Trans>Asked</Trans>
+            </Show>
+          </AskTurnButton>
+        </Show>
         <Show when={!isScreenShare()}>
           <ParticipantCaption identity={participant.identity} />
         </Show>
@@ -578,6 +644,34 @@ const ControlledByBadge = styled("div", {
     background: "rgba(0,0,0,0.45)",
 
     pointerEvents: "none",
+  },
+});
+
+const AskTurnButton = styled("button", {
+  base: {
+    gridArea: "1/1",
+    justifySelf: "end",
+    alignSelf: "end",
+    margin: "var(--gap-md)",
+
+    display: "flex",
+    alignItems: "center",
+    gap: "4px",
+
+    fontSize: "11px",
+    fontWeight: 600,
+    padding: "4px 8px",
+    borderRadius: "var(--borderRadius-full)",
+    border: "none",
+    cursor: "pointer",
+    color: "var(--md-sys-color-on-primary)",
+    background: "var(--md-sys-color-primary)",
+
+    "&[data-asked]": {
+      cursor: "default",
+      color: "var(--md-sys-color-on-surface-variant)",
+      background: "rgba(0,0,0,0.45)",
+    },
   },
 });
 
