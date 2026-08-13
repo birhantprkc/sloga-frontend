@@ -4,7 +4,7 @@ import { useState } from "@revolt/state";
 import { Button, Text } from "@revolt/ui";
 import { Show, createSignal } from "solid-js";
 import { styled } from "styled-system/jsx";
-import AndroidPromo from "../public/assets/inapp-promotion/web/android-phone.png";
+import AndroidPromo from "../scripts/assets_fallback/inapp-promotion/web/android-phone.png";
 
 /**
  * Section ID used to persist permanent dismissal of the nag screen

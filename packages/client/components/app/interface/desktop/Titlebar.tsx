@@ -14,7 +14,7 @@ import MdCollapseContent from "@material-symbols/svg-400/outlined/collapse_conte
 import MdExpandContent from "@material-symbols/svg-400/outlined/expand_content.svg?component-solid";
 import MdMinimize from "@material-symbols/svg-400/outlined/minimize.svg?component-solid";
 
-import Wordmark from "../../../../public/assets/web/wordmark.svg?component-solid";
+import Wordmark from "../../../../scripts/assets_fallback/web/wordmark.svg?component-solid";
 import { pendingUpdate } from "../../../../src/serviceWorkerInterface";
 
 const isMacOS = navigator.platform.startsWith("Mac");
