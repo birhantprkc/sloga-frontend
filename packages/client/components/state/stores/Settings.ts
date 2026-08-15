@@ -28,6 +28,37 @@ const NotificationPermissionStates: NotificationPermissionState[] = [
   "unsupported",
 ];
 
+/**
+ * How wide the message column is allowed to grow
+ */
+export type ContentWidth = "full" | "wide" | "comfortable" | "narrow";
+
+/**
+ * Widths in pixels, keyed by preset. "full" has no cap.
+ */
+export const CONTENT_WIDTHS: Record<ContentWidth, number | null> = {
+  full: null,
+  wide: 1600,
+  comfortable: 1200,
+  narrow: 900,
+};
+
+/**
+ * Possible message column widths
+ */
+const ContentWidths = Object.keys(CONTENT_WIDTHS) as ContentWidth[];
+
+/**
+ * Which side the message column sits on once it is narrower than the space
+ * available to it
+ */
+export type ContentAlign = "start" | "center";
+
+/**
+ * Possible message column alignments
+ */
+const ContentAligns: ContentAlign[] = ["start", "center"];
+
 interface SettingsDefinition {
   /**
    * Whether to enable desktop notifications
@@ -75,6 +106,30 @@ interface SettingsDefinition {
    * Whether to show the time a message was sent next to it
    */
   "appearance:show_timestamps": boolean;
+
+  /**
+   * How wide the message column may grow before it stops following the window
+   *
+   * Deliberately NOT gated on display aspect: a 2560x1440 16:9 window already
+   * gives a ~2250px column, which is past a comfortable return sweep. Only the
+   * rearrangement below is ultrawide-specific.
+   */
+  "appearance:content_width": ContentWidth;
+
+  /**
+   * Which side the message column sits on once it is capped
+   */
+  "appearance:content_align": ContentAlign;
+
+  /**
+   * Whether to rearrange the layout for very wide displays — currently, moving
+   * the member list out of the channel column and into the space to the right
+   * of the message column.
+   *
+   * Unlike the two above, this one only makes sense on an ultrawide, so the
+   * control that sets it is disabled elsewhere.
+   */
+  "appearance:ultrawide_layout": boolean;
 
   /**
    * Indicate new users to Stoat
@@ -206,6 +261,9 @@ const EXPECTED_TYPES: { [K in keyof SettingsDefinition]: ValueType<K> } = {
   "appearance:expand_emoticons": "boolean",
   "appearance:compact_mode": "boolean",
   "appearance:show_timestamps": "boolean",
+  "appearance:content_width": "string",
+  "appearance:content_align": "string",
+  "appearance:ultrawide_layout": "boolean",
   "advanced:copy_id": "boolean",
   "advanced:admin_panel": "boolean",
   "sounds:message_variant": "number",
@@ -241,6 +299,12 @@ const DEFAULT_VALUES: TypeSettings = {
   // has never heard of — which is every existing user, for a new key.
   "appearance:expand_emoticons": true,
   "appearance:show_timestamps": true,
+  // "full" so that shipping this reflows precisely nobody. The wider default a
+  // 21:9 owner actually wants is written into this key by the ultrawide toggle
+  // when they switch it on, not baked in here.
+  "appearance:content_width": "full",
+  "appearance:content_align": "start",
+  "appearance:ultrawide_layout": false,
   "sounds:message_variant": 4,
   "sounds:ringtone_variant": 8,
   "sounds:disconnect_variant": 3,
@@ -297,6 +361,10 @@ export class Settings extends AbstractStore<"settings", TypeSettings> {
       // there; a key in only one of the two reads undefined for every existing
       // user, whose stored blob predates it.
       "appearance:show_timestamps": true,
+      // Mirrored in DEFAULT_VALUES — see the note there.
+      "appearance:content_width": "full",
+      "appearance:content_align": "start",
+      "appearance:ultrawide_layout": false,
       "advanced:copy_id": false,
       "advanced:admin_panel": false,
       "sounds:message_variant": 4,
@@ -344,6 +412,16 @@ export class Settings extends AbstractStore<"settings", TypeSettings> {
         }
       } else if (key === "notifications:push") {
         if (NotificationPermissionStates.includes(input[key] as never)) {
+          settings[key] = input[key];
+        }
+      } else if (key === "appearance:content_width") {
+        // "string" in EXPECTED_TYPES would let any string through and land an
+        // unknown preset in the width lookup, so validate against the presets.
+        if (ContentWidths.includes(input[key] as never)) {
+          settings[key] = input[key];
+        }
+      } else if (key === "appearance:content_align") {
+        if (ContentAligns.includes(input[key] as never)) {
           settings[key] = input[key];
         }
       } else if (key === "translation:target" || key === "captions:target") {

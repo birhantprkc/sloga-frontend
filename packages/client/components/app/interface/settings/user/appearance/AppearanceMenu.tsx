@@ -1,16 +1,18 @@
-import { For, Match, Show, Switch, createSignal } from "solid-js";
+import { For, JSX, Match, Show, Switch, createSignal } from "solid-js";
 
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import { css } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 
 import { useUser } from "@revolt/client";
+import { useDevice } from "@revolt/common";
 import {
   UNICODE_EMOJI_PACKS,
   UnicodeEmoji,
   UnicodeEmojiPacks,
 } from "@revolt/markdown/emoji/UnicodeEmoji";
 import { useState } from "@revolt/state";
+import { ContentWidth } from "@revolt/state/stores/Settings";
 import {
   Avatar,
   Button,
@@ -39,8 +41,41 @@ import MDPalette from "@material-design-icons/svg/outlined/palette.svg?component
 export function AppearanceMenu() {
   const user = useUser();
   const state = useState();
+  const device = useDevice();
   const { t } = useLingui();
   const [pickerRef, setPickerRef] = createSignal<HTMLInputElement>();
+
+  const contentWidth = () =>
+    state.settings.getValue("appearance:content_width") ?? "full";
+  const contentAlign = () =>
+    state.settings.getValue("appearance:content_align") ?? "start";
+
+  /**
+   * The display's own resolution, for the disabled ultrawide row.
+   *
+   * Naming the ratio ("this display is 16:9") would mean reverse-engineering a
+   * fraction from a float and getting it wrong on anything unusual; the raw
+   * numbers are unambiguous and need no arithmetic.
+   */
+  const displayDimensions = () =>
+    `${globalThis.screen?.width ?? 0}×${globalThis.screen?.height ?? 0}`;
+
+  /**
+   * Message column width presets.
+   *
+   * Fixed choices rather than a free pixel entry: the useful range is narrow,
+   * and a hand-typed value small enough to break the composer is not a state
+   * worth supporting.
+   */
+  const CONTENT_WIDTH_OPTIONS: {
+    value: ContentWidth;
+    label: () => JSX.Element;
+  }[] = [
+    { value: "full", label: () => <Trans>Full</Trans> },
+    { value: "wide", label: () => <Trans>Wide</Trans> },
+    { value: "comfortable", label: () => <Trans>Comfortable</Trans> },
+    { value: "narrow", label: () => <Trans>Narrow</Trans> },
+  ];
 
   return (
     <Column gap="lg">
@@ -386,6 +421,107 @@ export function AppearanceMenu() {
           {(key) => <MenuItem value={key}>{key}</MenuItem>}
         </For>
       </FloatingSelect>
+
+      <Column>
+        <Text class="title" size="small">
+          <Trans>Layout</Trans>
+        </Text>
+
+        <Text class="label">
+          <Trans>Message width</Trans>
+        </Text>
+        <Row justify="stretch">
+          <For each={CONTENT_WIDTH_OPTIONS}>
+            {(option, index) => (
+              <Button
+                size="xs"
+                group={
+                  index() === 0
+                    ? "connected-start"
+                    : index() === CONTENT_WIDTH_OPTIONS.length - 1
+                      ? "connected-end"
+                      : "connected"
+                }
+                groupActive={contentWidth() === option.value}
+                onPress={() =>
+                  state.settings.setValue(
+                    "appearance:content_width",
+                    option.value,
+                  )
+                }
+              >
+                {option.label()}
+              </Button>
+            )}
+          </For>
+        </Row>
+
+        <Show when={contentWidth() !== "full"}>
+          <Text class="label">
+            <Trans>Message alignment</Trans>
+          </Text>
+          <Row justify="stretch">
+            <Button
+              size="xs"
+              group="connected-start"
+              groupActive={contentAlign() === "start"}
+              onPress={() =>
+                state.settings.setValue("appearance:content_align", "start")
+              }
+            >
+              <Trans>Hug the channel list</Trans>
+            </Button>
+            <Button
+              size="xs"
+              group="connected-end"
+              groupActive={contentAlign() === "center"}
+              onPress={() =>
+                state.settings.setValue("appearance:content_align", "center")
+              }
+            >
+              <Trans>Centered</Trans>
+            </Button>
+          </Row>
+        </Show>
+
+        <Checkbox
+          checked={
+            state.settings.getValue("appearance:ultrawide_layout") === true
+          }
+          disabled={!device.ultrawideDisplay()}
+          onChange={(event) => {
+            const enabled = event.currentTarget.checked;
+            state.settings.setValue("appearance:ultrawide_layout", enabled);
+
+            // The rearrangement needs a capped message column to have a gutter
+            // to move the member list into; with no cap there is nowhere to put
+            // it and the switch would appear to do nothing. Give it one, once,
+            // and visibly — the row above updates. Any width the user has
+            // already chosen is left alone.
+            if (enabled && contentWidth() === "full") {
+              state.settings.setValue("appearance:content_width", "wide");
+            }
+          }}
+        >
+          <Trans>Ultrawide layout</Trans>
+        </Checkbox>
+        <Text class="label">
+          <Show
+            when={device.ultrawideDisplay()}
+            fallback={
+              <Trans>
+                Requires a 21:9 or wider display. This display is{" "}
+                {displayDimensions()}.
+              </Trans>
+            }
+          >
+            <Trans>
+              Moves the member list out of the channel column and into the space
+              beside your messages. The area past it is left empty on purpose.
+            </Trans>
+          </Show>
+        </Text>
+      </Column>
 
       <Column>
         <Text class="title" size="small">

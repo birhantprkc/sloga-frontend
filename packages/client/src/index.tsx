@@ -39,6 +39,7 @@ import {
   ContextMenuGuard,
   FileDropGuard,
   FloatingManager,
+  LoadLayout,
   LoadTheme,
   SnackbarController,
   SnackbarProvider,
@@ -298,6 +299,10 @@ render(
         </Router>
 
         <LoadTheme />
+        {/* Sits beside LoadTheme, and outside the router root for the same
+            reason: both write custom properties onto <html>, and the overlay
+            window needs them without mounting the rest of the app. */}
+        <LoadLayout />
         {/* <ReportBug /> */}
       </StateContext>
     </DeviceContext>

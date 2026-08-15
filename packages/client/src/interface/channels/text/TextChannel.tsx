@@ -28,6 +28,7 @@ import {
   Text,
   TypingIndicator,
   main,
+  useUltrawideLayout,
 } from "@revolt/ui";
 import { VoiceChannelCallCardMount } from "@revolt/ui/components/features/voice/callCard/VoiceCallCard";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
@@ -69,6 +70,19 @@ export function canIHasSidebar(ch: Channel) {
 export function TextChannel(props: ChannelPageProps) {
   const state = useState();
   const client = useClient();
+  const ultrawide = useUltrawideLayout();
+
+  /**
+   * Whether the member list belongs in this right-hand column.
+   *
+   * A server text channel normally keeps its member list at the bottom of the
+   * left channel column, sharing the space with the channel list. On a display
+   * wide enough to have room to spare, the ultrawide layout moves it here
+   * instead, so neither list has to give up rows for the other.
+   * `ServerSidebar` reads the same condition and stands down when this is true.
+   */
+  const membersInRightColumn = () =>
+    props.channel.type !== "TextChannel" || ultrawide();
 
   // Last unread message id
   const [lastId, setLastId] = createSignal<string>();
@@ -189,7 +203,7 @@ export function TextChannel(props: ChannelPageProps) {
               true,
             ) &&
               canIHasSidebar(props.channel) &&
-              props.channel.type !== "TextChannel")
+              membersInRightColumn())
           }
         >
           <div
@@ -205,7 +219,7 @@ export function TextChannel(props: ChannelPageProps) {
           >
             <Switch
               fallback={
-                <Show when={props.channel.type !== "TextChannel"}>
+                <Show when={membersInRightColumn()}>
                   <MemberSidebar
                     channel={props.channel}
                     scrollTargetElement={sidebarScrollTargetElement}

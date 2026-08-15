@@ -11,12 +11,28 @@ export const main = cva({
     minWidth: 0,
     minHeight: 0,
 
+    // Message width preference. Both variables are unset until the user asks
+    // for a cap, and their fallbacks are the values that were hardcoded here
+    // before, so this reduces exactly to the previous behaviour for anyone who
+    // never opens the setting.
+    //
+    // Custom properties rather than cva variants on purpose: a variant merges
+    // *after* the base and would quietly win over anything a consumer sets,
+    // and `main` is applied from several call sites. A property set on the
+    // root element carries no such ordering surprise, and the whole feature
+    // reverts by clearing it.
+    //
+    // Hugging the left needs no margin work at all — `maxWidth` alone stops
+    // the flex item growing and the leftover space collects after it, which is
+    // the default packing. Only centring needs the `auto` margins.
+    maxWidth: "var(--layout-max-content-width, none)",
+    marginInline: "var(--layout-content-margin-inline, var(--gap-md))",
+
     display: "flex",
     overflow: "hidden",
     flexDirection: "column",
 
     paddingInline: "var(--gap-md)",
-    marginInline: "var(--gap-md)",
     marginBlockEnd: "var(--gap-md)",
     borderRadius: "var(--borderRadius-xl)",
     background: "var(--md-sys-color-surface-container-lowest)",
@@ -25,6 +41,10 @@ export const main = cva({
       margin: 0,
       borderBottomRightRadius: 0,
       borderBottomLeftRadius: 0,
+      // `_tablet` is `max-width: 840px` (plus a short-window clause), so it
+      // covers phones too. No cap makes sense at those sizes, and the existing
+      // `margin: 0` already neutralises the alignment margin.
+      maxWidth: "none",
     },
 
     _phone: {

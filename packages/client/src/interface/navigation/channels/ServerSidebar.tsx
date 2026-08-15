@@ -46,6 +46,7 @@ import {
   symbolSize,
   typography,
   unreadTone,
+  useUltrawideLayout,
 } from "@revolt/ui";
 import { VoiceChannelPreview } from "@revolt/ui/components/features/voice/VoiceChannelPreview";
 import { createDragHandle } from "@revolt/ui/components/utils/Draggable";
@@ -113,6 +114,7 @@ export const ServerSidebar = (props: Props) => {
   const { isMobile } = useDevice();
   const client = useClient();
   const state = useState();
+  const ultrawide = useUltrawideLayout();
 
   let memberScrollTarget: HTMLDivElement | undefined;
   let channelScrollTarget: HTMLDivElement | undefined;
@@ -175,8 +177,19 @@ export const ServerSidebar = (props: Props) => {
   // rather than in a right-hand one; the channel list has to stop growing
   // when it is there, otherwise it claims every spare pixel and leaves the
   // members scrolling inside a strip with dead space above it.
+  //
+  // Unless the ultrawide layout has moved it into the right-hand column, in
+  // which case this column goes back to being channels-only and the channel
+  // list gets the whole height. `TextChannel` reads the same condition from
+  // the other side; exactly one of the two renders the list.
+  //
+  // Note this only stops *rendering* the divider — `channelListHeight` and its
+  // localStorage entry are left alone, so the user's split comes back intact
+  // when the layout turns off, including when it turns itself off because the
+  // window got too narrow.
   const showMemberList = () =>
     selectedChannel()?.type === "TextChannel" &&
+    !ultrawide() &&
     state.layout.getSectionState(LAYOUT_SECTIONS.MEMBER_SIDEBAR, true);
 
   // Users can manage certain parts of the server individually, regardless of their ManageServer Permission
