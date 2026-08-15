@@ -8,6 +8,38 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // Cropped screen-share fix, reported on a 21:9 ultrawide and reproduced live
+  // on one (2026-08-14): the tile's grid track grew to the video's max-content
+  // height, so the `<video>` rendered taller than its box and `overflow:
+  // hidden` clipped the bottom. Copy constraints, all load-bearing:
+  // - This is a DISPLAY fix, not a stream fix. The frames were always arriving
+  //   complete. Never imply the share got sharper, faster, or higher quality —
+  //   nothing about encoding, bitrate or resolution changed.
+  // - The "it may look smaller now" line is REQUIRED, not hedging. The old
+  //   behavior filled the width precisely because the overflow was cut away;
+  //   fitting the whole frame into a short wide space means side bars. Without
+  //   this line the fix reads as a regression to anyone who got used to the
+  //   cropped-but-full-bleed picture.
+  // - The 32:9 figure is ARITHMETIC (width / ratio - height on a default card
+  //   height), not a measurement — no 32:9 was ever tested. Hence "could".
+  // - Say the resize divider is dragged DOWN: it sits under the call area and
+  //   growing the call shrinks the message list.
+  // - Portrait phone cameras hit the same defect on any monitor; it ships in
+  //   the same one-line change, so it is claimed but not headlined.
+  {
+    id: "sloga-2026-08-15-1",
+    title: "Patch Notes",
+    published_at: "2026-08-15T04:00:00.000Z",
+    markdown_content: `## v0.42.0 — The whole shared screen, whatever shape your window is
+
+### 🖥️ Screen shares are no longer cut off at the bottom
+- **The bottom of a shared screen was being clipped off.** The picture was drawn taller than the space it was given, and whatever hung over the edge was simply cut away — so the bottom of whatever your friend was sharing, taskbar and all, was missing. The wider your window, the more disappeared. Maximizing made it worse; full screen and theater mode made it worse still.
+- **Ultrawide monitors had it worst.** How much vanished grew with the width of the window, so a 21:9 display lost a strip along the bottom and a 32:9 could lose most of the picture. Nothing was ever wrong with the share itself — it was arriving complete the whole time, and only the display was cutting it short.
+- **On a very wide window the picture may now look smaller, and that is the fix.** Fitting all of a 16:9 screen into a short, wide space leaves bars down the sides. It used to fill the width only because the parts that didn't fit were being thrown away. Drag the divider under the call downward to give it more height if you'd rather have it bigger.
+- **A phone camera held upright is fixed by the same change**, on any size of screen.
+
+*Sloga — Hop on.*`,
+  },
   // Screen-share quality ladder fix + the Game tier (couch-co-op plan slice
   // G0), published after the two-account getStats leg passed (2026-08-13).
   // Copy constraints, all load-bearing:

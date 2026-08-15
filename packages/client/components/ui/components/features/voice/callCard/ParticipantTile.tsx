@@ -590,6 +590,29 @@ export function ParticipantTile(props: TileProps) {
 export const tile = cva({
   base: {
     display: "grid",
+    /**
+     * Pin the single stacking track to the tile instead of letting it size to
+     * its content. Everything in here sits in cell 1/1 (video, avatar,
+     * overlay), and the implicit track is `auto` — which grows to the video's
+     * max-content height, `width / <source ratio>`. The `<video>`'s own
+     * `height: 100%` then resolves against that grown track rather than the
+     * tile, so it renders taller than the box and `overflow: hidden` clips the
+     * bottom off the picture.
+     *
+     * Invisible whenever the tile is width-limited, because then the track and
+     * the tile come out the same size. It only opens up once the tile is
+     * HEIGHT-limited — `getHeight()`'s `min(…, 100%)` clamping, or a source
+     * taller than the 16:9 box — and the gap is exactly
+     * `width / ratio - height`. An ultrawide viewer is permanently in that
+     * regime (a 21:9 report showed 163px of the shared desktop's taskbar cut
+     * off; a 32:9 would lose four fifths of the frame), and a portrait phone
+     * camera hits it on any monitor.
+     *
+     * `minmax(0, …)` is the load-bearing half: the `0` floor removes the
+     * automatic minimum that otherwise lets the track grow past its container.
+     */
+    gridTemplateRows: "minmax(0, 1fr)",
+    gridTemplateColumns: "minmax(0, 1fr)",
     aspectRatio: "16/9",
     transition: "all .3s ease, width 0s, height 0s",
     borderRadius: "var(--borderRadius-lg)",
