@@ -201,6 +201,21 @@ export interface TypeVoice extends TypeVoiceOverlay {
    */
   e2eeCallsEnabled: boolean;
 
+  /**
+   * Route remote call audio through livekit's shared Web Audio graph
+   * (`RoomOptions.webAudioMix`). ON by default: it is what makes per-user
+   * volume above 100% work at all, because the SDK's `setVolume` drives a
+   * GainNode instead of `HTMLMediaElement.volume` (which is capped at 1.0),
+   * and it re-wires that graph on every track attach — the reason a boosted
+   * participant survives a reconnect.
+   *
+   * Exposed only as a kill-switch: it moves ALL remote audio onto one shared
+   * AudioContext, so if that path ever regresses this turns the whole client
+   * back to the plain-element path without a redeploy. Turning it off costs
+   * boosting — volume is clamped to 100% (see AudioTrack) — but audio plays.
+   */
+  webAudioMix: boolean;
+
   // The six in-game overlay keys come from `TypeVoiceOverlay` (./voiceOverlay)
   // so their defaults and clamps can be unit-tested without loading the store.
 
@@ -260,6 +275,7 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
       micOn: true,
       // Inert — the accessor always reports true (media E2EE is mandatory).
       e2eeCallsEnabled: true,
+      webAudioMix: true,
       ...defaultOverlaySettings(),
       userVolumes: {},
       userMutes: {},
@@ -348,6 +364,10 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
 
     if (typeof input.e2eeCallsEnabled === "boolean") {
       data.e2eeCallsEnabled = input.e2eeCallsEnabled;
+    }
+
+    if (typeof input.webAudioMix === "boolean") {
+      data.webAudioMix = input.webAudioMix;
     }
 
     if (typeof input.pushToTalkKey === "string") {
@@ -949,5 +969,18 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
    */
   set e2eeCallsEnabled(_value: boolean) {
     /* intentionally empty — media E2EE is mandatory */
+  }
+
+  /**
+   * Kill-switch for livekit's shared Web Audio mix (see `TypeVoice`).
+   * Read once per call, when the Room is constructed — flipping it mid-call
+   * does nothing until the next join.
+   */
+  get webAudioMix(): boolean {
+    return this.get().webAudioMix;
+  }
+
+  set webAudioMix(value: boolean) {
+    this.set("webAudioMix", value);
   }
 }

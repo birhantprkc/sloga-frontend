@@ -239,6 +239,18 @@ const MAX_VIDEO_PARTICIPANTS = 30;
  */
 const OPEN_GROUP_PROBE_TIMEOUT_MS = 10_000;
 
+/**
+ * Console escape hatch for the shared Web Audio mix, checked alongside the
+ * persisted `voice.webAudioMix` setting.
+ *
+ * The setting itself lives in localforage/IndexedDB, which is awkward to edit
+ * while someone's audio is broken; this is flippable in one line
+ * (`localStorage.slogaDisableWebAudioMix = "1"`, then rejoin the call) so
+ * support can drop a user back to the plain-element path without a redeploy.
+ * Costs boosting — volume clamps to 100% — but audio plays.
+ */
+const DISABLE_WEB_AUDIO_MIX_KEY = "slogaDisableWebAudioMix";
+
 type State =
   | "READY"
   | "DISCONNECTED"
@@ -1505,6 +1517,12 @@ class Voice {
       ? bridge?.status.get("state")?.device_id
       : undefined;
 
+    // Resolved once so the Room option and the post-connect sink switch below
+    // can never disagree about which audio path this call is on.
+    const webAudioMix =
+      this.#settings.webAudioMix &&
+      localStorage.getItem(DISABLE_WEB_AUDIO_MIX_KEY) !== "1";
+
     const room = new Room({
       e2ee:
         e2eeCapable && this.#mlsKeyProvider && this.#e2eeWorker
@@ -1516,6 +1534,17 @@ class Voice {
       // off: it pauses subscribed tracks by attached-element visibility, which
       // the custom PiP/tile/fullscreen renderers here don't reliably signal.
       dynacast: true,
+      // Mix remote audio through one shared AudioContext owned by the SDK.
+      // This is what makes per-user volume above 100% work: with a context
+      // set, livekit's `setVolume` drives a GainNode rather than
+      // `HTMLMediaElement.volume` (capped at 1.0). Critically it also re-wires
+      // the graph on every track attach, so a boosted participant survives a
+      // reconnect — the hand-rolled graph this replaces stayed bound to the
+      // pre-reconnect MediaStreamTrack and went permanently silent.
+      //
+      // Read once, here: flipping the setting mid-call does nothing until the
+      // next join. See `TypeVoice.webAudioMix` for the kill-switch rationale.
+      webAudioMix,
       audioCaptureDefaults: {
         deviceId: audioInputDevice,
         echoCancellation: this.#settings.echoCancellation,
@@ -1902,6 +1931,34 @@ class Voice {
         room.removeAllListeners(); // FE-9c
         room.disconnect();
         return false;
+      }
+
+      // Point the shared AudioContext at the preferred output device.
+      //
+      // Under `webAudioMix` the SDK mutes every <audio> element and plays
+      // through the context instead, but it only ever calls
+      // `audioContext.setSinkId` from `switchActiveDevice` — the `audioOutput`
+      // option passed to the Room constructor reaches the (muted) elements
+      // only. Without this, a user whose output is not the system default
+      // hears the call from the WRONG device until they touch the picker.
+      // Non-fatal: a failed switch still plays, just on the default device.
+      if (webAudioMix && this.#settings.preferredAudioOutputDevice) {
+        try {
+          await room.switchActiveDevice(
+            "audiooutput",
+            this.#settings.preferredAudioOutputDevice,
+          );
+        } catch (error) {
+          console.warn(
+            "[rtc] could not apply preferred output device to the audio mix",
+            error,
+          );
+        }
+        if (gen !== this.#connectGen) {
+          room.removeAllListeners(); // FE-9c
+          room.disconnect();
+          return false;
+        }
       }
 
       // Assert the device-qualified identity the SFU actually minted (slice
