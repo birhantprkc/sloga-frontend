@@ -25,7 +25,15 @@ import {
 import { useClient, useUser } from "@revolt/client";
 import { useModals } from "@revolt/modal";
 import { useState } from "@revolt/state";
-import { Avatar, Column, Row, Text, UserStatus, iconSize } from "@revolt/ui";
+import {
+  Avatar,
+  Column,
+  type PresenceValue,
+  Row,
+  Text,
+  UserStatus,
+  iconSize,
+} from "@revolt/ui";
 
 import MdContactPage from "@material-design-icons/svg/outlined/contact_page.svg?component-solid";
 import MdDelete from "@material-design-icons/svg/outlined/delete.svg?component-solid";
@@ -103,9 +111,14 @@ export function UserMenu(props: Props) {
     ),
   );
 
-  const setPresence = (
-    presence: (API.DataEditUser["status"] & {})["presence"],
-  ) => user()?.edit({ status: { presence } });
+  // `presence` is widened past what `stoat-api` declares -- see the `Presence`
+  // type next to UserStatus -- so the value is cast back at the edit call.
+  const setPresence = (presence: PresenceValue) =>
+    user()?.edit({
+      status: {
+        presence: presence as (API.DataEditUser["status"] & {})["presence"],
+      },
+    });
 
   function copyId() {
     navigator.clipboard.writeText(user()!.id);
@@ -212,6 +225,26 @@ export function UserMenu(props: Props) {
                     <MdNotificationsOff {...iconSize(12)} />
                   </div>
                 </Row>
+              </ContextMenuButton>
+              <ContextMenuButton
+                icon={
+                  <Status>
+                    <UserStatus size="10" status="LookingForGroup" />
+                  </Status>
+                }
+                onClick={() => setPresence("LookingForGroup")}
+              >
+                <Trans>Looking For Group</Trans>
+              </ContextMenuButton>
+              <ContextMenuButton
+                icon={
+                  <Status>
+                    <UserStatus size="10" status="LookingForMore" />
+                  </Status>
+                }
+                onClick={() => setPresence("LookingForMore")}
+              >
+                <Trans>Looking For More</Trans>
               </ContextMenuButton>
               <ContextMenuButton
                 icon={

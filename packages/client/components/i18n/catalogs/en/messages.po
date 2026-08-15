@@ -3377,6 +3377,14 @@ msgstr "Login"
 msgid "Logs you out of all sessions except this device."
 msgstr "Logs you out of all sessions except this device."
 
+#: src/interface/navigation/servers/UserMenu.tsx
+msgid "Looking For Group"
+msgstr "Looking For Group"
+
+#: src/interface/navigation/servers/UserMenu.tsx
+msgid "Looking For More"
+msgstr "Looking For More"
+
 #: components/auth/src/flows/FlowHome.tsx
 msgid "Low latency"
 msgstr "Low latency"

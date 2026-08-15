@@ -19,6 +19,7 @@ import {
   Unreads,
   UserStatus,
   iconSize,
+  presenceLabel,
   slogaBurstKeyframes,
   unreadHolepunch,
   unreadTone,
@@ -332,7 +333,7 @@ export const ServerList = (props: Props) => {
             <Column>
               <span>{props.user.username}</span>
               <Text class="label" size="small">
-                {props.user.presence}
+                {presenceLabel(props.user.presence)}
               </Text>
             </Column>
           )}

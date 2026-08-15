@@ -34,6 +34,10 @@ export function createStoatWebVariables(theme: SelectedTheme) {
     "--brand-presence-idle": "#F39F00",
     "--brand-presence-busy": "#F84848",
     "--brand-presence-focus": "#4799F0",
+    // Looking-for-group sits right next to idle's amber, so its yellow is
+    // pushed brighter and cooler to stay separable from idle at dot size.
+    "--brand-presence-lookingforgroup": "#FFD426",
+    "--brand-presence-lookingformore": "#A855F7",
     "--brand-presence-invisible": "#A5A5A5",
 
     // semantic state

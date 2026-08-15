@@ -62,4 +62,8 @@ export {
   unreadHolepunch,
   unreadTone,
 } from "./Unreads";
-export { UserStatus } from "./UserStatus";
+export {
+  type PresenceValue,
+  UserStatus,
+  presenceLabel,
+} from "./UserStatus";

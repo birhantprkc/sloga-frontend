@@ -32,6 +32,7 @@ import {
   NavigationRailItem,
   UserStatus,
   main,
+  presenceLabel,
   useSnackbar,
 } from "@revolt/ui";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
@@ -395,24 +396,6 @@ function SelfBar() {
       <UserMenu anchor={anchor} />
     </>
   );
-}
-
-/**
- * Readable label for a presence, used when someone has no custom status
- */
-function presenceLabel(presence?: string) {
-  switch (presence) {
-    case "Online":
-      return "Online";
-    case "Idle":
-      return "Idle";
-    case "Focus":
-      return "Focus";
-    case "Busy":
-      return "Do not disturb";
-    default:
-      return "Offline";
-  }
 }
 
 /**
