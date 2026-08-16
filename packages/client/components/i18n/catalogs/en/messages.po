@@ -33,6 +33,14 @@ msgstr "[Tomorrow at] LT"
 msgid "[Last] dddd [at] LT"
 msgstr "[Last] dddd [at] LT"
 
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Comfortable"
+msgstr "Comfortable"
+
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Centered"
+msgstr "Centered"
+
 #. js-lingui-explicit-id
 #: components/i18n/dayjs.tsx
 msgid "dddd [at] LT"
@@ -41,6 +49,46 @@ msgstr "dddd [at] LT"
 #: components/app/interface/settings/server/roles/ServerRoleOverview.tsx
 msgid "(changes are being saved…)"
 msgstr "(changes are being saved…)"
+
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Moves the member list out of the channel column and into the space beside your messages. The area past it is left empty on purpose."
+msgstr "Moves the member list out of the channel column and into the space beside your messages. The area past it is left empty on purpose."
+
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Requires a 21:9 or wider display. This display is {0}."
+msgstr "Requires a 21:9 or wider display. This display is {0}."
+
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Wide"
+msgstr "Wide"
+
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Ultrawide layout"
+msgstr "Ultrawide layout"
+
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Narrow"
+msgstr "Narrow"
+
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Message width"
+msgstr "Message width"
+
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Message alignment"
+msgstr "Message alignment"
+
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Layout"
+msgstr "Layout"
+
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Hug the channel list"
+msgstr "Hug the channel list"
+
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Full"
+msgstr "Full"
 
 #. placeholder {0}: attachmentCount()
 #: src/interface/ServerEvents.tsx
