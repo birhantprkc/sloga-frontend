@@ -8,6 +8,52 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // v0.43.0: ultrawide layout + message width, the boosted-audio reconnect
+  // fix reaching the apps, the audio-blocked banner, and LFG/LFM statuses.
+  // Copy constraints, all load-bearing:
+  // - Message width defaults to Full and ultrawide layout to OFF — nothing
+  //   moves for anyone on upgrade. Say so; a layout feature that might have
+  //   silently reflowed people's screens needs the "only if you pick it" line.
+  // - The ultrawide toggle is offered on 21:9-and-wider SCREENS and takes
+  //   effect when the WINDOW is wide enough. Those are two different gates
+  //   (hardware vs. current window) — keep both, vaguely ("roughly half of a
+  //   49-inch super-ultrawide" style precision is not needed, "wide enough"
+  //   is honest).
+  // - The boosted-audio bullet claims recovery after reconnects, NOT better
+  //   audio quality. Web has had it since 2026-08-15; the apps get it in
+  //   this update — the "Reading this in the apps?" line is the v0.41.0
+  //   pattern and stays.
+  // - The blocked-audio bullet must not promise the browser will never
+  //   block audio — it promises a visible button instead of silence.
+  //   Don't quote the banner's exact copy (it doubles as a release marker;
+  //   quoting UI strings in notes broke marker greps before — 08-12b).
+  // - LFG/LFM: friends on OLDER clients see these statuses as a plain
+  //   "Offline" dot. State it — hiding it invites "my friend shows offline
+  //   but is in a call" reports.
+  // - Never mention: server boosts, streaming connections, captions (all
+  //   dark), couch co-op (unbuilt).
+  {
+    id: "sloga-2026-08-16-1",
+    title: "Patch Notes",
+    published_at: "2026-08-16T05:00:00.000Z",
+    markdown_content: `## v0.43.0 — Room to stretch out
+
+### 🖥️ New in Appearance: message width, and a layout for ultrawide monitors
+- **Choose how wide messages run.** Full, Wide, Comfortable or Narrow — and whether the column hugs the left or sits centered. On a big monitor, chat no longer has to stretch the whole way across. The default is Full, exactly as before: nothing moves unless you pick something.
+- **Ultrawide layout.** On a 21:9 or wider screen, a new switch moves the member list out into the spare room on the right, so channels, chat and members each get their own column instead of everything crowding the middle. It takes effect when the window is actually wide enough to afford it, and it's off until you turn it on.
+
+### 🔊 Friends you turned up stay audible
+- **Anyone you'd set above 100% volume could go permanently silent after a connection hiccup** — theirs or yours. A Wi-Fi blip, a VPN switch, a laptop waking up: after the call reconnected, their audio was gone until you left and rejoined. Fixed — boosted volume now survives reconnects, and follows you when you switch output devices mid-call.
+- **If your browser refuses to play call audio, Sloga now says so.** Browsers sometimes hold audio back until you've interacted with the page. That used to mean a silent call and no clue why; now a notice appears on the call with a button that turns the sound on.
+
+### 👋 Tell people you're looking
+- **Two new statuses: Looking For Group and Looking For More.** Set them from your status menu, and people can see at a glance that you've got room — or that you're after one. Friends still on an older version of Sloga will see these as a plain offline dot until they update.
+
+### Also arriving in the apps
+- Reading this in the desktop, Android or Linux app? The audio fixes above reached the web last week — this is the update that brings them to you.
+
+*Sloga — Hop on.*`,
+  },
   // Cropped screen-share fix, reported on a 21:9 ultrawide and reproduced live
   // on one (2026-08-14): the tile's grid track grew to the video's max-content
   // height, so the `<video>` rendered taller than its box and `overflow:
