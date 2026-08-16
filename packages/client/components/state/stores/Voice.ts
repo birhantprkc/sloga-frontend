@@ -1,5 +1,10 @@
 import { State } from "..";
 
+import {
+  NORMALIZER_DEFAULT_STRENGTH,
+  clampStrength,
+} from "../../rtc/audioNormalizer";
+
 import { AbstractStore } from ".";
 import {
   OverlayCornerName,
@@ -216,6 +221,23 @@ export interface TypeVoice extends TypeVoiceOverlay {
    */
   webAudioMix: boolean;
 
+  /**
+   * Level incoming voices automatically (receive-side slow AGC + limiter,
+   * rtc/audioNormalizer.ts). OFF by default for v1 — it changes how every
+   * call sounds and its echo pressure is unmeasured. Applies to microphone
+   * tracks only, never screen-share or unknown-source audio. Requires
+   * `webAudioMix`; without the shared context the raw path plays untouched.
+   */
+  audioNormalization: boolean;
+
+  /**
+   * How far normalization may BOOST a quiet talker, 0–100. Scales only the
+   * boost clamp (0 → never boost, 100 → +18 dB); taming loud talkers is
+   * wanted at every strength so the cut side is fixed. Clamped in `clean()`
+   * because the value flows into a live GainNode.
+   */
+  audioNormalizationStrength: number;
+
   // The six in-game overlay keys come from `TypeVoiceOverlay` (./voiceOverlay)
   // so their defaults and clamps can be unit-tested without loading the store.
 
@@ -276,6 +298,8 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
       // Inert — the accessor always reports true (media E2EE is mandatory).
       e2eeCallsEnabled: true,
       webAudioMix: true,
+      audioNormalization: false,
+      audioNormalizationStrength: NORMALIZER_DEFAULT_STRENGTH,
       ...defaultOverlaySettings(),
       userVolumes: {},
       userMutes: {},
@@ -370,6 +394,16 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
       data.webAudioMix = input.webAudioMix;
     }
 
+    if (typeof input.audioNormalization === "boolean") {
+      data.audioNormalization = input.audioNormalization;
+    }
+
+    if (typeof input.audioNormalizationStrength === "number") {
+      data.audioNormalizationStrength = clampStrength(
+        input.audioNormalizationStrength,
+      );
+    }
+
     if (typeof input.pushToTalkKey === "string") {
       data.pushToTalkKey = input.pushToTalkKey;
     }
@@ -456,12 +490,21 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
 
     Object.assign(data, cleanOverlaySettings(input));
 
-    if (typeof input.inputVolume === "number") {
-      data.inputVolume = input.inputVolume;
+    // Both sliders run 0–3 (300%). These were the only unclamped numeric
+    // fields in the store, and both flow straight into a live GainNode — a
+    // corrupt persisted value must not become an ear-splitting gain.
+    if (
+      typeof input.inputVolume === "number" &&
+      Number.isFinite(input.inputVolume)
+    ) {
+      data.inputVolume = Math.max(0, Math.min(3, input.inputVolume));
     }
 
-    if (typeof input.outputVolume === "number") {
-      data.outputVolume = input.outputVolume;
+    if (
+      typeof input.outputVolume === "number" &&
+      Number.isFinite(input.outputVolume)
+    ) {
+      data.outputVolume = Math.max(0, Math.min(3, input.outputVolume));
     }
 
     if (typeof input.deafen === "boolean") {
@@ -524,7 +567,10 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
    * @returns Volume or default
    */
   getUserVolume(userId: string): number {
-    return this.get().userVolumes[userId] || 1.0;
+    // NOT `|| 1.0`: the slider's minimum is 0, and `0 || 1.0` is 1.0 — the
+    // old code snapped anyone dragged to 0% straight back to full volume.
+    const volume = this.get().userVolumes[userId];
+    return typeof volume === "number" && Number.isFinite(volume) ? volume : 1.0;
   }
 
   /**
@@ -560,7 +606,10 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
    * @returns Volume or default
    */
   getScreenShareVolume(userId: string): number {
-    return this.get().screenShareVolumes[userId] || 1.0;
+    // Same 0-is-falsy trap as getUserVolume: a share dragged to 0% must
+    // stay at 0%, not snap back to full volume.
+    const volume = this.get().screenShareVolumes[userId];
+    return typeof volume === "number" && Number.isFinite(volume) ? volume : 1.0;
   }
 
   /**
@@ -982,5 +1031,27 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
 
   set webAudioMix(value: boolean) {
     this.set("webAudioMix", value);
+  }
+
+  /**
+   * Level incoming voices (receive-side AGC + limiter). Unlike the mix
+   * itself this applies LIVE — the room audio manager re-wires plugins
+   * mid-call — but it still needs `webAudioMix` to have been on at join.
+   */
+  get audioNormalization(): boolean {
+    return this.get().audioNormalization;
+  }
+
+  set audioNormalization(value: boolean) {
+    this.set("audioNormalization", value);
+  }
+
+  /** Boost strength 0–100 (see `TypeVoice.audioNormalizationStrength`). */
+  get audioNormalizationStrength(): number {
+    return this.get().audioNormalizationStrength;
+  }
+
+  set audioNormalizationStrength(value: number) {
+    this.set("audioNormalizationStrength", clampStrength(value));
   }
 }

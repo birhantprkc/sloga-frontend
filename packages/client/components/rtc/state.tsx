@@ -249,7 +249,7 @@ const OPEN_GROUP_PROBE_TIMEOUT_MS = 10_000;
  * support can drop a user back to the plain-element path without a redeploy.
  * Costs boosting — volume clamps to 100% — but audio plays.
  */
-const DISABLE_WEB_AUDIO_MIX_KEY = "slogaDisableWebAudioMix";
+export const DISABLE_WEB_AUDIO_MIX_KEY = "slogaDisableWebAudioMix";
 
 type State =
   | "READY"
@@ -439,6 +439,16 @@ class Voice {
   // undefined on unsupported/web shells (treated as non-enrolled).
   #mlsKeyProvider: MlsKeyProvider | undefined;
   #e2eeWorker: Worker | undefined;
+  /**
+   * The shared web-audio context handed to livekit via
+   * `webAudioMix: { audioContext }`. Owned HERE, not by the SDK — livekit
+   * only closes contexts it created itself (boolean-option form), so passing
+   * one in makes teardown our job. Owning it is what lets the incoming-voice
+   * normalizer (rtc/audioNormalizer.ts) build nodes in the same graph the
+   * SDK wires remote audio through; nodes from a different context cannot
+   * connect. Undefined when the mix kill-switch is off or no call is up.
+   */
+  #callAudioContext: AudioContext | undefined;
   /**
    * The MLS control-plane session for this call (slice 6.4). Constructed once
    * the device-qualified identity is proven; drives create-or-join, admission,
@@ -1540,6 +1550,14 @@ class Voice {
       this.#settings.webAudioMix &&
       localStorage.getItem(DISABLE_WEB_AUDIO_MIX_KEY) !== "1";
 
+    // Our context, not the SDK's (see the field's doc). A superseded connect
+    // attempt dies at its next generation check without reaching teardown, so
+    // the incoming attempt closes its predecessor's context here — closing a
+    // context under a doomed attempt is safe, no audio has flowed yet.
+    void this.#callAudioContext?.close().catch(() => undefined);
+    const callAudioContext = webAudioMix ? new AudioContext() : undefined;
+    this.#callAudioContext = callAudioContext;
+
     const room = new Room({
       e2ee:
         e2eeCapable && this.#mlsKeyProvider && this.#e2eeWorker
@@ -1561,7 +1579,11 @@ class Voice {
       //
       // Read once, here: flipping the setting mid-call does nothing until the
       // next join. See `TypeVoice.webAudioMix` for the kill-switch rationale.
-      webAudioMix,
+      // The object form supplies OUR context (same SDK code path as `true`,
+      // minus the SDK-side ownership) — see `#callAudioContext`.
+      webAudioMix: callAudioContext
+        ? { audioContext: callAudioContext }
+        : false,
       audioCaptureDefaults: {
         deviceId: audioInputDevice,
         echoCancellation: this.#settings.echoCancellation,
@@ -2188,6 +2210,14 @@ class Voice {
       this.#setTurnDeadline(undefined);
       this.#setTurnLengthMs(undefined);
 
+      // Ours to close (see `#callAudioContext`): the SDK skips closing
+      // provided contexts, and a leaked one keeps the tab flagged as playing
+      // audio for the rest of the session. ABOVE the room guard on purpose:
+      // if connect() threw between creating the context and #setRoom, the
+      // error path lands here with no room and the context must still die.
+      void this.#callAudioContext?.close().catch(() => undefined);
+      this.#callAudioContext = undefined;
+
       const room = this.room();
       if (!room) return;
 
@@ -2433,6 +2463,18 @@ class Voice {
       // click, since the click IS the gesture the policy wants.
       console.error("[rtc] startAudio failed — audio is still blocked", error);
     }
+  }
+
+  /**
+   * The shared web-audio context of the CURRENT call, for consumers that
+   * build nodes into livekit's remote-audio graph (the incoming-voice
+   * normalizer). Not reactive — read it from an effect that already tracks
+   * something call-scoped (the track list), which cannot be non-empty before
+   * the context exists. Undefined when the mix kill-switch is off; callers
+   * must treat that as "feature unavailable", never build their own context.
+   */
+  callAudioContext(): AudioContext | undefined {
+    return this.#callAudioContext;
   }
 
   async toggleDeafen(fromMute?: boolean) {

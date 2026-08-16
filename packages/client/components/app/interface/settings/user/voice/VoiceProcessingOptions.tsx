@@ -2,6 +2,7 @@ import { createSignal, Show } from "solid-js";
 
 import { Trans } from "@lingui-solid/solid/macro";
 
+import { DISABLE_WEB_AUDIO_MIX_KEY } from "@revolt/rtc";
 import { useState } from "@revolt/state";
 import { CategoryButton, Checkbox, Column, Slider, Text } from "@revolt/ui";
 
@@ -92,6 +93,79 @@ export function VoiceProcessingOptions() {
         >
           <Trans>Automatic Gain Control</Trans>
         </CategoryButton>
+      </CategoryButton.Group>
+
+      <Text class="title">
+        <Trans>Incoming Voices</Trans>
+      </Text>
+      <CategoryButton.Group>
+        <CategoryButton
+          icon="blank"
+          action={<Checkbox checked={voice.audioNormalization} />}
+          onClick={() => (voice.audioNormalization = !voice.audioNormalization)}
+          description={
+            <Column gap="sm">
+              <Trans>
+                Evens out loud and quiet people automatically. Only voices are
+                leveled — music and screen share audio are never touched.
+              </Trans>
+              {/* §0.3: a feature that silently does nothing is worse than one
+                  that says why it is off. The shared mix is what the leveler
+                  builds its processing into — and it is read at join time,
+                  so turning it back on cannot help the CURRENT call. The
+                  localStorage escape hatch disables the mix just as hard as
+                  the setting does; check both or this reads as available
+                  while support has kill-switched it. */}
+              <Show
+                when={
+                  !voice.webAudioMix ||
+                  localStorage.getItem(DISABLE_WEB_AUDIO_MIX_KEY) === "1"
+                }
+              >
+                <Text class="label">
+                  <Trans>
+                    Unavailable while the shared audio mix is off. Turning the
+                    mix back on takes effect when you next join a call.
+                  </Trans>
+                </Text>
+              </Show>
+            </Column>
+          }
+        >
+          <Trans>Level Incoming Voices</Trans>
+        </CategoryButton>
+        <Show when={voice.audioNormalization}>
+          <CategoryButton
+            icon="blank"
+            description={
+              <Column gap="sm">
+                <Text class="label">
+                  <Trans>Strength: {voice.audioNormalizationStrength}%</Trans>
+                </Text>
+                <Slider
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={voice.audioNormalizationStrength}
+                  onInput={(e) =>
+                    (voice.audioNormalizationStrength = Number(
+                      e.currentTarget.value,
+                    ))
+                  }
+                  labelFormatter={(v) => `${v}%`}
+                />
+                <Text class="label">
+                  <Trans>
+                    How far a quiet voice may be raised. Loud voices are always
+                    tamed, at any strength.
+                  </Trans>
+                </Text>
+              </Column>
+            }
+          >
+            <Trans>Leveling Strength</Trans>
+          </CategoryButton>
+        </Show>
       </CategoryButton.Group>
 
       <Text class="title">

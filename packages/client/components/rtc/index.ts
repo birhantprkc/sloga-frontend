@@ -1,4 +1,9 @@
-export { VoiceContext, platformMediaE2EESupported, useVoice } from "./state";
+export {
+  DISABLE_WEB_AUDIO_MIX_KEY,
+  VoiceContext,
+  platformMediaE2EESupported,
+  useVoice,
+} from "./state";
 export type { DiceRollToast } from "./state";
 
 export {

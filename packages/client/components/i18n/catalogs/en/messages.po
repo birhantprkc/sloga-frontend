@@ -13,6 +13,35 @@ msgstr ""
 "Language-Team: \n"
 "Plural-Forms: \n"
 
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Evens out loud and quiet people automatically. Only voices are leveled — music and screen share audio are never touched."
+msgstr "Evens out loud and quiet people automatically. Only voices are leveled — music and screen share audio are never touched."
+
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "How far a quiet voice may be raised. Loud voices are always tamed, at any strength."
+msgstr "How far a quiet voice may be raised. Loud voices are always tamed, at any strength."
+
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Incoming Voices"
+msgstr "Incoming Voices"
+
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Level Incoming Voices"
+msgstr "Level Incoming Voices"
+
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Leveling Strength"
+msgstr "Leveling Strength"
+
+#. placeholder {0}: voice.audioNormalizationStrength
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Strength: {0}%"
+msgstr "Strength: {0}%"
+
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Unavailable while the shared audio mix is off. Turning the mix back on takes effect when you next join a call."
+msgstr "Unavailable while the shared audio mix is off. Turning the mix back on takes effect when you next join a call."
+
 #. js-lingui-explicit-id
 #: components/i18n/dayjs.tsx
 msgid "[Yesterday at] LT"
