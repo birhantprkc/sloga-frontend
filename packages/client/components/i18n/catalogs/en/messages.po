@@ -802,6 +802,10 @@ msgstr "App Settings"
 msgid "Appearance"
 msgstr "Appearance"
 
+#: components/modal/modals/ImageEditor.tsx
+msgid "Apply"
+msgstr "Apply"
+
 #: components/app/interface/settings/ServerSettings.tsx
 #: components/app/interface/settings/ServerSettings.tsx
 msgid "Apps"
@@ -2247,6 +2251,11 @@ msgstr "Edit identity"
 #: components/modal/modals/ServerInfo.tsx
 msgid "Edit Identity"
 msgstr "Edit Identity"
+
+#: components/modal/modals/ImageEditor.tsx
+#: components/ui/components/features/messaging/composition/FileCarousel.tsx
+msgid "Edit image"
+msgstr "Edit image"
 
 #: components/app/menus/MessageContextMenu.tsx
 msgid "Edit message"
@@ -4654,6 +4663,10 @@ msgstr "Remove"
 #: components/app/menus/MessageContextMenu.tsx
 msgid "Remove all reactions"
 msgstr "Remove all reactions"
+
+#: components/ui/components/features/messaging/composition/FileCarousel.tsx
+msgid "Remove attachment"
+msgstr "Remove attachment"
 
 #: components/app/interface/settings/user/Account.tsx
 msgid "Remove Authenticator"

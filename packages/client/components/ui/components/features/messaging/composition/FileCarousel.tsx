@@ -1,5 +1,6 @@
 import { For, Match, Show, Switch } from "solid-js";
 
+import { useLingui } from "@lingui-solid/solid/macro";
 import { cva } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 
@@ -11,6 +12,7 @@ import { OverflowingText, iconSize } from "@revolt/ui/components/utils";
 import MdAdd from "@material-design-icons/svg/outlined/add.svg?component-solid";
 import MdCancel from "@material-design-icons/svg/outlined/cancel.svg?component-solid";
 import MdFile from "@material-design-icons/svg/outlined/description.svg?component-solid";
+import MdEdit from "@material-design-icons/svg/outlined/edit.svg?component-solid";
 
 interface Props {
   /**
@@ -37,6 +39,12 @@ interface Props {
    * @param fileId ID
    */
   removeFile(fileId: string): void;
+
+  /**
+   * Open the image editor for a file (images only)
+   * @param fileId ID
+   */
+  editFile(fileId: string): void;
 }
 
 /**
@@ -58,6 +66,8 @@ export function determineFileSize(size: number) {
  * File carousel
  */
 export function FileCarousel(props: Props) {
+  const { t } = useLingui();
+
   return (
     <Show when={props.files.length}>
       <Container>
@@ -70,9 +80,10 @@ export function FileCarousel(props: Props) {
               const file = () => props.getFile(id);
 
               /**
-               * Handler for removing the file
+               * Whether this entry is an image (previewable and editable)
                */
-              const onClick = () => props.removeFile(id);
+              const isImage = () =>
+                ALLOWED_IMAGE_TYPES.includes(file().file.type);
 
               return (
                 <>
@@ -81,10 +92,7 @@ export function FileCarousel(props: Props) {
                   </Show>
 
                   <Entry ignored={index() >= CONFIGURATION.MAX_ATTACHMENTS}>
-                    <PreviewBox
-                      onClick={onClick}
-                      image={ALLOWED_IMAGE_TYPES.includes(file().file.type)}
-                    >
+                    <PreviewBox image={isImage()}>
                       <Switch
                         fallback={
                           <EmptyEntry>
@@ -92,9 +100,7 @@ export function FileCarousel(props: Props) {
                           </EmptyEntry>
                         }
                       >
-                        <Match
-                          when={ALLOWED_IMAGE_TYPES.includes(file().file.type)}
-                        >
+                        <Match when={isImage()}>
                           <Image
                             src={file().dataUri}
                             alt={file().file.name}
@@ -103,7 +109,22 @@ export function FileCarousel(props: Props) {
                         </Match>
                       </Switch>
                       <Overlay>
-                        <MdCancel {...iconSize(36)} />
+                        <Show when={isImage()}>
+                          <OverlayAction
+                            type="button"
+                            aria-label={t`Edit image`}
+                            onClick={() => props.editFile(id)}
+                          >
+                            <MdEdit {...iconSize(28)} />
+                          </OverlayAction>
+                        </Show>
+                        <OverlayAction
+                          type="button"
+                          aria-label={t`Remove attachment`}
+                          onClick={() => props.removeFile(id)}
+                        >
+                          <MdCancel {...iconSize(28)} />
+                        </OverlayAction>
                       </Overlay>
                     </PreviewBox>
                     <FileName>
@@ -134,7 +155,6 @@ const PreviewBox = styled("div", {
     justifyItems: "center",
     gridTemplate: `"main" var(--preview-size) / minmax(var(--preview-size), 1fr)`,
 
-    cursor: "pointer",
     overflow: "hidden",
     borderRadius: "var(--gap-md)",
 
@@ -171,9 +191,10 @@ const Overlay = styled("div", {
   base: {
     zIndex: 1,
 
-    display: "grid",
+    display: "flex",
     alignItems: "center",
     justifyContent: "center",
+    gap: "var(--gap-md)",
 
     width: "100%",
     height: "100%",
@@ -185,6 +206,36 @@ const Overlay = styled("div", {
 
     "&:hover": {
       opacity: 1,
+    },
+
+    // no hover on touch devices; keep the actions visible instead
+    "@media (pointer: coarse)": {
+      opacity: 1,
+      background: "rgba(0, 0, 0, 0.5)",
+    },
+  },
+});
+
+/**
+ * Individual action button on the preview overlay
+ */
+const OverlayAction = styled("button", {
+  base: {
+    display: "grid",
+    placeItems: "center",
+
+    padding: "var(--gap-sm)",
+    border: "none",
+    borderRadius: "var(--borderRadius-lg)",
+
+    cursor: "pointer",
+    color: "white",
+    fill: "white",
+    background: "transparent",
+    transition: "var(--transitions-fast) background",
+
+    "&:hover": {
+      background: "rgba(255, 255, 255, 0.2)",
     },
   },
 });

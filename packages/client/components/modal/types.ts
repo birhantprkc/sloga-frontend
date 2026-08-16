@@ -308,6 +308,19 @@ export type Modals =
       type: "e2ee_disable";
     }
   | {
+      type: "image_editor";
+      /**
+       * DOM File (not a stoat.js attachment) — this edits a pending draft
+       * attachment before it is ever uploaded.
+       */
+      file: globalThis.File;
+      /**
+       * Called with the edited file when the user applies their changes;
+       * not called on cancel/dismiss.
+       */
+      onSave: (file: globalThis.File) => void;
+    }
+  | {
       type: "image_viewer";
       embed?: ImageEmbed;
       gif?: VideoEmbed;

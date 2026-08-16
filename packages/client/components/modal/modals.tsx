@@ -48,6 +48,7 @@ import { EmojiPreviewModal } from "./modals/EmojiPreview";
 import { Error2Modal } from "./modals/Error2";
 import { FollowChannelModal } from "./modals/FollowChannel";
 import { ForwardMessageModal } from "./modals/ForwardMessage";
+import { ImageEditorModal } from "./modals/ImageEditor";
 import { ImageViewerModal } from "./modals/ImageViewer";
 import { ImportDiscordModal } from "./modals/ImportDiscord";
 import { InviteModal } from "./modals/Invite";
@@ -205,6 +206,8 @@ export function RenderModal(props: ActiveModal & { onClose: () => void }) {
       return <E2EEVerifyModal {...modalProps} />;
     case "e2ee_enable_group":
       return <E2EEEnableGroupModal {...modalProps} />;
+    case "image_editor":
+      return <ImageEditorModal {...modalProps} />;
     case "image_viewer":
       return <ImageViewerModal {...modalProps} />;
     case "discover_join":
