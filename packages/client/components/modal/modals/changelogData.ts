@@ -30,6 +30,12 @@ export const CHANGELOGS: ChangelogResponse[] = [
   // - LFG/LFM: friends on OLDER clients see these statuses as a plain
   //   "Offline" dot. State it — hiding it invites "my friend shows offline
   //   but is in a call" reports.
+  // - AVIF (added post-release, server-side — backend 79530632/b7404af7/
+  //   1f6fe599, live 08-15 21:19): claim upload/preview/thumbnails and that
+  //   animation + EXIF-stripping work. Do NOT claim it renders on every
+  //   platform — the Linux shell is WebKitGTK, where AVIF is distro-dependent
+  //   — and do not promise speed: a real-world phone photo has not been
+  //   through the path end to end.
   // - Never mention: server boosts, streaming connections, captions (all
   //   dark), couch co-op (unbuilt).
   {
@@ -48,6 +54,9 @@ export const CHANGELOGS: ChangelogResponse[] = [
 
 ### 👋 Tell people you're looking
 - **Two new statuses: Looking For Group and Looking For More.** Set them from your status menu, and people can see at a glance that you've got room — or that you're after one. Friends still on an older version of Sloga will see these as a plain offline dot until they update.
+
+### 🖼️ AVIF images now work
+- **Post AVIF pictures like any other image.** Sloga could store AVIF files but not actually read them, so uploading one just failed with an error. Now they upload properly, get previews and thumbnails, and animated AVIFs keep their animation. Location data hidden in the file is removed on upload, the same as for JPEG and PNG. This happened on the server, so it works from every app without an update.
 
 ### Also arriving in the apps
 - Reading this in the desktop, Android or Linux app? The audio fixes above reached the web last week — this is the update that brings them to you.
