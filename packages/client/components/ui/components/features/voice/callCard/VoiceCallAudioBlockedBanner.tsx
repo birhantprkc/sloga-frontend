@@ -15,10 +15,11 @@ import { Button } from "@revolt/ui/components/design";
  * rescue is `startAudio` on mic-publish, which never fires for a listener who
  * joined muted or has no microphone — this button is that user's way out.
  *
- * The blocked flag is debounced in `Voice` (`#armAudioBlockedRecheck`): a
- * reconnect's track re-attach emits a transient `canPlaybackAudio === false`
- * while audio keeps flowing, so the flag only latches once the status has
- * held false past the reconnect churn. The banner self-clears via
+ * The blocked flag is gated in `Voice` (`#armAudioBlockedRecheck`): any track
+ * attach (a peer joining, a reconnect re-attach) can flip `canPlaybackAudio`
+ * false while audio keeps flowing through the shared context, so the flag
+ * only latches once the status has held false AND the call's AudioContext is
+ * not running. The banner self-clears via
  * `AudioPlaybackStatusChanged` once playback succeeds, however that happens
  * (this button, or the SDK's own rescue).
  */

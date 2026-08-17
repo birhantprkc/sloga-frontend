@@ -2513,6 +2513,19 @@ class Voice {
         this.#armAudioBlockedRecheck(room);
         return;
       }
+      // Ground truth beats the SDK flag. Under `webAudioMix` every remote
+      // voice plays through OUR AudioContext and the per-track <audio>
+      // elements are muted decoys — yet livekit still calls `element.play()`
+      // on each attach and flips `canPlaybackAudio` false when THAT rejects,
+      // with no true edge until some later element happens to play. So a
+      // peer joining (fresh attach) can leave the flag stuck false for the
+      // rest of the call while audio is audibly flowing (live leg
+      // 2026-08-16: banner on the remote side after a rejoin, both parties
+      // already hearing each other). A running context means the graph the
+      // audio actually travels through is live; only a suspended one is the
+      // silence this banner exists for. Undefined context = mix kill-switch
+      // off = element playback IS the audio path, so the flag stands alone.
+      if (this.#callAudioContext?.state === "running") return;
       this.#setAudioPlaybackBlocked(true);
     }, AUDIO_BLOCKED_HOLD_MS);
   }
