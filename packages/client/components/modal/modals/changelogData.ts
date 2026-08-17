@@ -8,6 +8,48 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // v0.44.0: the in-app image editor with on-device auto-redact, plus the
+  // enable-audio banner no longer firing on reconnects/joins. Copy
+  // constraints, all load-bearing:
+  // - Auto-redact is ADVISORY. It proposes, the user reviews. Never say it
+  //   "removes" or "catches" sensitive info as a guarantee — say it finds
+  //   things and offers to cover them, and that the user should look. Small,
+  //   stylized, or non-English text can be missed and the copy says so.
+  // - Everything runs on the device. Say it plainly and mean it: the OCR
+  //   engine and its language data are served from Sloga's own origin and
+  //   the picture is never uploaded until you press send. This is the whole
+  //   privacy point of the feature; it must be stated, not implied.
+  // - Black bars, not blur, are what the auto pass draws — pixelated text
+  //   can sometimes be recovered. Mention that blur exists as a manual tool
+  //   without recommending it for text.
+  // - Edited images are re-encoded, which strips EXIF/GPS. Claim it, but
+  //   only for images that were EDITED — untouched uploads follow the
+  //   server's rules (JPEG/PNG/AVIF strip server-side; see v0.43.0).
+  // - GIFs can't be edited (it would flatten the animation). Say so; a
+  //   missing button otherwise reads as a bug.
+  // - The banner fix bullet claims fewer false alarms, not that audio issues
+  //   are gone. Do NOT quote the banner's copy (marker rule, 08-12b).
+  // - Do not name the editor's tool labels verbatim ("Black bar", "Pixelate",
+  //   "Auto-redact") — they are Trans-sourced release markers.
+  {
+    id: "sloga-2026-08-17-1",
+    title: "Patch Notes",
+    published_at: "2026-08-17T04:00:00.000Z",
+    markdown_content: `## v0.44.0 — Mark it up before you send it
+
+### ✏️ Edit screenshots and pictures right in Sloga
+- **No more round trip through Paint.** Attach an image, tap the pencil on its thumbnail, and you get a small editor: crop, draw, highlight, boxes and circles, arrows, and two ways to hide things — a solid bar, or a pixelated patch. Undo and redo the lot. When you apply, the edited picture replaces the original in your message, at full resolution.
+- **A one-tap pass that spots sensitive text for you.** Press the auto-redact button and Sloga reads the text in the picture and offers to cover anything that looks like an email address, phone number, card number, social security number, password or key after a label like "Password:", an IP address, or your own username. Each find shows up as a chip you can keep or skip, and you can add anything it missed with the bar tool. Have a look before you send — small, stylized, or non-English text can slip past it.
+- **All of it happens on your device.** The text recognition runs in your browser or app, from files Sloga serves itself; the picture is never uploaded until you actually press send. Nothing you're about to redact goes anywhere first.
+- **The auto pass draws solid black bars on purpose.** Pixelated text can sometimes be reconstructed; solid bars can't. The pixelate tool is still there for faces and backgrounds.
+- **A quiet bonus:** any image you edit is re-saved on the way out, which removes hidden location and camera data from it.
+- **One thing it won't do:** GIFs can't be edited yet, because flattening one would lose the animation — so the pencil doesn't appear on them.
+
+### 🔊 The "your browser blocked audio" notice is quieter
+- **It was popping up when it shouldn't.** Reconnecting after a network blip, or someone joining or leaving, could make the notice appear even though audio was playing fine. It now waits out the reconnect and checks the call's actual audio state before showing, so you should only see it when there's really something to click.
+
+*Sloga — Hop on.*`,
+  },
   // v0.43.0: ultrawide layout + message width, the boosted-audio reconnect
   // fix reaching the apps, the audio-blocked banner, and LFG/LFM statuses.
   // Copy constraints, all load-bearing:
