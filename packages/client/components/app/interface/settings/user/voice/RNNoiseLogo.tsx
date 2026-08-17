@@ -14,13 +14,14 @@ import { styled } from "styled-system/jsx";
  * `public/rnnoise/rnnoise-logo.svg` (or .png) and swap the <svg> below for an
  * <img src={`${import.meta.env.BASE_URL}rnnoise/rnnoise-logo.svg`} />.
  */
-export function RNNoiseLogo() {
+export function RNNoiseLogo(props: { height?: number }) {
+  const height = () => props.height ?? 24;
   return (
     <Wrapper>
       <svg
         viewBox="0 0 400 96"
-        height="24"
-        width="100"
+        height={height()}
+        width={Math.round((height() * 400) / 96)}
         role="img"
         aria-label="RNNoise"
         xmlns="http://www.w3.org/2000/svg"

@@ -97,7 +97,7 @@ export function CategoryButton(props: Props) {
               </Action>
             </Match>
             <Match when={action === "collapse"}>
-              <Action>
+              <Action class="CollapseChevron">
                 <MdKeyboardDown {...iconSize(18)} />
               </Action>
             </Match>
@@ -504,8 +504,10 @@ const Details = styled("div", {
       transition: "0.3s",
     },
 
-    /* rotate chevron when it is open */
-    "&.open summary div:last-child svg": {
+    /* rotate the collapse chevron when open — ONLY that one. The previous
+       selector (summary div:last-child svg) also caught any svg inside the
+       row's description, which drew the RNNoise wordmark upside down. */
+    "&.open summary .CollapseChevron svg": {
       transform: "rotate(180deg)",
     },
 

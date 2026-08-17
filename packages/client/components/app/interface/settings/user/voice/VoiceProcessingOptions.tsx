@@ -4,9 +4,17 @@ import { Trans } from "@lingui-solid/solid/macro";
 
 import { DISABLE_WEB_AUDIO_MIX_KEY } from "@revolt/rtc";
 import { useState } from "@revolt/state";
-import { CategoryButton, Checkbox, Column, Slider, Text } from "@revolt/ui";
+import {
+  CategoryButton,
+  Checkbox,
+  Column,
+  Row,
+  Slider,
+  Text,
+} from "@revolt/ui";
 
 import { InputSensitivity } from "./InputSensitivity";
+import { RNNoiseLogo } from "./RNNoiseLogo";
 
 /**
  * Voice processing options
@@ -74,8 +82,15 @@ export function VoiceProcessingOptions() {
             browser: { title: <Trans>Browser</Trans> },
             enhanced: {
               title: <Trans>Enhanced</Trans>,
-              description: <Trans>Powered by RNNoise</Trans>,
-              shortDesc: <Trans>Enhanced (RNNoise)</Trans>,
+              // The wordmark IS the credit line, the way Discord shows Krisp:
+              // the filter is what makes this option worth choosing.
+              description: <RNNoiseLogo height={32} />,
+              shortDesc: (
+                <Row align gap="sm">
+                  <Trans>Enhanced</Trans>
+                  <RNNoiseLogo />
+                </Row>
+              ),
             },
           }}
           value={voice.noiseSupression}

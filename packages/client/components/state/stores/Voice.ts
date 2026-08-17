@@ -288,7 +288,10 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
   default(): TypeVoice {
     return {
       echoCancellation: true,
-      noiseSupression: "browser",
+      // RNNoise by default: it is self-hosted, runs everywhere the app does
+      // (AudioWorklet + wasm) and is what the product means by "noise
+      // suppression". Existing installs keep whatever they persisted.
+      noiseSupression: "enhanced",
       autoGainControl: true,
       openMic: true,
       vadEnabled: false,
