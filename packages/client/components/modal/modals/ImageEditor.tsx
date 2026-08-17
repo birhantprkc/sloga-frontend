@@ -47,8 +47,9 @@ export function ImageEditorModal(
             file={props.file}
             onCancel={() => props.onClose()}
             onApply={(file: globalThis.File) => {
-              props.onSave(file);
-              props.onClose();
+              // A rejected save (over the size cap) leaves the editor open —
+              // closing would throw away everything the user just drew.
+              if (props.onSave(file) !== false) props.onClose();
             }}
           />
         </Show>

@@ -821,36 +821,49 @@ export function MessageComposition(props: Props) {
   }
 
   /**
+   * Largest attachment this conversation will accept right now.
+   *
+   * E2EE conversations use the one-shot blob path (server-capped ~20 MiB;
+   * chunked uploads are plaintext-only for now), so they must clamp small.
+   * Fail closed: "pending"/"blocked"/"peer_downgraded" can still resolve
+   * to an encrypted send, so they get the small cap too — only a
+   * definitively-plaintext conversation may admit large files.
+   *
+   * Plaintext conversations clamp to the server limit alone (5 GB today):
+   * files above CHUNKED_UPLOAD_THRESHOLD take the chunked path, whose
+   * sub-100 MB parts clear the CDN wall that used to cap everything at
+   * MAX_UPLOAD_REQUEST_SIZE.
+   *
+   * Every path that puts bytes into the draft must consult this — not just
+   * the picker. The image editor re-encodes what it exports, so an edit can
+   * land above the cap even though the original was under it.
+   * @returns Maximum attachment size in bytes
+   */
+  function attachmentSizeLimit() {
+    const serverLimit = client().configured()
+      ? (client().configuration?.features.limits.default.file_upload_size_limits
+          .attachments ?? CONFIGURATION.MAX_FILE_SIZE)
+      : CONFIGURATION.MAX_FILE_SIZE;
+
+    const maybeEncrypted =
+      e2eeMode() === "encrypt" ||
+      e2eeMode() === "blocked" ||
+      e2eeMode() === "pending" ||
+      e2eeMode() === "peer_downgraded";
+
+    return maybeEncrypted
+      ? Math.min(serverLimit, CONFIGURATION.E2EE_MAX_ATTACHMENT_SIZE)
+      : serverLimit;
+  }
+
+  /**
    * Handle files being added to the draft.
    * @param files List of files
    */
   function onFiles(files: File[]) {
     const rejectedFiles: File[] = [];
     const validFiles: File[] = [];
-
-    const serverLimit = client().configured()
-      ? (client().configuration?.features.limits.default.file_upload_size_limits
-          .attachments ?? CONFIGURATION.MAX_FILE_SIZE)
-      : CONFIGURATION.MAX_FILE_SIZE;
-
-    // E2EE conversations use the one-shot blob path (server-capped ~20 MiB;
-    // chunked uploads are plaintext-only for now), so they must clamp small.
-    // Fail closed: "pending"/"blocked"/"peer_downgraded" can still resolve
-    // to an encrypted send, so they get the small cap too — only a
-    // definitively-plaintext conversation may admit large files.
-    //
-    // Plaintext conversations clamp to the server limit alone (5 GB today):
-    // files above CHUNKED_UPLOAD_THRESHOLD take the chunked path, whose
-    // sub-100 MB parts clear the CDN wall that used to cap everything at
-    // MAX_UPLOAD_REQUEST_SIZE.
-    const maybeEncrypted =
-      e2eeMode() === "encrypt" ||
-      e2eeMode() === "blocked" ||
-      e2eeMode() === "pending" ||
-      e2eeMode() === "peer_downgraded";
-    const maxSize = maybeEncrypted
-      ? Math.min(serverLimit, CONFIGURATION.E2EE_MAX_ATTACHMENT_SIZE)
-      : serverLimit;
+    const maxSize = attachmentSizeLimit();
 
     for (const file of files) {
       if (file.size > maxSize) {
@@ -941,7 +954,27 @@ export function MessageComposition(props: Props) {
     openModal({
       type: "image_editor",
       file: entry.file,
-      onSave: (file) => state.draft.replaceFile(props.channel.id, fileId, file),
+      onSave: (file) => {
+        // The editor re-encodes on export, so its output can be LARGER than
+        // the file that was admitted at pick time — a PNG re-encode of a
+        // photo especially. Re-check here or an over-cap edit sails past the
+        // picker's guard and only fails at send (and the cap is much smaller
+        // in an encrypted conversation).
+        const maxSize = attachmentSizeLimit();
+        if (file.size > maxSize) {
+          const fileSize = humanFileSize(file.size);
+          const maxSizeFormatted = humanFileSize(maxSize);
+          const error = new Error(
+            t`The edited image (${fileSize}) exceeds the maximum size limit of ${maxSizeFormatted}. Crop it smaller, or close the editor to send the original.`,
+          );
+          error.name = "File too large";
+          openModal({ type: "error2", error });
+          return false;
+        }
+
+        state.draft.replaceFile(props.channel.id, fileId, file);
+        return true;
+      },
     });
   }
 

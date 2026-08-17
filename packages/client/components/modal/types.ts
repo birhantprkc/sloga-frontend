@@ -316,9 +316,11 @@ export type Modals =
       file: globalThis.File;
       /**
        * Called with the edited file when the user applies their changes;
-       * not called on cancel/dismiss.
+       * not called on cancel/dismiss. Return false to REJECT the edit (e.g.
+       * the export came out over the attachment size cap) — the editor then
+       * stays open instead of closing, so the user's work survives.
        */
-      onSave: (file: globalThis.File) => void;
+      onSave: (file: globalThis.File) => boolean;
     }
   | {
       type: "image_viewer";

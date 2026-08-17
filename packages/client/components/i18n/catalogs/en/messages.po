@@ -7269,6 +7269,10 @@ msgstr "Loading editor…"
 msgid "Auto-redact"
 msgstr "Auto-redact"
 
+#: src/interface/channels/text/Composition.tsx
+msgid "The edited image ({fileSize}) exceeds the maximum size limit of {maxSizeFormatted}. Crop it smaller, or close the editor to send the original."
+msgstr "The edited image ({fileSize}) exceeds the maximum size limit of {maxSizeFormatted}. Crop it smaller, or close the editor to send the original."
+
 #: components/modal/modals/ImageEditorCore.tsx
 msgid "Find and black out emails, phone numbers, card numbers, passwords and keys"
 msgstr "Find and black out emails, phone numbers, card numbers, passwords and keys"
