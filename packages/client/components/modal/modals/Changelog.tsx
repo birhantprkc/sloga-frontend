@@ -3,13 +3,22 @@ import { For, Show, createSignal } from "solid-js";
 import { Trans } from "@lingui-solid/solid/macro";
 import { styled } from "styled-system/jsx";
 
-import { useTime } from "@revolt/i18n";
+import dayjs from "dayjs";
+
 import { renderChangelogMarkdown } from "@revolt/markdown";
 import { useState } from "@revolt/state";
 import { Checkbox, Column, Dialog, DialogProps } from "@revolt/ui";
 import type { DialogAction } from "@revolt/ui/components/design/Dialog";
 
 import { Modals } from "../types";
+
+/**
+ * Patch notes are written in English only, so their date is always rendered
+ * in English too (e.g. "August 23, 2026") regardless of the UI language.
+ */
+function formatPatchDate(value: string) {
+  return dayjs(value).locale("en").format("MMMM D, YYYY");
+}
 
 export interface ChangelogResponse {
   id: string;
@@ -38,7 +47,6 @@ export async function fetchAllChangelogs(): Promise<ChangelogResponse[]> {
 export function ChangelogModal(
   props: DialogProps & Modals & { type: "changelog" },
 ) {
-  const dayjs = useTime();
   const state = useState();
   const [dontShowAgain, setDontShowAgain] = createSignal(false);
 
@@ -72,7 +80,7 @@ export function ChangelogModal(
       actions={actions}
     >
       <Column>
-        <Subtitle>{dayjs(props.changelog.published_at).format("LL")}</Subtitle>
+        <Subtitle>{formatPatchDate(props.changelog.published_at)}</Subtitle>
         <div>{renderChangelogMarkdown(props.changelog.markdown_content)}</div>
         <Checkbox
           checked={dontShowAgain()}
@@ -93,8 +101,6 @@ export function ChangelogModal(
 export function ChangelogHistoryModal(
   props: DialogProps & Modals & { type: "changelog_history" },
 ) {
-  const dayjs = useTime();
-
   const actions: DialogAction[] = [{ text: <Trans>Close</Trans> }];
 
   return (
@@ -121,7 +127,7 @@ export function ChangelogHistoryModal(
               <Show when={index() > 0}>
                 <Divider />
               </Show>
-              <Subtitle>{dayjs(entry.published_at).format("LL")}</Subtitle>
+              <Subtitle>{formatPatchDate(entry.published_at)}</Subtitle>
               <div>{renderChangelogMarkdown(entry.markdown_content)}</div>
             </Entry>
           )}
