@@ -7187,3 +7187,51 @@ msgstr "Stop drawing"
 #: components/ui/components/features/voice/callCard/ParticipantTile.tsx
 msgid "Several people are drawing on your screen"
 msgstr "Several people are drawing on your screen"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Crop"
+msgstr "Crop"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Pen"
+msgstr "Pen"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Highlighter"
+msgstr "Highlighter"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Rectangle"
+msgstr "Rectangle"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Ellipse"
+msgstr "Ellipse"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Arrow"
+msgstr "Arrow"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Black bar"
+msgstr "Black bar"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Pixelate"
+msgstr "Pixelate"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Undo"
+msgstr "Undo"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Redo"
+msgstr "Redo"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Reset crop"
+msgstr "Reset crop"
+
+#: components/modal/modals/ImageEditor.tsx
+msgid "Loading editor…"
+msgstr "Loading editor…"

@@ -935,6 +935,8 @@ export function MessageComposition(props: Props) {
   function editFile(fileId: string) {
     const entry = state.draft.getFile(fileId);
     if (!entry || !ALLOWED_IMAGE_TYPES.includes(entry.file.type)) return;
+    // the editor flattens to a still frame; don't silently kill animations
+    if (entry.file.type === "image/gif") return;
 
     openModal({
       type: "image_editor",

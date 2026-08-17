@@ -80,10 +80,17 @@ export function FileCarousel(props: Props) {
               const file = () => props.getFile(id);
 
               /**
-               * Whether this entry is an image (previewable and editable)
+               * Whether this entry is an image (previewable)
                */
               const isImage = () =>
                 ALLOWED_IMAGE_TYPES.includes(file().file.type);
+
+              /**
+               * Editable images exclude GIFs — the editor flattens to a
+               * still frame, which would silently drop the animation
+               */
+              const isEditable = () =>
+                isImage() && file().file.type !== "image/gif";
 
               return (
                 <>
@@ -109,7 +116,7 @@ export function FileCarousel(props: Props) {
                         </Match>
                       </Switch>
                       <Overlay>
-                        <Show when={isImage()}>
+                        <Show when={isEditable()}>
                           <OverlayAction
                             type="button"
                             aria-label={t`Edit image`}
