@@ -296,7 +296,12 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
       openMic: true,
       vadEnabled: false,
       vadThreshold: 20,
-      vadAuto: true,
+      // OFF by default, deliberately. A stored settings blob from before this
+      // key existed reads the default, so shipping `true` would silently
+      // override a threshold an existing voice-activity user had tuned by
+      // hand — a behavior change to the thing that decides whether their
+      // microphone opens. They opt in.
+      vadAuto: false,
       pushToTalk: false,
       attenuationStrength: 0,
       attenuateWhenISpeak: false,

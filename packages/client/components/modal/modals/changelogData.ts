@@ -8,6 +8,64 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // v0.45.0: the settings reorganization, global attenuation, the input
+  // sensitivity meter, entrance sounds, RNNoise as the default filter, and
+  // the new appearance knobs. Copy constraints, all load-bearing:
+  // - Attenuation is WINDOWS DESKTOP ONLY and ships OFF (strength 0). Both
+  //   facts must stay in the bullet: a web reader who goes looking for it
+  //   will not find it, and nobody should think their game volume changed on
+  //   its own. Claim only what is true by construction — it restores each app
+  //   to the level it had, and never touches Sloga's own audio.
+  // - Automatic input sensitivity ships OFF, so no existing voice-activity
+  //   user's hand-tuned threshold moves on upgrade, and the bullet says so.
+  //   If that default is ever flipped to ON, this copy MUST become a warning:
+  //   a stored blob predating the key reads the default, so ON silently
+  //   overrides the thing that decides whether their microphone opens.
+  // - Entrance sounds ride the ordinary soundboard route, so they only play
+  //   where the user may already use the soundboard. State the limit rather
+  //   than letting it read as a bug in servers that forbid it.
+  // - The noise-suppression default changes for NEW installs only; anyone
+  //   with a stored choice keeps it. Never imply we changed a setting of
+  //   theirs.
+  // - Do NOT quote these UI strings — they are this release's grep markers:
+  //   "Two-Factor Recovery Codes", "Automatically adjust input sensitivity",
+  //   "Show usernames", "When others speak", "Same as all servers". Naming
+  //   the sidebar sections (Account, Privacy & Safety, Voice, Video) is fine;
+  //   the markers above are what the sweep greps for.
+  // - Never mention: server boosts, streaming connections, captions.
+  {
+    id: "sloga-2026-08-17-2",
+    title: "Patch Notes",
+    published_at: "2026-08-17T14:00:00.000Z",
+    markdown_content: `## v0.45.0 — Everything where you'd look for it
+
+### 🗂️ Settings you can actually navigate
+- **Your account details have a row of their own.** The page holding your username, email, password and two-factor codes used to be reachable only by clicking your name at the top of the list — easy to miss entirely, while the Profile page told you to go there. It sits in the Account group now, where it should have been all along.
+- **A new Privacy & Safety group.** Who can see your profile, whether friends see the game you are playing, your encryption keys, who may drive your computer during a call, and Streamer Mode — the "who can see or do what" switches now live together instead of in four different places.
+- **Voice and Video are two pages.** The combined one had grown to a dozen sections, and the camera controls sat below a long scroll of microphone ones. The in-game overlay got its own page as well.
+- **Bots and the developer switches moved into their own group,** and two rows that never did anything have been removed.
+
+### 🔉 Turn the game down when someone talks *(Windows desktop)*
+- **Off until you switch it on, in Settings → Voice.** Give it a percentage and Sloga lowers your other applications — the game, the music, the browser — while someone in the call is speaking, then puts each one back exactly where you had it. You choose whether it reacts to other people, to your own voice, or to both.
+- It adjusts other apps the same way the Windows volume mixer does, and Sloga's own audio is never lowered. Windows desktop only for now.
+
+### 🎤 Watch your microphone while you set it up
+- **Voice activity mode now shows a live meter.** Red is the part that would not be transmitted, green is the part that would. Drag the handle to the point where your voice clears the line and the room does not.
+- **Or let it find the line for you.** Switch on the automatic option and Sloga follows your room's background noise and moves the line itself. It is off unless you ask for it, so a threshold you had already set by hand stays exactly where you put it.
+
+### 🔔 Announce yourself
+- **Pick a soundboard sound that plays when you join a voice channel.** One for everywhere, a different one per server, or none in the servers where that would be obnoxious. It goes out through the soundboard, so it plays only where you are allowed to use the soundboard in the first place.
+
+### 🎧 Better noise suppression out of the box
+- **New installs now start on the enhanced filter** — RNNoise, the open-source one Sloga serves itself and runs on your own device — instead of the browser's basic one. **If you had already chosen a setting, it is untouched.**
+
+### 🎨 A few things to fiddle with
+- **Avatars have a size slider** in Appearance, alongside message size, and the sample messages above it change as you drag.
+- **You can hide names in the message list** and go by avatar alone.
+- **Compact mode moved to Appearance**, next to the preview that shows what it does, instead of sitting in Advanced.
+
+*Sloga — Hop on.*`,
+  },
   // v0.44.0: the in-app image editor with on-device auto-redact, plus the
   // enable-audio banner no longer firing on reconnects/joins. Copy
   // constraints, all load-bearing:
