@@ -7235,3 +7235,63 @@ msgstr "Reset crop"
 #: components/modal/modals/ImageEditor.tsx
 msgid "Loading editor…"
 msgstr "Loading editor…"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Auto-redact"
+msgstr "Auto-redact"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Find and black out emails, phone numbers, card numbers, passwords and keys"
+msgstr "Find and black out emails, phone numbers, card numbers, passwords and keys"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Scanning…"
+msgstr "Scanning…"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Review what was found — tap a chip to keep or skip it. Add anything missed with the Black bar tool."
+msgstr "Review what was found — tap a chip to keep or skip it. Add anything missed with the Black bar tool."
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Redact {0}"
+msgstr "Redact {0}"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Nothing sensitive was recognized. Text that is small, stylized, or not English can be missed — use the Black bar tool for anything you can see."
+msgstr "Nothing sensitive was recognized. Text that is small, stylized, or not English can be missed — use the Black bar tool for anything you can see."
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Auto-redact couldn't run on this image."
+msgstr "Auto-redact couldn't run on this image."
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "email"
+msgstr "email"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "phone"
+msgstr "phone"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "card"
+msgstr "card"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "SSN"
+msgstr "SSN"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "secret"
+msgstr "secret"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "password"
+msgstr "password"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "you"
+msgstr "you"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "IP"
+msgstr "IP"

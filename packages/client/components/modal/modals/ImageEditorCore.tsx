@@ -3,7 +3,15 @@ import { For, Show, createSignal, onCleanup, onMount } from "solid-js";
 import { useLingui } from "@lingui-solid/solid/macro";
 import { styled } from "styled-system/jsx";
 
+import { useClient } from "@revolt/client";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
+
+import {
+  type OcrWord,
+  type RedactionKind,
+  type RedactionProposal,
+  detectSensitive,
+} from "./autoRedact";
 
 /**
  * The image editor proper — loaded behind a dynamic import so none of this
@@ -64,6 +72,23 @@ const COLORS = [
 const WIDTHS = [3, 6, 12];
 
 /**
+ * Self-hosted tesseract assets (see public/tesseract). Every path is
+ * same-origin: nothing about the image ever leaves the device, and no shell
+ * needs a CSP change.
+ */
+const TESSERACT_BASE = "/tesseract";
+
+/** Padding around each OCR box so descenders/antialiasing are covered */
+const REDACT_PAD = 0.18;
+
+type OcrState =
+  | { phase: "idle" }
+  | { phase: "running"; progress: number }
+  | { phase: "review"; proposals: (RedactionProposal & { on: boolean })[] }
+  | { phase: "empty" }
+  | { phase: "error" };
+
+/**
  * Freehand shapes store a point trail; everything else stores a drag box
  */
 function isStroke(s: Shape): s is StrokeShape {
@@ -84,6 +109,7 @@ function normalise(s: { x1: number; y1: number; x2: number; y2: number }): Box {
 
 export function ImageEditorCore(props: Props) {
   const { t } = useLingui();
+  const client = useClient();
 
   const [shapes, setShapes] = createSignal<Shape[]>([]);
   const [redoStack, setRedoStack] = createSignal<Shape[]>([]);
@@ -92,6 +118,7 @@ export function ImageEditorCore(props: Props) {
   const [width, setWidth] = createSignal(WIDTHS[1]);
   const [crop, setCrop] = createSignal<Box | null>(null);
   const [ready, setReady] = createSignal(false);
+  const [ocr, setOcr] = createSignal<OcrState>({ phase: "idle" });
 
   let canvas!: HTMLCanvasElement;
   let image!: HTMLImageElement;
@@ -243,6 +270,29 @@ export function ImageEditorCore(props: Props) {
     ctx.drawImage(image, 0, 0);
     for (const s of shapes()) drawShape(ctx, s);
     if (preview) drawShape(ctx, preview);
+
+    // proposed redactions under review: solid where on, outlined where off
+    const state = ocr();
+    if (state.phase === "review") {
+      ctx.save();
+      const lw = Math.max(2, image.naturalWidth / 500);
+      for (const p of state.proposals) {
+        if (p.on) {
+          ctx.fillStyle = "#000000";
+          ctx.fillRect(p.x, p.y, p.w, p.h);
+          ctx.strokeStyle = "#FDD835";
+          ctx.lineWidth = lw;
+          ctx.strokeRect(p.x, p.y, p.w, p.h);
+        } else {
+          ctx.strokeStyle = "#FDD835";
+          ctx.lineWidth = lw;
+          ctx.setLineDash([lw * 3, lw * 2]);
+          ctx.strokeRect(p.x, p.y, p.w, p.h);
+          ctx.setLineDash([]);
+        }
+      }
+      ctx.restore();
+    }
 
     const c = cropPreview ?? crop();
     if (c && c.w > 0 && c.h > 0) {
@@ -427,9 +477,172 @@ export function ImageEditorCore(props: Props) {
   }
 
   /**
+   * OCR the base image on-device and propose redactions for anything that
+   * looks sensitive. Proposals are reviewed, never applied silently.
+   */
+  async function autoRedact() {
+    if (ocr().phase === "running") return;
+    setOcr({ phase: "running", progress: 0 });
+
+    let worker: import("tesseract.js").Worker | undefined;
+    try {
+      // tesseract.js is CJS: under vite's dep optimizer the named exports
+      // live only on `default`, while the production bundle hoists them.
+      // Read through whichever shape arrived.
+      const mod = await import("tesseract.js");
+      const { createWorker, OEM } = (
+        "createWorker" in mod ? mod : (mod as { default: typeof mod }).default
+      ) as typeof mod;
+      worker = await createWorker("eng", OEM.LSTM_ONLY, {
+        workerPath: `${TESSERACT_BASE}/worker.min.js`,
+        corePath: TESSERACT_BASE,
+        langPath: TESSERACT_BASE,
+        // the vendored traineddata is gzipped; keep it in the browser cache
+        gzip: true,
+        logger: (m) => {
+          if (m.status === "recognizing text") {
+            setOcr({ phase: "running", progress: m.progress });
+          }
+        },
+      });
+
+      // recognise from a plain canvas of the base image so the OCR never sees
+      // (or is confused by) annotations already drawn
+      const src = document.createElement("canvas");
+      src.width = image.naturalWidth;
+      src.height = image.naturalHeight;
+      src.getContext("2d")!.drawImage(image, 0, 0);
+
+      const { data } = await worker.recognize(src, {}, { blocks: true });
+
+      const words: OcrWord[] = [];
+      let lineNo = 0;
+      for (const block of data.blocks ?? []) {
+        for (const para of block.paragraphs) {
+          for (const line of para.lines) {
+            for (const w of line.words) {
+              if (!w.text.trim() || w.confidence < 25) continue;
+              words.push({
+                text: w.text,
+                x0: w.bbox.x0,
+                y0: w.bbox.y0,
+                x1: w.bbox.x1,
+                y1: w.bbox.y1,
+                line: lineNo,
+              });
+            }
+            lineNo++;
+          }
+        }
+      }
+
+      const self = client()?.user;
+      const found = detectSensitive(words, {
+        username: self?.username,
+        displayName: self?.displayName,
+      });
+
+      if (!found.length) {
+        setOcr({ phase: "empty" });
+        redraw();
+        return;
+      }
+
+      // pad each box: OCR boxes hug glyph ink and miss antialiased edges.
+      // Digit-only runs have no ascenders/descenders, so a purely relative
+      // pad can be a couple of pixels; enforce an absolute floor too.
+      const floor = Math.max(3, image.naturalWidth / 400);
+      const proposals = found.map((p) => {
+        const px = Math.max(floor, p.h * REDACT_PAD);
+        const py = Math.max(floor, p.h * REDACT_PAD);
+        const x = Math.max(0, p.x - px);
+        const y = Math.max(0, p.y - py);
+        return {
+          ...p,
+          x,
+          y,
+          w: Math.min(canvas.width - x, p.w + px * 2),
+          h: Math.min(canvas.height - y, p.h + py * 2),
+          on: true,
+        };
+      });
+      setOcr({ phase: "review", proposals });
+      redraw();
+    } catch (error) {
+      console.error("[image-editor] auto-redact failed", error);
+      setOcr({ phase: "error" });
+    } finally {
+      await worker?.terminate().catch(() => {});
+    }
+  }
+
+  function toggleProposal(index: number) {
+    const state = ocr();
+    if (state.phase !== "review") return;
+    setOcr({
+      phase: "review",
+      proposals: state.proposals.map((p, i) =>
+        i === index ? { ...p, on: !p.on } : p,
+      ),
+    });
+    redraw();
+  }
+
+  /**
+   * Commit the enabled proposals as ordinary bar shapes (so they join the
+   * undo stack like anything hand-drawn) and leave review mode
+   */
+  function applyProposals() {
+    const state = ocr();
+    if (state.phase !== "review") return;
+    const bars: Shape[] = state.proposals
+      .filter((p) => p.on)
+      .map((p) => ({
+        kind: "bar",
+        x1: p.x,
+        y1: p.y,
+        x2: p.x + p.w,
+        y2: p.y + p.h,
+        color: "#000000",
+        width: 0,
+      }));
+    if (bars.length) {
+      setShapes([...shapes(), ...bars]);
+      setRedoStack([]);
+    }
+    setOcr({ phase: "idle" });
+    redraw();
+  }
+
+  function discardProposals() {
+    setOcr({ phase: "idle" });
+    redraw();
+  }
+
+  const enabledCount = () => {
+    const state = ocr();
+    return state.phase === "review"
+      ? state.proposals.filter((p) => p.on).length
+      : 0;
+  };
+
+  const KIND_LABEL: Record<RedactionKind, () => string> = {
+    email: () => t`email`,
+    phone: () => t`phone`,
+    card: () => t`card`,
+    ssn: () => t`SSN`,
+    secret: () => t`secret`,
+    labelled: () => t`password`,
+    identity: () => t`you`,
+    ip: () => t`IP`,
+  };
+
+  /**
    * Flatten image + shapes (+ crop) to a new File and hand it back
    */
   async function apply() {
+    // never lose reviewed-but-unapplied redactions on Apply
+    if (ocr().phase === "review") applyProposals();
     const full = document.createElement("canvas");
     full.width = canvas.width;
     full.height = canvas.height;
@@ -534,6 +747,27 @@ export function ImageEditorCore(props: Props) {
           </Show>
         </Group>
         <Group>
+          <AutoRedactButton
+            type="button"
+            aria-label={t`Auto-redact`}
+            title={t`Find and black out emails, phone numbers, card numbers, passwords and keys`}
+            disabled={ocr().phase === "running" || !ready()}
+            onClick={autoRedact}
+          >
+            <Symbol>visibility_off</Symbol>
+            <Show
+              when={ocr().phase === "running"}
+              fallback={<span>{t`Auto-redact`}</span>}
+            >
+              <span>
+                {t`Scanning…`}{" "}
+                {Math.round(
+                  (ocr() as { progress?: number }).progress! * 100 || 0,
+                )}
+                %
+              </span>
+            </Show>
+          </AutoRedactButton>
           <ToolButton
             type="button"
             title={t`Undo`}
@@ -558,6 +792,56 @@ export function ImageEditorCore(props: Props) {
           </TextButton>
         </Group>
       </Toolbar>
+      <Show when={ocr().phase === "review"}>
+        <ReviewBar>
+          <ReviewHint>
+            {t`Review what was found — tap a chip to keep or skip it. Add anything missed with the Black bar tool.`}
+          </ReviewHint>
+          <Chips>
+            <For
+              each={(ocr() as Extract<OcrState, { phase: "review" }>).proposals}
+            >
+              {(p, index) => (
+                <Chip
+                  type="button"
+                  on={p.on}
+                  onClick={() => toggleProposal(index())}
+                  title={p.text}
+                >
+                  <Symbol>{p.on ? "check" : "close"}</Symbol>
+                  <span>{KIND_LABEL[p.kind]()}</span>
+                </Chip>
+              )}
+            </For>
+          </Chips>
+          <Group>
+            <TextButton type="button" onClick={discardProposals}>
+              {t`Discard`}
+            </TextButton>
+            <TextButton type="button" accent onClick={applyProposals}>
+              {t`Redact ${enabledCount()}`}
+            </TextButton>
+          </Group>
+        </ReviewBar>
+      </Show>
+      <Show when={ocr().phase === "empty"}>
+        <ReviewBar>
+          <ReviewHint>
+            {t`Nothing sensitive was recognized. Text that is small, stylized, or not English can be missed — use the Black bar tool for anything you can see.`}
+          </ReviewHint>
+          <TextButton type="button" onClick={discardProposals}>
+            {t`OK`}
+          </TextButton>
+        </ReviewBar>
+      </Show>
+      <Show when={ocr().phase === "error"}>
+        <ReviewBar>
+          <ReviewHint>{t`Auto-redact couldn't run on this image.`}</ReviewHint>
+          <TextButton type="button" onClick={discardProposals}>
+            {t`OK`}
+          </TextButton>
+        </ReviewBar>
+      </Show>
       <CanvasArea>
         <EditCanvas
           ref={canvas}
@@ -683,6 +967,91 @@ const TextButton = styled("button", {
         "&:hover": {
           background: "var(--md-sys-color-primary)",
         },
+      },
+    },
+  },
+});
+
+const AutoRedactButton = styled("button", {
+  base: {
+    display: "flex",
+    alignItems: "center",
+    gap: "var(--gap-sm)",
+    padding: "0 var(--gap-md)",
+    height: "36px",
+
+    border: "1px solid var(--md-sys-color-outline)",
+    borderRadius: "var(--borderRadius-md)",
+    cursor: "pointer",
+    fontWeight: 600,
+    color: "inherit",
+    background: "transparent",
+
+    "&:hover": {
+      background: "var(--md-sys-color-surface-variant)",
+    },
+    "&:disabled": {
+      cursor: "progress",
+      opacity: 0.7,
+    },
+  },
+});
+
+const ReviewBar = styled("div", {
+  base: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "var(--gap-md)",
+
+    padding: "var(--gap-md)",
+    borderRadius: "var(--borderRadius-lg)",
+    background: "var(--md-sys-color-surface)",
+    color: "var(--md-sys-color-on-surface)",
+    borderLeft: "4px solid #FDD835",
+  },
+});
+
+const ReviewHint = styled("span", {
+  base: {
+    flexBasis: "100%",
+    fontSize: "0.9em",
+    color: "var(--md-sys-color-on-surface-variant)",
+  },
+});
+
+const Chips = styled("div", {
+  base: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "var(--gap-sm)",
+  },
+});
+
+const Chip = styled("button", {
+  base: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    padding: "2px 10px 2px 6px",
+    height: "30px",
+
+    border: "1px solid var(--md-sys-color-outline)",
+    borderRadius: "999px",
+    cursor: "pointer",
+    fontSize: "0.85em",
+    color: "var(--md-sys-color-on-surface-variant)",
+    background: "transparent",
+    textDecoration: "line-through",
+  },
+  variants: {
+    on: {
+      true: {
+        textDecoration: "none",
+        color: "var(--md-sys-color-on-primary-container)",
+        background: "var(--md-sys-color-primary-container)",
+        borderColor: "transparent",
       },
     },
   },

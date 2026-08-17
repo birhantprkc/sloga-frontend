@@ -156,6 +156,7 @@
     "space-separated-tokens": "^2.0.2",
     "stoat.js": "workspace:^",
     "style-to-object": "^1.0.8",
+    "tesseract.js": "^6.0.1",
     "tlock-js": "^0.9.0",
     "ulid": "^3.0.2",
     "unified": "^11.0.5",
