@@ -686,6 +686,9 @@ const entryContainer = cva({
     display: "grid",
     flexShrink: 0,
     placeItems: "center",
+    // Href-less <a>: without this the expanded rail labels show the text
+    // I-beam while the avatar next to them shows a pointer.
+    cursor: "pointer",
 
     "&:before": {
       content: "' '",

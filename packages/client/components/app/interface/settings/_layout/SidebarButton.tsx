@@ -57,6 +57,9 @@ const SidebarButtonBase = styled("a", {
     marginInlineEnd: "12px",
     fontSize: "15px",
     userSelect: "none",
+    // An <a> with no href gets the browser default, which is the text
+    // I-beam over the label. These are buttons.
+    cursor: "pointer",
     transition: "background-color 0.1s ease-in-out",
     color: "var(--md-sys-color-on-surface)",
     fill: "var(--md-sys-color-on-surface)",
