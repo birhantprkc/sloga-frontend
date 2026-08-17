@@ -9,7 +9,6 @@ import { render } from "solid-js/web";
 
 import { useLingui } from "@lingui-solid/solid/macro";
 
-import { attachDevtoolsOverlay } from "@solid-devtools/overlay";
 import { Navigate, Route, Router, useParams } from "@solidjs/router";
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import "material-symbols";
@@ -64,7 +63,12 @@ import { ChannelPage } from "./interface/channels/ChannelPage";
 import { mountIosViewportFix } from "./iosViewport";
 import "./serviceWorkerInterface";
 
-attachDevtoolsOverlay();
+// Best-effort: the devtools debugger throws at module eval when its setup
+// script loses the load race (reliably in CDP-automated tabs), and a static
+// import would take the whole app down with it.
+import("@solid-devtools/overlay")
+  .then(({ attachDevtoolsOverlay }) => attachDevtoolsOverlay())
+  .catch(() => {});
 
 // Stamp the overlay window BEFORE the first paint. The transparency rule in
 // @revolt/ui/styles hangs off this attribute; setting it from an effect would
