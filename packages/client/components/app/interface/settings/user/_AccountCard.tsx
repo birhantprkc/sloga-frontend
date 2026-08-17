@@ -14,17 +14,18 @@ import {
 } from "../_layout/SidebarButton";
 
 /**
- * Account Card
+ * Account Card — the "signed in as" header above the settings list.
+ *
+ * Still a shortcut to My Account, but it no longer claims the selected state:
+ * My Account is a visible row in the Account section now, and that row is
+ * what highlights. Two highlighted rows for one page read as two pages.
  */
 export function AccountCard() {
   const client = useClient();
-  const { page, navigate } = useSettingsNavigation();
+  const { navigate } = useSettingsNavigation();
 
   return (
-    <SidebarButton
-      onClick={() => navigate("account")}
-      aria-selected={page() === "account"}
-    >
+    <SidebarButton onClick={() => navigate("account")}>
       <Ripple />
       <SidebarButtonTitle>
         <Avatar size={36} src={client().user!.animatedAvatarURL} />
@@ -34,7 +35,9 @@ export function AccountCard() {
           >
             {client().user!.displayName}
           </OverflowingText>
-          <Trans>My Account</Trans>
+          <OverflowingText>
+            {client().user!.username}#{client().user!.discriminator}
+          </OverflowingText>
         </SidebarButtonContent>
       </SidebarButtonTitle>
       {/*<SidebarButtonIcon>

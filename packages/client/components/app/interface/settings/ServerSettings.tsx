@@ -122,7 +122,7 @@ const Config: SettingsConfiguration<Server> = {
         },
         {
           hidden: !server.havePermission("ManageCustomisation"),
-          title: <Trans>Customisation</Trans>,
+          title: <Trans>Customization</Trans>,
           entries: [
             {
               id: "emojis",

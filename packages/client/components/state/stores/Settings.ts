@@ -108,6 +108,12 @@ interface SettingsDefinition {
   "appearance:show_timestamps": boolean;
 
   /**
+   * Whether to show the sender name above a message group. Off leaves the
+   * avatar (and its hover card) as the only identification.
+   */
+  "appearance:show_usernames": boolean;
+
+  /**
    * How wide the message column may grow before it stops following the window
    *
    * Deliberately NOT gated on display aspect: a 2560x1440 16:9 window already
@@ -261,6 +267,7 @@ const EXPECTED_TYPES: { [K in keyof SettingsDefinition]: ValueType<K> } = {
   "appearance:expand_emoticons": "boolean",
   "appearance:compact_mode": "boolean",
   "appearance:show_timestamps": "boolean",
+  "appearance:show_usernames": "boolean",
   "appearance:content_width": "string",
   "appearance:content_align": "string",
   "appearance:ultrawide_layout": "boolean",
@@ -299,6 +306,7 @@ const DEFAULT_VALUES: TypeSettings = {
   // has never heard of — which is every existing user, for a new key.
   "appearance:expand_emoticons": true,
   "appearance:show_timestamps": true,
+  "appearance:show_usernames": true,
   // "full" so that shipping this reflows precisely nobody. The wider default a
   // 21:9 owner actually wants is written into this key by the ultrawide toggle
   // when they switch it on, not baked in here.
@@ -361,6 +369,7 @@ export class Settings extends AbstractStore<"settings", TypeSettings> {
       // there; a key in only one of the two reads undefined for every existing
       // user, whose stored blob predates it.
       "appearance:show_timestamps": true,
+      "appearance:show_usernames": true,
       // Mirrored in DEFAULT_VALUES — see the note there.
       "appearance:content_width": "full",
       "appearance:content_align": "start",

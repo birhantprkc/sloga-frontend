@@ -13,7 +13,6 @@ import {
   CircularProgress,
   Column,
   Form2,
-  MenuItem,
   Row,
   Text,
 } from "@revolt/ui";
@@ -50,7 +49,6 @@ export function UserProfileEditor(props: Props) {
     ),
     banner: createFormControl<string | File[] | null>(null),
     bio: createFormControl(""),
-    visibility: createFormControl(props.user.profileVisibility),
   });
   /* eslint-enable solid/reactivity */
 
@@ -94,7 +92,6 @@ export function UserProfileEditor(props: Props) {
   function onReset() {
     editGroup.controls.displayName.setValue(props.user.displayName);
     editGroup.controls.avatar.setValue(props.user.animatedAvatarURL);
-    editGroup.controls.visibility.setValue(props.user.profileVisibility);
 
     if (profile.data) {
       editGroup.controls.banner.setValue(
@@ -133,12 +130,6 @@ export function UserProfileEditor(props: Props) {
         changes.profile ??= {};
         changes.profile.content = editGroup.controls.bio.value;
       }
-    }
-
-    if (editGroup.controls.visibility.isDirty) {
-      // `profile_visibility` is additive; stoat-api 0.13.5 predates it
-      (changes as { profile_visibility?: string }).profile_visibility =
-        editGroup.controls.visibility.value;
     }
 
     let newBannerUrl: string | null = null;
@@ -203,9 +194,7 @@ export function UserProfileEditor(props: Props) {
           <CategoryButton
             icon={<MdBadge />}
             action="chevron"
-            description={
-              <Trans>Go to account settings to edit your username</Trans>
-            }
+            description={<Trans>Go to My Account to edit your username</Trans>}
             onClick={() => navigate("account")}
           >
             <Trans>Want to change username?</Trans>
@@ -220,30 +209,6 @@ export function UserProfileEditor(props: Props) {
           control={editGroup.controls.bio}
           placeholder={t`Something cool about me...`}
         />
-
-        <Show when={!props.user.bot}>
-          <Text class="label">
-            <Trans>Profile visibility</Trans>
-          </Text>
-          <Text class="_status" size="small">
-            <Trans>
-              Choose who can see your bio, banner, and connections. People you
-              share a server or group with can always see your name and
-              avatar.
-            </Trans>
-          </Text>
-          <Form2.Select
-            label={t`Profile visibility`}
-            control={editGroup.controls.visibility}
-          >
-            <MenuItem value="Everyone">
-              <Trans>Everyone</Trans>
-            </MenuItem>
-            <MenuItem value="Friends">
-              <Trans>Friends only</Trans>
-            </MenuItem>
-          </Form2.Select>
-        </Show>
 
         <Row align>
           <Form2.Reset group={editGroup} onReset={onReset} />

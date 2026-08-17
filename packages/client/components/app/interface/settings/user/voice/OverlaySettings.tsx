@@ -16,13 +16,22 @@ import { CategoryButton, Checkbox, Column, Slider, Text } from "@revolt/ui";
 /**
  * In-game voice overlay options (desktop shells only).
  *
- * Lives with Voice rather than on the Electron-only `Native` page: this is a
- * voice feature, and `Native` is gated on `!!window.native`, which does not
- * exist on the Tauri shell at all.
+ * Its own sidebar page ("Game Overlay") since the Voice/Video split — it
+ * used to be the last section of Voice & Video. The sidebar entry is gated on
+ * `overlayShellAvailable()`, the same probe the <Show> below uses, so a shell
+ * that cannot open the window gets neither the row nor an empty page.
  *
  * Unlike the overlay WINDOW's own components, this one runs in the main
  * window with the full provider stack, so lingui macros are correct here.
  */
+export function OverlaySettingsPage() {
+  return (
+    <Column gap="lg">
+      <OverlaySettings />
+    </Column>
+  );
+}
+
 export function OverlaySettings() {
   const { voice } = useState();
 

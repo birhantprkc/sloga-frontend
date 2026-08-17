@@ -203,7 +203,10 @@ function MultiFactorAuth() {
     <CategoryButton.Group>
       <CategoryButton.Collapse
         icon={<MdVerifiedUser {...iconSize(22)} />}
-        title={<Trans>Recovery Codes</Trans>}
+        // "Two-Factor" is deliberate: the Encryption page has its own,
+        // unrelated "recovery code" for encrypted message history, and the
+        // two were one word apart on adjacent pages.
+        title={<Trans>Two-Factor Recovery Codes</Trans>}
         description={
           <Trans>
             Configure a way to get back into your account in case your 2FA is

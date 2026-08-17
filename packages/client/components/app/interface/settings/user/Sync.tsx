@@ -31,7 +31,7 @@ export default function Sync() {
           onClick={() => void 0}
           icon={<MdBrush {...iconSize(22)} />}
           description={
-            <Trans>Sync your chosen theme, colours, and any custom CSS.</Trans>
+            <Trans>Sync your chosen theme, colors, and any custom CSS.</Trans>
           }
         >
           <Trans>Theme</Trans>

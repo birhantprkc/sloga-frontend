@@ -788,7 +788,7 @@ function EventCard(props: { occurrence: Occurrence; onOpen: () => void }) {
           </Text>
           <Show when={event().cancelled}>
             <CancelledPill>
-              <Trans>Cancelled</Trans>
+              <Trans>Canceled</Trans>
             </CancelledPill>
           </Show>
           <Show when={event().recurrence}>
@@ -1171,7 +1171,7 @@ function EventDetail(props: {
         </Text>
         <Show when={props.event.cancelled}>
           <CancelledPill>
-            <Trans>Cancelled</Trans>
+            <Trans>Canceled</Trans>
           </CancelledPill>
         </Show>
       </Row>

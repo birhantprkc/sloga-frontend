@@ -445,8 +445,8 @@ export function ImportDiscordModal(
             <Text>
               <Trans>
                 The server name, its categories and its channels in order, its
-                roles with their colours and ranking, and who can see and do
-                what in each channel — private channels included.
+                roles with their colors and ranking, and who can see and do what
+                in each channel — private channels included.
               </Trans>
             </Text>
 

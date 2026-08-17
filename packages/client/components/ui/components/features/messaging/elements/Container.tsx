@@ -224,7 +224,9 @@ const Info = styled("div", {
     compact: {
       true: {},
       false: {
-        width: "54px",
+        // Avatar plus its padding; never narrower than the 54px the
+        // tail-message timestamp prefix was laid out for.
+        width: "max(54px, calc(var(--message-avatar-size, 36px) + 18px))",
       },
     },
   },
@@ -326,6 +328,16 @@ export function MessageContainer(props: Props) {
     !(props.timestamp instanceof Date) ||
     state.settings.getValue("appearance:show_timestamps");
 
+  /**
+   * Whether to render the sender name. Same shape as showTime: rows with a
+   * real Date (the message list, the Appearance preview) follow the setting;
+   * a draft passing a status label keeps its name so the row still says who
+   * is sending.
+   */
+  const showName = () =>
+    !(props.timestamp instanceof Date) ||
+    state.settings.getValue("appearance:show_usernames");
+
   return (
     <div
       id={message?.id}
@@ -394,7 +406,7 @@ export function MessageContainer(props: Props) {
                     />
                   </div>
                 </Show>
-                {props.username}
+                <Show when={showName()}>{props.username}</Show>
                 {props.info}
               </CompactInfo>
             </Match>
@@ -452,7 +464,9 @@ export function MessageContainer(props: Props) {
         <Body editing={props.editing}>
           <Show when={!props.tail && !props.compact}>
             <Row gap="sm" align>
-              <OverflowingText>{props.username}</OverflowingText>
+              <Show when={showName()}>
+                <OverflowingText>{props.username}</OverflowingText>
+              </Show>
               <NonBreakingText>
                 <div class={infoText()}>
                   {props.info}

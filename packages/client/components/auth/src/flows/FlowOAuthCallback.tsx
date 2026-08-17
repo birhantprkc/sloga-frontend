@@ -93,7 +93,7 @@ export default function FlowOAuthCallback() {
             }
           >
             <Match when={error() === "cancelled"}>
-              <Trans>The Google sign-in was cancelled.</Trans>
+              <Trans>The Google sign-in was canceled.</Trans>
             </Match>
             <Match when={error() === "email_unverified"}>
               <Trans>

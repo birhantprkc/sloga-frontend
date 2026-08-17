@@ -79,17 +79,9 @@ export function AppearanceMenu() {
 
   return (
     <Column gap="lg">
-      <MessagePreview>
-        <Text>
-          Welcome to the new appearance menu, custom themes are not available
-          just yet but we are looking for feedback on how to best implement
-          them!
-        </Text>
-      </MessagePreview>
-
       <Column>
         <Text class="title" size="small">
-          Colours
+          <Trans>Colors</Trans>
         </Text>
 
         <Row justify="stretch">
@@ -319,18 +311,55 @@ export function AppearanceMenu() {
             </Button>
           </Row>
         </Show>
-      </Column>
 
-      <Column>
-        <Text class="title" size="small">
-          <Trans>Display & Text</Trans>
-        </Text>
-
+        {/* A rendering effect of the theme, so it sits with the theme rather
+            than among the message options it used to head. */}
         <Checkbox checked={state.theme.blur} onChange={state.theme.toggleBlur}>
           <Trans>
             Enable transparency glass/blur effects (slow on older machines)
           </Trans>
         </Checkbox>
+      </Column>
+
+      <Column>
+        <Text class="title" size="small">
+          <Trans>Messages</Trans>
+        </Text>
+
+        {/* The preview leads the section so every control under it has
+            something to act on. It is a live MessageContainer, so it honours
+            the timestamp/username toggles and the three sliders exactly as
+            the channel view does. */}
+        <Preview>
+          <MessagePreview>
+            <MessageContainer
+              avatar={
+                <Avatar
+                  size={state.theme.messageAvatarSize}
+                  src={user()?.animatedAvatarURL}
+                  fallback={user()?.displayName}
+                />
+              }
+              timestamp={new Date()}
+              username={user()?.displayName}
+              isLink="hide"
+            >
+              Sphinx of black quartz, judge my vow
+            </MessageContainer>
+            <MessageContainer
+              avatar={
+                <Avatar size={state.theme.messageAvatarSize} fallback={"M"} />
+              }
+              timestamp={new Date()}
+              username={"MysticPixie"}
+              isLink="hide"
+            >
+              <code class={css({ fontFamily: `var(--fonts-monospace)` })}>
+                The quick brown fox jumped over the lazy dog
+              </code>
+            </MessageContainer>
+          </MessagePreview>
+        </Preview>
 
         <Checkbox
           checked={state.settings.getValue("appearance:show_timestamps")}
@@ -344,34 +373,17 @@ export function AppearanceMenu() {
           <Trans>Show message timestamps</Trans>
         </Checkbox>
 
-        <Preview>
-          <MessagePreview>
-            <MessageContainer
-              avatar={
-                <Avatar
-                  size={36}
-                  src={user()?.animatedAvatarURL}
-                  fallback={user()?.displayName}
-                />
-              }
-              timestamp={new Date()}
-              username={user()?.displayName}
-              isLink="hide"
-            >
-              Sphinx of black quartz, judge my vow
-            </MessageContainer>
-            <MessageContainer
-              avatar={<Avatar size={36} fallback={"M"} />}
-              timestamp={new Date()}
-              username={"MysticPixie"}
-              isLink="hide"
-            >
-              <code class={css({ fontFamily: `var(--fonts-monospace)` })}>
-                The quick brown fox jumped over the lazy dog
-              </code>
-            </MessageContainer>
-          </MessagePreview>
-        </Preview>
+        <Checkbox
+          checked={state.settings.getValue("appearance:show_usernames")}
+          onChange={(event) =>
+            state.settings.setValue(
+              "appearance:show_usernames",
+              event.currentTarget.checked,
+            )
+          }
+        >
+          <Trans>Show usernames</Trans>
+        </Checkbox>
 
         <Text class="label">
           <Trans>Message Size</Trans>
@@ -384,43 +396,65 @@ export function AppearanceMenu() {
             (state.theme.messageSize = event.currentTarget.value)
           }
         />
+
+        <Text class="label">
+          <Trans>Avatar Size</Trans>
+        </Text>
+        <Slider
+          min={24}
+          max={48}
+          step={2}
+          value={state.theme.messageAvatarSize}
+          onInput={(event) =>
+            (state.theme.messageAvatarSize = event.currentTarget.value)
+          }
+          labelFormatter={(value) => `${value}px`}
+        />
+
+        <Text class="label">
+          <Trans>Message Group Spacing</Trans>
+        </Text>
+        <Slider
+          min={0}
+          max={16}
+          value={state.theme.messageGroupSpacing}
+          onInput={(event) =>
+            (state.theme.messageGroupSpacing = event.currentTarget.value)
+          }
+        />
       </Column>
 
-      <Text class="label">
-        <Trans>Message Group Spacing</Trans>
-      </Text>
-      <Slider
-        min={0}
-        max={16}
-        value={state.theme.messageGroupSpacing}
-        onInput={(event) =>
-          (state.theme.messageGroupSpacing = event.currentTarget.value)
-        }
-      />
+      <Column>
+        <Text class="title" size="small">
+          <Trans>Fonts</Trans>
+        </Text>
 
-      <FloatingSelect
-        label={t`Interface Font`}
-        value={state.theme.interfaceFont}
-        onChange={(e) =>
-          state.theme.setInterfaceFont(e.currentTarget.value as Fonts)
-        }
-      >
-        <For each={FONT_KEYS}>
-          {(key) => <MenuItem value={key}>{key}</MenuItem>}
-        </For>
-      </FloatingSelect>
+        <FloatingSelect
+          label={t`Interface Font`}
+          value={state.theme.interfaceFont}
+          onChange={(e) =>
+            state.theme.setInterfaceFont(e.currentTarget.value as Fonts)
+          }
+        >
+          <For each={FONT_KEYS}>
+            {(key) => <MenuItem value={key}>{key}</MenuItem>}
+          </For>
+        </FloatingSelect>
 
-      <FloatingSelect
-        label={t`Monospace Font`}
-        value={state.theme.monospaceFont}
-        onChange={(e) =>
-          state.theme.setMonospaceFont(e.currentTarget.value as MonospaceFonts)
-        }
-      >
-        <For each={MONOSPACE_FONT_KEYS}>
-          {(key) => <MenuItem value={key}>{key}</MenuItem>}
-        </For>
-      </FloatingSelect>
+        <FloatingSelect
+          label={t`Monospace Font`}
+          value={state.theme.monospaceFont}
+          onChange={(e) =>
+            state.theme.setMonospaceFont(
+              e.currentTarget.value as MonospaceFonts,
+            )
+          }
+        >
+          <For each={MONOSPACE_FONT_KEYS}>
+            {(key) => <MenuItem value={key}>{key}</MenuItem>}
+          </For>
+        </FloatingSelect>
+      </Column>
 
       <Column>
         <Text class="title" size="small">
@@ -600,7 +634,9 @@ function EmojiPack(props: { pack: UnicodeEmojiPacks }) {
 
 const Preview = styled("div", {
   base: {
-    height: "126px",
+    // Grows with the avatar and message-size sliders instead of clipping the
+    // second sample message at their upper end.
+    minHeight: "126px",
     overflow: "hidden",
     borderRadius: "var(--borderRadius-lg)",
     background: "var(--md-sys-color-surface-container-highest)",

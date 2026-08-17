@@ -51,10 +51,6 @@ export function CameraOptions() {
 
   return (
     <Column>
-      <Text class="title">
-        <Trans>Camera Settings</Trans>
-      </Text>
-
       <CameraPreview />
 
       <CategoryButton.Group>

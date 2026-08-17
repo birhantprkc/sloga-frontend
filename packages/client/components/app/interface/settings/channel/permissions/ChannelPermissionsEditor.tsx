@@ -168,7 +168,7 @@ export function ChannelPermissionsEditor(props: Props) {
     {
       key: "ManageCustomisation",
       value: 2n ** 4n,
-      title: t`Manage Customisation`,
+      title: t`Manage Customization`,
       description: {
         Server: t`Create server emoji`,
       },

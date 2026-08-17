@@ -1,4 +1,4 @@
-import { Show } from "solid-js";
+import { Show, createResource } from "solid-js";
 
 import { Trans } from "@lingui-solid/solid/macro";
 import { Server } from "stoat.js";
@@ -9,10 +9,12 @@ import {
   nativeE2EEAvailable,
   useClient,
 } from "@revolt/client";
+import { fetchStreamingFlags } from "@revolt/client/streamConnections";
 import { CONFIGURATION, tauriInvoke } from "@revolt/common";
 import { useUser } from "@revolt/markdown/users";
 import { useModals } from "@revolt/modal";
 import { fetchAllChangelogs } from "@revolt/modal/modals/Changelog";
+import { overlayShellAvailable } from "@revolt/rtc/overlay/shell";
 import { ColouredText, Column, Text, iconSize } from "@revolt/ui";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
@@ -22,7 +24,6 @@ import MdCoffee from "@material-design-icons/svg/outlined/coffee.svg?component-s
 import MdGavel from "@material-design-icons/svg/outlined/gavel.svg?component-solid";
 import MdLanguage from "@material-design-icons/svg/outlined/language.svg?component-solid";
 import MdLogout from "@material-design-icons/svg/outlined/logout.svg?component-solid";
-import MdMemory from "@material-design-icons/svg/outlined/memory.svg?component-solid";
 import MdMic from "@material-design-icons/svg/outlined/mic.svg?component-solid";
 import MdNotifications from "@material-design-icons/svg/outlined/notifications.svg?component-solid";
 import MdPalette from "@material-design-icons/svg/outlined/palette.svg?component-solid";
@@ -40,18 +41,22 @@ import { SettingsConfiguration } from ".";
 import { AccountCard, BackCard } from "./user/_AccountCard";
 import { MyAccount } from "./user/Account";
 import AdvancedSettings from "./user/Advanced";
-import { ConnectionsSettings } from "./user/Connections";
 import { AppearanceMenu } from "./user/appearance";
 import { MyBots, ViewBot } from "./user/bots";
+import { ConnectionsSettings } from "./user/Connections";
+import { EncryptionSettings } from "./user/Encryption";
 import { Feedback } from "./user/Feedback";
 import { LanguageSettings } from "./user/Language";
 import Native from "./user/Native";
 import Notifications from "./user/notifications/Notifications";
+import { PrivacySettings } from "./user/Privacy";
 import { EditProfile } from "./user/profile";
-import { SecurityAndPrivacy } from "./user/SecurityAndPrivacy";
+import { RemoteControlSettings } from "./user/RemoteControl";
 import { Sessions } from "./user/Sessions";
 import { StreamerModeSettings } from "./user/StreamerMode";
 import { EditSubscription } from "./user/subscriptions";
+import { OverlaySettingsPage } from "./user/voice/OverlaySettings";
+import { VideoSettings } from "./user/voice/VideoSettings";
 import { VoiceSettings } from "./user/voice/VoiceSettings";
 
 const Config: SettingsConfiguration<{ server: Server }> = {
@@ -97,7 +102,11 @@ const Config: SettingsConfiguration<{ server: Server }> = {
       case "sessions":
         return <Sessions />;
       case "security":
-        return <SecurityAndPrivacy />;
+        return <EncryptionSettings />;
+      case "privacy":
+        return <PrivacySettings />;
+      case "remote_control":
+        return <RemoteControlSettings />;
       case "bots":
         return <MyBots />;
       case "language":
@@ -110,6 +119,10 @@ const Config: SettingsConfiguration<{ server: Server }> = {
         return <Native />;
       case "voice":
         return <VoiceSettings />;
+      case "video":
+        return <VideoSettings />;
+      case "overlay":
+        return <OverlaySettingsPage />;
       case "notifications":
         return <Notifications isDesktop={!!window.native} />;
       case "streamer":
@@ -129,6 +142,18 @@ const Config: SettingsConfiguration<{ server: Server }> = {
    */
   list(_, onClose) {
     const { pop, openModal } = useModals();
+    const client = useClient();
+
+    // Which streaming platforms this server can link. Connections is a dead
+    // page ("not enabled on this server yet") wherever both are off, so the
+    // row hides there — unless the account already carries a link, which the
+    // page can still show and unlink. Hidden while the flags load too, so a
+    // server with linking off never flashes the row.
+    const [streamingFlags] = createResource(fetchStreamingFlags);
+    const connectionsUnavailable = () =>
+      !client().user?.connections?.length &&
+      (streamingFlags.state !== "ready" ||
+        (!streamingFlags()?.twitch && !streamingFlags()?.youtube));
 
     return {
       context: null!,
@@ -169,45 +194,81 @@ const Config: SettingsConfiguration<{ server: Server }> = {
       ),
       entries: [
         {
+          // Who you are and how you sign in. Ordered from "the account
+          // itself" outward: credentials, then what others see, then where
+          // you are signed in, then what is linked to it.
           title: <Trans>Account</Trans>,
           entries: [
+            // Username, email, password, 2FA, delete. This used to be a hidden
+            // stub reachable only through the header card, while the Profile
+            // page told people to "go to account settings" — a page that had
+            // no row in a section called Account.
             {
               id: "account",
-              icon: <></>,
-              title: <></>,
-              hidden: true,
+              icon: <Symbol size={20}>manage_accounts</Symbol>,
+              title: <Trans>My Account</Trans>,
             },
             {
               id: "profile",
               icon: <MdAccountCircle {...iconSize(20)} />,
               title: <Trans>Profile</Trans>,
             },
-            // Sessions and E2E Encryption are adjacent on purpose: both answer
-            // "who can get at this account", so they read as one idea.
             {
               id: "sessions",
               icon: <MdVerifiedUser {...iconSize(20)} />,
               title: <Trans>Sessions</Trans>,
             },
             {
+              id: "connections",
+              icon: <Symbol size={20}>link</Symbol>,
+              title: <Trans>Connections</Trans>,
+              // A getter, so the sidebar's <Show> tracks the flag fetch and
+              // the row appears once the server says linking is on.
+              get hidden() {
+                return connectionsUnavailable();
+              },
+            },
+          ],
+        },
+        {
+          // Who can see and do what. Everything here is an audience or a
+          // consent decision — none of it changes what your profile says or
+          // how the app looks.
+          title: <Trans>Privacy & Safety</Trans>,
+          entries: [
+            {
+              id: "privacy",
+              icon: <Symbol size={20}>shield_person</Symbol>,
+              title: <Trans>Privacy</Trans>,
+            },
+            {
+              // Sidebar id stays `security` (deep links); the page is the
+              // E2EE toggles + recovery backup and nothing else now.
               id: "security",
               icon: <MdSecurity {...iconSize(20)} />,
-              title: <Trans>E2E Encryption</Trans>,
+              title: <Trans>Encryption</Trans>,
               // Only meaningful where the native E2EE layer exists (desktop);
               // the web build has no key material.
               hidden: !nativeE2EEAvailable(),
             },
             {
-              id: "connections",
-              icon: <Symbol size={20}>link</Symbol>,
-              title: <Trans>Connections</Trans>,
+              // Remembered people + Express Connect. Gated on the release flag
+              // and the Tauri command bridge — the same two things
+              // `rc.supported()` checks first — NOT on E2EE, which is where
+              // this list used to live and why it vanished on any shell
+              // without native key material.
+              id: "remote_control",
+              icon: <Symbol size={20}>arrow_selector_tool</Symbol>,
+              title: <Trans>Remote Control</Trans>,
+              hidden: !CONFIGURATION.ENABLE_REMOTE_CONTROL || !tauriInvoke(),
             },
-            // Bots belong to the account that made them, not to the block of
-            // about-the-app links they used to sit in.
+            // Streamer Mode hides personal details, invites and notifications
+            // while live — a privacy feature that only sat under App Settings
+            // because Discord's does.
             {
-              id: "bots",
-              icon: <MdSmartToy {...iconSize(20)} />,
-              title: <Trans>My Bots</Trans>,
+              id: "streamer",
+              icon: <Symbol size={20}>videocam</Symbol>,
+              title: <Trans>Streamer Mode</Trans>,
             },
           ],
         },
@@ -255,19 +316,28 @@ const Config: SettingsConfiguration<{ server: Server }> = {
               icon: <MdNotifications {...iconSize(20)} />,
               title: <Trans>Notifications</Trans>,
             },
+            // Voice and Video are separate pages: the combined one had grown
+            // to a dozen sections (devices, tests, processing, mic mode, PTT,
+            // camera, filters, backgrounds, screen share, overlay) and the
+            // camera controls sat below a long scroll of microphone ones.
             {
               id: "voice",
               icon: <MdMic {...iconSize(20)} />,
-              title: CONFIGURATION.ENABLE_VIDEO ? (
-                <Trans>Voice & Video</Trans>
-              ) : (
-                <Trans>Voice</Trans>
-              ),
+              title: <Trans>Voice</Trans>,
             },
             {
-              id: "streamer",
-              icon: <Symbol size={20}>videocam</Symbol>,
-              title: <Trans>Streamer Mode</Trans>,
+              id: "video",
+              icon: <Symbol size={20}>camera_video</Symbol>,
+              title: <Trans>Video</Trans>,
+              hidden: !CONFIGURATION.ENABLE_VIDEO,
+            },
+            {
+              // Desktop shells only — the same probe the page itself uses,
+              // so no shell ever sees a row that opens an empty page.
+              id: "overlay",
+              icon: <Symbol size={20}>picture_in_picture</Symbol>,
+              title: <Trans>Game Overlay</Trans>,
+              hidden: !overlayShellAvailable(),
             },
             // {
             //   id: "keybinds",
@@ -303,6 +373,19 @@ const Config: SettingsConfiguration<{ server: Server }> = {
               id: "advanced",
               icon: <MdScience {...iconSize(20)} />,
               title: <Trans>Advanced</Trans>,
+            },
+          ],
+        },
+        {
+          // Bots belong to the account that made them, but they are not a
+          // setting about the account — they are things you build. Their own
+          // section keeps the Account list to identity and sign-in.
+          title: <Trans>Developer</Trans>,
+          entries: [
+            {
+              id: "bots",
+              icon: <MdSmartToy {...iconSize(20)} />,
+              title: <Trans>My Bots</Trans>,
             },
           ],
         },
@@ -354,7 +437,9 @@ const Config: SettingsConfiguration<{ server: Server }> = {
               href: "https://sloga.gg/legal/terms.html",
             },
             {
-              id: "privacy",
+              // Not `privacy` — that id is the Privacy settings page, and the
+              // sidebar highlights by id.
+              id: "privacy_policy",
               icon: <MdPolicy {...iconSize(20)} />,
               title: <Trans>Privacy Policy</Trans>,
               href: "https://sloga.gg/legal/privacy.html",

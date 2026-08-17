@@ -88,6 +88,11 @@ export type TypeTheme = {
    * Spacing between message groups
    */
   messageGroupSpacing: number;
+
+  /**
+   * Avatar size in the message list (px)
+   */
+  messageAvatarSize: number;
 };
 
 export type SelectedTheme = Pick<
@@ -97,6 +102,7 @@ export type SelectedTheme = Pick<
   | "monospaceFont"
   | "messageSize"
   | "messageGroupSpacing"
+  | "messageAvatarSize"
 > & {
   preset: "stoat" | "you";
   darkMode: boolean;
@@ -161,6 +167,7 @@ export class Theme extends AbstractStore<"theme", TypeTheme> {
       blur: true,
       messageSize: 14,
       messageGroupSpacing: 12,
+      messageAvatarSize: 36,
     };
   }
 
@@ -234,6 +241,10 @@ export class Theme extends AbstractStore<"theme", TypeTheme> {
       data.messageGroupSpacing = input.messageGroupSpacing;
     }
 
+    if (typeof input.messageAvatarSize === "number") {
+      data.messageAvatarSize = input.messageAvatarSize;
+    }
+
     if (
       typeof input.monospaceFont === "string" &&
       MONOSPACE_FONT_KEYS.includes(input.monospaceFont)
@@ -263,6 +274,7 @@ export class Theme extends AbstractStore<"theme", TypeTheme> {
       monospaceFont: opts.monospaceFont,
       messageSize: opts.messageSize,
       messageGroupSpacing: opts.messageGroupSpacing,
+      messageAvatarSize: opts.messageAvatarSize,
       darkMode:
         opts.mode === "dark" || (opts.mode === "system" && this.prefersDark()),
     };
@@ -436,5 +448,19 @@ export class Theme extends AbstractStore<"theme", TypeTheme> {
    */
   set messageGroupSpacing(space: number) {
     this.set("messageGroupSpacing", space);
+  }
+
+  /**
+   * Get current message-list avatar size
+   */
+  get messageAvatarSize() {
+    return this.get().messageAvatarSize;
+  }
+
+  /**
+   * Set message-list avatar size
+   */
+  set messageAvatarSize(size: number) {
+    this.set("messageAvatarSize", size);
   }
 }

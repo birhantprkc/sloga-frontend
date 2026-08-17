@@ -104,6 +104,10 @@ msgid "Message width"
 msgstr "Message width"
 
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Messages"
+msgstr "Messages"
+
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
 msgid "Message alignment"
 msgstr "Message alignment"
 
@@ -949,6 +953,10 @@ msgstr "Automatically enable"
 msgid "Avatar"
 msgstr "Avatar"
 
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Avatar Size"
+msgstr "Avatar Size"
+
 #: components/app/interface/settings/user/voice/OverlaySettings.tsx
 msgid "Avatars and names"
 msgstr "Avatars and names"
@@ -1144,6 +1152,10 @@ msgstr "Call full for encryption (100)"
 msgid "Call transcription language"
 msgstr "Call transcription language"
 
+#: components/app/interface/settings/user/Encryption.tsx
+msgid "Calls are end-to-end encrypted"
+msgstr "Calls are end-to-end encrypted"
+
 #: components/ui/components/features/voice/callCard/VoiceDeviceSelector.tsx
 #: components/modal/modals/CameraSettings.tsx
 msgid "Camera"
@@ -1246,8 +1258,8 @@ msgstr "Cancel scheduled message"
 
 #: src/interface/ServerEvents.tsx
 #: src/interface/ServerEvents.tsx
-msgid "Cancelled"
-msgstr "Cancelled"
+msgid "Canceled"
+msgstr "Canceled"
 
 #: components/app/interface/settings/user/Account.tsx
 msgid "Cannot delete account until servers are deleted or transferred"
@@ -1328,8 +1340,8 @@ msgid "Channel Info"
 msgstr "Channel Info"
 
 #: src/index.tsx
-msgid "Channel linking failed or was cancelled."
-msgstr "Channel linking failed or was cancelled."
+msgid "Channel linking failed or was canceled."
+msgstr "Channel linking failed or was canceled."
 
 #: components/app/interface/settings/user/Connections.tsx
 msgid "Channel linking is not enabled on this server yet."
@@ -1389,6 +1401,10 @@ msgstr "Choose a background image in Settings → Voice."
 #: components/auth/src/flows/FlowLogin.tsx
 msgid "Choose a username"
 msgstr "Choose a username"
+
+#: components/app/interface/settings/user/RemoteControl.tsx
+msgid "Choose how Sloga asks before someone in a call can use this computer's mouse and keyboard. People you have remembered are listed here; select one to forget them."
+msgstr "Choose how Sloga asks before someone in a call can use this computer's mouse and keyboard. People you have remembered are listed here; select one to forget them."
 
 #: components/modal/modals/Onboarding.tsx
 msgid "Choose username"
@@ -1509,6 +1525,10 @@ msgstr "Code"
 #: components/app/interface/settings/user/voice/CameraOptions.tsx
 msgid "Color filter"
 msgstr "Color filter"
+
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Colors"
+msgstr "Colors"
 
 #: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx
 #: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx
@@ -1731,6 +1751,10 @@ msgstr "Could not start the sticker import. Try again shortly."
 msgid "Could not unlink the channel, try again."
 msgstr "Could not unlink the channel, try again."
 
+#: components/app/interface/settings/user/Privacy.tsx
+msgid "Could not update profile visibility, try again."
+msgstr "Could not update profile visibility, try again."
+
 #: components/app/interface/settings/server/apps/AppsList.tsx
 msgid "Couldn't add the app — try again."
 msgstr "Couldn't add the app — try again."
@@ -1783,6 +1807,10 @@ msgstr "Create a new role"
 #: components/app/interface/settings/user/SecurityAndPrivacy.tsx
 msgid "Create a recovery code"
 msgstr "Create a recovery code"
+
+#: components/modal/modals/E2EEEnable.tsx
+msgid "Create a recovery code so you can restore your identity and message history if you lose this device. Without one, encrypted history is gone for good if the device is lost. You can also do this later from Settings › Privacy & Safety › Encryption."
+msgstr "Create a recovery code so you can restore your identity and message history if you lose this device. Without one, encrypted history is gone for good if the device is lost. You can also do this later from Settings › Privacy & Safety › Encryption."
 
 #: components/modal/modals/E2EEEnable.tsx
 msgid "Create a recovery code so you can restore your identity and message history if you lose this device. Without one, encrypted history is gone for good if the device is lost. You can also do this later from E2E Encryption settings."
@@ -1926,8 +1954,8 @@ msgid "Custom window frame"
 msgstr "Custom window frame"
 
 #: components/app/interface/settings/ServerSettings.tsx
-msgid "Customisation"
-msgstr "Customisation"
+msgid "Customization"
+msgstr "Customization"
 
 #: src/interface/ServerEvents.tsx
 msgid "Daily"
@@ -2081,6 +2109,10 @@ msgstr "Details"
 #: components/app/interface/settings/user/Language.tsx
 msgid "Detect automatically"
 msgstr "Detect automatically"
+
+#: components/app/interface/settings/UserSettings.tsx
+msgid "Developer"
+msgstr "Developer"
 
 #: src/interface/channels/text/Composition.tsx
 msgid "Dice"
@@ -2406,6 +2438,10 @@ msgstr "Encrypted direct messages are on for this device. Messages you send in a
 msgid "Encrypted messaging is on"
 msgstr "Encrypted messaging is on"
 
+#: components/app/interface/settings/UserSettings.tsx
+msgid "Encryption"
+msgstr "Encryption"
+
 #: components/modal/modals/E2EEDisable.tsx
 msgid "Encryption is off for this device. New direct messages are no longer end-to-end encrypted, and your contacts have been told this device no longer uses encryption."
 msgstr "Encryption is off for this device. New direct messages are no longer end-to-end encrypted, and your contacts have been told this device no longer uses encryption."
@@ -2675,6 +2711,10 @@ msgstr "Followers"
 msgid "Following creates a webhook in the destination channel. The destination server can stop the follow at any time by deleting that webhook."
 msgstr "Following creates a webhook in the destination channel. The destination server can stop the follow at any time by deleting that webhook."
 
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Fonts"
+msgstr "Fonts"
+
 #: components/app/menus/ServerContextMenu.tsx
 #: components/app/menus/shared/NotificationContextMenu.tsx
 msgid "For 1 hour"
@@ -2846,6 +2886,10 @@ msgstr "Go"
 #: components/auth/src/flows/FlowConfirmReset.tsx
 msgid "Go back to login"
 msgstr "Go back to login"
+
+#: components/app/interface/settings/user/profile/UserProfileEditor.tsx
+msgid "Go to My Account to edit your username"
+msgstr "Go to My Account to edit your username"
 
 #: components/app/interface/settings/user/profile/UserProfileEditor.tsx
 msgid "Go to account settings to edit your username"
@@ -3496,8 +3540,8 @@ msgid "Manage Channel"
 msgstr "Manage Channel"
 
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
-msgid "Manage Customisation"
-msgstr "Manage Customisation"
+msgid "Manage Customization"
+msgstr "Manage Customization"
 
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Manage Messages"
@@ -3718,8 +3762,8 @@ msgid "Middle right"
 msgstr "Middle right"
 
 #: components/app/interface/settings/user/Native.tsx
-msgid "Minimise to Tray"
-msgstr "Minimise to Tray"
+msgid "Minimize to Tray"
+msgstr "Minimize to Tray"
 
 #: src/interface/navigation/UserFooter.tsx
 #: src/interface/navigation/UserFooter.tsx
@@ -4430,6 +4474,14 @@ msgstr "Press any key..."
 #: components/app/interface/settings/user/notifications/Sounds.tsx
 msgid "Preview"
 msgstr "Preview"
+
+#: components/app/interface/settings/UserSettings.tsx
+msgid "Privacy"
+msgstr "Privacy"
+
+#: components/app/interface/settings/UserSettings.tsx
+msgid "Privacy & Safety"
+msgstr "Privacy & Safety"
 
 #: components/auth/src/flows/FlowCreate.tsx
 #: components/app/interface/settings/UserSettings.tsx
@@ -5353,6 +5405,10 @@ msgstr "Show overlay during calls"
 msgid "Show send message button"
 msgstr "Show send message button"
 
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Show usernames"
+msgstr "Show usernames"
+
 #: components/app/interface/settings/user/voice/OverlaySettings.tsx
 msgid "Show who is talking on top of your game during a call. Works in borderless-windowed games; exclusive fullscreen cannot be drawn over."
 msgstr "Show who is talking on top of your game during a call. Works in borderless-windowed games; exclusive fullscreen cannot be drawn over."
@@ -5546,8 +5602,8 @@ msgid "Start import"
 msgstr "Start import"
 
 #: components/app/interface/settings/user/Native.tsx
-msgid "Start Minimised to Tray"
-msgstr "Start Minimised to Tray"
+msgid "Start Minimized to Tray"
+msgstr "Start Minimized to Tray"
 
 #: components/ui/components/features/voice/callCard/VoiceCallCardPreview.tsx
 msgid "Start the call"
@@ -5708,8 +5764,8 @@ msgid "Sync appearance options, such as chosen emoji pack and message density."
 msgstr "Sync appearance options, such as chosen emoji pack and message density."
 
 #: components/app/interface/settings/user/Sync.tsx
-msgid "Sync your chosen theme, colours, and any custom CSS."
-msgstr "Sync your chosen theme, colours, and any custom CSS."
+msgid "Sync your chosen theme, colors, and any custom CSS."
+msgstr "Sync your chosen theme, colors, and any custom CSS."
 
 #: components/app/interface/settings/user/Sync.tsx
 msgid "Sync your currently chosen language."
@@ -5834,8 +5890,8 @@ msgid "The forward keeps a copy of the message as it is right now — later edit
 msgstr "The forward keeps a copy of the message as it is right now — later edits or deletion of the original won't change it. Encrypted conversations can't receive forwards."
 
 #: components/auth/src/flows/FlowOAuthCallback.tsx
-msgid "The Google sign-in was cancelled."
-msgstr "The Google sign-in was cancelled."
+msgid "The Google sign-in was canceled."
+msgstr "The Google sign-in was canceled."
 
 #: components/modal/modals/ImportDiscord.tsx
 msgid "The import didn't finish."
@@ -5859,8 +5915,8 @@ msgid "The security identity for {0} changed. This happens when they reinstall o
 msgstr "The security identity for {0} changed. This happens when they reinstall or set up a new device — but it can also mean someone is attempting to intercept your messages."
 
 #: components/modal/modals/ImportDiscord.tsx
-msgid "The server name, its categories and its channels in order, its roles with their colours and ranking, and who can see and do what in each channel — private channels included."
-msgstr "The server name, its categories and its channels in order, its roles with their colours and ranking, and who can see and do what in each channel — private channels included."
+msgid "The server name, its categories and its channels in order, its roles with their colors and ranking, and who can see and do what in each channel — private channels included."
+msgstr "The server name, its categories and its channels in order, its roles with their colors and ranking, and who can see and do what in each channel — private channels included."
 
 #: components/app/interface/settings/user/Sync.tsx
 msgid "Theme"
@@ -6198,6 +6254,10 @@ msgstr "Turn on your camera to check it works and preview brightness and backgro
 #: components/app/interface/settings/user/StreamerMode.tsx
 msgid "Turn Streamer Mode on while a streaming app (OBS, Streamlabs, XSplit, ...) is running."
 msgstr "Turn Streamer Mode on while a streaming app (OBS, Streamlabs, XSplit, ...) is running."
+
+#: components/app/interface/settings/user/Account.tsx
+msgid "Two-Factor Recovery Codes"
+msgstr "Two-Factor Recovery Codes"
 
 #: src/interface/channels/text/TextChannel.tsx
 msgid "Unarchive"
@@ -6994,6 +7054,10 @@ msgstr "Slogatron minigame"
 msgid "Game over"
 msgstr "Game over"
 
+#: components/app/interface/settings/UserSettings.tsx
+msgid "Game Overlay"
+msgstr "Game Overlay"
+
 #: components/ui/components/features/voice/minigame/MinigameChip.tsx
 msgid "Web cleared!"
 msgstr "Web cleared!"
@@ -7167,6 +7231,14 @@ msgstr "Controlled by {0}"
 #: components/ui/components/features/voice/callCard/VoiceCallRosterPanel.tsx
 msgid "Remote control"
 msgstr "Remote control"
+
+#: components/app/interface/settings/UserSettings.tsx
+msgid "Remote Control"
+msgstr "Remote Control"
+
+#: components/app/interface/settings/user/RemoteControl.tsx
+msgid "Remote control isn't available on this device."
+msgstr "Remote control isn't available on this device."
 
 #: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
 msgid "Add to rotation"

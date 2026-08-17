@@ -1,237 +1,36 @@
-import {
-  For,
-  Match,
-  Show,
-  Switch,
-  createResource,
-  createSignal,
-  onMount,
-} from "solid-js";
+import { Match, Show, Switch, createSignal, onMount } from "solid-js";
 
 import { Trans } from "@lingui-solid/solid/macro";
 
 import type { BackupStatusView } from "@revolt/client";
 import { useClient, useE2EE } from "@revolt/client";
-import { CONFIGURATION } from "@revolt/common";
-import { useUser } from "@revolt/markdown/users";
 import { useModals } from "@revolt/modal";
-import type { RcTrustedPeer } from "@revolt/rtc";
-import {
-  REMOTE_CONTROL_EXPRESS_NOTE,
-  platformMediaE2EESupported,
-  useVoice,
-} from "@revolt/rtc";
+import { platformMediaE2EESupported } from "@revolt/rtc";
 import { CategoryButton, Checkbox, Column, iconSize } from "@revolt/ui";
 
-import MdBolt from "@material-design-icons/svg/outlined/bolt.svg?component-solid";
-import MdDesktopWindows from "@material-design-icons/svg/outlined/desktop_windows.svg?component-solid";
 import MdKey from "@material-design-icons/svg/outlined/key.svg?component-solid";
 import MdLock from "@material-design-icons/svg/outlined/lock.svg?component-solid";
 import MdVideocam from "@material-design-icons/svg/outlined/videocam.svg?component-solid";
 
 /**
- * Security & Privacy settings page.
+ * Encryption settings page (sidebar id `security`, kept for deep links).
  *
- * Currently hosts the per-device end-to-end encryption opt-in (moved out of
- * Sessions). The E2EE card renders only where a native crypto layer exists
- * (Tauri desktop); the web build has no key material and the server refuses
- * its E2EE routes.
+ * Hosts the per-device end-to-end encryption opt-in for direct messages, the
+ * always-on call encryption indicator, and the recovery-code backup. Renders
+ * only where a native crypto layer exists (Tauri desktop); the web build has
+ * no key material and the server refuses its E2EE routes.
+ *
+ * The remote-control trust list that used to sit at the bottom of this page
+ * moved to its own Remote Control page — it is a consent setting, not
+ * encryption, and it must not inherit this page's native-E2EE gate.
  */
-export function SecurityAndPrivacy() {
+export function EncryptionSettings() {
   return (
     <Column gap="lg">
       <EncryptionCard />
       <CallEncryptionCard />
       <RecoveryBackupCard />
-      <RemoteControlTrustCard />
     </Column>
-  );
-}
-
-/**
- * People this computer has been told to remember for remote control
- * (RC slice 6, part 2).
- *
- * **Not optional polish — this card is half of what makes remembering
- * someone an acceptable thing to offer at all.** Each row removes one of the
- * two system confirmations Sloga asks for before that person's input can
- * reach this machine, and a row nobody can find is a consent decision that
- * has outlived anyone's memory of making it.
- *
- * The list is read from NATIVE, which is its only writer. There is
- * deliberately no way to ADD a row from the renderer — the grant happens
- * inside the shell on the far side of the `RcGive` dialog returning true,
- * because a renderer that could write this list could grant itself a way
- * past that dialog. Revoking IS renderer-reachable: it can only ever remove
- * authority.
- */
-function RemoteControlTrustCard() {
-  const voice = useVoice();
-  const rc = voice.remoteControl;
-
-  const [peers, setPeers] = createSignal<RcTrustedPeer[]>([]);
-  const [busy, setBusy] = createSignal(false);
-  // A command PROBE, matching how the give-control affordance itself is
-  // gated. On web, on a shell without the commands, and with the release
-  // flag off, this stays false and the card never renders — rather than
-  // showing an empty list, which reads as the reassurance "nobody is
-  // remembered" and is the one wrong answer this screen can give.
-  const [supported] = createResource(() => rc.supported());
-
-  async function reload() {
-    setPeers(await rc.trustedPeers());
-  }
-
-  onMount(() => {
-    if (CONFIGURATION.ENABLE_REMOTE_CONTROL) void reload();
-  });
-
-  async function forget(userId: string) {
-    setBusy(true);
-    try {
-      await rc.revokeTrust(userId);
-      await reload();
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function forgetEveryone() {
-    setBusy(true);
-    try {
-      await rc.revokeAllTrust();
-      await reload();
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  // -- Express Connect (part 3) ----------------------------------------
-  //
-  // The switch itself is NOT settable from here. Turning it on asks native
-  // to show its own opt-in dialog and the flag is written on the far side of
-  // that; a renderer that could set it could remove one of the two
-  // confirmations standing between it and the keyboard. Turning it OFF is
-  // unrestricted, because that direction only adds friction back.
-  const [express, setExpress] = createSignal(false);
-
-  async function reloadExpress() {
-    setExpress(await rc.expressEnabled());
-  }
-
-  onMount(() => {
-    if (CONFIGURATION.ENABLE_REMOTE_CONTROL) void reloadExpress();
-  });
-
-  async function toggleExpress() {
-    setBusy(true);
-    try {
-      if (express()) await rc.disableExpress();
-      else await rc.enableExpress();
-      await reloadExpress();
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Show when={supported() === true}>
-      <Show when={peers().length > 0}>
-        <CategoryButton.Group>
-          <For each={peers()}>
-            {(peer) => (
-              <TrustedPeerRow peer={peer} busy={busy()} onForget={forget} />
-            )}
-          </For>
-          <CategoryButton
-            icon={<MdDesktopWindows {...iconSize(24)} />}
-            disabled={busy()}
-            description={
-              <Trans>
-                Everyone above goes back to needing both confirmations.
-              </Trans>
-            }
-            onClick={() => void forgetEveryone()}
-          >
-            <Trans>Forget everyone</Trans>
-          </CategoryButton>
-        </CategoryButton.Group>
-      </Show>
-
-      {/* Express Connect. Shown even with an empty trust list, because it is
-          the switch that has to be findable — but note it does nothing at
-          all until someone is remembered, which is §8's mitigation and is
-          said in the description rather than left to be discovered.
-
-          🔴 REMOTE_CONTROL_EXPRESS_NOTE is a SECURITY STATEMENT (reviewed
-          2026-07-29). The pinned claim is unchanged and still true; what this
-          adds is that the OS-drawn verification code is gone in this mode.
-          The off-state description below carried the same false delta the
-          note did — "one step instead of two" — and is corrected with it:
-          the peers this applies to were already at one confirmation, so what
-          changes is WHEN it is asked, not how many. */}
-      <CategoryButton.Group>
-        <CategoryButton
-          disabled={busy()}
-          action={
-            <span style={{ "pointer-events": "none", display: "flex" }}>
-              <Checkbox checked={express()} />
-            </span>
-          }
-          icon={<MdBolt {...iconSize(24)} />}
-          description={
-            express() ? (
-              REMOTE_CONTROL_EXPRESS_NOTE
-            ) : (
-              <Trans>
-                For people you have remembered, Sloga asks when you click
-                instead of after they answer, so you do not have to come back to
-                your computer. It is the same one confirmation, and it cannot
-                show a verification code. People you have not remembered are
-                unaffected.
-              </Trans>
-            )
-          }
-          onClick={() => void toggleExpress()}
-        >
-          <Trans>Express Connect</Trans>
-        </CategoryButton>
-      </CategoryButton.Group>
-    </Show>
-  );
-}
-
-/**
- * One remembered peer. The username is resolved from the user id like every
- * other surface does — native stores ids only, and copying a server-asserted
- * name into the trust table would undermine the one job this list has.
- */
-function TrustedPeerRow(props: {
-  peer: RcTrustedPeer;
-  busy: boolean;
-  onForget: (userId: string) => void;
-}) {
-  const user = useUser(props.peer.userId);
-  const name = () => user()?.username ?? props.peer.userId;
-  // The device half, shortened. Someone who has remembered the same person on
-  // two machines over time needs to tell the rows apart, and the full
-  // identity is a 32-character hash nobody reads.
-  const device = () => props.peer.identity.split(":")[1]?.slice(0, 8) ?? "";
-
-  return (
-    <CategoryButton
-      icon={<MdDesktopWindows {...iconSize(24)} />}
-      disabled={props.busy}
-      description={
-        <Trans>
-          Sloga asks you once instead of twice before this person can use your
-          mouse and keyboard. Select to undo.
-        </Trans>
-      }
-      onClick={() => props.onForget(props.peer.userId)}
-    >
-      {name()} ({device()})
-    </CategoryButton>
   );
 }
 
@@ -262,31 +61,40 @@ function CallEncryptionCard() {
     return !!s?.enabled && !!s?.published;
   };
   // Media E2EE is MANDATORY — there is no off switch (Discord/DAVE parity).
-  // The row is a locked indicator: checked and greyed once this device can
-  // actually encrypt, and never unchecked by a user action.
+  // Once this device can actually encrypt, the row is a plain status line
+  // with a lock — not a checked checkbox, which implies it can be unchecked
+  // and reads as a control that does nothing.
   //
   // "Can actually encrypt" still requires text-E2EE enrollment, so an
-  // unenrolled user must NOT see a checked box — that would claim encryption
-  // the gate will not deliver (FE-6). For them the row stays unchecked and
-  // routes into the enrolment flow, which is the one remaining click here.
+  // unenrolled user must NOT see it presented as on — that would claim
+  // encryption the gate will not deliver (FE-6). For them the row shows an
+  // unchecked box and routes into the enrolment flow, which is the one
+  // remaining click here.
   const enabled = () => mediaCapable() && textEnrolled();
 
   const onClick = () => {
     if (!mediaCapable()) return; // unsupported shell — no-op
-    if (textEnrolled()) return; // already on and not turn-off-able
     openModal({ type: "e2ee_enable" });
   };
 
   return (
     <CategoryButton.Group>
       <CategoryButton
-        // Greyed out whenever there is nothing to click: either this device
-        // cannot encrypt at all, or it already does and cannot be turned off.
-        disabled={!mediaCapable() || enabled()}
+        // Greyed out only when this device cannot encrypt at all. The
+        // always-on state is informational rather than disabled: it has no
+        // click handler, so it renders without the link cursor.
+        disabled={!mediaCapable()}
         action={
-          <span style={{ "pointer-events": "none", display: "flex" }}>
-            <Checkbox checked={enabled()} />
-          </span>
+          <Show
+            when={enabled()}
+            fallback={
+              <span style={{ "pointer-events": "none", display: "flex" }}>
+                <Checkbox checked={false} />
+              </span>
+            }
+          >
+            <MdLock {...iconSize(20)} />
+          </Show>
         }
         icon={<MdVideocam {...iconSize(24)} />}
         description={
@@ -316,9 +124,11 @@ function CallEncryptionCard() {
             </Show>
           </Show>
         }
-        onClick={onClick}
+        onClick={enabled() ? undefined : onClick}
       >
-        <Trans>Encrypt my calls</Trans>
+        <Show when={enabled()} fallback={<Trans>Encrypt my calls</Trans>}>
+          <Trans>Calls are end-to-end encrypted</Trans>
+        </Show>
       </CategoryButton>
     </CategoryButton.Group>
   );

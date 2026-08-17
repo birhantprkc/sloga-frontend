@@ -125,7 +125,7 @@ function SettingsRedirect() {
         message:
           error === "no_channel"
             ? t`That account has no channel to link.`
-            : t`Channel linking failed or was cancelled.`,
+            : t`Channel linking failed or was canceled.`,
       });
     }
 

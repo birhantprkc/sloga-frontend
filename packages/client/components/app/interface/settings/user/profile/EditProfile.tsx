@@ -5,16 +5,7 @@ import { Trans } from "@lingui-solid/solid/macro";
 import { useClient } from "@revolt/client";
 import { createOwnProfileResource } from "@revolt/client/resources";
 import { useModals } from "@revolt/modal";
-import { useState } from "@revolt/state";
-import {
-  Avatar,
-  CategoryButton,
-  Checkbox,
-  Column,
-  Text,
-  iconSize,
-} from "@revolt/ui";
-import { Symbol } from "@revolt/ui/components/utils/Symbol";
+import { Avatar, CategoryButton, Column, Text, iconSize } from "@revolt/ui";
 
 import MdGroups from "@material-design-icons/svg/outlined/groups.svg?component-solid";
 
@@ -27,7 +18,6 @@ import { UserProfileEditor } from "./UserProfileEditor";
  */
 export function EditProfile() {
   const client = useClient();
-  const state = useState();
   const { openModal } = useModals();
   const profile = createOwnProfileResource();
 
@@ -67,28 +57,6 @@ export function EditProfile() {
             )}
           </For>
         </CategoryButton.Collapse>
-      </CategoryButton.Group>
-
-      <CategoryButton.Group>
-        <CategoryButton
-          action={
-            <Checkbox checked={state.settings.getValue("activity:share")} />
-          }
-          onClick={() =>
-            state.settings.setValue(
-              "activity:share",
-              !state.settings.getValue("activity:share"),
-            )
-          }
-          icon={<Symbol>sports_esports</Symbol>}
-          description={
-            <Trans>
-              Show friends what game you are playing (desktop app only).
-            </Trans>
-          }
-        >
-          <Trans>Share Game Activity</Trans>
-        </CategoryButton>
       </CategoryButton.Group>
 
       <Column>

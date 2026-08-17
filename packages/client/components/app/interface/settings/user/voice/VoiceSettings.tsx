@@ -1,16 +1,15 @@
-import { Show } from "solid-js";
-
-import { CONFIGURATION } from "@revolt/common";
 import { Column } from "@revolt/ui";
 
-import { CameraOptions } from "./CameraOptions";
 import { MicrophoneLevelMeter } from "./MicrophoneLevelMeter";
 import { MicrophoneTest } from "./MicrophoneTest";
-import { OverlaySettings } from "./OverlaySettings";
 import { VoiceInputOptions } from "./VoiceInputOptions";
 import { VoiceProcessingOptions } from "./VoiceProcessingOptions";
+
 /**
- * Configure voice options
+ * Voice page: microphone and speaker devices, tests, processing, mic mode
+ * and push-to-talk. Camera + screen share moved to the Video page and the
+ * in-game overlay to its own page — one "Voice & Video" page had grown to
+ * a dozen sections and the camera controls were a long scroll away.
  */
 export function VoiceSettings() {
   return (
@@ -19,12 +18,6 @@ export function VoiceSettings() {
       <MicrophoneLevelMeter />
       <MicrophoneTest />
       <VoiceProcessingOptions />
-      <Show when={CONFIGURATION.ENABLE_VIDEO}>
-        <CameraOptions />
-      </Show>
-      {/* Renders nothing unless a desktop shell can actually open the
-          window, so the feature is dark on release web by construction. */}
-      <OverlaySettings />
     </Column>
   );
 }

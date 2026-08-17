@@ -232,13 +232,13 @@ function ElectronNative() {
           CheckboxButton(
             "startMinimisedToTray",
             "minimize",
-            t`Start Minimised to Tray`,
+            t`Start Minimized to Tray`,
             t`Sloga will start in the system tray.`,
           )}
         {CheckboxButton(
           "minimiseToTray",
           "cancel_presentation",
-          t`Minimise to Tray`,
+          t`Minimize to Tray`,
           t`Instead of closing, Sloga will hide in your tray.`,
         )}
         {CheckboxButton(

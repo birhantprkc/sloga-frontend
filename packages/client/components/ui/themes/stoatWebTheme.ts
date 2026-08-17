@@ -14,6 +14,7 @@ export function createStoatWebVariables(theme: SelectedTheme) {
     // message size
     "--message-size": `${theme.messageSize}px`,
     "--message-group-spacing": `${theme.messageGroupSpacing}px`,
+    "--message-avatar-size": `${theme.messageAvatarSize}px`,
 
     // emoji size
     "--emoji-size": "1.4em",
