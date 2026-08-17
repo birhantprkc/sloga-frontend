@@ -78,7 +78,12 @@ export function unicodeEmojiUrl(
   pack: UnicodeEmojiPacks = "fluent-3d",
   text: string,
 ) {
-  return `${CONFIGURATION.DEFAULT_EMOJI_URL}/${pack}/${toCodepoint(text)}.svg?v=1`;
+  // The packs name their files WITHOUT the U+FE0F presentation selector
+  // ("270f.svg", never "270f-fe0f.svg"), including inside ZWJ sequences —
+  // probed on all six packs 2026-08-17. Text such as "✏️" or "🎚️" carries
+  // FE0F, so leaving it in produced a 404 and a broken-image glyph.
+  const codepoint = toCodepoint(text.replace(/\uFE0F/g, ""));
+  return `${CONFIGURATION.DEFAULT_EMOJI_URL}/${pack}/${codepoint}.svg?v=1`;
 }
 
 /**
