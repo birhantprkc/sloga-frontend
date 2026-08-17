@@ -31,6 +31,10 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //   are gone. Do NOT quote the banner's copy (marker rule, 08-12b).
   // - Do not name the editor's tool labels verbatim ("Black bar", "Pixelate",
   //   "Auto-redact") — they are Trans-sourced release markers.
+  // - Voice leveling (audio normalization) is OFF by default and listener-
+  //   side only. Say where the toggle lives, that it's opt-in, and that music
+  //   / screen-share audio and silence are untouched. Don't quote the settings
+  //   labels verbatim ("Level Incoming Voices", "Leveling Strength") — markers.
   {
     id: "sloga-2026-08-17-1",
     title: "Patch Notes",
@@ -44,6 +48,11 @@ export const CHANGELOGS: ChangelogResponse[] = [
 - **The auto pass draws solid black bars on purpose.** Pixelated text can sometimes be reconstructed; solid bars can't. The pixelate tool is still there for faces and backgrounds.
 - **A quiet bonus:** any image you edit is re-saved on the way out, which removes hidden location and camera data from it.
 - **One thing it won't do:** GIFs can't be edited yet, because flattening one would lose the animation — so the pencil doesn't appear on them.
+
+### 🎚️ Even out loud and quiet people in calls
+- **Off by default — turn it on in Settings → Voice & Video, under the incoming-voices section.** Once on, Sloga gently raises the friend who's always too quiet and reins in the one who's always too loud, per person, on your end only. There's a strength slider for how far a quiet voice may be lifted; loud voices are always tamed no matter where you set it. Both apply live in whatever call you're in.
+- **Only voices are leveled.** Music and screen-share audio are never touched, and it doesn't turn silence into hiss — when nobody's talking it holds still rather than cranking the gain.
+- **Your right-click per-person volume still works on top of it**, and setting someone to 0% is now truly silent.
 
 ### 🔊 The "your browser blocked audio" notice is quieter
 - **It was popping up when it shouldn't.** Reconnecting after a network blip, or someone joining or leaving, could make the notice appear even though audio was playing fine. It now waits out the reconnect and checks the call's actual audio state before showing, so you should only see it when there's really something to click.
