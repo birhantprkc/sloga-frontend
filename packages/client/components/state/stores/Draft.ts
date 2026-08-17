@@ -698,11 +698,11 @@ export class Draft extends AbstractStore<"draft", TypeDraft> {
   }
 
   /**
-   * Add a file to a draft
-   * @param channelId Channel ID
-   * @param file File to add
+   * Create a cache entry for a file and probe image dimensions
+   * @param file File to cache
+   * @returns Cache ID
    */
-  async addFile(channelId: string, file: File) {
+  private async cacheFile(file: File): Promise<string> {
     const id = insecureUniqueId();
     this.fileCache[id] = {
       file,
@@ -732,9 +732,48 @@ export class Draft extends AbstractStore<"draft", TypeDraft> {
         .catch(() => {});
     }
 
+    return id;
+  }
+
+  /**
+   * Add a file to a draft
+   * @param channelId Channel ID
+   * @param file File to add
+   */
+  async addFile(channelId: string, file: File) {
+    const id = await this.cacheFile(file);
+
     this.setDraft(channelId, (data) => ({
       files: [...(data.files ?? []), id],
     }));
+  }
+
+  /**
+   * Replace a draft file's contents (e.g. after editing an image), keeping
+   * its position in the draft. The entry gets a fresh ID so anything keyed
+   * on it (previews, upload state) rebuilds, and — critically — so a stale
+   * `autumnId` from an earlier upload of the pre-edit bytes can never be
+   * reused by sendDraft.
+   * @param channelId Channel ID
+   * @param fileId File ID being replaced
+   * @param file New file contents
+   */
+  async replaceFile(channelId: string, fileId: string, file: File) {
+    if (!this.getDraft(channelId).files?.includes(fileId)) return;
+
+    const id = await this.cacheFile(file);
+
+    // the draft may have changed while dimensions were probed
+    if (!this.getDraft(channelId).files?.includes(fileId)) {
+      this.deleteFile(id);
+      return;
+    }
+
+    this.setDraft(channelId, (data) => ({
+      files: data.files?.map((entry) => (entry === fileId ? id : entry)),
+    }));
+
+    this.deleteFile(fileId);
   }
 
   /**

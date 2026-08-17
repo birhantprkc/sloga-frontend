@@ -16,6 +16,9 @@ allowBuilds:
   onnxruntime-node: false
   protobufjs: false
   sharp: false
+  # Its postinstall is only the opencollective donation banner (`|| true`);
+  # the OCR runtime is fully self-hosted from public/tesseract.
+  tesseract.js: false
 nodeLinker: isolated
 
 # Override prettier because some of the submodules have ancient prettiers required

@@ -25,6 +25,7 @@ import { Keybind, KeybindAction, createKeybind } from "@revolt/keybinds";
 import { unicodeEmojiPackPrefix } from "@revolt/markdown/emoji/UnicodeEmoji";
 import { useModals } from "@revolt/modal";
 import { useState } from "@revolt/state";
+import { ALLOWED_IMAGE_TYPES } from "@revolt/state/stores/Draft";
 import {
   CameraMessageButton,
   ComposerPopover,
@@ -927,6 +928,23 @@ export function MessageComposition(props: Props) {
     state.draft.removeFile(props.channel.id, fileId);
   }
 
+  /**
+   * Open the image editor for a pending attachment
+   * @param fileId File ID
+   */
+  function editFile(fileId: string) {
+    const entry = state.draft.getFile(fileId);
+    if (!entry || !ALLOWED_IMAGE_TYPES.includes(entry.file.type)) return;
+    // the editor flattens to a still frame; don't silently kill animations
+    if (entry.file.type === "image/gif") return;
+
+    openModal({
+      type: "image_editor",
+      file: entry.file,
+      onSave: (file) => state.draft.replaceFile(props.channel.id, fileId, file),
+    });
+  }
+
   const baseSearchSpace = useSearchSpace(() => props.channel, client);
 
   /**
@@ -1124,6 +1142,7 @@ export function MessageComposition(props: Props) {
         getFile={state.draft.getFile}
         addFile={addFile}
         removeFile={removeFile}
+        editFile={editFile}
       />
       <For each={draft().replies ?? []}>
         {(reply) => {

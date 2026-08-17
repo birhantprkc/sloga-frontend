@@ -831,6 +831,10 @@ msgstr "App Settings"
 msgid "Appearance"
 msgstr "Appearance"
 
+#: components/modal/modals/ImageEditor.tsx
+msgid "Apply"
+msgstr "Apply"
+
 #: components/app/interface/settings/ServerSettings.tsx
 #: components/app/interface/settings/ServerSettings.tsx
 msgid "Apps"
@@ -2276,6 +2280,11 @@ msgstr "Edit identity"
 #: components/modal/modals/ServerInfo.tsx
 msgid "Edit Identity"
 msgstr "Edit Identity"
+
+#: components/modal/modals/ImageEditor.tsx
+#: components/ui/components/features/messaging/composition/FileCarousel.tsx
+msgid "Edit image"
+msgstr "Edit image"
 
 #: components/app/menus/MessageContextMenu.tsx
 msgid "Edit message"
@@ -4683,6 +4692,10 @@ msgstr "Remove"
 #: components/app/menus/MessageContextMenu.tsx
 msgid "Remove all reactions"
 msgstr "Remove all reactions"
+
+#: components/ui/components/features/messaging/composition/FileCarousel.tsx
+msgid "Remove attachment"
+msgstr "Remove attachment"
 
 #: components/app/interface/settings/user/Account.tsx
 msgid "Remove Authenticator"
@@ -7203,3 +7216,111 @@ msgstr "Stop drawing"
 #: components/ui/components/features/voice/callCard/ParticipantTile.tsx
 msgid "Several people are drawing on your screen"
 msgstr "Several people are drawing on your screen"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Crop"
+msgstr "Crop"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Pen"
+msgstr "Pen"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Highlighter"
+msgstr "Highlighter"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Rectangle"
+msgstr "Rectangle"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Ellipse"
+msgstr "Ellipse"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Arrow"
+msgstr "Arrow"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Black bar"
+msgstr "Black bar"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Pixelate"
+msgstr "Pixelate"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Undo"
+msgstr "Undo"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Redo"
+msgstr "Redo"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Reset crop"
+msgstr "Reset crop"
+
+#: components/modal/modals/ImageEditor.tsx
+msgid "Loading editor…"
+msgstr "Loading editor…"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Auto-redact"
+msgstr "Auto-redact"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Find and black out emails, phone numbers, card numbers, passwords and keys"
+msgstr "Find and black out emails, phone numbers, card numbers, passwords and keys"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Scanning…"
+msgstr "Scanning…"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Review what was found — tap a chip to keep or skip it. Add anything missed with the Black bar tool."
+msgstr "Review what was found — tap a chip to keep or skip it. Add anything missed with the Black bar tool."
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Redact {0}"
+msgstr "Redact {0}"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Nothing sensitive was recognized. Text that is small, stylized, or not English can be missed — use the Black bar tool for anything you can see."
+msgstr "Nothing sensitive was recognized. Text that is small, stylized, or not English can be missed — use the Black bar tool for anything you can see."
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Auto-redact couldn't run on this image."
+msgstr "Auto-redact couldn't run on this image."
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "email"
+msgstr "email"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "phone"
+msgstr "phone"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "card"
+msgstr "card"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "SSN"
+msgstr "SSN"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "secret"
+msgstr "secret"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "password"
+msgstr "password"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "you"
+msgstr "you"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "IP"
+msgstr "IP"
