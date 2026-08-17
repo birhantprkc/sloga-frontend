@@ -26,6 +26,15 @@
  * - **A 5xx or a network drop is retried once**, briefly. A rate limit is
  *   NOT — repeating a request Google just refused is how a cooldown becomes
  *   a ban.
+ * - **A request whose retry ALSO fails transiently opens the circuit too.**
+ *   Google's IP wall answers with a redirect the browser's CORS policy then
+ *   blocks, and a CORS-blocked fetch rejects with a bare TypeError — there
+ *   is no status to match, so the 429/403 check above can never see it.
+ *   Before this, a walled client re-fired two doomed requests on every
+ *   message render, forever (observed in the field 2026-08-16: a console
+ *   full of CORS errors). Because the wall outlives any one cooldown, each
+ *   consecutive opening doubles the cooldown up to 10 minutes; one success
+ *   resets it to 30 seconds.
  *
  * The factory takes its fetch so the specs can run the whole policy against
  * a scripted network — same reason the transcription engine takes a worker
@@ -113,6 +122,13 @@ const MAX_IN_FLIGHT = 2;
 /** How long the circuit stays open after Google refuses a request. */
 const RATE_LIMIT_COOLDOWN_MS = 30_000;
 
+/**
+ * Ceiling for the doubling cooldown under a persistent wall. High enough to
+ * stop feeding a 40-hour IP ban, low enough that a fixed network (VPN off,
+ * captive portal gone) is noticed within minutes.
+ */
+const MAX_COOLDOWN_MS = 600_000;
+
 /** Pause before the single retry of a transiently failed request. */
 const RETRY_DELAY_MS = 400;
 
@@ -152,9 +168,16 @@ export function createTranslator(
   const waiters: (() => void)[] = [];
   /** Epoch ms until which the circuit is open. 0 = closed. */
   let rateLimitedUntil = 0;
+  /** Next opening's duration; doubles per consecutive opening (see header). */
+  let cooldownMs = RATE_LIMIT_COOLDOWN_MS;
 
   function coolingDown(): boolean {
     return Date.now() < rateLimitedUntil;
+  }
+
+  function openCircuit(): void {
+    rateLimitedUntil = Date.now() + cooldownMs;
+    cooldownMs = Math.min(cooldownMs * 2, MAX_COOLDOWN_MS);
   }
 
   async function acquireSlot(): Promise<void> {
@@ -201,12 +224,16 @@ export function createTranslator(
       );
 
       if (response.status === 429 || response.status === 403) {
-        rateLimitedUntil = Date.now() + RATE_LIMIT_COOLDOWN_MS;
+        openCircuit();
         throw new Error(`Translate rate limited: ${response.status}`);
       }
       if (!response.ok) {
         throw new RetryableError(`Translate failed: ${response.status}`);
       }
+
+      // The endpoint is reachable and willing: future openings start from
+      // the base cooldown again.
+      cooldownMs = RATE_LIMIT_COOLDOWN_MS;
 
       const data: {
         sentences?: { trans?: string }[];
@@ -255,7 +282,16 @@ export function createTranslator(
         if (!(error instanceof RetryableError)) throw error;
         await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
         if (coolingDown()) throw error;
-        return await attempt(text, target);
+        try {
+          return await attempt(text, target);
+        } catch (retryError) {
+          // Both attempts failed transiently: the endpoint is unreachable
+          // from here (CORS wall, network down, persistent 5xx) and no
+          // status-based check will ever fire. Open the circuit so the
+          // callers stop paying for requests that cannot succeed.
+          if (retryError instanceof RetryableError) openCircuit();
+          throw retryError;
+        }
       }
     } finally {
       releaseSlot();

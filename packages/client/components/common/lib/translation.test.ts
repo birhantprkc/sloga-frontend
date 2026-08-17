@@ -216,22 +216,104 @@ test("a network drop is retried once; a second drop resolves null", async (t) =>
   assert.equal(calls.length, 2);
 });
 
-test("a failure is not cached: the next call asks the network again", async () => {
+test("a failure is not cached: after the cooldown the network is asked again", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
   const { fn, calls } = scriptedFetch();
   const translator = createTranslator(fn);
 
   const failed = translator.translateText("hello", "es");
   await settle();
-  // A 404 is retryable, so exhaust the retry synchronously-ish: real timers
-  // here, and the 400 ms delay is real but short.
   calls[0].resolve(statusResponse(404));
-  await new Promise((resolve) => setTimeout(resolve, 450));
-  calls[1]?.resolve(statusResponse(404));
+  await settle();
+  t.mock.timers.tick(400);
+  await settle();
+  calls[1].resolve(statusResponse(404));
   assert.equal(await failed, null);
 
+  // The exhausted retry opened the circuit; the not-cached property is that
+  // once it closes, the SAME text fetches again instead of replaying null.
+  t.mock.timers.tick(30_001);
   const again = translator.translateText("hello", "es");
   await settle();
-  assert.ok(calls.length > 2, "the failure must not be served from cache");
-  calls[calls.length - 1].resolve(gtxResponse("hola", "en"));
+  assert.equal(calls.length, 3, "the failure must not be served from cache");
+  calls[2].resolve(gtxResponse("hola", "en"));
   assert.deepEqual(await again, { text: "hola", detectedSource: "en" });
+});
+
+// A CORS-blocked fetch (Google's IP wall answers with a redirect the browser
+// refuses) rejects with a bare TypeError — no status for the 429/403 check.
+// The circuit must open anyway, or every message render fires two doomed
+// requests forever (the 2026-08-16 console-spam incident).
+test("a network wall opens the circuit: the next render fires nothing", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  const { fn, calls } = scriptedFetch();
+  const translator = createTranslator(fn);
+
+  const walled = translator.translateText("first", "es");
+  await settle();
+  calls[0].reject(new TypeError("Failed to fetch"));
+  await settle();
+  t.mock.timers.tick(400);
+  await settle();
+  calls[1].reject(new TypeError("Failed to fetch"));
+  assert.equal(await walled, null);
+
+  // Circuit open: instant fallback, zero network.
+  const blocked = translator.translateText("second", "es");
+  await settle();
+  assert.equal(calls.length, 2);
+  assert.equal(await blocked, null);
+
+  // And it recovers once the wall might have lifted.
+  t.mock.timers.tick(30_001);
+  const recovered = translator.translateText("second", "es");
+  await settle();
+  assert.equal(calls.length, 3);
+  calls[2].resolve(gtxResponse("segundo", "en"));
+  assert.deepEqual(await recovered, { text: "segundo", detectedSource: "en" });
+});
+
+test("consecutive openings double the cooldown; one success resets it", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  const { fn, calls } = scriptedFetch();
+  const translator = createTranslator(fn);
+
+  /** Fail one request through its retry with network errors. */
+  const wall = async (text: string) => {
+    const pending = translator.translateText(text, "es");
+    await settle();
+    calls[calls.length - 1].reject(new TypeError("Failed to fetch"));
+    await settle();
+    t.mock.timers.tick(400);
+    await settle();
+    calls[calls.length - 1].reject(new TypeError("Failed to fetch"));
+    assert.equal(await pending, null);
+  };
+
+  await wall("first"); // opens for 30 s
+  t.mock.timers.tick(30_001);
+  await wall("second"); // opens for 60 s
+
+  // 30 s in: a 30 s cooldown would have expired, the doubled one has not.
+  t.mock.timers.tick(30_001);
+  const blocked = translator.translateText("third", "es");
+  await settle();
+  assert.equal(calls.length, 4, "the doubled cooldown must still be open");
+  assert.equal(await blocked, null);
+
+  // Past 60 s: requests flow again, and one success resets the scale.
+  t.mock.timers.tick(30_000);
+  const recovered = translator.translateText("fourth", "es");
+  await settle();
+  assert.equal(calls.length, 5);
+  calls[4].resolve(gtxResponse("cuarto", "en"));
+  await recovered;
+
+  await wall("fifth"); // calls 6 and 7 — opens at the BASE 30 s again
+  t.mock.timers.tick(30_001);
+  const afterReset = translator.translateText("sixth", "es");
+  await settle();
+  assert.equal(calls.length, 8, "a success must reset the cooldown scale");
+  calls[7].resolve(gtxResponse("sexto", "en"));
+  assert.deepEqual(await afterReset, { text: "sexto", detectedSource: "en" });
 });
