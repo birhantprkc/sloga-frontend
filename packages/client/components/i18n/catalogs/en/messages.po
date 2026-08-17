@@ -591,6 +591,10 @@ msgstr "A participant turned off encryption for this call. Resume to be heard �
 msgid "A scheduled message could not be sent: {reason}"
 msgstr "A scheduled message could not be sent: {reason}"
 
+#: components/app/interface/settings/user/voice/EntranceSoundOptions.tsx
+msgid "A soundboard sound that plays for everyone when you join a voice channel. It uses the soundboard, so it only plays where you are allowed to use it."
+msgstr "A soundboard sound that plays for everyone when you join a voice channel. It uses the soundboard, so it only plays where you are allowed to use it."
+
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Able to access channels on this server"
 msgstr "Able to access channels on this server"
@@ -735,6 +739,10 @@ msgstr "All day"
 #: components/app/menus/shared/NotificationContextMenu.tsx
 msgid "All Messages"
 msgstr "All Messages"
+
+#: components/app/interface/settings/user/voice/EntranceSoundOptions.tsx
+msgid "All servers"
+msgstr "All servers"
 
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Allow members to change name and avatar per-message"
@@ -909,6 +917,14 @@ msgstr "Attachments"
 msgid "Attendees can join this channel from the event when it starts. Only members who can see the channel will see the event."
 msgstr "Attendees can join this channel from the event when it starts. Only members who can see the channel will see the event."
 
+#: components/app/interface/settings/user/voice/AttenuationOptions.tsx
+msgid "Attenuation"
+msgstr "Attenuation"
+
+#: components/app/interface/settings/user/voice/AttenuationOptions.tsx
+msgid "Attenuation Strength"
+msgstr "Attenuation Strength"
+
 #: components/modal/modals/ScreenShareSettings.tsx
 msgid "Audio disabled by browser"
 msgstr "Audio disabled by browser"
@@ -940,6 +956,10 @@ msgstr "Automatic"
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "Automatic Gain Control"
 msgstr "Automatic Gain Control"
+
+#: components/app/interface/settings/user/voice/InputSensitivity.tsx
+msgid "Automatically adjust input sensitivity"
+msgstr "Automatically adjust input sensitivity"
 
 #: components/app/interface/settings/user/Language.tsx
 msgid "Automatically detect and translate messages sent by other people. Message text is sent to Google Translate; encrypted messages are never translated."
@@ -1534,6 +1554,10 @@ msgstr "Colors"
 #: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx
 msgid "Coming soon! 👀"
 msgstr "Coming soon! 👀"
+
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Compact mode"
+msgstr "Compact mode"
 
 #. placeholder {0}: peer()?.username ?? t`your contact`
 #: components/modal/modals/E2EEVerify.tsx
@@ -2536,6 +2560,10 @@ msgstr "Enter your invite code."
 msgid "Enter your preferred username."
 msgstr "Enter your preferred username."
 
+#: components/app/interface/settings/user/voice/EntranceSoundOptions.tsx
+msgid "Entrance Sound"
+msgstr "Entrance Sound"
+
 #: src/interface/ServerEvents.tsx
 msgid "Event title"
 msgstr "Event title"
@@ -3151,6 +3179,10 @@ msgstr "Input Gain"
 msgid "Input Level"
 msgstr "Input Level"
 
+#: components/app/interface/settings/user/voice/InputSensitivity.tsx
+msgid "Input Sensitivity"
+msgstr "Input Sensitivity"
+
 #: components/app/interface/settings/user/Native.tsx
 msgid "Instead of closing, Sloga will hide in your tray."
 msgstr "Instead of closing, Sloga will hide in your tray."
@@ -3523,6 +3555,10 @@ msgstr "Looking For More"
 msgid "Low latency"
 msgstr "Low latency"
 
+#: components/app/interface/settings/user/voice/AttenuationOptions.tsx
+msgid "Lower the volume of your games and other applications by this much while someone is speaking. Set to 0% to turn it off. Sloga's own audio is never lowered."
+msgstr "Lower the volume of your games and other applications by this much while someone is speaking. Set to 0% to turn it off. Sloga's own audio is never lowered."
+
 #: components/app/interface/channels/text/MessageComponents.tsx
 msgid "Make a selection"
 msgstr "Make a selection"
@@ -3732,6 +3768,10 @@ msgstr "Microphone"
 #: components/app/interface/settings/user/voice/MicrophoneLevelMeter.tsx
 msgid "Microphone access denied."
 msgstr "Microphone access denied."
+
+#: components/app/interface/settings/user/voice/InputSensitivity.tsx
+msgid "Microphone access was denied, so the meter cannot run."
+msgstr "Microphone access was denied, so the meter cannot run."
 
 #: components/ui/components/features/messaging/composition/VoiceMessageButton.tsx
 msgid "Microphone access was denied. Check your microphone permissions and try again."
@@ -4280,6 +4320,11 @@ msgstr "Or type /roll 2d6+3 in chat"
 msgid "Other"
 msgstr "Other"
 
+#. placeholder {0}: 100 - voice.attenuationStrength
+#: components/app/interface/settings/user/voice/AttenuationOptions.tsx
+msgid "Other applications drop to {0}% while someone speaks."
+msgstr "Other applications drop to {0}% while someone speaks."
+
 #: components/ui/components/features/voice/minigame/MinigameChip.tsx
 msgid "Out of balls!"
 msgstr "Out of balls!"
@@ -4474,6 +4519,10 @@ msgstr "Press any key..."
 #: components/app/interface/settings/user/notifications/Sounds.tsx
 msgid "Preview"
 msgstr "Preview"
+
+#: components/app/interface/settings/user/voice/EntranceSoundOptions.tsx
+msgid "Preview entrance sound"
+msgstr "Preview entrance sound"
 
 #: components/app/interface/settings/UserSettings.tsx
 msgid "Privacy"
@@ -5024,6 +5073,10 @@ msgstr "Round-trip time for your own microphone stream. Shows a dash while your 
 msgid "Run again"
 msgstr "Run again"
 
+#: components/app/interface/settings/user/voice/EntranceSoundOptions.tsx
+msgid "Same as all servers"
+msgstr "Same as all servers"
+
 #: src/interface/ServerEvents.tsx
 #: components/modal/modals/ServerIdentity.tsx
 #: components/modal/modals/CustomStatus.tsx
@@ -5264,6 +5317,10 @@ msgstr "Sent an attachment"
 msgid "Sent multiple attachments"
 msgstr "Sent multiple attachments"
 
+#: components/app/interface/settings/user/voice/EntranceSoundOptions.tsx
+msgid "Server"
+msgstr "Server"
+
 #: components/modal/modals/ServerIdentity.tsx
 msgid "Server Avatar"
 msgstr "Server Avatar"
@@ -5368,6 +5425,14 @@ msgstr "Share screen"
 #: components/ui/components/features/voice/VoiceChannelPreview.tsx
 msgid "Sharing their screen — join to watch"
 msgstr "Sharing their screen — join to watch"
+
+#: components/app/interface/settings/user/Advanced.tsx
+msgid "Show 'copy ID' in context menus"
+msgstr "Show 'copy ID' in context menus"
+
+#: components/app/interface/settings/user/Advanced.tsx
+msgid "Show admin panel shortcuts in context menus"
+msgstr "Show admin panel shortcuts in context menus"
 
 #: components/app/interface/settings/user/Native.tsx
 msgid "Show corrections and suggestions as you type."
@@ -5475,6 +5540,10 @@ msgstr "Sloga cannot tell which screen you are sharing, so it will not hand over
 msgid "Sloga Developer"
 msgstr "Sloga Developer"
 
+#: components/app/interface/settings/user/voice/InputSensitivity.tsx
+msgid "Sloga follows the background noise in your room and opens the microphone when you speak over it. Turn off to set the level by hand."
+msgstr "Sloga follows the background noise in your room and opens the microphone when you speak over it. Turn off to set the level by hand."
+
 #: components/app/interface/settings/user/Native.tsx
 msgid "Sloga for Desktop"
 msgstr "Sloga for Desktop"
@@ -5551,6 +5620,10 @@ msgstr "Something went wrong while signing you in with Google. Please try again.
 #: components/i18n/errors.ts
 msgid "Something went wrong! {error}"
 msgstr "Something went wrong! {error}"
+
+#: components/app/interface/settings/user/voice/EntranceSoundOptions.tsx
+msgid "Sound"
+msgstr "Sound"
 
 #: components/app/interface/settings/server/soundboard/SoundboardList.tsx
 msgid "Sound Name"
@@ -6662,6 +6735,14 @@ msgstr "What doesn't"
 msgid "What the overlay shows"
 msgstr "What the overlay shows"
 
+#: components/app/interface/settings/user/voice/AttenuationOptions.tsx
+msgid "When I speak"
+msgstr "When I speak"
+
+#: components/app/interface/settings/user/voice/AttenuationOptions.tsx
+msgid "When others speak"
+msgstr "When others speak"
+
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Whether other users can edit these settings"
 msgstr "Whether other users can edit these settings"
@@ -7304,6 +7385,15 @@ msgstr "Highlighter"
 #: components/modal/modals/ImageEditorCore.tsx
 msgid "Rectangle"
 msgstr "Rectangle"
+
+#: components/app/interface/settings/user/voice/InputSensitivity.tsx
+msgid "Red is below the level Sloga picked for your room and is not sent; speak normally and your voice should land in the green."
+msgstr "Red is below the level Sloga picked for your room and is not sent; speak normally and your voice should land in the green."
+
+#. placeholder {0}: voice.vadThreshold
+#: components/app/interface/settings/user/voice/InputSensitivity.tsx
+msgid "Red is below the threshold and is not sent; drag the handle so your voice lands in the green and room noise stays in the red. Threshold: {0}%"
+msgstr "Red is below the threshold and is not sent; drag the handle so your voice lands in the green and room noise stays in the red. Threshold: {0}%"
 
 #: components/modal/modals/ImageEditorCore.tsx
 msgid "Ellipse"

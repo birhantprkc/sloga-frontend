@@ -367,13 +367,6 @@ const Config: SettingsConfiguration<{ server: Server }> = {
             //   icon: <MdScience {...iconSize(20)} />,
             //   title: <Trans>Experiments</Trans>,
             // },
-            // Advanced closes out the settings proper. It used to share a
-            // group with Sign out, which read as if the two belonged together.
-            {
-              id: "advanced",
-              icon: <MdScience {...iconSize(20)} />,
-              title: <Trans>Advanced</Trans>,
-            },
           ],
         },
         {
@@ -386,6 +379,13 @@ const Config: SettingsConfiguration<{ server: Server }> = {
               id: "bots",
               icon: <MdSmartToy {...iconSize(20)} />,
               title: <Trans>My Bots</Trans>,
+            },
+            // Copy-ID and admin-panel context-menu shortcuts: developer /
+            // staff tooling, not app preferences.
+            {
+              id: "advanced",
+              icon: <MdScience {...iconSize(20)} />,
+              title: <Trans>Advanced</Trans>,
             },
           ],
         },

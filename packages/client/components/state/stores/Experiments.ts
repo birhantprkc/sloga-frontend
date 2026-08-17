@@ -4,13 +4,19 @@ import { AbstractStore } from ".";
 
 /**
  * Union type of available experiments.
+ *
+ * Empty on purpose. The two upstream entries ("GIF Picker Placeholder",
+ * "Plugins v2 Placeholder") were never read by anything — no `isEnabled`
+ * call existed outside commented-out code — yet they rendered as live
+ * toggles on the Advanced page. Add a member here when a real experiment
+ * exists; the store, clean() and the settings UI already handle a list.
  */
-export type Experiment = "gif_picker" | "plugins";
+export type Experiment = never;
 
 /**
  * Currently active experiments.
  */
-export const AVAILABLE_EXPERIMENTS: Experiment[] = ["gif_picker", "plugins"];
+export const AVAILABLE_EXPERIMENTS: Experiment[] = [];
 
 /**
  * Experiments enabled by default.
@@ -27,16 +33,7 @@ export const ALWAYS_ON_DEVELOPMENT_EXPERIMENTS: Experiment[] = [];
  */
 export const EXPERIMENTS: {
   [key in Experiment]: { title: string; description: string };
-} = {
-  gif_picker: {
-    title: "GIF Picker Placeholder",
-    description: "Not available yet.",
-  },
-  plugins: {
-    title: "Plugins v2 Placeholder",
-    description: "Not available yet.",
-  },
-};
+} = {};
 
 export interface TypeExperiments {
   /**

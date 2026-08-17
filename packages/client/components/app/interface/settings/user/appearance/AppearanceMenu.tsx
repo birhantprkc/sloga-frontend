@@ -49,6 +49,9 @@ export function AppearanceMenu() {
     state.settings.getValue("appearance:content_width") ?? "full";
   const contentAlign = () =>
     state.settings.getValue("appearance:content_align") ?? "start";
+  // Mirrors Message.tsx: compact rows are also "tail" rows (time in the
+  // gutter, name inline), so the preview lays out exactly like the channel.
+  const compact = () => !!state.settings.getValue("appearance:compact_mode");
 
   /**
    * The display's own resolution, for the disabled ultrawide row.
@@ -342,6 +345,8 @@ export function AppearanceMenu() {
               }
               timestamp={new Date()}
               username={user()?.displayName}
+              compact={compact()}
+              tail={compact()}
               isLink="hide"
             >
               Sphinx of black quartz, judge my vow
@@ -352,6 +357,8 @@ export function AppearanceMenu() {
               }
               timestamp={new Date()}
               username={"MysticPixie"}
+              compact={compact()}
+              tail={compact()}
               isLink="hide"
             >
               <code class={css({ fontFamily: `var(--fonts-monospace)` })}>
@@ -383,6 +390,18 @@ export function AppearanceMenu() {
           }
         >
           <Trans>Show usernames</Trans>
+        </Checkbox>
+
+        <Checkbox
+          checked={compact()}
+          onChange={(event) =>
+            state.settings.setValue(
+              "appearance:compact_mode",
+              event.currentTarget.checked,
+            )
+          }
+        >
+          <Trans>Compact mode</Trans>
         </Checkbox>
 
         <Text class="label">

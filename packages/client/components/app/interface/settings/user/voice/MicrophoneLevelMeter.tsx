@@ -2,6 +2,7 @@ import { createSignal, onCleanup } from "solid-js";
 
 import { Trans } from "@lingui-solid/solid/macro";
 
+import { VAD_FFT_SIZE, levelFromFrequencyData } from "@revolt/rtc/vadLevel";
 import { CategoryButton, Column, Text } from "@revolt/ui";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
@@ -25,14 +26,13 @@ export function MicrophoneLevelMeter() {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       audioCtx = new AudioContext();
       const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 512;
+      analyser.fftSize = VAD_FFT_SIZE;
       audioCtx.createMediaStreamSource(stream).connect(analyser);
 
       const buf = new Uint8Array(analyser.frequencyBinCount);
       function tick() {
         analyser.getByteFrequencyData(buf);
-        const avg = buf.reduce((a, b) => a + b, 0) / buf.length;
-        const lvl = Math.min(100, avg * 2.5);
+        const lvl = levelFromFrequencyData(buf);
         setLevel(lvl);
         if (lvl > peak()) {
           setPeak(lvl);

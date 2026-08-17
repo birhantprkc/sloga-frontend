@@ -169,8 +169,23 @@ export interface TypeVoice extends TypeVoiceOverlay {
   openMic: boolean;
   vadEnabled: boolean;
   vadThreshold: number;
+  /**
+   * Voice-activity threshold picked automatically from the ambient noise
+   * floor instead of `vadThreshold`. Discord's "Automatically adjust input
+   * sensitivity" default.
+   */
+  vadAuto: boolean;
   pushToTalk: boolean;
   pushToTalkKey: string;
+
+  /**
+   * Global attenuation ("duck other apps while someone speaks"), desktop
+   * only. Strength 0–100 = how far every OTHER application is lowered while
+   * a speaker is active; 0 turns the feature off.
+   */
+  attenuationStrength: number;
+  attenuateWhenISpeak: boolean;
+  attenuateWhenOthersSpeak: boolean;
 
   screenShareQuality: ScreenShareQualityName;
   screenShareQualityAsk: boolean;
@@ -278,7 +293,11 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
       openMic: true,
       vadEnabled: false,
       vadThreshold: 20,
+      vadAuto: true,
       pushToTalk: false,
+      attenuationStrength: 0,
+      attenuateWhenISpeak: false,
+      attenuateWhenOthersSpeak: true,
       pushToTalkKey: "Space",
       screenShareQuality: "low",
       screenShareQualityAsk: true,
@@ -368,6 +387,25 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
 
     if (typeof input.vadThreshold === "number") {
       data.vadThreshold = Math.max(0, Math.min(100, input.vadThreshold));
+    }
+
+    if (typeof input.vadAuto === "boolean") {
+      data.vadAuto = input.vadAuto;
+    }
+
+    if (typeof input.attenuationStrength === "number") {
+      data.attenuationStrength = Math.max(
+        0,
+        Math.min(100, Math.round(input.attenuationStrength)),
+      );
+    }
+
+    if (typeof input.attenuateWhenISpeak === "boolean") {
+      data.attenuateWhenISpeak = input.attenuateWhenISpeak;
+    }
+
+    if (typeof input.attenuateWhenOthersSpeak === "boolean") {
+      data.attenuateWhenOthersSpeak = input.attenuateWhenOthersSpeak;
     }
 
     if (typeof input.pushToTalk === "boolean") {
@@ -688,6 +726,22 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
     this.set("vadThreshold", value);
   }
 
+  set vadAuto(value: boolean) {
+    this.set("vadAuto", value);
+  }
+
+  set attenuationStrength(value: number) {
+    this.set("attenuationStrength", value);
+  }
+
+  set attenuateWhenISpeak(value: boolean) {
+    this.set("attenuateWhenISpeak", value);
+  }
+
+  set attenuateWhenOthersSpeak(value: boolean) {
+    this.set("attenuateWhenOthersSpeak", value);
+  }
+
   set pushToTalkKey(value: string) {
     this.set("pushToTalkKey", value);
   }
@@ -922,6 +976,22 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
 
   get vadThreshold(): number {
     return this.get().vadThreshold;
+  }
+
+  get vadAuto(): boolean {
+    return this.get().vadAuto;
+  }
+
+  get attenuationStrength(): number {
+    return this.get().attenuationStrength;
+  }
+
+  get attenuateWhenISpeak(): boolean {
+    return this.get().attenuateWhenISpeak;
+  }
+
+  get attenuateWhenOthersSpeak(): boolean {
+    return this.get().attenuateWhenOthersSpeak;
   }
 
   get pushToTalk(): boolean {

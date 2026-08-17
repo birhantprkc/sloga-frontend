@@ -106,7 +106,9 @@ import {
 } from "@revolt/state/stores/Voice";
 import { VoiceCallCardContext } from "@revolt/ui/components/features/voice/callCard/VoiceCallCard";
 import { ReactiveMap } from "@solid-primitives/map";
+import { Attenuation } from "./attenuation";
 import { CaptureClaim } from "./captureClaim";
+import { entranceSoundFor } from "./entranceSound";
 import { watchLocalUserId } from "./localUserIdentity";
 import { RemoteControl } from "./remoteControl";
 import {
@@ -141,6 +143,11 @@ import {
   removeTurnRequest,
   retainPresentRequests,
 } from "./turnRequests";
+import {
+  createNoiseFloorTracker,
+  levelFromFrequencyData,
+  VAD_FFT_SIZE,
+} from "./vadLevel";
 
 import { LiveAnnotations } from "./annotations/liveAnnotations";
 import {
@@ -449,6 +456,16 @@ class Voice {
    * stream keeps the OS mic indicator lit after the call.
    */
   #vadGen = 0;
+  /**
+   * Global attenuation ("duck other apps while someone speaks"). Follows the
+   * room's active speakers between connect and teardown; a no-op off desktop.
+   */
+  #attenuation: Attenuation;
+  /**
+   * Entrance sound lookup (server id → soundboard sound id), read from the
+   * synced settings store by VoiceContext. Undefined = feature not wired.
+   */
+  #entranceSound: ((serverId: string) => string | undefined) | undefined;
 
   // --- Media E2EE (slice 6.3) ---------------------------------------
   // The native-derived key provider + self-hosted worker are constructed per
@@ -798,9 +815,20 @@ class Voice {
     voiceSettings: VoiceSettings,
     modals: ModalControllerExtended,
     sound: SoundController,
+    entranceSound?: (serverId: string) => string | undefined,
   ) {
     this.#settings = voiceSettings;
     this.sound = sound;
+    this.#entranceSound = entranceSound;
+    this.#attenuation = new Attenuation(voiceSettings);
+    // Strength / who-counts changes land on an active duck immediately; the
+    // reads are store getters, so this tracks exactly those three keys.
+    createEffect(() => {
+      void this.#settings.attenuationStrength;
+      void this.#settings.attenuateWhenISpeak;
+      void this.#settings.attenuateWhenOthersSpeak;
+      untrack(() => this.#attenuation.refresh());
+    });
 
     const [channel, setChannel] = createSignal<Channel>();
     this.channel = channel;
@@ -1725,6 +1753,8 @@ class Voice {
       void this.#announceRcCapable(channel, gen);
       this.#startPushToTalk(room);
       this.#startVAD(room);
+      this.#attenuation.attach(room);
+      this.#playEntranceSound(channel);
       const isAfk = channel.name?.toLowerCase() === "afk";
       // Honour the persisted pre-call state (the sidebar user bar makes
       // muting/deafening before a call a first-class action): a deafened or
@@ -2313,6 +2343,7 @@ class Voice {
       this.disposeTrackRoot = undefined;
       this.#stopPushToTalk();
       this.#stopVAD();
+      this.#attenuation.detach();
 
       // Room disconnect stops tracks (destroying attached processors); drop the
       // controller's references and release any virtual-background image URL.
@@ -4658,15 +4689,21 @@ class Voice {
       });
       this.#vadCtx = new AudioContext();
       const analyser = this.#vadCtx.createAnalyser();
-      analyser.fftSize = 512;
+      analyser.fftSize = VAD_FFT_SIZE;
       this.#vadCtx.createMediaStreamSource(this.#vadStream).connect(analyser);
       const buf = new Uint8Array(analyser.frequencyBinCount);
+      // "Automatically adjust input sensitivity": the gate follows the room's
+      // noise floor instead of the hand-set threshold. Same tracker the
+      // settings meter runs, so what the meter shows is what the gate does.
+      const auto = createNoiseFloorTracker();
 
       const tick = () => {
         analyser.getByteFrequencyData(buf);
-        const avg = buf.reduce((a, b) => a + b, 0) / buf.length;
-        const level = Math.min(100, avg * 2.5);
-        const threshold = this.#settings.vadThreshold;
+        const level = levelFromFrequencyData(buf);
+        const autoThreshold = auto.update(level);
+        const threshold = this.#settings.vadAuto
+          ? autoThreshold
+          : this.#settings.vadThreshold;
 
         if (level > threshold && !this.whisper.target()) {
           // Voice-activity must not open the room mic while whispering — the
@@ -4692,6 +4729,26 @@ class Voice {
     } catch {
       // mic access denied — VAD won't run
     }
+  }
+
+  /**
+   * Trigger the user's entrance sound for this server, if one is chosen. Goes
+   * through the ordinary soundboard trigger route (same UseSoundboard
+   * permission, same fan-out, same local playback for everyone) after a short
+   * beat so the join has settled and the others' clients are listening for
+   * us. Best effort: a 403 (no soundboard permission here) or a vanished
+   * sound is silently nothing.
+   */
+  #playEntranceSound(channel: Channel) {
+    const serverId = channel.serverId;
+    if (!serverId || !this.#entranceSound) return;
+    const soundId = this.#entranceSound(serverId);
+    if (!soundId) return;
+    setTimeout(() => {
+      if (this.state() !== "CONNECTED" || this.channel()?.id !== channel.id)
+        return;
+      void channel.triggerSound(soundId).catch(() => {});
+    }, 800);
   }
 
   #stopVAD() {
@@ -4721,7 +4778,9 @@ export function VoiceContext(props: { children: JSX.Element }) {
   const state = useState();
   const modals = useModals();
   const sound = useSound();
-  const voice = new Voice(state.voice, modals, sound);
+  const voice = new Voice(state.voice, modals, sound, (serverId) =>
+    entranceSoundFor(state.settings, serverId),
+  );
 
   return (
     <voiceContext.Provider value={voice}>

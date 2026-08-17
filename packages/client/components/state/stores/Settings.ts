@@ -239,6 +239,18 @@ interface SettingsDefinition {
    * Streamer Mode: mute notification and call sounds
    */
   "streamer:disable_sounds": boolean;
+
+  /**
+   * Entrance sound for every server: soundboard sound id triggered when you
+   * join a server voice channel. "" = none.
+   */
+  "soundboard:entrance": string;
+
+  /**
+   * Per-server entrance-sound overrides (server id → sound id). A server
+   * present with "" plays nothing there even when a global sound is set.
+   */
+  "soundboard:entrance_servers": Record<string, string>;
 }
 
 /**
@@ -290,6 +302,15 @@ const EXPECTED_TYPES: { [K in keyof SettingsDefinition]: ValueType<K> } = {
   "streamer:hide_invites": "boolean",
   "streamer:disable_notifications": "boolean",
   "streamer:disable_sounds": "boolean",
+  "soundboard:entrance": "string",
+  "soundboard:entrance_servers": (value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    const out: Record<string, string> = {};
+    for (const [server, sound] of Object.entries(value)) {
+      if (typeof sound === "string") out[server] = sound;
+    }
+    return out;
+  },
 };
 
 /**
@@ -330,6 +351,8 @@ const DEFAULT_VALUES: TypeSettings = {
   "streamer:hide_invites": true,
   "streamer:disable_notifications": true,
   "streamer:disable_sounds": true,
+  "soundboard:entrance": "",
+  "soundboard:entrance_servers": {},
 };
 
 /**
@@ -392,6 +415,8 @@ export class Settings extends AbstractStore<"settings", TypeSettings> {
       "streamer:hide_invites": true,
       "streamer:disable_notifications": true,
       "streamer:disable_sounds": true,
+      "soundboard:entrance": "",
+      "soundboard:entrance_servers": {},
     };
   }
 

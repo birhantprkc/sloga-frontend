@@ -1,5 +1,7 @@
 import { Column } from "@revolt/ui";
 
+import { AttenuationOptions } from "./AttenuationOptions";
+import { EntranceSoundOptions } from "./EntranceSoundOptions";
 import { MicrophoneLevelMeter } from "./MicrophoneLevelMeter";
 import { MicrophoneTest } from "./MicrophoneTest";
 import { VoiceInputOptions } from "./VoiceInputOptions";
@@ -18,6 +20,9 @@ export function VoiceSettings() {
       <MicrophoneLevelMeter />
       <MicrophoneTest />
       <VoiceProcessingOptions />
+      <EntranceSoundOptions />
+      {/* Renders nothing off desktop: the shell probe answers unsupported. */}
+      <AttenuationOptions />
     </Column>
   );
 }

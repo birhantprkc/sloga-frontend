@@ -6,6 +6,8 @@ import { DISABLE_WEB_AUDIO_MIX_KEY } from "@revolt/rtc";
 import { useState } from "@revolt/state";
 import { CategoryButton, Checkbox, Column, Slider, Text } from "@revolt/ui";
 
+import { InputSensitivity } from "./InputSensitivity";
+
 /**
  * Voice processing options
  */
@@ -189,24 +191,7 @@ export function VoiceProcessingOptions() {
           <Trans>Voice Activity Detection</Trans>
         </CategoryButton>
         <Show when={voice.vadEnabled}>
-          <CategoryButton
-            icon="blank"
-            description={
-              <Column gap="sm">
-                <Text class="label"><Trans>Sensitivity threshold: {voice.vadThreshold}%</Trans></Text>
-                <Slider
-                  min={0}
-                  max={100}
-                  step={1}
-                  value={voice.vadThreshold}
-                  onInput={(e) => (voice.vadThreshold = Number(e.currentTarget.value))}
-                  labelFormatter={(v) => `${v}%`}
-                />
-              </Column>
-            }
-          >
-            <Trans>VAD Threshold</Trans>
-          </CategoryButton>
+          <InputSensitivity />
         </Show>
       </CategoryButton.Group>
 
