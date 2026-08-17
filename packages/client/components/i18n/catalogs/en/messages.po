@@ -631,6 +631,10 @@ msgstr "Accept new identity"
 msgid "Account"
 msgstr "Account"
 
+#: components/app/interface/settings/UserSettings.tsx
+msgid "Account Info"
+msgstr "Account Info"
+
 #: components/modal/modals/PolicyChange.tsx
 msgid "Acknowledge"
 msgstr "Acknowledge"
@@ -2916,8 +2920,8 @@ msgid "Go back to login"
 msgstr "Go back to login"
 
 #: components/app/interface/settings/user/profile/UserProfileEditor.tsx
-msgid "Go to My Account to edit your username"
-msgstr "Go to My Account to edit your username"
+msgid "Go to Account Info to edit your username"
+msgstr "Go to Account Info to edit your username"
 
 #: components/app/interface/settings/user/profile/UserProfileEditor.tsx
 msgid "Go to account settings to edit your username"

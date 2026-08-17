@@ -194,7 +194,9 @@ export function UserProfileEditor(props: Props) {
           <CategoryButton
             icon={<MdBadge />}
             action="chevron"
-            description={<Trans>Go to My Account to edit your username</Trans>}
+            description={
+              <Trans>Go to Account Info to edit your username</Trans>
+            }
             onClick={() => navigate("account")}
           >
             <Trans>Want to change username?</Trans>

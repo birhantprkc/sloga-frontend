@@ -206,7 +206,7 @@ const Config: SettingsConfiguration<{ server: Server }> = {
             {
               id: "account",
               icon: <Symbol size={20}>manage_accounts</Symbol>,
-              title: <Trans>My Account</Trans>,
+              title: <Trans>Account Info</Trans>,
             },
             {
               id: "profile",

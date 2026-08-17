@@ -16,8 +16,8 @@ import {
 /**
  * Account Card — the "signed in as" header above the settings list.
  *
- * Still a shortcut to My Account, but it no longer claims the selected state:
- * My Account is a visible row in the Account section now, and that row is
+ * Still a shortcut to Account Info, but it no longer claims the selected state:
+ * Account Info is a visible row in the Account section now, and that row is
  * what highlights. Two highlighted rows for one page read as two pages.
  */
 export function AccountCard() {
