@@ -183,6 +183,8 @@ export function LayoutArrangement() {
       tabIndex={0}
       aria-label={navLabel()}
       dragging={dragging() === "nav"}
+      // Rail at the window edge, channels inside — as the real block does.
+      reversed={sides().nav === "right"}
       onPointerDown={[beginDrag, "nav"]}
       onKeyDown={[onTileKey, "nav"]}
     >
@@ -422,6 +424,9 @@ const Tile = styled("div", {
     },
   },
   variants: {
+    reversed: {
+      true: { flexDirection: "row-reverse" },
+    },
     narrow: {
       true: { width: "44px" },
       false: { width: "88px" },

@@ -14,6 +14,8 @@ import { useLocation, useParams, useSmartParams } from "@revolt/routing";
 import { useState } from "@revolt/state";
 import { LAYOUT_SECTIONS } from "@revolt/state/stores/Layout";
 
+import { useLayoutSides } from "@revolt/ui";
+
 import { HomeSidebar, ServerList, ServerSidebar } from "./navigation";
 import { UserFooter } from "./navigation/UserFooter";
 import { RAIL_EXPANDED_DEFAULT } from "./navigation/servers/ServerList";
@@ -33,6 +35,17 @@ const MainBar = styled("div", {
     },
   },
   variants: {
+    /**
+     * Navigation block on the right: the rail belongs at the window edge and
+     * the channel list inside it, i.e. a true mirror of the default. The
+     * floating user bar is absolutely positioned over the whole block, so it
+     * needs nothing.
+     */
+    navRight: {
+      true: {
+        flexDirection: "row-reverse",
+      },
+    },
     /**
      * Reserve room at the bottom of the visible columns (server rail +
      * channel list) so their content can always scroll clear of the
@@ -77,6 +90,7 @@ export const Sidebar = (props: {
 
   const params = useParams<{ server: string }>();
   const location = useLocation();
+  const sides = useLayoutSides();
 
   /** Whether the channel sidebar is shown. */
   const showSidebar = () =>
@@ -106,6 +120,7 @@ export const Sidebar = (props: {
   return (
     <MainBar
       class="main_bar"
+      navRight={sides().nav === "right"}
       footer={showFooter() ? (footerStacked() ? "stack" : "bar") : "none"}
     >
       <ServerList
