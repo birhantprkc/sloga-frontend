@@ -5,7 +5,7 @@ import { Channel, Server, User } from "stoat.js";
 import { cva } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 
-import { CONFIGURATION, useDevice } from "@revolt/common";
+import { useDevice } from "@revolt/common";
 import { KeybindAction, createKeybind } from "@revolt/keybinds";
 import { useModals } from "@revolt/modal";
 import { useNavigate } from "@revolt/routing";
@@ -547,19 +547,17 @@ export const ServerList = (props: Props) => {
             </Show>
           </a>
         </Tooltip>
-        <Show when={CONFIGURATION.IS_STOAT}>
-          <Tooltip placement="right" content={"Find new servers to join"}>
-            <a
-              href={state.layout.getLastActiveDiscoverPath()}
-              class={entryContainer({ expanded: railExpanded() })}
-            >
-              <Avatar size={42} fallback={<MdExplore />} />
-              <Show when={railExpanded()}>
-                <RailLabel>Discover</RailLabel>
-              </Show>
-            </a>
-          </Tooltip>
-        </Show>
+        <Tooltip placement="right" content={"Find new servers to join"}>
+          <a
+            href={state.layout.getLastActiveDiscoverPath()}
+            class={entryContainer({ expanded: railExpanded() })}
+          >
+            <Avatar size={42} fallback={<MdExplore />} />
+            <Show when={railExpanded()}>
+              <RailLabel>Discover</RailLabel>
+            </Show>
+          </a>
+        </Tooltip>
       </div>
       <Shadow>
         <div />

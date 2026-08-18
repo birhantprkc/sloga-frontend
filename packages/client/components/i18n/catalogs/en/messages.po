@@ -7475,6 +7475,14 @@ msgstr "phone"
 msgid "card"
 msgstr "card"
 
+#: src/interface/Discover.tsx
+msgid "Couldn't load the directory. Try again in a moment."
+msgstr "Couldn't load the directory. Try again in a moment."
+
+#: src/interface/Discover.tsx
+msgid "Discover"
+msgstr "Discover"
+
 #: components/modal/modals/ImageEditorCore.tsx
 msgid "SSN"
 msgstr "SSN"
@@ -7494,3 +7502,23 @@ msgstr "you"
 #: components/modal/modals/ImageEditorCore.tsx
 msgid "IP"
 msgstr "IP"
+
+#: src/interface/Discover.tsx
+msgid "Loading communities…"
+msgstr "Loading communities…"
+
+#: src/interface/Discover.tsx
+msgid "No communities are listed yet. Server owners can request a listing from Server Settings → Overview."
+msgstr "No communities are listed yet. Server owners can request a listing from Server Settings → Overview."
+
+#: src/interface/Discover.tsx
+msgid "No communities match your search."
+msgstr "No communities match your search."
+
+#: src/interface/Discover.tsx
+msgid "Public communities on Sloga. Servers appear here after their owner requests a listing and it is approved."
+msgstr "Public communities on Sloga. Servers appear here after their owner requests a listing and it is approved."
+
+#: src/interface/Discover.tsx
+msgid "Search communities…"
+msgstr "Search communities…"

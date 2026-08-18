@@ -343,19 +343,17 @@ export function HomePage() {
               <Trans>Add a Friend</Trans>
             </CategoryButton>
             </div>
-            <Show when={CONFIGURATION.IS_STOAT}>
-              <CategoryButton
-                onClick={() => navigate("/discover")}
-                description={
-                  <Trans>
-                    Find a community based on your hobbies or interests.
-                  </Trans>
-                }
-                icon={<MdExplore />}
-              >
-                <Trans>Discover Sloga</Trans>
-              </CategoryButton>
-            </Show>
+            <CategoryButton
+              onClick={() => navigate("/discover")}
+              description={
+                <Trans>
+                  Find a community based on your hobbies or interests.
+                </Trans>
+              }
+              icon={<MdExplore />}
+            >
+              <Trans>Discover Sloga</Trans>
+            </CategoryButton>
             <Show when={client()!.user?.privileged}>
               <CategoryButton
                 onClick={() =>

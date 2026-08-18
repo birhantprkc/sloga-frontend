@@ -53,6 +53,7 @@ import AuthPage from "./Auth";
 import Interface from "./Interface";
 import "./index.css";
 import { DevelopmentPage } from "./interface/Development";
+import { Discover } from "./interface/Discover";
 import { Friends } from "./interface/Friends";
 import { FriendsPopout } from "./interface/FriendsPopout";
 import { HomePage } from "./interface/Home";
@@ -287,6 +288,7 @@ render(
           <Route path="/" component={Interface as never}>
             <Route path="/pwa" component={PWARedirect} />
             <Route path="/dev" component={DevelopmentPage} />
+            <Route path={["/discover", "/discover/servers"]} component={Discover} />
             <Route path="/discover/server/:id" component={DiscoverRedirect} />
             <Route path="/settings" component={SettingsRedirect} />
             <Route path="/invite/:code" component={InviteRedirect} />
