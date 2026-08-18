@@ -8,6 +8,49 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // v0.46.0: the layout designer + the in-app community directory. Copy
+  // constraints, all load-bearing:
+  // - The layout applies to THE DEVICE IT IS SET ON. The settings store is
+  //   local-only (it is not in Sync's STORE_KEYS), so a user who arranges
+  //   their desktop and then opens the app on a laptop will find it
+  //   unchanged. Say so, or it reads as sync being broken.
+  // - It is NOT offered at phone widths — the slide-out drawer owns the
+  //   layout there. State the limit; a phone reader will go looking.
+  // - The member list's Auto choice is what everyone already has, and it is
+  //   what the ultrawide layout drives. Never imply the ultrawide option was
+  //   removed or is overridden by default; choosing a side explicitly is what
+  //   overrides it.
+  // - The Discord preset is named after the arrangement it reproduces.
+  //   Describe it as an arrangement, never as compatibility, import, or any
+  //   kind of interoperability with them.
+  // - The directory has been reachable on the web since 08-18 but was never
+  //   announced; this is its first entry, and it is now in every shell. Do
+  //   not call it brand new to a web reader who has already seen it.
+  // - Never mention the listing-request queue: it renders for platform
+  //   admins only, and describing a button nobody else has is noise.
+  // - Do NOT quote these UI strings — they are this release's grep markers:
+  //   "Arrangement", "Server list and channels", "Mirrored",
+  //   "No communities match your search." Naming the Layout section and the
+  //   Discover page is fine; the markers above are what the sweep greps for.
+  // - Never mention: server boosts, streaming connections, captions, remote
+  //   control (lit on Windows desktop only, dark everywhere else).
+  {
+    id: "sloga-2026-08-18",
+    title: "Patch Notes",
+    published_at: "2026-08-18T21:00:00.000Z",
+    markdown_content: `## v0.46.0 — Move the sidebars where you want them
+
+### 🧩 The app rearranges to suit you
+- **Settings → Appearance → Layout.** Drag your server list and channels, or your member list, to whichever side of the window you want them on, and drop them there. Buttons and arrow keys do the same job if dragging is not your style.
+- **Three ready-made arrangements.** Sloga is the one you have now. The Discord one puts the member list in a full-height column on the right and shrinks the server list down to icons, for anyone whose muscle memory came from there. The third flips the whole app to the other side of the window, which is the point if you sit left-handed or your monitor is off to one side.
+- **The member list starts on Auto,** exactly where it has always been — tucked under your channel list, and moved out to its own column by the ultrawide option on very wide displays. Pick a side for it yourself and your choice wins from then on.
+- **This applies to the device you set it on.** Arrange your desktop however you like and your laptop stays as it was; the two do not have to agree. Phones keep their slide-out drawer and are unaffected.
+
+### 🧭 Find communities without leaving the app
+- **Discover, from your server list or from Home.** Browse the public communities on Sloga, search them, and open a join card straight from the results — no trip to the website. It has been on the web for a few days; now it is in the desktop, Linux and Android apps too.
+- Server owners ask to be listed from their own server settings, and every listing is reviewed by hand before it appears.
+`,
+  },
   // v0.45.0: the settings reorganization, global attenuation, the input
   // sensitivity meter, entrance sounds, RNNoise as the default filter, and
   // the new appearance knobs. Copy constraints, all load-bearing:
