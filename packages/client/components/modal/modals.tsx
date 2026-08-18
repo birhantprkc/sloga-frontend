@@ -20,6 +20,7 @@ import { CreateGroupOrServer } from "./modals/CreateGroupOrServer";
 import { CreateInviteModal } from "./modals/CreateInvite";
 import { CreateOrJoinServerModal } from "./modals/CreateOrJoinServer";
 import { DiscoverJoinModal } from "./modals/DiscoverJoin";
+import { DiscoveryQueueModal } from "./modals/DiscoveryQueue";
 import { CreatePollModal } from "./modals/CreatePoll";
 import { CreateRoleModal } from "./modals/CreateRole";
 import { CreateSoftResModal } from "./modals/CreateSoftRes";
@@ -212,6 +213,8 @@ export function RenderModal(props: ActiveModal & { onClose: () => void }) {
       return <ImageViewerModal {...modalProps} />;
     case "discover_join":
       return <DiscoverJoinModal {...modalProps} />;
+    case "discovery_queue":
+      return <DiscoveryQueueModal {...modalProps} />;
     case "invite":
       return <InviteModal {...modalProps} />;
     case "invite_to_server":

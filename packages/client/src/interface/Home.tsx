@@ -28,6 +28,7 @@ import MdPersonAdd from "@material-design-icons/svg/filled/person_add.svg?compon
 import MdRateReview from "@material-design-icons/svg/filled/rate_review.svg?component-solid";
 import MdReport from "@material-design-icons/svg/filled/report.svg?component-solid";
 import MdSettings from "@material-design-icons/svg/filled/settings.svg?component-solid";
+import MdTravelExplore from "@material-design-icons/svg/filled/travel_explore.svg?component-solid";
 
 import { HeaderIcon } from "./common/CommonHeader";
 
@@ -365,6 +366,19 @@ export function HomePage() {
                 icon={<MdReport />}
               >
                 <Trans>Report queue</Trans>
+              </CategoryButton>
+              <CategoryButton
+                onClick={() =>
+                  openModal({ type: "discovery_queue", client: client()! })
+                }
+                description={
+                  <Trans>
+                    Approve or reject servers asking to be publicly listed.
+                  </Trans>
+                }
+                icon={<MdTravelExplore />}
+              >
+                <Trans>Listing requests</Trans>
               </CategoryButton>
             </Show>
             <div style={{"--md-sys-color-primary": "#00B2FF", "--md-sys-color-on-primary": "#05090F"}}>

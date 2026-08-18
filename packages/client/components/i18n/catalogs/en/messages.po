@@ -7329,6 +7329,14 @@ msgstr "Remote control isn't available on this device."
 msgid "Add to rotation"
 msgstr "Add to rotation"
 
+#: components/modal/modals/DiscoveryQueue.tsx
+msgid "Approve"
+msgstr "Approve"
+
+#: components/modal/modals/DiscoveryQueue.tsx
+msgid "Approve or reject servers asking to be publicly listed."
+msgstr "Approve or reject servers asking to be publicly listed."
+
 #: components/ui/components/features/voice/callCard/ParticipantTile.tsx
 msgid "Ask for a turn"
 msgstr "Ask for a turn"
@@ -7503,9 +7511,17 @@ msgstr "you"
 msgid "IP"
 msgstr "IP"
 
+#: components/modal/modals/DiscoveryQueue.tsx
+msgid "Listing requests"
+msgstr "Listing requests"
+
 #: src/interface/Discover.tsx
 msgid "Loading communities…"
 msgstr "Loading communities…"
+
+#: components/modal/modals/DiscoveryQueue.tsx
+msgid "Loading requests…"
+msgstr "Loading requests…"
 
 #: src/interface/Discover.tsx
 msgid "No communities are listed yet. Server owners can request a listing from Server Settings → Overview."
@@ -7515,6 +7531,14 @@ msgstr "No communities are listed yet. Server owners can request a listing from 
 msgid "No communities match your search."
 msgstr "No communities match your search."
 
+#: components/modal/modals/DiscoveryQueue.tsx
+msgid "No pending listing requests. All clear!"
+msgstr "No pending listing requests. All clear!"
+
+#: components/modal/modals/DiscoveryQueue.tsx
+msgid "Owner"
+msgstr "Owner"
+
 #: src/interface/Discover.tsx
 msgid "Public communities on Sloga. Servers appear here after their owner requests a listing and it is approved."
 msgstr "Public communities on Sloga. Servers appear here after their owner requests a listing and it is approved."
@@ -7522,3 +7546,4 @@ msgstr "Public communities on Sloga. Servers appear here after their owner reque
 #: src/interface/Discover.tsx
 msgid "Search communities…"
 msgstr "Search communities…"
+
