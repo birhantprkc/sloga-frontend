@@ -13,6 +13,22 @@ msgstr ""
 "Language-Team: \n"
 "Plural-Forms: \n"
 
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Arrangement"
+msgstr "Arrangement"
+
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Auto keeps the member list with the channels, unless Ultrawide layout moves it to the other side. Applies to this device only."
+msgstr "Auto keeps the member list with the channels, unless Ultrawide layout moves it to the other side. Applies to this device only."
+
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Custom"
+msgstr "Custom"
+
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Discord"
+msgstr "Discord"
+
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "Evens out loud and quiet people automatically. Only voices are leveled — music and screen share audio are never touched."
 msgstr "Evens out loud and quiet people automatically. Only voices are leveled — music and screen share audio are never touched."
@@ -25,6 +41,11 @@ msgstr "How far a quiet voice may be raised. Loud voices are always tamed, at an
 msgid "Incoming Voices"
 msgstr "Incoming Voices"
 
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Left"
+msgstr "Left"
+
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "Level Incoming Voices"
 msgstr "Level Incoming Voices"
@@ -32,6 +53,43 @@ msgstr "Level Incoming Voices"
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "Leveling Strength"
 msgstr "Leveling Strength"
+
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Member list"
+msgstr "Member list"
+
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Member list: on the left. Press left or right arrow to move."
+msgstr "Member list: on the left. Press left or right arrow to move."
+
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Member list: on the right. Press left or right arrow to move."
+msgstr "Member list: on the right. Press left or right arrow to move."
+
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Mirrored"
+msgstr "Mirrored"
+
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "On the same side as the channels, the member list shares their column. Overrides Ultrawide layout's member list placement."
+msgstr "On the same side as the channels, the member list shares their column. Overrides Ultrawide layout's member list placement."
+
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Right"
+msgstr "Right"
+
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Server list and channels"
+msgstr "Server list and channels"
+
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Server list and channels: on the left. Press left or right arrow to move."
+msgstr "Server list and channels: on the left. Press left or right arrow to move."
+
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Server list and channels: on the right. Press left or right arrow to move."
+msgstr "Server list and channels: on the right. Press left or right arrow to move."
 
 #. placeholder {0}: voice.audioNormalizationStrength
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx

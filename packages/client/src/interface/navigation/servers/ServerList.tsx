@@ -10,7 +10,10 @@ import { KeybindAction, createKeybind } from "@revolt/keybinds";
 import { useModals } from "@revolt/modal";
 import { useNavigate } from "@revolt/routing";
 import { useState } from "@revolt/state";
-import { LAYOUT_SECTIONS } from "@revolt/state/stores/Layout";
+import {
+  LAYOUT_SECTIONS,
+  SERVER_RAIL_EXPANDED_DEFAULT,
+} from "@revolt/state/stores/Layout";
 import {
   Avatar,
   Column,
@@ -86,7 +89,7 @@ interface Props {
  * Exported so Sidebar reads the rail state with the same default when
  * deciding which shape the floating user bar takes.
  */
-export const RAIL_EXPANDED_DEFAULT = true;
+export const RAIL_EXPANDED_DEFAULT = SERVER_RAIL_EXPANDED_DEFAULT;
 
 /**
  * Sloga brand palette for the standalone "O" mark — green core in the middle,

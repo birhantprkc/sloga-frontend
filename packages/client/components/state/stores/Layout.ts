@@ -15,6 +15,13 @@ export enum LAYOUT_SECTIONS {
   SERVER_RAIL_EXPANDED = "SERVER_RAIL_EXPANDED",
 }
 
+/**
+ * Default for `LAYOUT_SECTIONS.SERVER_RAIL_EXPANDED`. Lives here (rather than
+ * with the rail) so settings code can collapse the rail with the same default
+ * every get/set/toggle call passes — the store only stores the contrary.
+ */
+export const SERVER_RAIL_EXPANDED_DEFAULT = true;
+
 export interface TypeLayout {
   /**
    * URL to redirect to after login

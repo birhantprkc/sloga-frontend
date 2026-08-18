@@ -46,7 +46,7 @@ import {
   symbolSize,
   typography,
   unreadTone,
-  useUltrawideLayout,
+  useLayoutSides,
 } from "@revolt/ui";
 import { VoiceChannelPreview } from "@revolt/ui/components/features/voice/VoiceChannelPreview";
 import { createDragHandle } from "@revolt/ui/components/utils/Draggable";
@@ -114,7 +114,7 @@ export const ServerSidebar = (props: Props) => {
   const { isMobile } = useDevice();
   const client = useClient();
   const state = useState();
-  const ultrawide = useUltrawideLayout();
+  const sides = useLayoutSides();
 
   let memberScrollTarget: HTMLDivElement | undefined;
   let channelScrollTarget: HTMLDivElement | undefined;
@@ -178,9 +178,9 @@ export const ServerSidebar = (props: Props) => {
   // when it is there, otherwise it claims every spare pixel and leaves the
   // members scrolling inside a strip with dead space above it.
   //
-  // Unless the ultrawide layout has moved it into the right-hand column, in
-  // which case this column goes back to being channels-only and the channel
-  // list gets the whole height. `TextChannel` reads the same condition from
+  // Unless the layout setting (or the ultrawide layout, via "auto") has given
+  // it its own column on the far side, in which case this column goes back to
+  // being channels-only and the channel list gets the whole height. `TextChannel` reads the same condition from
   // the other side; exactly one of the two renders the list.
   //
   // Note this only stops *rendering* the divider — `channelListHeight` and its
@@ -189,7 +189,7 @@ export const ServerSidebar = (props: Props) => {
   // window got too narrow.
   const showMemberList = () =>
     selectedChannel()?.type === "TextChannel" &&
-    !ultrawide() &&
+    !sides().membersOwnColumn &&
     state.layout.getSectionState(LAYOUT_SECTIONS.MEMBER_SIDEBAR, true);
 
   // Users can manage certain parts of the server individually, regardless of their ManageServer Permission

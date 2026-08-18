@@ -1,6 +1,6 @@
 import { BiRegularChevronLeft, BiRegularChevronRight } from "solid-icons/bi";
 
-import { JSX, Match, Switch } from "solid-js";
+import { JSX, Match, Show, Switch } from "solid-js";
 
 import MdArrowBack from "@material-design-icons/svg/outlined/arrow_back.svg?component-solid";
 
@@ -9,6 +9,7 @@ import { css } from "styled-system/css";
 
 import { useState } from "@revolt/state";
 import { LAYOUT_SECTIONS } from "@revolt/state/stores/Layout";
+import { useLayoutSides } from "@revolt/ui";
 
 /**
  * Wrapper for header icons which adds the chevron on the
@@ -18,6 +19,10 @@ import { LAYOUT_SECTIONS } from "@revolt/state/stores/Layout";
 export function HeaderIcon(props: { children: JSX.Element }) {
   const state = useState();
   const { t } = useLingui();
+  const sides = useLayoutSides();
+  // The chevrons point toward the sidebar they act on: inward to collapse,
+  // outward to expand. That is "left" only while the nav is on the left.
+  const navRight = () => sides().nav === "right";
 
   return (
     <div
@@ -41,7 +46,12 @@ export function HeaderIcon(props: { children: JSX.Element }) {
       <Switch
         fallback={
           <>
-            <BiRegularChevronRight size={20} />
+            <Show
+              when={navRight()}
+              fallback={<BiRegularChevronRight size={20} />}
+            >
+              <BiRegularChevronLeft size={20} />
+            </Show>
             {props.children}
           </>
         }
@@ -55,7 +65,9 @@ export function HeaderIcon(props: { children: JSX.Element }) {
             true,
           )}
         >
-          <BiRegularChevronLeft size={20} />
+          <Show when={navRight()} fallback={<BiRegularChevronLeft size={20} />}>
+            <BiRegularChevronRight size={20} />
+          </Show>
           {props.children}
         </Match>
       </Switch>

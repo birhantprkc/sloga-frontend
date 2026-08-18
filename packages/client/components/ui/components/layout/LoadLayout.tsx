@@ -2,7 +2,7 @@ import { Accessor, createEffect } from "solid-js";
 
 import { useDevice } from "@revolt/common";
 import { useState } from "@revolt/state";
-import { CONTENT_WIDTHS } from "@revolt/state/stores/Settings";
+import { CONTENT_WIDTHS, LayoutSide } from "@revolt/state/stores/Settings";
 
 /**
  * Mount the message width preference onto the root element.
@@ -64,4 +64,55 @@ export function useUltrawideLayout(): Accessor<boolean> {
   return () =>
     state.settings.getValue("appearance:ultrawide_layout") === true &&
     device.wideEnough();
+}
+
+/**
+ * The resolved arrangement of the shell's movable panels.
+ */
+export interface LayoutSides {
+  /** Side the navigation block (server rail + channel list) sits on */
+  nav: LayoutSide;
+  /** Side the member list sits on */
+  members: LayoutSide;
+  /**
+   * Whether the member list gets its own full-height column (opposite side
+   * from the nav) rather than sharing the channel column behind the divider
+   * (same side as the nav). Derived: `members !== nav`.
+   */
+  membersOwnColumn: boolean;
+}
+
+const DEFAULT_SIDES: LayoutSides = {
+  nav: "left",
+  members: "left",
+  membersOwnColumn: false,
+};
+
+/**
+ * Where the movable panels go right now. The single source of truth for
+ * `Interface`, `TextChannel`, `ServerSidebar` and the headers — nothing else
+ * should read the two `appearance:layout_*` keys directly.
+ *
+ * - Phone widths ignore the preference entirely: the slide drawer owns the
+ *   layout there and always slides in from the left.
+ * - `members: "auto"` reproduces the pre-designer behaviour — in the channel
+ *   column, unless the ultrawide layout is active, which moves it opposite.
+ */
+export function useLayoutSides(): Accessor<LayoutSides> {
+  const state = useState();
+  const device = useDevice();
+  const ultrawide = useUltrawideLayout();
+
+  return () => {
+    if (device.layout() === "phone") return DEFAULT_SIDES;
+
+    const nav = state.settings.getValue("appearance:layout_nav_side") ?? "left";
+    const pref =
+      state.settings.getValue("appearance:layout_members_side") ?? "auto";
+    const opposite: LayoutSide = nav === "left" ? "right" : "left";
+    const members: LayoutSide =
+      pref === "auto" ? (ultrawide() ? opposite : nav) : pref;
+
+    return { nav, members, membersOwnColumn: members !== nav };
+  };
 }

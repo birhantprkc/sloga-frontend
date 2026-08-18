@@ -770,6 +770,10 @@ msgstr ""
 msgid "Are you sure you want to Sign out?"
 msgstr ""
 
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Arrangement"
+msgstr ""
+
 #: components/app/interface/settings/server/Overview.tsx
 msgid "Ask for this server to be shown in the public directory. Its name, icon, description and member count become publicly visible once approved."
 msgstr ""
@@ -825,6 +829,10 @@ msgstr ""
 #: components/app/interface/settings/user/voice/CameraOptions.tsx
 #: components/app/interface/settings/user/voice/CameraOptions.tsx
 msgid "Auto"
+msgstr ""
+
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Auto keeps the member list with the channels, unless Ultrawide layout moves it to the other side. Applies to this device only."
 msgstr ""
 
 #: components/modal/modals/CreateThread.tsx
@@ -1816,6 +1824,10 @@ msgstr ""
 msgid "Current Session"
 msgstr ""
 
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Custom"
+msgstr ""
+
 #: components/modal/modals/ImportDiscord.tsx
 msgid "Custom emojis and the server icon aren't in a Discord template, so they can't come across this way."
 msgstr ""
@@ -2055,6 +2067,10 @@ msgstr ""
 
 #: components/ui/components/features/voice/callCard/VoiceCallCardStatus.tsx
 msgid "Disconnected"
+msgstr ""
+
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Discord"
 msgstr ""
 
 #: components/app/interface/settings/user/Native.tsx
@@ -3204,6 +3220,11 @@ msgstr ""
 msgid "Leave Thread"
 msgstr ""
 
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Left"
+msgstr ""
+
 #: components/app/interface/settings/user/Native.tsx
 msgid "Let Sloga use its own custom titlebar."
 msgstr ""
@@ -3441,6 +3462,18 @@ msgstr ""
 msgid "Maximize & hide participants"
 msgstr ""
 
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Member list"
+msgstr ""
+
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Member list: on the left. Press left or right arrow to move."
+msgstr ""
+
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Member list: on the right. Press left or right arrow to move."
+msgstr ""
+
 #: components/app/interface/settings/ServerSettings.tsx
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Members"
@@ -3588,6 +3621,10 @@ msgstr ""
 
 #: components/app/interface/settings/user/Native.tsx
 msgid "Minimise to Tray"
+msgstr ""
+
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Mirrored"
 msgstr ""
 
 #: src/interface/navigation/UserFooter.tsx
@@ -4003,6 +4040,10 @@ msgstr ""
 
 #: components/ui/components/features/messaging/composition/MessageReplyPreview.tsx
 msgid "On"
+msgstr ""
+
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "On the same side as the channels, the member list shares their column. Overrides Ultrawide layout's member list placement."
 msgstr ""
 
 #: components/modal/modals/DeleteServer.tsx
@@ -4788,6 +4829,11 @@ msgstr ""
 msgid "Review report"
 msgstr ""
 
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Right"
+msgstr ""
+
 #: components/app/interface/settings/user/notifications/Sounds.tsx
 msgid "Ringtone Style"
 msgstr ""
@@ -5090,6 +5136,18 @@ msgstr ""
 
 #: components/app/interface/settings/user/profile/EditProfile.tsx
 msgid "Server Identities"
+msgstr ""
+
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Server list and channels"
+msgstr ""
+
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Server list and channels: on the left. Press left or right arrow to move."
+msgstr ""
+
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Server list and channels: on the right. Press left or right arrow to move."
 msgstr ""
 
 #: components/modal/modals/CreateServer.tsx

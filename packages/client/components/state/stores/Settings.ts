@@ -59,6 +59,29 @@ export type ContentAlign = "start" | "center";
  */
 const ContentAligns: ContentAlign[] = ["start", "center"];
 
+/**
+ * A physical side of the window. Physical on purpose — nothing in the app is
+ * RTL-mirrored today, and a user's explicit "put it on the right" should
+ * never be flipped under them by a locale change.
+ */
+export type LayoutSide = "left" | "right";
+
+/**
+ * Possible sides for the navigation block
+ */
+const LayoutSides: LayoutSide[] = ["left", "right"];
+
+/**
+ * Where the member list sits. "auto" is the pre-designer behaviour: shares
+ * the channel column, unless the ultrawide layout moves it out.
+ */
+export type MembersSide = "auto" | LayoutSide;
+
+/**
+ * Possible member list placements
+ */
+const MembersSides: MembersSide[] = ["auto", "left", "right"];
+
 interface SettingsDefinition {
   /**
    * Whether to enable desktop notifications
@@ -136,6 +159,25 @@ interface SettingsDefinition {
    * control that sets it is disabled elsewhere.
    */
   "appearance:ultrawide_layout": boolean;
+
+  /**
+   * Which side of the window the navigation block (server rail + channel
+   * list) sits on. The two move together: the floating user bar overlays the
+   * pair and has no home if they split.
+   *
+   * Per-device on purpose (this store does not sync): a phone, a 16:9 laptop
+   * and a 32:9 desktop want different arrangements. Ignored at phone widths,
+   * where the slide drawer owns the layout.
+   */
+  "appearance:layout_nav_side": LayoutSide;
+
+  /**
+   * Which side of the window the member list sits on. Same side as the
+   * navigation block = shares the channel column behind the divider (today's
+   * behaviour); opposite side = its own full-height column. "auto" defers to
+   * the ultrawide layout, exactly as before this key existed.
+   */
+  "appearance:layout_members_side": MembersSide;
 
   /**
    * Indicate new users to Stoat
@@ -283,6 +325,8 @@ const EXPECTED_TYPES: { [K in keyof SettingsDefinition]: ValueType<K> } = {
   "appearance:content_width": "string",
   "appearance:content_align": "string",
   "appearance:ultrawide_layout": "boolean",
+  "appearance:layout_nav_side": "string",
+  "appearance:layout_members_side": "string",
   "advanced:copy_id": "boolean",
   "advanced:admin_panel": "boolean",
   "sounds:message_variant": "number",
@@ -334,6 +378,9 @@ const DEFAULT_VALUES: TypeSettings = {
   "appearance:content_width": "full",
   "appearance:content_align": "start",
   "appearance:ultrawide_layout": false,
+  // Today's arrangement, so shipping the designer reflows nobody.
+  "appearance:layout_nav_side": "left",
+  "appearance:layout_members_side": "auto",
   "sounds:message_variant": 4,
   "sounds:ringtone_variant": 8,
   "sounds:disconnect_variant": 3,
@@ -397,6 +444,9 @@ export class Settings extends AbstractStore<"settings", TypeSettings> {
       "appearance:content_width": "full",
       "appearance:content_align": "start",
       "appearance:ultrawide_layout": false,
+      // Mirrored in DEFAULT_VALUES — see the note there.
+      "appearance:layout_nav_side": "left",
+      "appearance:layout_members_side": "auto",
       "advanced:copy_id": false,
       "advanced:admin_panel": false,
       "sounds:message_variant": 4,
@@ -456,6 +506,15 @@ export class Settings extends AbstractStore<"settings", TypeSettings> {
         }
       } else if (key === "appearance:content_align") {
         if (ContentAligns.includes(input[key] as never)) {
+          settings[key] = input[key];
+        }
+      } else if (key === "appearance:layout_nav_side") {
+        // A corrupt side must fall back to the default, not render nothing.
+        if (LayoutSides.includes(input[key] as never)) {
+          settings[key] = input[key];
+        }
+      } else if (key === "appearance:layout_members_side") {
+        if (MembersSides.includes(input[key] as never)) {
           settings[key] = input[key];
         }
       } else if (key === "translation:target" || key === "captions:target") {

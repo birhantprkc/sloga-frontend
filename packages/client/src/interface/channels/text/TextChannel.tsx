@@ -28,7 +28,7 @@ import {
   Text,
   TypingIndicator,
   main,
-  useUltrawideLayout,
+  useLayoutSides,
 } from "@revolt/ui";
 import { VoiceChannelCallCardMount } from "@revolt/ui/components/features/voice/callCard/VoiceCallCard";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
@@ -70,19 +70,37 @@ export function canIHasSidebar(ch: Channel) {
 export function TextChannel(props: ChannelPageProps) {
   const state = useState();
   const client = useClient();
-  const ultrawide = useUltrawideLayout();
+  const sides = useLayoutSides();
 
   /**
-   * Whether the member list belongs in this right-hand column.
+   * Whether the member list belongs in this channel's own side column (the
+   * one opposite the navigation block) rather than in the channel column.
    *
-   * A server text channel normally keeps its member list at the bottom of the
-   * left channel column, sharing the space with the channel list. On a display
-   * wide enough to have room to spare, the ultrawide layout moves it here
-   * instead, so neither list has to give up rows for the other.
-   * `ServerSidebar` reads the same condition and stands down when this is true.
+   * A server text channel keeps its member list at the bottom of the channel
+   * column by default, sharing the space with the channel list; the layout
+   * setting (or the ultrawide layout, via "auto") moves it here instead so
+   * neither list has to give up rows for the other. Group DMs have no channel
+   * column and always use this one. `ServerSidebar` reads the same condition
+   * and stands down when this is true.
    */
-  const membersInRightColumn = () =>
-    props.channel.type !== "TextChannel" || ultrawide();
+  const membersInOwnColumn = () =>
+    props.channel.type !== "TextChannel" || sides().membersOwnColumn;
+
+  /**
+   * Whether the side column (members / search / pins / threads) renders
+   * before or after `<main>` in the row.
+   *
+   * It has always sat on the near side — between the channel column and the
+   * messages — and it stays there unless the member list has been given its
+   * own column, in which case the whole side column moves to the far edge:
+   * that is what "member list on the right" means. Both cases mirror when the
+   * navigation block is on the right.
+   */
+  const sideColumnEdge = (): "before" | "after" => {
+    const far = sides().membersOwnColumn;
+    const navRight = sides().nav === "right";
+    return far !== navRight ? "after" : "before";
+  };
 
   // Last unread message id
   const [lastId, setLastId] = createSignal<string>();
@@ -194,7 +212,7 @@ export function TextChannel(props: ChannelPageProps) {
       <Show when={props.channel.isThread}>
         <ThreadBanner channel={props.channel} />
       </Show>
-      <Content>
+      <Content navRight={sides().nav === "right"}>
         <Show
           when={
             sidebarState().state !== "default" ||
@@ -203,7 +221,7 @@ export function TextChannel(props: ChannelPageProps) {
               true,
             ) &&
               canIHasSidebar(props.channel) &&
-              membersInRightColumn())
+              membersInOwnColumn())
           }
         >
           <div
@@ -215,11 +233,20 @@ export function TextChannel(props: ChannelPageProps) {
             }}
             style={{
               width: sidebarState().state !== "default" ? "360px" : "",
+              // `<main>` keeps the default order 0; the column goes either
+              // side of it without ever being remounted (which would drop
+              // the scroll position and the members' scroll target). The
+              // directive above applies its class once, so the edge-dependent
+              // rule (the hairline on the side facing the messages) lives
+              // here where it can react.
+              order: sideColumnEdge() === "before" ? -1 : 1,
+              [sideColumnEdge() === "before" ? "border-right" : "border-left"]:
+                "1px solid var(--md-sys-color-outline-variant)",
             }}
           >
             <Switch
               fallback={
-                <Show when={membersInRightColumn()}>
+                <Show when={membersInOwnColumn()}>
                   <MemberSidebar
                     channel={props.channel}
                     scrollTargetElement={sidebarScrollTargetElement}
@@ -228,7 +255,7 @@ export function TextChannel(props: ChannelPageProps) {
               }
             >
               <Match when={sidebarState().state === "search"}>
-                <WideSidebarContainer>
+                <WideSidebarContainer edge={sideColumnEdge()}>
                   <SidebarTitle>
                     <Text class="label" size="large">
                       Search Results
@@ -243,7 +270,7 @@ export function TextChannel(props: ChannelPageProps) {
                 </WideSidebarContainer>
               </Match>
               <Match when={sidebarState().state === "pins"}>
-                <WideSidebarContainer>
+                <WideSidebarContainer edge={sideColumnEdge()}>
                   <SidebarTitle>
                     <Text class="label" size="large">
                       Pinned Messages
@@ -256,7 +283,7 @@ export function TextChannel(props: ChannelPageProps) {
                 </WideSidebarContainer>
               </Match>
               <Match when={sidebarState().state === "threads_list"}>
-                <WideSidebarContainer>
+                <WideSidebarContainer edge={sideColumnEdge()}>
                   <SidebarTitle>
                     <Text class="label" size="large">
                       <Trans>Threads</Trans>
@@ -471,6 +498,19 @@ const Content = styled("div", {
     minWidth: 0,
     minHeight: 0,
   },
+  variants: {
+    /**
+     * With the navigation block on the right, a capped `<main>` should hug
+     * it from the other side: pack the row from the end so the leftover
+     * width collects on the left. Centred alignment is margin-driven and
+     * unaffected.
+     */
+    navRight: {
+      true: {
+        justifyContent: "flex-end",
+      },
+    },
+  },
 });
 
 /**
@@ -482,7 +522,8 @@ const sidebar = cva({
     width: "var(--layout-width-channel-sidebar)",
     // margin: "var(--gap-md)",
     borderRadius: "var(--borderRadius-lg)",
-    borderRight: "1px solid var(--md-sys-color-outline-variant)",
+    // The hairline facing the messages is set inline by `TextChannel` — it
+    // depends on which side of `<main>` the column is on.
     // color: "var(--colours-sidebar-channels-foreground)",
     // background: "var(--colours-sidebar-channels-background)",
   },
@@ -493,8 +534,17 @@ const sidebar = cva({
  */
 const WideSidebarContainer = styled("div", {
   base: {
-    paddingRight: "var(--gap-md)",
     width: "360px",
+  },
+  variants: {
+    /** Pad the edge that faces the messages */
+    edge: {
+      before: { paddingRight: "var(--gap-md)" },
+      after: { paddingLeft: "var(--gap-md)" },
+    },
+  },
+  defaultVariants: {
+    edge: "before",
   },
 });
 

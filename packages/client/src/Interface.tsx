@@ -29,7 +29,7 @@ import { OverlayBridgeWorker } from "@revolt/rtc/overlay/OverlayBridgeWorker";
 import { useState } from "@revolt/state";
 import { LAYOUT_SECTIONS } from "@revolt/state/stores/Layout";
 import { streamerModeActive } from "@revolt/state/streamer";
-import { CircularProgress } from "@revolt/ui";
+import { CircularProgress, useLayoutSides } from "@revolt/ui";
 import { IncomingCallOverlay } from "@revolt/ui/components/features/voice/IncomingCallOverlay";
 import { CallRecordingNotices } from "@revolt/ui/components/features/voice/callCard/CallRecordingNotices";
 import { RemoteControlOverlays } from "@revolt/ui/components/features/voice/callCard/RemoteControlOverlays";
@@ -65,6 +65,7 @@ const Interface = (props: { children: JSX.Element }) => {
   const { openModal } = useModals();
   const { isLoggedIn, lifecycle } = useClientLifecycle();
   const { pathname } = useLocation();
+  const sides = useLayoutSides();
 
   useBeforeLeave((e) => {
     if (!e.defaultPrevented) {
@@ -149,6 +150,7 @@ const Interface = (props: { children: JSX.Element }) => {
                 modals, portals and the login page navigating away */}
             <Layout
               disconnected={isDisconnected()}
+              navRight={sides().nav === "right"}
               style={{ "flex-grow": 1, "min-height": 0 }}
             >
               <Sidebar
@@ -173,6 +175,7 @@ const Interface = (props: { children: JSX.Element }) => {
                   LAYOUT_SECTIONS.PRIMARY_SIDEBAR,
                   true,
                 )}
+                navRight={sides().nav === "right"}
               >
                 {props.children}
               </Content>
@@ -255,6 +258,17 @@ const Layout = styled("div", {
     minWidth: 0,
   },
   variants: {
+    /**
+     * Navigation block on the right. Reversing the row (rather than
+     * re-mounting the two children in the other order) keeps `Sidebar` and
+     * its `SlideDrawer` / server-reorder state alive across the flip. Never
+     * true at phone widths — `useLayoutSides` pins the phone to the default.
+     */
+    navRight: {
+      true: {
+        flexDirection: "row-reverse",
+      },
+    },
     disconnected: {
       true: {
         color: "var(--md-sys-color-on-primary-container)",
@@ -281,12 +295,45 @@ const Content = styled("div", {
   variants: {
     sidebar: {
       false: {
-        borderTopLeftRadius: "var(--borderRadius-lg)",
-        borderBottomLeftRadius: "var(--borderRadius-lg)",
         overflow: "hidden",
       },
     },
+    /**
+     * Pack a capped page from the end when the nav is on the right, so the
+     * message column hugs the nav from the other side. Direct children that
+     * fill the width (`width: 100%` pages) are unaffected.
+     */
+    navRight: {
+      true: {
+        justifyContent: "flex-end",
+      },
+      // Explicit so the compound variants below can match on it.
+      false: {},
+    },
   },
+  defaultVariants: {
+    navRight: false,
+  },
+  // With the channel sidebar collapsed only the server rail is beside this
+  // block, and the corner that meets it is rounded — whichever side that is.
+  compoundVariants: [
+    {
+      sidebar: false,
+      navRight: true,
+      css: {
+        borderTopRightRadius: "var(--borderRadius-lg)",
+        borderBottomRightRadius: "var(--borderRadius-lg)",
+      },
+    },
+    {
+      sidebar: false,
+      navRight: false,
+      css: {
+        borderTopLeftRadius: "var(--borderRadius-lg)",
+        borderBottomLeftRadius: "var(--borderRadius-lg)",
+      },
+    },
+  ],
 });
 
 export default Interface;

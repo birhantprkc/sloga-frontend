@@ -35,6 +35,8 @@ import {
 
 import MDPalette from "@material-design-icons/svg/outlined/palette.svg?component-solid";
 
+import { LayoutArrangement } from "./LayoutArrangement";
+
 /**
  * All appearance options for the client
  */
@@ -479,6 +481,12 @@ export function AppearanceMenu() {
         <Text class="title" size="small">
           <Trans>Layout</Trans>
         </Text>
+
+        {/* Hidden, not disabled, at phone widths: the slide drawer owns the
+            layout there and no reason string would help a phone user. */}
+        <Show when={device.layout() !== "phone"}>
+          <LayoutArrangement />
+        </Show>
 
         <Text class="label">
           <Trans>Message width</Trans>
