@@ -27,9 +27,23 @@ import type { Channel, WatchMediaData, WatchResult, WatchSessionData } from "sto
 
 import { CONFIGURATION } from "@revolt/common";
 
+import { JellyfinApi } from "@revolt/ui/components/features/voice/watch/providers/jellyfin/api";
+import {
+  JellyfinProvider,
+  loadHls,
+} from "@revolt/ui/components/features/voice/watch/providers/jellyfin/jellyfinProvider";
+import { describeTranscode } from "@revolt/ui/components/features/voice/watch/providers/jellyfin/jellyfinWire";
+import {
+  getQuality,
+  getServer,
+  listServers,
+  touchServer,
+} from "@revolt/ui/components/features/voice/watch/providers/jellyfin/servers";
+import { registerServers } from "@revolt/ui/components/features/voice/watch/providers/jellyfin/transport";
 import type { Provider, ProviderStatus } from "@revolt/ui/components/features/voice/watch/providers/provider";
 import { YouTubeProvider } from "@revolt/ui/components/features/voice/watch/providers/youtubeProvider";
 import {
+  expectedPosition,
   INITIAL_SYNC_STATE,
   RATE_NORMAL,
   reconcile,
@@ -48,9 +62,25 @@ const SCRUB_DEBOUNCE_MS = 250;
 const AUTOPLAY_GRACE_MS = 3000;
 /** Host-unreachable re-check cadence. */
 const UNREACHABLE_CHECK_MS = 5000;
+/** Jellyfin playstate progress report (plan §5.5: every 10 s). */
+const JELLYFIN_PROGRESS_MS = 10000;
+/** Jellyfin transcode-state poll for the stats overlay (plan §7.1). */
+const JELLYFIN_TRANSCODE_MS = 10000;
 
 const LS_VOLUME = "sloga:watch:volume";
 const LS_MUTED = "sloga:watch:muted";
+
+/** A neutral provider status for surfacing an error before/without a player. */
+const EMPTY_STATUS: ProviderStatus = {
+  state: "idle",
+  currentTimeMs: null,
+  durationMs: null,
+  ratePermille: RATE_NORMAL,
+  error: null,
+  title: null,
+  muted: false,
+  volume: 100,
+};
 
 export interface WatchStats {
   driftMs: number | null;
@@ -102,6 +132,21 @@ export class WatchTogether {
   /** A request is in flight (buttons disable). */
   readonly busy: Accessor<boolean>;
   #setBusy: Setter<boolean>;
+  /**
+   * A Jellyfin session names a server this viewer hasn't signed into. Holds
+   * the display info for the overlay's "Sign in to {server} to watch"
+   * button; NOTHING is fetched from the server until the viewer clicks (plan
+   * §5.1 — a session broadcast is another user's data).
+   */
+  readonly needsJellyfinSignin: Accessor<
+    { serverUrl: string; serverId: string; itemName: string } | undefined
+  >;
+  #setNeedsJellyfinSignin: Setter<
+    { serverUrl: string; serverId: string; itemName: string } | undefined
+  >;
+  /** Server-side transcode note for the stats overlay (plan §7.1). */
+  readonly serverTranscode: Accessor<string | undefined>;
+  #setServerTranscode: Setter<string | undefined>;
 
   /**
    * The ONE player host. Mounted by `VoiceCallCard.tsx` inside `<Float>`
@@ -140,6 +185,20 @@ export class WatchTogether {
   #queued: { playing?: boolean; positionMs?: number; ratePermille?: number; media?: WatchMediaData } | undefined;
   #scrubTimer: ReturnType<typeof setTimeout> | undefined;
   #nudgeRate = RATE_NORMAL;
+  /** Jellyfin: the per-server client + the current PlaybackInfo choice, so
+   * playstate can be reported and the transcode freed on teardown (§5.5). */
+  #jellyfinApi: JellyfinApi | undefined;
+  #jellyfinPlay:
+    | { playSessionId: string; mediaSourceId: string; itemId: string }
+    | undefined;
+  #jellyfinProgressTimer: ReturnType<typeof setInterval> | undefined;
+  #jellyfinTranscodeTimer: ReturnType<typeof setInterval> | undefined;
+  /** Fires Stopped + ActiveEncodings-delete (keepalive) if the tab closes
+   * mid-play, so the server doesn't keep transcoding for a gone viewer. */
+  #jellyfinPagehide: (() => void) | undefined;
+  /** Guards against two concurrent async Jellyfin provider builds for the
+   * same session (a re-entrant onUpdate while PlaybackInfo is in flight). */
+  #jellyfinStarting: string | undefined;
 
   constructor() {
     [this.session, this.#setSession] = createSignal<WatchSessionData | undefined>();
@@ -150,6 +209,10 @@ export class WatchTogether {
     [this.pickerOpen, this.setPickerOpen] = createSignal(false);
     [this.stats, this.#setStats] = createSignal<WatchStats | undefined>();
     [this.busy, this.#setBusy] = createSignal(false);
+    [this.needsJellyfinSignin, this.#setNeedsJellyfinSignin] = createSignal<
+      { serverUrl: string; serverId: string; itemName: string } | undefined
+    >();
+    [this.serverTranscode, this.#setServerTranscode] = createSignal<string | undefined>();
     [this.volume, this.#setVolume] = createSignal(readVolume());
     [this.muted, this.#setMuted] = createSignal(readMuted());
 
@@ -404,6 +467,7 @@ export class WatchTogether {
     this.#setSession(undefined);
     this.#setNeedsTap(false);
     this.#setHostUnreachable(false);
+    this.#setNeedsJellyfinSignin(undefined);
     this.#setStats(undefined);
     this.#lastUpdateLocalMs = null;
     this.#disposeProvider();
@@ -440,19 +504,186 @@ export class WatchTogether {
       this.#setProviderStatus(p.status());
       this.#playAskedAt = s.playing ? Date.now() : null;
     } else {
-      // Jellyfin lands in slice 2. Show the session; no player yet.
+      // Jellyfin (slice 2): async — needs a PlaybackInfo round trip, and
+      // only if the viewer has signed into this server (plan §5.1).
       this.#provider = undefined;
       this.#setProviderStatus(undefined);
+      void this.#startJellyfin(s, key);
     }
   }
 
+  /**
+   * Build the Jellyfin provider for the current session, IF this viewer has
+   * saved the server. Nothing is fetched until here — reached only from
+   * `#ensureProvider` (a session we chose to join) or the "Sign in" button,
+   * never from a raw broadcast (plan §5.1).
+   */
+  async #startJellyfin(s: WatchSessionData, key: string) {
+    if (s.media.provider !== "jellyfin") return;
+    if (this.#jellyfinStarting === key) return;
+    const server = getServer(s.media.server_id);
+    if (!server) {
+      // Known server not saved: show the sign-in affordance; contact nothing.
+      this.#setNeedsJellyfinSignin({
+        serverUrl: s.media.server_url,
+        serverId: s.media.server_id,
+        itemName: s.media.item_name,
+      });
+      return;
+    }
+    this.#setNeedsJellyfinSignin(undefined);
+    this.#jellyfinStarting = key;
+    try {
+      // Make sure the shell's forwarder knows our saved servers before any
+      // fetch goes through the `jf` scheme.
+      await registerServers(listServers());
+      const api = new JellyfinApi(server);
+      // hls.js loads as its own chunk in parallel with PlaybackInfo — it
+      // never bloats the main bundle (flag-dark path stays weightless).
+      const [Hls, choice] = await Promise.all([
+        loadHls(),
+        api.playbackInfo(s.media.item_id, getQuality()),
+      ]);
+      // The session may have moved on (ended / swapped) while we awaited.
+      if (this.#providerKey !== key || this.session()?.id !== s.id) {
+        await api.stopTranscode(choice.playSessionId).catch(() => undefined);
+        return;
+      }
+      const p = new JellyfinProvider({
+        Hls,
+        hlsUrl: api.hlsUrl(choice.transcodingUrl),
+        runtimeMs: choice.runtimeMs || s.media.runtime_ms,
+        autoplay: s.playing,
+        volume: this.volume(),
+        muted: this.muted(),
+        onFatal: (detail) => this.#setProviderStatus({ ...(this.#provider?.status() ?? EMPTY_STATUS), state: "error", error: detail }),
+      });
+      this.#provider = p;
+      this.#jellyfinApi = api;
+      this.#jellyfinPlay = {
+        playSessionId: choice.playSessionId,
+        mediaSourceId: choice.mediaSourceId,
+        itemId: s.media.item_id,
+      };
+      this.host.appendChild(p.element);
+      this.#providerUnsub = p.onChange((st) => this.#onProviderChange(st));
+      this.#setProviderStatus(p.status());
+      this.#playAskedAt = s.playing ? Date.now() : null;
+      touchServer(server.id);
+      // Playstate: tell the server we started, then report progress on a
+      // timer, and poll our own transcode state for the stats overlay.
+      void api.reportPlaying({
+        itemId: s.media.item_id,
+        playSessionId: choice.playSessionId,
+        mediaSourceId: choice.mediaSourceId,
+        positionMs: 0,
+        paused: !s.playing,
+      });
+      this.#startJellyfinTimers();
+    } catch (e) {
+      if (this.#providerKey === key) {
+        this.#setProviderStatus({
+          ...EMPTY_STATUS,
+          state: "error",
+          error: e instanceof Error ? e.message : "Jellyfin error",
+        });
+      }
+    } finally {
+      if (this.#jellyfinStarting === key) this.#jellyfinStarting = undefined;
+    }
+  }
+
+  #startJellyfinTimers() {
+    if (!this.#jellyfinPagehide) {
+      const handler = () => {
+        const api = this.#jellyfinApi;
+        const play = this.#jellyfinPlay;
+        if (!api || !play) return;
+        const posMs = this.#provider?.status().currentTimeMs ?? 0;
+        void api.reportStopped({
+          itemId: play.itemId,
+          playSessionId: play.playSessionId,
+          mediaSourceId: play.mediaSourceId,
+          positionMs: posMs,
+        });
+        void api.stopTranscode(play.playSessionId);
+      };
+      window.addEventListener("pagehide", handler);
+      this.#jellyfinPagehide = () => window.removeEventListener("pagehide", handler);
+    }
+    if (!this.#jellyfinProgressTimer) {
+      this.#jellyfinProgressTimer = setInterval(() => this.#reportJellyfinProgress(), JELLYFIN_PROGRESS_MS);
+    }
+    if (!this.#jellyfinTranscodeTimer) {
+      const poll = async () => {
+        const api = this.#jellyfinApi;
+        if (!api) return;
+        const t = await api.transcodeState();
+        this.#setServerTranscode(describeTranscode(t) ?? undefined);
+      };
+      void poll();
+      this.#jellyfinTranscodeTimer = setInterval(() => void poll(), JELLYFIN_TRANSCODE_MS);
+    }
+  }
+
+  #reportJellyfinProgress() {
+    const api = this.#jellyfinApi;
+    const play = this.#jellyfinPlay;
+    const p = this.#provider;
+    if (!api || !play || !p) return;
+    const st = p.status();
+    void api.reportProgress({
+      itemId: play.itemId,
+      playSessionId: play.playSessionId,
+      mediaSourceId: play.mediaSourceId,
+      positionMs: st.currentTimeMs ?? 0,
+      paused: st.state !== "playing",
+    });
+  }
+
+  /** Stop the server's transcode + playstate for a departing Jellyfin
+   * viewer (plan §5.5 — or ffmpeg keeps running on their machine). */
+  #teardownJellyfin() {
+    if (this.#jellyfinProgressTimer) clearInterval(this.#jellyfinProgressTimer);
+    if (this.#jellyfinTranscodeTimer) clearInterval(this.#jellyfinTranscodeTimer);
+    this.#jellyfinPagehide?.();
+    this.#jellyfinPagehide = undefined;
+    this.#jellyfinProgressTimer = undefined;
+    this.#jellyfinTranscodeTimer = undefined;
+    const api = this.#jellyfinApi;
+    const play = this.#jellyfinPlay;
+    if (api && play) {
+      const posMs = this.#provider?.status().currentTimeMs ?? 0;
+      void api.reportStopped({
+        itemId: play.itemId,
+        playSessionId: play.playSessionId,
+        mediaSourceId: play.mediaSourceId,
+        positionMs: posMs,
+      });
+      void api.stopTranscode(play.playSessionId);
+    }
+    this.#jellyfinApi = undefined;
+    this.#jellyfinPlay = undefined;
+    this.#jellyfinStarting = undefined;
+    this.#setServerTranscode(undefined);
+  }
+
   #disposeProvider() {
+    this.#teardownJellyfin();
     this.#providerUnsub?.();
     this.#providerUnsub = undefined;
     this.#provider?.dispose();
     this.#provider = undefined;
     this.#providerKey = undefined;
     this.#setProviderStatus(undefined);
+  }
+
+  /** The "Sign in to {server}" button landed a token — retry the provider. */
+  retryJellyfin() {
+    const s = this.session();
+    if (!s || s.media.provider !== "jellyfin") return;
+    this.#setNeedsJellyfinSignin(undefined);
+    void this.#startJellyfin(s, providerKey(s.media));
   }
 
   #onProviderChange(st: ProviderStatus) {
@@ -540,6 +771,29 @@ export class WatchTogether {
         heartbeatAgeMs: this.#lastUpdateLocalMs == null ? null : nowLocal - this.#lastUpdateLocalMs,
         providerState: st.state,
         nudgeRate: RATE_NORMAL,
+      });
+      return;
+    }
+
+    // Post-seek hold (plan §7.1): while OUR HLS seek is still rebuffering
+    // (a transcode restart costs ~4-5 s), don't judge position — the frozen
+    // currentTime would read as huge drift and trigger a second seek,
+    // restarting ffmpeg forever. Provider-capped so a wedged seek recovers.
+    if (p.postSeekHold?.()) {
+      this.#setStats({
+        driftMs: null,
+        expectedMs: Math.round(
+          expectedPosition(
+            { playing: s.playing, positionMs: s.position_ms, positionAt: s.position_at, ratePermille: s.rate_permille },
+            nowServer,
+          ),
+        ),
+        currentMs: st.currentTimeMs == null ? null : Math.round(st.currentTimeMs),
+        offsetMs: Math.round(this.#offsetMs),
+        seq: s.seq,
+        heartbeatAgeMs: this.#lastUpdateLocalMs == null ? null : nowLocal - this.#lastUpdateLocalMs,
+        providerState: st.state,
+        nudgeRate: this.#nudgeRate,
       });
       return;
     }

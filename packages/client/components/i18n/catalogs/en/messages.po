@@ -7695,3 +7695,84 @@ msgid "Search communities…"
 msgstr "Search communities…"
 
 
+
+msgid "Add a Jellyfin server"
+msgstr "Add a Jellyfin server"
+
+msgid "Add another server"
+msgstr "Add another server"
+
+msgid "Choose a server"
+msgstr "Choose a server"
+
+msgid "Connected to {0}"
+msgstr "Connected to {0}"
+
+msgid "Couldn't load items"
+msgstr "Couldn't load items"
+
+msgid "Couldn't load libraries"
+msgstr "Couldn't load libraries"
+
+msgid "Forget this server"
+msgstr "Forget this server"
+
+msgid "Jellyfin"
+msgstr "Jellyfin"
+
+msgid "Jellyfin isn't available on Android yet — use the desktop app or web."
+msgstr "Jellyfin isn't available on Android yet — use the desktop app or web."
+
+msgid "Nothing here."
+msgstr "Nothing here."
+
+msgid "Open Jellyfin on your phone or another device and enter this code:"
+msgstr "Open Jellyfin on your phone or another device and enter this code:"
+
+msgid "Search failed"
+msgstr "Search failed"
+
+msgid "Search {0}"
+msgstr "Search {0}"
+
+msgid "Search: {term}"
+msgstr "Search: {term}"
+
+msgid "Sent only to {0}, never to Sloga."
+msgstr "Sent only to {0}, never to Sloga."
+
+msgid "Server address"
+msgstr "Server address"
+
+msgid "Sign in"
+msgstr "Sign in"
+
+msgid "Sign in to watch"
+msgstr "Sign in to watch"
+
+msgid "Sign in with a password"
+msgstr "Sign in with a password"
+
+msgid "Sloga connects your device straight to your server. It never sees or stores your Jellyfin password."
+msgstr "Sloga connects your device straight to your server. It never sees or stores your Jellyfin password."
+
+msgid "Something went wrong"
+msgstr "Something went wrong"
+
+msgid "That doesn't look like a server address."
+msgstr "That doesn't look like a server address."
+
+msgid "This is an http:// server on a page served over https. Use the Sloga desktop app for a LAN or http server, or put your Jellyfin behind https."
+msgstr "This is an http:// server on a page served over https. Use the Sloga desktop app for a LAN or http server, or put your Jellyfin behind https."
+
+msgid "This session is playing from {0}. Sign in to that Jellyfin to watch along."
+msgstr "This session is playing from {0}. Sign in to that Jellyfin to watch along."
+
+msgid "Use Quick Connect"
+msgstr "Use Quick Connect"
+
+msgid "Waiting for you to approve it in your Jellyfin app…"
+msgstr "Waiting for you to approve it in your Jellyfin app…"
+
+msgid "YouTube"
+msgstr "YouTube"

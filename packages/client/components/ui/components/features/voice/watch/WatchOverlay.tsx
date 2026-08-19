@@ -17,6 +17,8 @@ import { useVoice } from "@revolt/rtc";
 import { Button, IconButton } from "@revolt/ui/components/design";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
+import { JellyfinBrowser } from "./JellyfinBrowser";
+import { JellyfinConnect } from "./JellyfinConnect";
 import { parseYouTubeInput } from "./providers/youtubeWire";
 import { watchOverlayVisible } from "./watchPolicy";
 
@@ -44,6 +46,10 @@ export function WatchOverlay() {
   const { t } = useLingui();
   const translateError = useError();
   const watch = voice.watch;
+
+  // The in-slot "sign in to {server}" form is open (a Jellyfin session named
+  // a server this viewer hasn't added — nothing is fetched until they click).
+  const [signinOpen, setSigninOpen] = createSignal(false);
 
   const visible = () =>
     watchOverlayVisible({
@@ -166,8 +172,30 @@ export function WatchOverlay() {
             <Show when={watch.providerStatus()?.state === "error"}>
               <SlotMessage>{watch.providerStatus()?.error}</SlotMessage>
             </Show>
-            <Show when={watch.session()?.media.provider === "jellyfin"}>
-              <SlotMessage>{t`Jellyfin playback isn't available in this build yet.`}</SlotMessage>
+            <Show when={watch.needsJellyfinSignin()}>
+              {(info) => (
+                <SlotSignin>
+                  <SlotMessage>{t`This session is playing from ${info().serverUrl}. Sign in to that Jellyfin to watch along.`}</SlotMessage>
+                  <Show
+                    when={signinOpen()}
+                    fallback={
+                      <Button variant="filled" onPress={() => setSigninOpen(true)}>
+                        <Symbol>login</Symbol>
+                        {t`Sign in to watch`}
+                      </Button>
+                    }
+                  >
+                    <JellyfinConnect
+                      prefillUrl={info().serverUrl}
+                      onCancel={() => setSigninOpen(false)}
+                      onDone={() => {
+                        setSigninOpen(false);
+                        watch.retryJellyfin();
+                      }}
+                    />
+                  </Show>
+                </SlotSignin>
+              )}
             </Show>
           </PlayerSlot>
           <Show when={watch.needsTap()}>
@@ -300,6 +328,7 @@ function Picker() {
   const watch = voice.watch;
   const [raw, setRaw] = createSignal("");
   const [bad, setBad] = createSignal(false);
+  const [tab, setTab] = createSignal<"youtube" | "jellyfin">("youtube");
 
   const submit = () => {
     const id = parseYouTubeInput(raw());
@@ -313,6 +342,20 @@ function Picker() {
 
   return (
     <PickerBox>
+      <Tabs>
+        <Tab data-active={tab() === "youtube"} onClick={() => setTab("youtube")}>
+          <Symbol size={16}>smart_display</Symbol>
+          {t`YouTube`}
+        </Tab>
+        <Tab data-active={tab() === "jellyfin"} onClick={() => setTab("jellyfin")}>
+          <Symbol size={16}>dns</Symbol>
+          {t`Jellyfin`}
+        </Tab>
+      </Tabs>
+      <Show when={tab() === "jellyfin"}>
+        <JellyfinBrowser />
+      </Show>
+      <Show when={tab() === "youtube"}>
       <PickerText>
         {t`Paste a YouTube link. Everyone in the call watches it in sync, each from YouTube directly — Sloga never touches the video.`}
       </PickerText>
@@ -340,6 +383,7 @@ function Picker() {
       <PickerHint>
         {t`Loads from youtube-nocookie.com. The server sees what you watch — also in encrypted calls. Videos with embedding disabled won't play. Headphones recommended: an open mic will carry the movie into the call.`}
       </PickerHint>
+      </Show>
     </PickerBox>
   );
 }
@@ -348,6 +392,7 @@ function Picker() {
 function Stats() {
   const voice = useVoice();
   const s = () => voice.watch.stats();
+  const transcode = () => voice.watch.serverTranscode();
   return (
     <Show when={s()}>
       {(st) => (
@@ -356,7 +401,7 @@ function Stats() {
             st().driftMs == null ? "—" : `${st().driftMs} ms`
           } · rate ${st().nudgeRate} · off ${st().offsetMs} ms · seq ${st().seq} · hb ${
             st().heartbeatAgeMs == null ? "—" : `${Math.round(st().heartbeatAgeMs! / 1000)}s`
-          }`}
+          }${transcode() ? ` · ${transcode()}` : ""}`}
         </StatsLine>
       )}
     </Show>
@@ -483,7 +528,23 @@ const StatsLine = styled("div", {
   },
 });
 const PickerBox = styled("div", {
-  base: { display: "flex", flexDirection: "column", gap: "var(--gap-md)", maxWidth: "56ch", margin: "auto" },
+  base: { display: "flex", flexDirection: "column", gap: "var(--gap-md)", width: "100%", maxWidth: "60ch", margin: "auto", minHeight: 0 },
+});
+const Tabs = styled("div", { base: { display: "flex", gap: "var(--gap-sm)", justifyContent: "center" } });
+const Tab = styled("button", {
+  base: {
+    display: "flex", alignItems: "center", gap: "6px", padding: "6px 14px", borderRadius: "999px",
+    border: "1px solid var(--md-sys-color-outline-variant)", background: "transparent",
+    color: "var(--md-sys-color-on-surface-variant)", cursor: "pointer", fontSize: "13px", fontWeight: 500,
+    "&[data-active='true']": {
+      background: "var(--md-sys-color-secondary-container)",
+      color: "var(--md-sys-color-on-secondary-container)",
+      borderColor: "transparent",
+    },
+  },
+});
+const SlotSignin = styled("div", {
+  base: { display: "flex", flexDirection: "column", gap: "var(--gap-md)", alignItems: "center", padding: "var(--gap-md)", maxWidth: "48ch", width: "100%" },
 });
 const PickerText = styled("p", { base: { fontSize: "14px" } });
 const PickerHint = styled("p", {
