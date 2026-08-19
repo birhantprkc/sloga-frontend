@@ -1,4 +1,10 @@
-import { type Participant, type Room, RoomEvent } from "livekit-client";
+import {
+  type LocalTrackPublication,
+  type Participant,
+  type Room,
+  RoomEvent,
+  Track,
+} from "livekit-client";
 
 import { tauriInvoke } from "@revolt/common";
 import type { Voice as VoiceSettings } from "@revolt/state/stores/Voice";
@@ -14,6 +20,14 @@ import type { Voice as VoiceSettings } from "@revolt/state/stores/Voice";
  *
  * Desktop only — the probe returns `supported: false` elsewhere and every
  * call here becomes a no-op, so the room wiring can be unconditional.
+ *
+ * Suspended while WE share system audio. Windows loopback capture (what
+ * `getDisplayMedia({ audio })` records) reads the endpoint mix AFTER
+ * per-session volumes, so ducking the shared app ducks the very audio we
+ * are broadcasting: at full strength the stream goes silent every time
+ * someone talks. You cannot lower the thing you are sending, so the duck
+ * releases the moment a screen-share audio track publishes and stays off
+ * until it is gone.
  */
 
 /** Hold-off after the last active speaker before other apps come back up. */
@@ -41,6 +55,8 @@ export class Attenuation {
   #room: Room | undefined;
   #localSpeaking = false;
   #remoteSpeaking = false;
+  /** We are publishing system/tab audio — ducking would duck the stream. */
+  #sharingAudio = false;
   /** Strength (0–1) last sent to native; 0 = nothing ducked. */
   #applied = 0;
   #release: ReturnType<typeof setTimeout> | undefined;
@@ -48,6 +64,10 @@ export class Attenuation {
     this.#localSpeaking = speakers.some((p) => p.isLocal);
     this.#remoteSpeaking = speakers.some((p) => !p.isLocal);
     this.#evaluate();
+  };
+  #onLocalTrack = (pub: LocalTrackPublication) => {
+    if (pub.source !== Track.Source.ScreenShareAudio) return;
+    this.#syncSharingAudio();
   };
 
   constructor(settings: VoiceSettings) {
@@ -59,15 +79,21 @@ export class Attenuation {
     this.detach();
     this.#room = room;
     room.on(RoomEvent.ActiveSpeakersChanged, this.#onSpeakers);
+    room.on(RoomEvent.LocalTrackPublished, this.#onLocalTrack);
+    room.on(RoomEvent.LocalTrackUnpublished, this.#onLocalTrack);
+    this.#syncSharingAudio();
     this.#onSpeakers(room.activeSpeakers);
   }
 
   /** Stop following and put everything back immediately. */
   detach() {
     this.#room?.off(RoomEvent.ActiveSpeakersChanged, this.#onSpeakers);
+    this.#room?.off(RoomEvent.LocalTrackPublished, this.#onLocalTrack);
+    this.#room?.off(RoomEvent.LocalTrackUnpublished, this.#onLocalTrack);
     this.#room = undefined;
     this.#localSpeaking = false;
     this.#remoteSpeaking = false;
+    this.#sharingAudio = false;
     this.#cancelRelease();
     if (this.#applied > 0) this.#apply(0);
   }
@@ -80,6 +106,16 @@ export class Attenuation {
     this.#evaluate();
   }
 
+  #syncSharingAudio() {
+    const pub = this.#room?.localParticipant.getTrackPublication(
+      Track.Source.ScreenShareAudio,
+    );
+    const sharing = !!pub?.track;
+    if (sharing === this.#sharingAudio) return;
+    this.#sharingAudio = sharing;
+    this.#evaluate();
+  }
+
   #evaluate() {
     const strength = Math.min(
       1,
@@ -88,7 +124,10 @@ export class Attenuation {
     const speaking =
       (this.#settings.attenuateWhenISpeak && this.#localSpeaking) ||
       (this.#settings.attenuateWhenOthersSpeak && this.#remoteSpeaking);
-    const want = this.#room && strength > 0 && speaking ? strength : 0;
+    const want =
+      this.#room && strength > 0 && speaking && !this.#sharingAudio
+        ? strength
+        : 0;
 
     if (want > 0) {
       this.#cancelRelease();
@@ -97,8 +136,10 @@ export class Attenuation {
     }
 
     if (this.#applied === 0) return;
-    // Feature switched off outright: no reason to keep others quiet.
-    if (strength === 0) {
+    // Feature switched off outright, or we just started broadcasting system
+    // audio: no reason to keep others quiet, and no hold-off either — every
+    // ducked millisecond is a dip in the stream.
+    if (strength === 0 || this.#sharingAudio) {
       this.#cancelRelease();
       this.#apply(0);
       return;
