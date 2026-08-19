@@ -33,6 +33,10 @@ msgstr "Discord"
 msgid "Evens out loud and quiet people automatically. Only voices are leveled — music and screen share audio are never touched."
 msgstr "Evens out loud and quiet people automatically. Only voices are leveled — music and screen share audio are never touched."
 
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx:198
+msgid "Hosted by {name}"
+msgstr "Hosted by {name}"
+
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "How far a quiet voice may be raised. Loud voices are always tamed, at any strength."
 msgstr "How far a quiet voice may be raised. Loud voices are always tamed, at any strength."
@@ -40,6 +44,10 @@ msgstr "How far a quiet voice may be raised. Loud voices are always tamed, at an
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "Incoming Voices"
 msgstr "Incoming Voices"
+
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx:160
+msgid "Jellyfin playback isn't available in this build yet."
+msgstr "Jellyfin playback isn't available in this build yet."
 
 #: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
 #: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
@@ -53,6 +61,10 @@ msgstr "Level Incoming Voices"
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "Leveling Strength"
 msgstr "Leveling Strength"
+
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx:316
+msgid "Loads from youtube-nocookie.com. The server sees what you watch — also in encrypted calls. Videos with embedding disabled won't play. Headphones recommended: an open mic will carry the movie into the call."
+msgstr "Loads from youtube-nocookie.com. The server sees what you watch — also in encrypted calls. Videos with embedding disabled won't play. Headphones recommended: an open mic will carry the movie into the call."
 
 #: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
 msgid "Member list"
@@ -74,10 +86,22 @@ msgstr "Mirrored"
 msgid "On the same side as the channels, the member list shares their column. Overrides Ultrawide layout's member list placement."
 msgstr "On the same side as the channels, the member list shares their column. Overrides Ultrawide layout's member list placement."
 
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx:292
+msgid "Paste a YouTube link. Everyone in the call watches it in sync, each from YouTube directly — Sloga never touches the video."
+msgstr "Paste a YouTube link. Everyone in the call watches it in sync, each from YouTube directly — Sloga never touches the video."
+
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx:250
+msgid "Playback speed"
+msgstr "Playback speed"
+
 #: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
 #: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
 msgid "Right"
 msgstr "Right"
+
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx:243
+msgid "Seek"
+msgstr "Seek"
 
 #: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
 msgid "Server list and channels"
@@ -91,10 +115,35 @@ msgstr "Server list and channels: on the left. Press left or right arrow to move
 msgid "Server list and channels: on the right. Press left or right arrow to move."
 msgstr "Server list and channels: on the right. Press left or right arrow to move."
 
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx:436
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx:437
+msgid "Start and control synced video playback in a voice call"
+msgstr "Start and control synced video playback in a voice call"
+
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx:147
+msgid "Stop watching together"
+msgstr "Stop watching together"
+
 #. placeholder {0}: voice.audioNormalizationStrength
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "Strength: {0}%"
 msgstr "Strength: {0}%"
+
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx:137
+msgid "Sync stats"
+msgstr "Sync stats"
+
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx:167
+msgid "Tap to start"
+msgstr "Tap to start"
+
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx:310
+msgid "That doesn't look like a YouTube link or video id."
+msgstr "That doesn't look like a YouTube link or video id."
+
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx:173
+msgid "The host seems to have dropped — waiting for them to come back…"
+msgstr "The host seems to have dropped — waiting for them to come back…"
 
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "Unavailable while the shared audio mix is off. Turning the mix back on takes effect when you next join a call."
@@ -145,6 +194,26 @@ msgstr "Moves the member list out of the channel column and into the space besid
 msgid "Requires a 21:9 or wider display. This display is {0}."
 msgstr "Requires a 21:9 or wider display. This display is {0}."
 
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx:306
+msgid "Watch"
+msgstr "Watch"
+
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx:112
+msgid "Watch together"
+msgstr "Watch together"
+
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx:434
+msgid "Watch Together"
+msgstr "Watch Together"
+
+#: components/ui/components/features/voice/callCard/VoiceWatchButton.tsx:59
+msgid "Watch together — paste a YouTube link, everyone in the call stays in sync"
+msgstr "Watch together — paste a YouTube link, everyone in the call stays in sync"
+
+#: components/ui/components/features/voice/callCard/VoiceWatchButton.tsx:58
+msgid "Watching together"
+msgstr "Watching together"
+
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
 msgid "Wide"
 msgstr "Wide"
@@ -180,6 +249,14 @@ msgstr "Hug the channel list"
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
 msgid "Full"
 msgstr "Full"
+
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx:130
+msgid "You're hosting"
+msgstr "You're hosting"
+
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx:169
+msgid "Your browser blocked autoplay — one tap and you're in sync."
+msgstr "Your browser blocked autoplay — one tap and you're in sync."
 
 #. placeholder {0}: attachmentCount()
 #: src/interface/ServerEvents.tsx

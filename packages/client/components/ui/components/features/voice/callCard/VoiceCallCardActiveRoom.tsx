@@ -15,6 +15,7 @@ import { Symbol } from "@revolt/ui/components/utils/Symbol";
 import { scrollableStyles } from "@revolt/ui/directives";
 
 import { MinigameChip } from "../minigame/MinigameChip";
+import { WatchOverlay } from "../watch/WatchOverlay";
 import { ParticipantTile, tile } from "./ParticipantTile";
 import { VoiceCallAudioBlockedBanner } from "./VoiceCallAudioBlockedBanner";
 import { VoiceCallCardActions } from "./VoiceCallCardActions";
@@ -460,6 +461,11 @@ function Participants() {
           container on purpose, so the controls bar below stays clickable
           mid-game and the card-level banners (z5/z6) stay on top. */}
       <MinigameChip />
+      {/* Watch together: same placement as the minigame overlay (participant
+          AREA only, z4). It holds our chrome and RESERVES the player rect;
+          the player element itself lives in the store's host inside
+          VoiceCallCard's persistent <Float>, never in this card. */}
+      <WatchOverlay />
     </Call>
   );
 }

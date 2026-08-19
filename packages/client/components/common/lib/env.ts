@@ -219,6 +219,24 @@ export default {
       (import.meta.env.VITE_CFG_ENABLE_CALL_MINIGAME as string) ?? ""
     ).toLowerCase() == "true",
   /**
+   * Watch together — synced YouTube (slice 1) / Jellyfin (slice 2) playback
+   * in a voice call. Sloga carries only the control state over the existing
+   * WebSocket; the media never touches a Sloga server.
+   *
+   * DEFAULT OFF. Read in `watchPolicy.ts` (`watchOverlayVisible` /
+   * `watchButtonVisible`), the single point the actions-bar button, the
+   * overlay and the player host all sit behind — one flag darkens the lot.
+   * Bundled shells ship it lit only once their own CSP/scheme work is in the
+   * same build (the RC release-gate rule); YouTube needs no CSP change in
+   * any shell (frame-src already carries youtube-nocookie.com).
+   *
+   * Set `VITE_CFG_ENABLE_WATCH_TOGETHER=true` for builds that should have it.
+   */
+  ENABLE_WATCH_TOGETHER:
+    (
+      (import.meta.env.VITE_CFG_ENABLE_WATCH_TOGETHER as string) ?? ""
+    ).toLowerCase() == "true",
+  /**
    * Session ID to set during development.
    */
   DEVELOPMENT_SESSION_ID: import.meta.env.DEV

@@ -1,0 +1,205 @@
+/**
+ * The YouTube embed's postMessage protocol, spoken directly (plan §4.2) —
+ * no `iframe_api` script (blocked by `script-src 'self'` in all three
+ * shells). Pure: message parsing + command/URL builders only, so it runs
+ * under `node --test`:
+ *   node --test components/ui/components/features/voice/watch/providers/youtubeWire.test.ts
+ *
+ * Wire facts pinned by the 2026-08-19 probe (plan §7.1):
+ * - `infoDelivery` is a PARTIAL object stream (~264 ms cadence while
+ *   playing): `currentTime` in ~80 % of them, `playerState` only on change.
+ *   Merge into a running state; never treat a missing field as a change.
+ * - There is NO separate `onStateChange` over raw postMessage; state rides
+ *   in `infoDelivery.playerState`. `onReady` / `onError` ARE separate.
+ * - `initialDelivery` and `apiInfoDelivery` (a ~30 KB captions blob) also
+ *   arrive — ignore unknown events, never throw on them.
+ * - Fractional `setPlaybackRate` (0.95 / 1.05) is accepted and effective.
+ * - Error codes: 2 / 5 / 100 / 101 / 150 (an unknown id gave 150, not 100)
+ *   — all mean "can't be watched together here".
+ */
+import type { ProviderState } from "../syncController.ts";
+
+export const YOUTUBE_EMBED_ORIGIN = "https://www.youtube-nocookie.com";
+
+/** YouTube player states (`playerState` / YT.PlayerState). */
+export const YT_STATE = {
+  UNSTARTED: -1,
+  ENDED: 0,
+  PLAYING: 1,
+  PAUSED: 2,
+  BUFFERING: 3,
+  CUED: 5,
+} as const;
+
+export function providerStateFromYt(playerState: number | undefined): ProviderState | null {
+  switch (playerState) {
+    case YT_STATE.UNSTARTED:
+      return "unstarted";
+    case YT_STATE.ENDED:
+      return "ended";
+    case YT_STATE.PLAYING:
+      return "playing";
+    case YT_STATE.PAUSED:
+      return "paused";
+    case YT_STATE.BUFFERING:
+      return "buffering";
+    case YT_STATE.CUED:
+      return "cued";
+    default:
+      return null;
+  }
+}
+
+/** Human text for an `onError` code (plan §4.3). */
+export function youtubeErrorText(code: number): string {
+  switch (code) {
+    case 2:
+      return "That doesn't look like a valid YouTube video.";
+    case 5:
+      return "YouTube's player failed to load this video.";
+    case 100:
+      return "This video was not found, or it is private.";
+    case 101:
+    case 150:
+      return "This video can't be watched together — the uploader disabled embedding.";
+    default:
+      return `YouTube reported an error (${code}).`;
+  }
+}
+
+/** 11 chars of [A-Za-z0-9_-]. */
+export const YOUTUBE_ID_RE = /^[A-Za-z0-9_-]{11}$/;
+
+/**
+ * Extract a video id from anything a user might paste: a bare id,
+ * youtube.com/watch?v=, youtu.be/, /shorts/, /embed/, /live/, with or
+ * without extra params. Returns null when nothing id-shaped is found.
+ */
+export function parseYouTubeInput(raw: string): string | null {
+  const s = raw.trim();
+  if (!s) return null;
+  if (YOUTUBE_ID_RE.test(s)) return s;
+  let url: URL;
+  try {
+    url = new URL(/^[a-z]+:\/\//i.test(s) ? s : `https://${s}`);
+  } catch {
+    return null;
+  }
+  const host = url.hostname.replace(/^www\.|^m\.|^music\./, "");
+  const idOk = (v: string | null) => (v && YOUTUBE_ID_RE.test(v) ? v : null);
+  if (host === "youtu.be") return idOk(url.pathname.split("/")[1] ?? null);
+  if (host === "youtube.com" || host === "youtube-nocookie.com") {
+    const v = url.searchParams.get("v");
+    if (idOk(v)) return v;
+    const m = url.pathname.match(/^\/(?:embed|shorts|live|v)\/([^/?#]+)/);
+    if (m) return idOk(m[1]);
+  }
+  return null;
+}
+
+export interface YouTubeEmbedOptions {
+  videoId: string;
+  /** `location.origin` of the embedding document — YouTube checks it. */
+  origin: string;
+  autoplay?: boolean;
+  /** Viewers get `controls=0` so scrubbing the YouTube bar can't desync them. */
+  controls?: boolean;
+  mute?: boolean;
+}
+
+export function youtubeEmbedUrl(o: YouTubeEmbedOptions): string {
+  const params = new URLSearchParams({
+    enablejsapi: "1",
+    origin: o.origin,
+    autoplay: o.autoplay === false ? "0" : "1",
+    playsinline: "1",
+    rel: "0",
+    controls: o.controls ? "1" : "0",
+    disablekb: "1",
+    // Keep YouTube's own end-screen / annotations quiet: this is a synced
+    // surface, not a discovery surface.
+    iv_load_policy: "3",
+  });
+  if (o.mute) params.set("mute", "1");
+  return `${YOUTUBE_EMBED_ORIGIN}/embed/${encodeURIComponent(o.videoId)}?${params}`;
+}
+
+/** Outbound messages. `id`/`channel` are echoed back, letting two embeds coexist. */
+export function listeningMessage(id: string): string {
+  return JSON.stringify({ event: "listening", id, channel: "widget" });
+}
+
+export type YouTubeCommand =
+  | "playVideo"
+  | "pauseVideo"
+  | "seekTo"
+  | "setPlaybackRate"
+  | "mute"
+  | "unMute"
+  | "setVolume"
+  | "stopVideo";
+
+export function commandMessage(id: string, func: YouTubeCommand, args: unknown[] = []): string {
+  return JSON.stringify({ event: "command", func, args, id, channel: "widget" });
+}
+
+/** What one inbound message contributes to the running player state. */
+export interface YouTubeInfo {
+  currentTimeMs?: number;
+  durationMs?: number;
+  playerState?: number;
+  playbackRate?: number;
+  muted?: boolean;
+  volume?: number;
+  title?: string;
+}
+
+export type YouTubeInbound =
+  | { kind: "ready" }
+  | { kind: "info"; info: YouTubeInfo }
+  | { kind: "error"; code: number }
+  | { kind: "ignore" };
+
+/**
+ * Parse an inbound `message` event's data for OUR embed. `expectedId` is
+ * the id we handshook with; messages for another embed (the message-embed
+ * iframe in chat, say) are ignored. The caller has already checked
+ * `e.origin === YOUTUBE_EMBED_ORIGIN` and `e.source === iframe.contentWindow`.
+ */
+export function parseYouTubeMessage(data: unknown, expectedId: string): YouTubeInbound {
+  let d: unknown = data;
+  if (typeof d === "string") {
+    try {
+      d = JSON.parse(d);
+    } catch {
+      return { kind: "ignore" };
+    }
+  }
+  if (!d || typeof d !== "object") return { kind: "ignore" };
+  const m = d as { event?: unknown; id?: unknown; info?: unknown };
+  if (m.id !== undefined && m.id !== expectedId) return { kind: "ignore" };
+  switch (m.event) {
+    case "onReady":
+      return { kind: "ready" };
+    case "onError": {
+      const code = typeof m.info === "number" ? m.info : Number((m.info as { data?: unknown })?.data);
+      return { kind: "error", code: Number.isFinite(code) ? code : -1 };
+    }
+    case "infoDelivery": {
+      const raw = (m.info ?? {}) as Record<string, unknown>;
+      const info: YouTubeInfo = {};
+      if (typeof raw.currentTime === "number") info.currentTimeMs = raw.currentTime * 1000;
+      if (typeof raw.duration === "number") info.durationMs = raw.duration * 1000;
+      if (typeof raw.playerState === "number") info.playerState = raw.playerState;
+      if (typeof raw.playbackRate === "number") info.playbackRate = raw.playbackRate;
+      if (typeof raw.muted === "boolean") info.muted = raw.muted;
+      if (typeof raw.volume === "number") info.volume = raw.volume;
+      const vd = raw.videoData as { title?: unknown } | undefined;
+      if (vd && typeof vd.title === "string" && vd.title) info.title = vd.title;
+      return { kind: "info", info };
+    }
+    default:
+      // initialDelivery, apiInfoDelivery, anything new — ignored, never thrown on.
+      return { kind: "ignore" };
+  }
+}

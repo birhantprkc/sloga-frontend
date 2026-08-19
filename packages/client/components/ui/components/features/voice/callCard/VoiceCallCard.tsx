@@ -205,6 +205,14 @@ export function VoiceCallCardContext(props: { children: JSX.Element }) {
               {(inCall) => <VoiceCallCard channel={inCall()} />}
             </Match>
           </Switch>
+          {/* Watch-together player host (plan §2.1): a DIRECT child of the
+              persistent Float, OUTSIDE the docked/PiP Switch, so the player
+              element is never reparented or detached — a detached iframe
+              loses its browsing context and reloads, a detached <video> is
+              paused by spec. The store positions it over whatever rect the
+              WatchOverlay reserves; with no card showing it is hidden and
+              zero-size but keeps playing (audio continues). */}
+          {voice.watch.host}
         </Float>
       </Portal>
     </callCardContext.Provider>

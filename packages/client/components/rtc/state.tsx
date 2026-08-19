@@ -111,6 +111,7 @@ import { CaptureClaim } from "./captureClaim";
 import { entranceSoundFor } from "./entranceSound";
 import { watchLocalUserId } from "./localUserIdentity";
 import { RemoteControl } from "./remoteControl";
+import { WatchTogether } from "./watchTogether";
 import {
   type RemoteControlQueue,
   addToQueue,
@@ -584,6 +585,17 @@ class Voice {
    * everything they published.
    */
   readonly remoteControl = new RemoteControl();
+  /**
+   * Watch together (synced YouTube/Jellyfin playback in the call). Owned
+   * here for the same reason as remote control: the player element must
+   * outlive the call card (it unmounts on channel navigation) and must
+   * NEVER be detached — so the store owns the one player host and
+   * `VoiceCallCard.tsx` mounts it in its persistent `<Float>`. Session
+   * events are app-lifetime client subscriptions (the annotations shape),
+   * scoped to the call we are connected to. Sloga relays control state
+   * only; the media is fetched by each viewer from the provider.
+   */
+  readonly watch = new WatchTogether();
   /**
    * Client-local soundboard playback. Subscribes to the `soundboardSound`
    * client event app-lifetime (in the constructor) and plays a received clip
@@ -1215,6 +1227,42 @@ class Voice {
         client.removeListener("callAnnotationConsent", consentHandler);
       });
     });
+    // Watch together: same app-lifetime, private-topic shape. Both events
+    // reach every session of this user, so drop anything that is not the
+    // call we are connected to. A bonfire `ready` (reconnect) fires no
+    // VoiceChannelJoin for self, so re-GET the session there too.
+    this.watch.setContext({
+      channel: () => this.channel(),
+      connected: () => this.state() === "CONNECTED",
+      localUserId: () => this.getClient()?.user?.id,
+    });
+    createEffect(() => {
+      const client = this.getClient();
+      if (!client) return;
+      const onWatchUpdate = (detail: {
+        channelId: string;
+        session: import("stoat.js").WatchSessionData;
+      }) => {
+        if (this.state() !== "CONNECTED") return;
+        if (this.channel()?.id !== detail.channelId) return;
+        this.watch.onUpdate(detail);
+      };
+      const onWatchEnd = (detail: { channelId: string; id: string }) => {
+        if (this.channel()?.id !== detail.channelId) return;
+        this.watch.onEnd(detail);
+      };
+      const onReady = () => {
+        if (this.state() === "CONNECTED") void this.watch.attach();
+      };
+      client.addListener("watchSessionUpdate", onWatchUpdate);
+      client.addListener("watchSessionEnd", onWatchEnd);
+      client.addListener("ready", onReady);
+      onCleanup(() => {
+        client.removeListener("watchSessionUpdate", onWatchUpdate);
+        client.removeListener("watchSessionEnd", onWatchEnd);
+        client.removeListener("ready", onReady);
+      });
+    });
     // Re-point any in-flight soundboard playback when the output device
     // changes mid-call (future plays read the device per-play already).
     createEffect(() => {
@@ -1740,6 +1788,10 @@ class Voice {
         .fetchAnnotationConsent()
         .then((entries) => this.annotations.seedConsent(entries))
         .catch(() => {});
+      // Watch together: a late joiner has missed every session event —
+      // GET it (retries once if ingress has not written our voice state
+      // yet). Flag-dark builds simply get a 404 or nothing to render.
+      if (CONFIGURATION.ENABLE_WATCH_TOGETHER) void this.watch.attach();
       this.remoteControl.attach(room, room.localParticipant.identity);
       // Capability beacon (pass-the-controller slice 2): tell the call this
       // client could RECEIVE control, so a sharer's rotation queue can mark
@@ -2225,6 +2277,11 @@ class Voice {
       this.#mlsKeyProvider = undefined;
       this.captions.detach();
       this.annotations.detach();
+      // Watch together dies with the call: the host's leave ends the
+      // session server-side anyway (delete_voice_state hook) but we also
+      // send a best-effort DELETE, and the player is disposed here — the
+      // MinigameChip "dies with the call" rule.
+      this.watch.detach();
       // Whisper state dies with the call: the room is going away, so there
       // is nothing to unpublish or restore — just stop the capture.
       this.whisper.reset();

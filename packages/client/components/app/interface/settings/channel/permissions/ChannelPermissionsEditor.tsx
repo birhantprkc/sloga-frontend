@@ -426,6 +426,18 @@ export function ChannelPermissionsEditor(props: Props) {
       },
     },
     {
+      // Bit 43. On by default (DEFAULT_PERMISSION + backend migration 68).
+      // Gates STARTING and driving a watch-together session; watching along
+      // needs only Connect, so this row is not "who may watch".
+      key: "UseWatchTogether",
+      value: 2n ** 43n,
+      title: t`Watch Together`,
+      description: {
+        TextChannel: t`Start and control synced video playback in a voice call`,
+        Server: t`Start and control synced video playback in a voice call`,
+      },
+    },
+    {
       heading: t`Mentions`,
       key: "MentionEveryone",
       value: 2n ** 37n,

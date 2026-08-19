@@ -17,6 +17,7 @@ import { VoiceRecordButton } from "./VoiceRecordButton";
 import { VoiceSoundboardButton } from "./VoiceSoundboardButton";
 import { VoiceStatsOverlay } from "./VoiceStatsOverlay";
 import { VoiceTranscribeButton } from "./VoiceTranscribeButton";
+import { VoiceWatchButton } from "./VoiceWatchButton";
 
 export function VoiceCallCardActions(props: { size: "xs" | "sm" }) {
   const voice = useVoice();
@@ -183,6 +184,12 @@ export function VoiceCallCardActions(props: { size: "xs" | "sm" }) {
         }
       >
         <VoiceSoundboardButton size={props.size} />
+      </Show>
+      {/* Watch together: off the compact card (its overlay needs the docked
+          participant area). Gates itself on the ENABLE_WATCH_TOGETHER flag +
+          the UseWatchTogether bit via watchPolicy. */}
+      <Show when={!compact()}>
+        <VoiceWatchButton size={props.size} />
       </Show>
       {/* Recording stays OFF the compact PiP card. The 300px card only fits
           the essentials, and a control whose side effect is telling everyone
