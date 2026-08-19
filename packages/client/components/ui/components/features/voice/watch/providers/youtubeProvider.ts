@@ -28,6 +28,8 @@ export interface YouTubeProviderOptions {
   videoId: string;
   /** Host gets the YouTube bar (it IS the control surface); viewers don't. */
   controls: boolean;
+  /** Start playing on load (the session is playing); default true. */
+  autoplay?: boolean;
   /** Start muted (autoplay fallback). */
   mute?: boolean;
   volume: number;
@@ -112,7 +114,7 @@ export class YouTubeProvider implements Provider {
     f.src = youtubeEmbedUrl({
       videoId: opts.videoId,
       origin: location.origin,
-      autoplay: true,
+      autoplay: opts.autoplay !== false,
       controls: opts.controls,
       mute: opts.mute || opts.muted,
     });

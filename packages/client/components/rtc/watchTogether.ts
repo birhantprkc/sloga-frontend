@@ -25,6 +25,8 @@ import { createSignal, type Accessor, type Setter } from "solid-js";
 
 import type { Channel, WatchMediaData, WatchResult, WatchSessionData } from "stoat.js";
 
+import { CONFIGURATION } from "@revolt/common";
+
 import type { Provider, ProviderStatus } from "@revolt/ui/components/features/voice/watch/providers/provider";
 import { YouTubeProvider } from "@revolt/ui/components/features/voice/watch/providers/youtubeProvider";
 import {
@@ -117,6 +119,15 @@ export class WatchTogether {
   #offsetRtt = Number.POSITIVE_INFINITY;
   #lastUpdateLocalMs: number | null = null;
   #lastSeqBySession = new Map<string, number>();
+  #endedSessions = new Set<string>();
+  /**
+   * Host: the last OPINIONATED provider state (playing / paused / ended).
+   * buffering / cued / unstarted are "no opinion" for the host too — a
+   * heartbeat landing mid-buffer must not write `playing:false` and pause
+   * the whole call (plan §3, applied to the host's writes).
+   */
+  #hostOpinion: "playing" | "paused" | "ended" | null = null;
+  #lastProviderState: string | undefined;
   #tick: ReturnType<typeof setInterval> | undefined;
   #heartbeat: ReturnType<typeof setInterval> | undefined;
   #unreachableTimer: ReturnType<typeof setInterval> | undefined;
@@ -144,8 +155,12 @@ export class WatchTogether {
 
     const host = document.createElement("div");
     host.className = "sloga-watch-host";
+    // z-index 3: the docked card's `Base` is an absolute sibling at z2 in
+    // the same Float stacking context — at z1 the iframe would paint UNDER
+    // the card (audio only). The overlay hides the anchor while a BLOCKING
+    // card banner is up, since at z3 we would also paint over that.
     host.style.cssText =
-      "position:absolute;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:auto;overflow:hidden;border-radius:8px;background:#000;z-index:1";
+      "position:absolute;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:auto;overflow:hidden;border-radius:8px;background:#000;z-index:3";
     this.host = host;
   }
 
@@ -204,9 +219,19 @@ export class WatchTogether {
   // ---- WS events (called from state.tsx, already scoped to our call) -----
 
   onUpdate(detail: { channelId: string; session: WatchSessionData }) {
+    // THE flag gate for receivers (plan: one flag darkens the lot). A lit
+    // client starting a session must not make dark clients spawn a hidden
+    // autoplaying iframe they have no UI to stop.
+    if (!CONFIGURATION.ENABLE_WATCH_TOGETHER) return;
     const s = detail.session;
+    // A reordered update for a session we already saw END (delta's PATCH fan
+    // and voice-ingress' leave fan are two processes with no ordering) must
+    // not resurrect it.
+    if (this.#endedSessions.has(s.id)) return;
     const last = this.#lastSeqBySession.get(s.id) ?? -1;
     if (s.seq <= last) return; // stale / reordered
+    // New session id: forget older counters (bounded memory).
+    if (!this.#lastSeqBySession.has(s.id)) this.#lastSeqBySession.clear();
     this.#lastSeqBySession.set(s.id, s.seq);
     this.#lastUpdateLocalMs = Date.now();
     this.#setHostUnreachable(false);
@@ -218,7 +243,14 @@ export class WatchTogether {
   }
 
   onEnd(detail: { channelId: string; id: string }) {
-    void detail;
+    this.#endedSessions.add(detail.id);
+    const current = this.session();
+    if (current && current.id !== detail.id) this.#endedSessions.add(current.id);
+    // Bounded: only the last few ids matter for reordering.
+    if (this.#endedSessions.size > 16) {
+      const first = this.#endedSessions.values().next().value;
+      if (first) this.#endedSessions.delete(first);
+    }
     this.#clearSession();
   }
 
@@ -226,6 +258,7 @@ export class WatchTogether {
 
   /** On CONNECTED (and on bonfire `ready` / reconnect): learn the session. */
   async attach() {
+    if (!CONFIGURATION.ENABLE_WATCH_TOGETHER) return;
     if (!this.#ctx?.channel()) return;
     await this.refetch(true);
   }
@@ -387,12 +420,17 @@ export class WatchTogether {
     this.#providerKey = key;
     this.#syncState = INITIAL_SYNC_STATE;
     this.#nudgeRate = RATE_NORMAL;
+    this.#hostOpinion = null;
+    this.#lastProviderState = undefined;
     if (s.media.provider === "youtube") {
       const p = new YouTubeProvider({
         videoId: s.media.video_id,
         // The host gets YouTube's own bar as a control surface; viewers
         // don't, so scrubbing it can't desync them (plan §4.1).
         controls: this.isHost(),
+        // A paused session must not blip audio at 0 before the corrector
+        // pauses it; the corrector issues play() when the host plays.
+        autoplay: s.playing,
         volume: this.volume(),
         muted: this.muted(),
       });
@@ -419,14 +457,21 @@ export class WatchTogether {
 
   #onProviderChange(st: ProviderStatus) {
     this.#setProviderStatus(st);
+    const transition = st.state !== this.#lastProviderState;
+    this.#lastProviderState = st.state;
     if (st.state === "playing") {
       this.#playAskedAt = null;
       this.#setNeedsTap(false);
     }
+    if (st.state === "playing" || st.state === "paused" || st.state === "ended") {
+      this.#hostOpinion = st.state;
+    }
     if (this.isHost()) {
-      // Any state change the host's player reports (clicked the video,
-      // ended, stalled) is host truth — write it (plan §1, rev 3).
-      if (st.state === "playing" || st.state === "paused" || st.state === "ended") {
+      // A STATE TRANSITION the host's player reports (clicked the video,
+      // ended, stalled-then-resumed) is host truth — write it (plan §1,
+      // rev 3). Volume/mute/rate/duration changes also come through here
+      // and must NOT each cost a PATCH (the bucket is 60/10 s).
+      if (transition && this.#hostOpinion && st.state === this.#hostOpinion) {
         this.#queueWrite({ playing: st.state === "playing" });
       }
       // Title learned from the embed: write it once so late joiners see it.
@@ -474,7 +519,18 @@ export class WatchTogether {
     const nowServer = this.#serverNow();
 
     if (this.isHost()) {
-      // Host is ground truth: no correction, only the debug line.
+      // Host is ground truth: no correction. But a host scrubbing YouTube's
+      // own bar WHILE PAUSED produces no state transition — the viewers
+      // would only learn the new position at the next heartbeat. Write when
+      // the real position has moved away from the session's by > 1 s.
+      if (
+        st.currentTimeMs != null &&
+        !s.playing &&
+        this.#hostOpinion === "paused" &&
+        Math.abs(st.currentTimeMs - s.position_ms) > 1000
+      ) {
+        this.#queueWrite({ positionMs: st.currentTimeMs }, /* scrub */ true);
+      }
       this.#setStats({
         driftMs: null,
         expectedMs: st.currentTimeMs ?? 0,
@@ -593,7 +649,10 @@ export class WatchTogether {
     const over = this.#queued ?? {};
     this.#queued = undefined;
     const st = p?.status();
-    const playing = over.playing ?? (st ? st.state === "playing" : s.playing);
+    // Only an opinionated provider state decides `playing`; mid-buffer
+    // (every seek, every pause passes through it) keeps the last opinion.
+    const playing =
+      over.playing ?? (this.#hostOpinion ? this.#hostOpinion === "playing" : s.playing);
     const positionMs = Math.max(0, Math.round(over.positionMs ?? st?.currentTimeMs ?? s.position_ms));
     const ratePermille = over.ratePermille ?? s.rate_permille;
     this.#inFlight = (async () => {

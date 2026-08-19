@@ -59,10 +59,18 @@ export function WatchOverlay() {
     watch.pickerOpen() &&
     !voice.immersive();
 
+  // A BLOCKING card banner (the E2EE downgrade / terminal-loud banner, z5
+  // inside the card) must stay on top; the player host sits at Float level
+  // ABOVE the card, so park it (audio continues) while one is showing.
+  const blockingBanner = () => {
+    const kind = voice.callMode()?.kind;
+    return kind === "mixed" || kind === "interlude" || voice.callTerminalLoud();
+  };
+
   // Anchor the player host to the slot whenever the slot exists.
   const [slot, setSlot] = createSignal<HTMLDivElement>();
   createEffect(() => {
-    watch.setAnchor(visible() ? slot() : undefined);
+    watch.setAnchor(visible() && !blockingBanner() ? slot() : undefined);
   });
   onCleanup(() => watch.setAnchor(undefined));
 
@@ -214,10 +222,18 @@ function Controls() {
     const s = watch.session();
     return watch.isHost() ? status()?.state === "playing" : !!s?.playing;
   };
-  // Position for the bar: the host's own player; viewers show the session's
-  // expected line (what the store's stats already compute).
-  const positionMs = () =>
-    watch.isHost() ? (status()?.currentTimeMs ?? 0) : (watch.stats()?.expectedMs ?? 0);
+  // Position for the bar, from the store's per-tick stats (the provider
+  // status signal only changes on state transitions): the host's own real
+  // position; viewers the session's expected line. Frozen while the host
+  // is dragging so the tick doesn't fight the thumb.
+  const [dragging, setDragging] = createSignal(false);
+  const [dragValue, setDragValue] = createSignal(0);
+  const positionMs = () => {
+    if (dragging()) return dragValue();
+    const st = watch.stats();
+    if (!st) return 0;
+    return watch.isHost() ? (st.currentMs ?? 0) : st.expectedMs;
+  };
 
   const RATES = [750, 1000, 1250, 1500, 2000];
 
@@ -239,9 +255,15 @@ function Controls() {
         max={Math.max(1, Math.round(duration()))}
         value={Math.min(Math.round(positionMs()), Math.max(1, Math.round(duration())))}
         disabled={!watch.isHost()}
+        onPointerDown={() => setDragging(true)}
+        onPointerUp={() => setDragging(false)}
+        onPointerCancel={() => setDragging(false)}
         onInput={(e) => {
-          if (watch.isHost()) watch.hostSeek(Number(e.currentTarget.value));
+          const v = Number(e.currentTarget.value);
+          setDragValue(v);
+          if (watch.isHost()) watch.hostSeek(v);
         }}
+        onChange={() => setDragging(false)}
         aria-label={t`Seek`}
       />
       <Time>{fmt(duration())}</Time>
