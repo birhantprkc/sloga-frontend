@@ -8,6 +8,34 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // v0.47.0: the screen-share audio fixes. Copy constraints, load-bearing:
+  // - The listener-side default flipped from muted to audible. Say plainly
+  //   that nothing needs unmuting any more AND that the per-person mute is
+  //   still there — a reader who muted someone on purpose must not think
+  //   their choice was discarded (it was not; stored mutes are kept).
+  // - The attenuation fix is WINDOWS DESKTOP ONLY (the feature itself is).
+  //   Describe it as the sharer's own stream no longer being lowered; do not
+  //   claim anything about how the feature sounds otherwise, it is still
+  //   untested against a real game.
+  // - Do NOT quote these UI strings — they are this release's grep markers:
+  //   "Mute Screen Share", "Attenuation Strength". Calling it "the mute
+  //   option in their menu" is fine.
+  // - Never mention: server boosts, streaming connections, captions, remote
+  //   control (lit on Windows desktop only, dark everywhere else).
+  {
+    id: "sloga-2026-08-19",
+    title: "Patch Notes",
+    published_at: "2026-08-19T16:00:00.000Z",
+    markdown_content: `## v0.47.0 — You can hear the stream now
+
+### 🔊 Screen-share audio plays by default
+- **No more silent streams.** When someone shares a tab or their screen with audio, you hear it straight away. Until now every share arrived muted on your end and stayed that way until you found the mute option in that person's right-click menu and switched it off — which is why so many shares seemed to have no sound at all.
+- **Your per-person choice still stands.** If you muted a particular person's shares on purpose, they stay muted; the option is right where it was. This only changes what happens before you have said anything.
+- **Windows desktop: sharing with attenuation on no longer quiets your own stream.** The option that lowers other applications while people talk was also lowering the application you were sharing, so what left your machine dipped — or went silent — every time someone spoke. It now steps aside for as long as you are sharing audio and picks back up when you stop.
+
+Reading this in the desktop, Linux or Android app? Your version already has both fixes.
+`,
+  },
   // v0.46.0: the layout designer + the in-app community directory. Copy
   // constraints, all load-bearing:
   // - The layout applies to THE DEVICE IT IS SET ON. The settings store is
