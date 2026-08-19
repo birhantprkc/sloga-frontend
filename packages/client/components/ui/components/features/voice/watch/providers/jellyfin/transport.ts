@@ -10,18 +10,29 @@
  *   `http://`, LAN, self-signed.
  * - **Electron (Linux)** — `jf://{server_id}/…`, same forwarding
  *   (electron-shell/src/jellyfin.js).
- * - **Android** — no transport yet (slice 3); `available()` is false there.
+ * - **Android** — split carrier (plan §5.4, slice 3). Media GETs (HLS
+ *   manifests/segments via hls.js, `<img>` posters) ride the same-origin
+ *   path `/_jf/{server_id}/…`, intercepted natively by
+ *   `JellyfinWebViewClient` and streamed — CSP sees only 'self'. API calls
+ *   go over the `Jellyfin` Capacitor plugin (`request`), because Android's
+ *   `shouldInterceptRequest` never exposes a POST body, so PlaybackInfo /
+ *   auth / playstate cannot ride the interceptor.
  *
- * The desktop shells forward ONLY to servers the viewer saved. This module
- * pushes the saved-server list down to the shell (`registerServers`)
- * whenever it changes; an id the shell doesn't know is a 404, so a watch
- * session naming a server the viewer never added cannot make their client
- * contact an arbitrary URL (plan §5.1).
+ * Every native carrier forwards ONLY to servers the viewer saved. This
+ * module pushes the saved-server list down to the shell
+ * (`registerServers`) whenever it changes; an id the shell doesn't know is
+ * a 404, so a watch session naming a server the viewer never added cannot
+ * make their client contact an arbitrary URL (plan §5.1). The one
+ * deliberate addition is `registerProbeServer`: the connect flow's
+ * pre-save probe/sign-in registers the typed URL under a fixed provisional
+ * id — that is still viewer-initiated contact (they typed the address and
+ * clicked Connect), and the next `registerServers` replaces the table and
+ * drops it.
  *
  * Sloga is never on the media path: this is the viewer's own machine
  * fetching from the viewer's own Jellyfin.
  */
-import { Capacitor } from "@capacitor/core";
+import { Capacitor, registerPlugin } from "@capacitor/core";
 
 import { tauriInvoke } from "@revolt/common";
 
@@ -36,6 +47,24 @@ interface ElectronJellyfin {
 }
 interface SlogaShell {
   jellyfin?: ElectronJellyfin;
+}
+
+/** The Android `Jellyfin` Capacitor plugin (JellyfinPlugin.kt). */
+interface JellyfinNativePlugin {
+  setServers(options: { servers: unknown[] }): Promise<{ count: number }>;
+  request(options: {
+    serverId: string;
+    path: string;
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+  }): Promise<{ status: number; body: string }>;
+}
+
+let androidPlugin: JellyfinNativePlugin | undefined;
+function jellyfinPlugin(): JellyfinNativePlugin {
+  if (!androidPlugin) androidPlugin = registerPlugin<JellyfinNativePlugin>("Jellyfin");
+  return androidPlugin;
 }
 
 /** Which shell we run in (plan §5.3). Frozen per document. */
@@ -53,14 +82,11 @@ export function shellKind(): ShellKind {
 
 /**
  * Can this shell reach `baseUrl` at all? Web can't do mixed content or a
- * LAN address from the public origin; Android has no transport in v1. The
- * desktop shells can reach anything the user saved.
+ * LAN address from the public origin. The native shells can reach anything
+ * the user saved.
  */
-export function transportProblem(
-  baseUrl: string,
-): "mixed-content" | "android-unsupported" | null {
+export function transportProblem(baseUrl: string): "mixed-content" | null {
   const kind = shellKind();
-  if (kind === "android") return "android-unsupported";
   if (kind === "web") {
     const proto = typeof location !== "undefined" ? location.protocol : "https:";
     return webTransportProblem(proto, baseUrl);
@@ -68,14 +94,25 @@ export function transportProblem(
   return null;
 }
 
-/** Push the saved-server list to the native shell's forwarder. No-op on web. */
-export async function registerServers(servers: SavedServer[]): Promise<void> {
-  const kind = shellKind();
-  const list = servers.map((s) => ({
+/**
+ * The provisional forwarding id used by the connect flow BEFORE a server
+ * is saved (probe, Quick Connect, password sign-in). Fixed and 8-64
+ * `[A-Za-z0-9_-]` so it passes every shell's second-gate id validation.
+ */
+export const PROBE_SERVER_ID = "connect-probe-0";
+
+function toSpecList(servers: SavedServer[]) {
+  return servers.map((s) => ({
     id: s.id,
     baseUrl: s.baseUrl,
     trustSelfSigned: s.trustSelfSigned === true,
   }));
+}
+
+async function pushServers(
+  list: Array<{ id: string; baseUrl: string; trustSelfSigned: boolean }>,
+): Promise<void> {
+  const kind = shellKind();
   if (kind === "tauri") {
     const invoke = tauriInvoke();
     if (invoke) {
@@ -96,18 +133,41 @@ export async function registerServers(servers: SavedServer[]): Promise<void> {
         /* swallowed like the shell's other fire-and-forget verbs */
       }
     }
+    return;
   }
+  if (kind === "android") {
+    try {
+      await jellyfinPlugin().setServers({ servers: list });
+    } catch {
+      /* plugin absent (old APK) — provider will surface fetch failures */
+    }
+  }
+}
+
+/** Push the saved-server list to the native shell's forwarder. No-op on web. */
+export async function registerServers(servers: SavedServer[]): Promise<void> {
+  await pushServers(toSpecList(servers));
+}
+
+/**
+ * Register the connect flow's typed-but-unsaved URL under
+ * `PROBE_SERVER_ID`, alongside the saved list, so the pre-save probe and
+ * sign-in calls can cross a native shell's forwarder at all. Replaced —
+ * and the provisional entry dropped — by the next `registerServers`.
+ */
+export async function registerProbeServer(
+  baseUrl: string,
+  saved: SavedServer[],
+): Promise<void> {
+  await pushServers([
+    ...toSpecList(saved),
+    { id: PROBE_SERVER_ID, baseUrl, trustSelfSigned: false },
+  ]);
 }
 
 /** Build a fetchable URL for a Jellyfin path against a saved server. */
 export function mediaUrl(server: SavedServer, path: string): string {
-  const kind = shellKind();
-  if (kind === "android") {
-    // No transport yet — return the direct URL so an <img> at least tries;
-    // hls.js/api go through fetchJellyfin(), which throws on android.
-    return `${server.baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
-  }
-  return transportUrl(kind, { id: server.id, baseUrl: server.baseUrl }, path);
+  return transportUrl(shellKind(), { id: server.id, baseUrl: server.baseUrl }, path);
 }
 
 /**
@@ -121,7 +181,24 @@ export async function fetchJellyfin(
   init: RequestInit = {},
 ): Promise<Response> {
   if (shellKind() === "android") {
-    throw new Error("Jellyfin isn't available on Android yet");
+    // API calls go over the plugin bridge: shouldInterceptRequest cannot
+    // see a POST body, and the responses here are small JSON (§5.4).
+    const headers: Record<string, string> = {};
+    new Headers(init.headers).forEach((v, k) => {
+      headers[k] = v;
+    });
+    const { status, body } = await jellyfinPlugin().request({
+      serverId: server.id,
+      path: path.startsWith("/") ? path : `/${path}`,
+      method: typeof init.method === "string" ? init.method : "GET",
+      headers,
+      ...(typeof init.body === "string" ? { body: init.body } : {}),
+    });
+    // status 0 = the native side could not reach the server at all.
+    if (status < 200) throw new Error("Couldn't reach the server");
+    // These statuses forbid a Response body by spec.
+    const bodyless = status === 204 || status === 205 || status === 304;
+    return new Response(bodyless ? null : body, { status });
   }
   return fetch(mediaUrl(server, path), { ...init, credentials: "omit" });
 }

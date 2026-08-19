@@ -63,9 +63,13 @@ test("transportUrl: per-shell carrier, path always absolute", () => {
   assert.equal(transportUrl("tauri", s, "/Users/Me"), `https://jf.localhost/${s.id}/Users/Me`);
   // Electron's `standard` scheme lower-cases the host; register lower-case too.
   assert.equal(transportUrl("electron", s, "/Users/Me"), `jf://${s.id.toLowerCase()}/Users/Me`);
+  // Android rides the same-origin interceptor path — relative on purpose,
+  // so the page CSP sees 'self' and relative HLS URLs resolve under /_jf/.
+  assert.equal(transportUrl("android", s, "/Users/Me"), `/_jf/${s.id}/Users/Me`);
   // A relative TranscodingUrl keeps its query intact.
   const t = "/videos/x/master.m3u8?DeviceId=d&ApiKey=k";
   assert.equal(transportUrl("tauri", s, t), `https://jf.localhost/${s.id}${t}`);
+  assert.equal(transportUrl("android", s, t), `/_jf/${s.id}${t}`);
 });
 
 test("webTransportProblem: https page + http LAN server = mixed content; loopback fine", () => {

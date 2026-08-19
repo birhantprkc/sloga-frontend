@@ -17,7 +17,7 @@ import {
   type TranscodeState,
 } from "./jellyfinWire";
 import { deviceId, type SavedServer } from "./servers";
-import { fetchJellyfin, mediaUrl } from "./transport";
+import { PROBE_SERVER_ID, fetchJellyfin, mediaUrl } from "./transport";
 
 // Shown only in the user's own Jellyfin dashboard; the client has no
 // version constant, so a stable label is enough (the DeviceId, not this,
@@ -118,10 +118,15 @@ export class JellyfinApi {
 
   // ---- unauthenticated ----------------------------------------------------
 
-  /** `GET /System/Info/Public` — confirms the box and gets its id/name. */
+  /**
+   * `GET /System/Info/Public` — confirms the box and gets its id/name.
+   * Rides the provisional `PROBE_SERVER_ID` (the caller registered the
+   * typed URL under it first — `registerProbeServer`): a native shell
+   * forwards only ids in its table, and the server isn't saved yet.
+   */
   static async probe(baseUrl: string): Promise<PublicInfo> {
     const tmp = new JellyfinApi({
-      id: "probe",
+      id: PROBE_SERVER_ID,
       name: "",
       baseUrl,
       token: "",

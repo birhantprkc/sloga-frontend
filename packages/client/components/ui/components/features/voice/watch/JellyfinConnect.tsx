@@ -9,7 +9,12 @@ import { Symbol } from "@revolt/ui/components/utils/Symbol";
 import { JellyfinApi, JfError } from "./providers/jellyfin/api";
 import { normalizeServerUrl, statusText } from "./providers/jellyfin/jellyfinWire";
 import { type SavedServer, listServers, saveServer } from "./providers/jellyfin/servers";
-import { registerServers, transportProblem } from "./providers/jellyfin/transport";
+import {
+  PROBE_SERVER_ID,
+  registerProbeServer,
+  registerServers,
+  transportProblem,
+} from "./providers/jellyfin/transport";
 
 /**
  * Add a Jellyfin server + sign in (plan §5.1). Quick Connect first (it is ON
@@ -41,10 +46,15 @@ export function JellyfinConnect(props: {
   let quickPoll: ReturnType<typeof setInterval> | undefined;
   onCleanup(() => {
     if (quickPoll) clearInterval(quickPoll);
+    // Drop the provisional probe entry from the shell's forwarding table
+    // if the flow is abandoned mid-way (finish() already replaces it).
+    void registerServers(listServers());
   });
 
+  // Pre-save calls (probe, Quick Connect, password auth) ride the
+  // provisional PROBE_SERVER_ID that probe() registered with the shell.
   const bareApi = (baseUrl: string) =>
-    new JellyfinApi({ id: "connect", name: "", baseUrl, token: "", userId: "" });
+    new JellyfinApi({ id: PROBE_SERVER_ID, name: "", baseUrl, token: "", userId: "" });
 
   const errText = (e: unknown): string => {
     if (e instanceof JfError) return statusText(e.status);
@@ -64,13 +74,13 @@ export function JellyfinConnect(props: {
       );
       return;
     }
-    if (problem === "android-unsupported") {
-      setError(t`Jellyfin isn't available on Android yet — use the desktop app or web.`);
-      return;
-    }
     setBusy(true);
     setError(undefined);
     try {
+      // The server isn't saved yet, so a native shell's forwarder doesn't
+      // know it — register the typed URL provisionally first (viewer-
+      // initiated contact: they typed it and clicked Connect, §5.1).
+      await registerProbeServer(base, listServers());
       const info = await JellyfinApi.probe(base);
       setServer({ name: info.ServerName, id: info.Id, baseUrl: base });
       let qc = false;

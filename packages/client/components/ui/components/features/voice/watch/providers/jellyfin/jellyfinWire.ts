@@ -78,12 +78,12 @@ export type ShellKind = "web" | "tauri" | "electron" | "android";
 
 /**
  * Where a Jellyfin path is fetched from, per shell (plan §5.3). Web goes
- * direct; the desktop shells go through their `jf` scheme, which forwards
- * ONLY to servers the user saved (by server id). Android has no transport
- * yet (slice 3) — callers must not reach this with `android`.
+ * direct; the desktop shells go through their `jf` scheme and Android
+ * through the same-origin `/_jf/` WebView interceptor (slice 3) — all
+ * three forward ONLY to servers the user saved (by server id).
  */
 export function transportUrl(
-  kind: Exclude<ShellKind, "android">,
+  kind: ShellKind,
   server: { id: string; baseUrl: string },
   path: string,
 ): string {
@@ -95,6 +95,11 @@ export function transportUrl(
       return `https://jf.localhost/${server.id}${p}`;
     case "electron":
       return `jf://${server.id.toLowerCase()}${p}`;
+    case "android":
+      // Relative to the Capacitor origin (https://localhost): the request
+      // is answered natively by the `/_jf/` WebView interceptor, so the
+      // page CSP sees only 'self' (plan §5.4 — no CSP widening).
+      return `/_jf/${server.id}${p}`;
   }
 }
 

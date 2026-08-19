@@ -21,7 +21,10 @@ import java.io.ByteArrayInputStream
  * class serves the result verbatim and only adds the same hardening
  * headers the desktop handler sets. Every failure is an opaque 404.
  */
-class E2eeWebViewClient(private val bridge: Bridge) : BridgeWebViewClient(bridge) {
+// `open` so the watch-together Jellyfin interceptor (JellyfinWebViewClient)
+// can chain onto the one WebViewClient slot Capacitor exposes; the E2EE
+// handling itself is unchanged and runs for everything that isn't /_jf/.
+open class E2eeWebViewClient(private val bridge: Bridge) : BridgeWebViewClient(bridge) {
     override fun shouldInterceptRequest(
         view: WebView?,
         request: WebResourceRequest?,

@@ -16,10 +16,13 @@ public class MainActivity extends BridgeActivity {
         FlavorPlugins.register(this);
         registerPlugin(SpeechToTextPlugin.class);
         registerPlugin(com.acutest.app.e2ee.E2eePlugin.class);
+        registerPlugin(com.acutest.app.watch.JellyfinPlugin.class);
         super.onCreate(savedInstanceState);
-        // Serve decrypted E2EE attachments from the native layer (the
-        // Android analog of the desktop e2ee-att protocol handler)
-        bridge.setWebViewClient(new com.acutest.app.e2ee.E2eeWebViewClient(bridge));
+        // One WebViewClient serves both native interceptors: decrypted E2EE
+        // attachments (/_e2ee-att/, in the E2eeWebViewClient base) and
+        // watch-together Jellyfin media (/_jf/, saved servers only) — the
+        // Android analogs of the desktop e2ee-att and jf protocol handlers.
+        bridge.setWebViewClient(new com.acutest.app.watch.JellyfinWebViewClient(bridge));
 
         // DEBUG-ONLY WebView conveniences (slice-4 gate HIGH #1 / MEDIUM #2):
         // release ships with these OFF via capacitor.config so a local
