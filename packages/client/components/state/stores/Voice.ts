@@ -671,9 +671,15 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
    * Get whether a user's screen share is muted
    * @param userId User ID
    * @returns Whether muted
+   *
+   * Unset = AUDIBLE. This shipped as `?? true` (upstream #1055), which made
+   * every stream silent until the listener found "Mute Screen Share" in the
+   * sharer's context menu and unticked it — reported three times in a day
+   * as "no sound during screen sharing". Only an explicit mute silences a
+   * share; stored `true` values from users who chose to mute are kept.
    */
   getScreenShareMuted(userId: string): boolean {
-    return this.get().screenShareMutes[userId] ?? true;
+    return this.get().screenShareMutes[userId] ?? false;
   }
 
   /**
