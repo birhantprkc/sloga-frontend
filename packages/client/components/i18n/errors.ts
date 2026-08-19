@@ -54,6 +54,13 @@ export function useError() {
         return t`This name is not allowed.`;
       if (errType === "ProfileIsPrivate")
         return t`This profile is private.`;
+      // Watch together (same lag pattern).
+      if (errType === "WatchSessionExists")
+        return t`Someone in this call is already watching together — stop that session first.`;
+      if (errType === "NotWatchHost")
+        return t`Only the host (or a channel manager) can control playback.`;
+      if (errType === "NotInVoiceChannel")
+        return t`You need to be in the call to do that.`;
 
       switch (err.type) {
         case "AccountDisabled":

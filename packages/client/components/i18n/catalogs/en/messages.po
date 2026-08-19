@@ -86,6 +86,10 @@ msgstr "Mirrored"
 msgid "On the same side as the channels, the member list shares their column. Overrides Ultrawide layout's member list placement."
 msgstr "On the same side as the channels, the member list shares their column. Overrides Ultrawide layout's member list placement."
 
+#: components/i18n/errors.ts
+msgid "Only the host (or a channel manager) can control playback."
+msgstr "Only the host (or a channel manager) can control playback."
+
 #: components/ui/components/features/voice/watch/WatchOverlay.tsx:292
 msgid "Paste a YouTube link. Everyone in the call watches it in sync, each from YouTube directly — Sloga never touches the video."
 msgstr "Paste a YouTube link. Everyone in the call watches it in sync, each from YouTube directly — Sloga never touches the video."
@@ -114,6 +118,10 @@ msgstr "Server list and channels: on the left. Press left or right arrow to move
 #: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
 msgid "Server list and channels: on the right. Press left or right arrow to move."
 msgstr "Server list and channels: on the right. Press left or right arrow to move."
+
+#: components/i18n/errors.ts
+msgid "Someone in this call is already watching together — stop that session first."
+msgstr "Someone in this call is already watching together — stop that session first."
 
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx:436
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx:437
@@ -249,6 +257,10 @@ msgstr "Hug the channel list"
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
 msgid "Full"
 msgstr "Full"
+
+#: components/i18n/errors.ts
+msgid "You need to be in the call to do that."
+msgstr "You need to be in the call to do that."
 
 #: components/ui/components/features/voice/watch/WatchOverlay.tsx:130
 msgid "You're hosting"
@@ -7681,4 +7693,5 @@ msgstr "Public communities on Sloga. Servers appear here after their owner reque
 #: src/interface/Discover.tsx
 msgid "Search communities…"
 msgstr "Search communities…"
+
 

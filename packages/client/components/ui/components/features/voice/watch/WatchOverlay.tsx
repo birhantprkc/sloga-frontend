@@ -12,6 +12,7 @@ import { styled } from "styled-system/jsx";
 
 import { useClient } from "@revolt/client";
 import { CONFIGURATION } from "@revolt/common";
+import { useError } from "@revolt/i18n";
 import { useVoice } from "@revolt/rtc";
 import { Button, IconButton } from "@revolt/ui/components/design";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
@@ -41,6 +42,7 @@ export function WatchOverlay() {
   const voice = useVoice();
   const client = useClient();
   const { t } = useLingui();
+  const translateError = useError();
   const watch = voice.watch;
 
   const visible = () =>
@@ -173,7 +175,7 @@ export function WatchOverlay() {
             <Notice>{t`The host seems to have dropped — waiting for them to come back…`}</Notice>
           </Show>
           <Show when={watch.error()}>
-            <Notice>{watch.error()}</Notice>
+            <Notice>{translateError({ type: watch.error() })}</Notice>
           </Show>
           <Controls />
           <Show when={showStats()}>
@@ -272,6 +274,7 @@ function Controls() {
 function Picker() {
   const voice = useVoice();
   const { t } = useLingui();
+  const translateError = useError();
   const watch = voice.watch;
   const [raw, setRaw] = createSignal("");
   const [bad, setBad] = createSignal(false);
@@ -310,7 +313,7 @@ function Picker() {
         <Notice>{t`That doesn't look like a YouTube link or video id.`}</Notice>
       </Show>
       <Show when={watch.error()}>
-        <Notice>{watch.error()}</Notice>
+        <Notice>{translateError({ type: watch.error() })}</Notice>
       </Show>
       <PickerHint>
         {t`Loads from youtube-nocookie.com. The server sees what you watch — also in encrypted calls. Videos with embedding disabled won't play. Headphones recommended: an open mic will carry the movie into the call.`}
