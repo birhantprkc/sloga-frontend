@@ -8,6 +8,42 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // v0.48.0: watch together + the tidied call bar + pt-BR. Copy constraints,
+  // load-bearing:
+  // - Sloga never uploads, hosts, proxies or relays the video — settled
+  //   operator constraint AND the pitch; state it as a feature.
+  // - Jellyfin privacy rule: a viewer's app contacts the host's server ONLY
+  //   after that viewer signs in themselves. Keep that line.
+  // - Web only at publish time: desktop/Linux/Android still carry the old
+  //   bundle — keep the "pick this up with their next update" close.
+  // - YouTube runs through YouTube's own embedded player. Never imply
+  //   downloading, ad behavior, or DRM'd services (don't name Netflix).
+  // - Do NOT quote these UI strings (release grep markers): "More call
+  //   controls" (say "a More button"), "Selecione seu idioma".
+  // - Never mention: server boosts, streaming connections, captions, remote
+  //   control (Windows desktop only), the debug stats line, or moderator
+  //   overrides.
+  {
+    id: "sloga-2026-08-20",
+    title: "Patch Notes",
+    published_at: "2026-08-20T18:30:00.000Z",
+    markdown_content: `## v0.48.0 — Watch together
+
+### 🎬 Watch videos together in voice channels
+- **Synced playback, everyone's own stream.** Start a video in a voice channel and everyone in the call watches the same moment together — play, pause and seeking stay in sync. Each person's app plays its own buffered copy, so it looks the way video should: no re-encoded screenshare blur, no dropped frames when the network hiccups.
+- **YouTube, or your own Jellyfin server.** Paste a YouTube link, or browse a Jellyfin media server you have access to and pick something from it. YouTube plays through YouTube's own embedded player.
+- **Your media server stays yours.** Sloga never uploads, hosts or relays the video — the only thing that touches a Sloga server is the sync state (what's playing and where). For Jellyfin, nobody's app contacts your server until they sign into it themselves; people without access simply see what's playing and an invitation to sign in.
+- **The host drives.** Whoever starts the session controls playback for the room; in server channels, starting one is a channel permission moderators can assign.
+
+### 📞 A tidier call bar
+- The controls you use constantly — mute, camera, share, leave — stay front and center; everything else now sits behind a More button instead of crowding the bar. Open it once and the bar stops feeling like a cockpit.
+
+### 🌎 Português (Brasil)
+- The full interface is now translated into Brazilian Portuguese — pick it in Settings → Language. More languages are on the way.
+
+On the web now; desktop and Android pick these up with their next update.
+`,
+  },
   // v0.47.0: the screen-share audio fixes. Copy constraints, load-bearing:
   // - The listener-side default flipped from muted to audible. Say plainly
   //   that nothing needs unmuting any more AND that the per-person mute is
