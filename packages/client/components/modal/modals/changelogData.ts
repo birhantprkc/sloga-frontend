@@ -19,10 +19,22 @@ export const CHANGELOGS: ChangelogResponse[] = [
   // - YouTube runs through YouTube's own embedded player. Never imply
   //   downloading, ad behavior, or DRM'd services (don't name Netflix).
   // - Do NOT quote these UI strings (release grep markers): "More call
-  //   controls" (say "a More button"), "Selecione seu idioma".
+  //   controls" (say "a More button"), "Selecione seu idioma", and the
+  //   watch-refinement markers "Make host", "Show cameras beside the video",
+  //   "Lower the movie while people talk", "Playing a playlist" —
+  //   paraphrase every one of them.
   // - Never mention: server boosts, streaming connections, captions, remote
   //   control (Windows desktop only), the debug stats line, or moderator
   //   overrides.
+  // - AMENDED 2026-08-20, same `id` on purpose (so no re-pop for anyone who
+  //   already saw it): the web dist that carried these notes ALSO carried
+  //   the watch refinements — handoff, playlists, the camera strip, opt-in
+  //   ducking, the channel-list marker — so the entry had to describe them
+  //   or it under-reported what users actually received.
+  // - EXCLUDED as dark: per-server certificate trust for self-signed
+  //   Jellyfin servers. That only exists on desktop/Android, and those
+  //   shells still ship the OLD bundle, so nobody can reach it. It belongs
+  //   in whichever entry ships the shell sweep, not this one.
   {
     id: "sloga-2026-08-20",
     title: "Patch Notes",
@@ -33,7 +45,11 @@ export const CHANGELOGS: ChangelogResponse[] = [
 - **Synced playback, everyone's own stream.** Start a video in a voice channel and everyone in the call watches the same moment together — play, pause and seeking stay in sync. Each person's app plays its own buffered copy, so it looks the way video should: no re-encoded screenshare blur, no dropped frames when the network hiccups.
 - **YouTube, or your own Jellyfin server.** Paste a YouTube link, or browse a Jellyfin media server you have access to and pick something from it. YouTube plays through YouTube's own embedded player.
 - **Your media server stays yours.** Sloga never uploads, hosts or relays the video — the only thing that touches a Sloga server is the sync state (what's playing and where). For Jellyfin, nobody's app contacts your server until they sign into it themselves; people without access simply see what's playing and an invitation to sign in.
-- **The host drives.** Whoever starts the session controls playback for the room; in server channels, starting one is a channel permission moderators can assign.
+- **The host drives — and can hand it over.** Whoever starts the session controls playback for the room, and can pass that to anyone else in the call: handy when the person who started it has to drop, or when someone else has the next thing lined up. In server channels, starting a session is a channel permission moderators can assign.
+- **Queues carry across.** Paste a YouTube link that belongs to a playlist and the rest of it comes along: when one video ends, the whole room moves to the next together.
+- **Faces stay on screen.** Cameras and shared screens in the call now sit in a strip beside the video instead of disappearing behind it, so you can still see who you're watching with.
+- **Optional: dip the video while people talk.** There's a toggle in the player's volume controls that quietly lowers the video whenever someone in the call is speaking and lifts it again when they stop. It's off unless you turn it on.
+- **See a watch party from the channel list.** People already watching get a small marker next to their name in the sidebar, so you can tell what a voice channel is up to before you join it.
 
 ### 📞 A tidier call bar
 - The controls you use constantly — mute, camera, share, leave — stay front and center; everything else now sits behind a More button instead of crowding the bar. Open it once and the bar stops feeling like a cockpit.
