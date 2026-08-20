@@ -77,6 +77,14 @@ const JELLYFIN_TRANSCODE_MS = 10000;
 
 const LS_VOLUME = "sloga:watch:volume";
 const LS_MUTED = "sloga:watch:muted";
+/** Movie-ducking preference (plan §7.3 4d). Default OFF: the interaction
+ * between LiveKit speaker detection, open mics and the movie's own audio
+ * meets real hardware for the first time in production — flip the default
+ * only after a real-hardware leg with an open mic. */
+const LS_DUCK = "sloga:watch:duck";
+/** Duck ramp cadence / step — full 1↔0.6 swing in ~5 steps (~250 ms). */
+const DUCK_RAMP_MS = 50;
+const DUCK_RAMP_STEP = 0.08;
 
 /** A neutral provider status for surfacing an error before/without a player. */
 const EMPTY_STATUS: ProviderStatus = {
@@ -137,6 +145,9 @@ export class WatchTogether {
   #setVolume: Setter<number>;
   readonly muted: Accessor<boolean>;
   #setMuted: Setter<boolean>;
+  /** Movie ducking on speech (per-device preference, default off). */
+  readonly duckEnabled: Accessor<boolean>;
+  #setDuckEnabled: Setter<boolean>;
   /** Debug line for the live leg (plan §9). */
   readonly stats: Accessor<WatchStats | undefined>;
   #setStats: Setter<WatchStats | undefined>;
@@ -221,6 +232,15 @@ export class WatchTogether {
   #hostSuspended = false;
   /** Session id we last claimed the `watching` roster flag for (§7.3 4b). */
   #watchingClaimedFor: string | undefined;
+  /** Duck multiplier (§7.3 4d): current (ramped) and target. Composed with
+   * the user's volume at the ONE application seam (`#applyEffectiveVolume`)
+   * — never through `setVolume`, which persists; the slider always shows
+   * the user's setting. Both providers echo volume into their status
+   * (Jellyfin `volumechange`, YouTube infoDelivery), so the ramp is driven
+   * from duckPolicy state only — provider echoes drive nothing here. */
+  #duckMult = 1;
+  #duckTarget = 1;
+  #duckRamp: ReturnType<typeof setInterval> | undefined;
 
   constructor() {
     [this.session, this.#setSession] = createSignal<WatchSessionData | undefined>();
@@ -237,6 +257,7 @@ export class WatchTogether {
     [this.serverTranscode, this.#setServerTranscode] = createSignal<string | undefined>();
     [this.volume, this.#setVolume] = createSignal(readVolume());
     [this.muted, this.#setMuted] = createSignal(readMuted());
+    [this.duckEnabled, this.#setDuckEnabled] = createSignal(readDuck());
 
     const host = document.createElement("div");
     host.className = "sloga-watch-host";
@@ -516,7 +537,54 @@ export class WatchTogether {
     } catch {
       /* private mode */
     }
-    this.#provider?.setVolume(vol);
+    // Through the seam: a slider move mid-duck must not un-duck (§7.3 4d).
+    this.#applyEffectiveVolume();
+  }
+
+  setDuckEnabled(v: boolean) {
+    this.#setDuckEnabled(v);
+    try {
+      localStorage.setItem(LS_DUCK, v ? "1" : "0");
+    } catch {
+      /* private mode */
+    }
+    // WatchDuck re-evaluates via the state.tsx effect on this signal and
+    // ramps the multiplier; nothing to apply directly here.
+  }
+
+  /**
+   * Duck multiplier from `WatchDuck` (state.tsx wiring). Ramped in small
+   * steps so the dip is smooth; the ramp interval dies with the provider /
+   * session like every other timer.
+   */
+  setDuckMult(target: number) {
+    this.#duckTarget = Math.max(0, Math.min(1, target));
+    if (this.#duckRamp) return; // running ramp chases #duckTarget
+    if (this.#duckMult === this.#duckTarget) return;
+    this.#duckRamp = setInterval(() => {
+      const d = this.#duckTarget - this.#duckMult;
+      if (Math.abs(d) <= DUCK_RAMP_STEP) {
+        this.#duckMult = this.#duckTarget;
+        this.#stopDuckRamp();
+      } else {
+        this.#duckMult += Math.sign(d) * DUCK_RAMP_STEP;
+      }
+      this.#applyEffectiveVolume();
+    }, DUCK_RAMP_MS);
+  }
+
+  #stopDuckRamp() {
+    if (this.#duckRamp) clearInterval(this.#duckRamp);
+    this.#duckRamp = undefined;
+  }
+
+  /** The ONE composition seam: user volume × duck multiplier. */
+  #effectiveVolume(): number {
+    return Math.max(0, Math.min(100, Math.round(this.volume() * this.#duckMult)));
+  }
+
+  #applyEffectiveVolume() {
+    this.#provider?.setVolume(this.#effectiveVolume());
   }
   setMuted(m: boolean) {
     this.#setMuted(m);
@@ -582,6 +650,9 @@ export class WatchTogether {
     this.#queued = undefined;
     if (this.#scrubTimer) clearTimeout(this.#scrubTimer);
     this.#scrubTimer = undefined;
+    // An orphaned ramp must not write into the next session's provider.
+    this.#stopDuckRamp();
+    this.#duckMult = this.#duckTarget;
   }
 
   #ensureProvider(s: WatchSessionData) {
@@ -603,7 +674,8 @@ export class WatchTogether {
         // A paused session must not blip audio at 0 before the corrector
         // pauses it; the corrector issues play() when the host plays.
         autoplay: s.playing,
-        volume: this.volume(),
+        // Through the duck seam: a media swap mid-speech starts ducked.
+        volume: this.#effectiveVolume(),
         muted: this.muted(),
       });
       this.#provider = p;
@@ -662,7 +734,7 @@ export class WatchTogether {
         hlsUrl: api.hlsUrl(choice.transcodingUrl),
         runtimeMs: choice.runtimeMs || s.media.runtime_ms,
         autoplay: s.playing,
-        volume: this.volume(),
+        volume: this.#effectiveVolume(),
         muted: this.muted(),
         onFatal: (detail) => this.#setProviderStatus({ ...(this.#provider?.status() ?? EMPTY_STATUS), state: "error", error: detail }),
       });
@@ -777,6 +849,10 @@ export class WatchTogether {
   }
 
   #disposeProvider() {
+    // Stop the duck ramp writing into a disposed provider; the multiplier
+    // itself stays (WatchDuck owns it and lifts it on detach).
+    this.#stopDuckRamp();
+    this.#duckMult = this.#duckTarget;
     this.#teardownJellyfin();
     this.#providerUnsub?.();
     this.#providerUnsub = undefined;
@@ -1170,6 +1246,14 @@ function readVolume(): number {
 function readMuted(): boolean {
   try {
     return localStorage.getItem(LS_MUTED) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function readDuck(): boolean {
+  try {
+    return localStorage.getItem(LS_DUCK) === "1";
   } catch {
     return false;
   }
