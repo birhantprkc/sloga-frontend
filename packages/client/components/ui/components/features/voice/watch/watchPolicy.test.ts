@@ -7,9 +7,13 @@ import {
   AUTOPLAY_GRACE_MS,
   HOST_UNREACHABLE_AFTER_MS,
   IDLE_BOOT_GRACE_MS,
+  PAUSED_SCRUB_JITTER_MS,
   hostUnreachable,
+  hostWriteIsNoop,
   needsTapToStart,
   pauseIsEnvironmental,
+  pausedScrubTracker,
+  pausedScrubWrite,
   shouldResumeSuspendedHost,
   watchButtonVisible,
   watchCanStart,
@@ -108,6 +112,80 @@ test("shouldResumeSuspendedHost: rejoin only when shown and still playing", () =
   // Session paused for real in the meantime: nothing to rejoin.
   assert.equal(shouldResumeSuspendedHost({ ...base, sessionPlaying: false }), false);
   assert.equal(shouldResumeSuspendedHost({ ...base, suspended: false }), false);
+});
+
+test("hostWriteIsNoop: a keyed write that restates the session is dropped (7.2c governor)", () => {
+  // Session paused at 60 s: expected position IS 60 s.
+  const paused = {
+    isHeartbeat: false,
+    hasMedia: false,
+    playing: false,
+    positionMs: 60_000,
+    ratePermille: 1000,
+    sessionPlaying: false,
+    sessionRatePermille: 1000,
+    sessionExpectedMs: 60_000,
+  };
+  assert.equal(hostWriteIsNoop(paused), true);
+  // Anything the session doesn't already say goes through…
+  assert.equal(hostWriteIsNoop({ ...paused, playing: true }), false);
+  assert.equal(hostWriteIsNoop({ ...paused, ratePermille: 1250 }), false);
+  assert.equal(hostWriteIsNoop({ ...paused, positionMs: 62_000 }), false);
+  // …a real scrub barely past the tolerance included.
+  assert.equal(hostWriteIsNoop({ ...paused, positionMs: 61_001 }), false);
+  assert.equal(hostWriteIsNoop({ ...paused, positionMs: 61_000 }), true);
+  // Heartbeats and media writes are NEVER dropped (TTL / not derivable).
+  assert.equal(hostWriteIsNoop({ ...paused, isHeartbeat: true }), false);
+  assert.equal(hostWriteIsNoop({ ...paused, hasMedia: true }), false);
+  // Playing on the line: a transition re-assert with an on-line position is
+  // a no-op; a genuinely drifted player position is not.
+  const playing = {
+    ...paused,
+    playing: true,
+    sessionPlaying: true,
+    positionMs: 120_400,
+    sessionExpectedMs: 120_000,
+  };
+  assert.equal(hostWriteIsNoop(playing), true);
+  assert.equal(hostWriteIsNoop({ ...playing, positionMs: 125_000 }), false);
+});
+
+test("pausedScrubWrite: a scrub is a jump that holds still; a moving clock is chased never (7.2c)", () => {
+  // Real scrub: jump 0 → 90 s, then the paused player's clock freezes.
+  let t = pausedScrubTracker();
+  let r = pausedScrubWrite(t, 90_000, 0);
+  assert.equal(r.write, false); // first sighting: not yet stable
+  r = pausedScrubWrite(r.tracker, 90_000, 0);
+  assert.equal(r.write, true); // held still one tick: write it
+  // Report jitter within the band still counts as stable.
+  r = pausedScrubWrite(r.tracker, 90_000 + PAUSED_SCRUB_JITTER_MS, 0);
+  assert.equal(r.write, true);
+  // An ADVANCING clock under a paused claim never stabilizes → no writes.
+  t = pausedScrubTracker();
+  let ms = 10_000;
+  for (let i = 0; i < 20; i++) {
+    r = pausedScrubWrite(t, ms, 0);
+    assert.equal(r.write, false, `advancing tick ${i}`);
+    t = r.tracker;
+    ms += 500;
+  }
+  // An OSCILLATING clock (0 ↔ X) never stabilizes either.
+  t = pausedScrubTracker();
+  for (let i = 0; i < 20; i++) {
+    r = pausedScrubWrite(t, i % 2 ? 30_000 : 0, 0);
+    assert.equal(r.write, false, `oscillating tick ${i}`);
+    t = r.tracker;
+  }
+  // Within a second of the session: parked, nothing to say.
+  t = pausedScrubTracker();
+  r = pausedScrubWrite(t, 500, 0);
+  r = pausedScrubWrite(r.tracker, 500, 0);
+  assert.equal(r.write, false);
+  // A null clock resets the tracker — no stale stability across a gap.
+  t = { lastReadMs: 90_000 };
+  r = pausedScrubWrite(t, null, 0);
+  assert.equal(r.write, false);
+  assert.equal(r.tracker.lastReadMs, null);
 });
 
 test("needsTapToStart: session paused, never-asked, and in-grace all stay quiet", () => {

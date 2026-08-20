@@ -118,6 +118,75 @@ export function shouldResumeSuspendedHost(i: {
   return i.suspended && i.sessionPlaying && !i.documentHidden;
 }
 
+/**
+ * Host write governor (§7.2c open observation: a paused-idle-hidden host
+ * wrote ~1/1.25 s against a 5 s heartbeat design). Whatever provider
+ * pathology drives such a loop — a flapping state transition re-asserting
+ * what the session already says, a jittering clock re-triggering the
+ * paused-scrub path — every one of them composes a PATCH that tells the
+ * server nothing it doesn't already know. So the rule sits on the write
+ * itself: a KEYED write (a transition, a scrub, a rate change) whose body
+ * is a no-op against the session's own timeline is not sent. Heartbeats
+ * (an empty override) always go — they carry the TTL refresh and the
+ * host-liveness signal — and a `media` change always goes (it is never
+ * derivable from the timeline). This bounds the steady-state write rate to
+ * the heartbeat by construction, independent of what the embed does.
+ */
+export const HOST_WRITE_NOOP_POSITION_MS = 1000;
+
+export function hostWriteIsNoop(i: {
+  /** An empty override (the 5 s heartbeat) — always sent. */
+  isHeartbeat: boolean;
+  /** The write carries a media swap / learned title — always sent. */
+  hasMedia: boolean;
+  /** The composed body. */
+  playing: boolean;
+  positionMs: number;
+  ratePermille: number;
+  /** The session as we know it. */
+  sessionPlaying: boolean;
+  sessionRatePermille: number;
+  /** Where the session timeline is right now (`expectedPosition(session, serverNow)`). */
+  sessionExpectedMs: number;
+}): boolean {
+  if (i.isHeartbeat || i.hasMedia) return false;
+  if (i.playing !== i.sessionPlaying) return false;
+  if (i.ratePermille !== i.sessionRatePermille) return false;
+  return Math.abs(i.positionMs - i.sessionExpectedMs) <= HOST_WRITE_NOOP_POSITION_MS;
+}
+
+/**
+ * Paused-scrub stability gate (same observation, the trigger side): the
+ * host tick writes a position while paused so viewers' timelines follow a
+ * scrub of the embed's own bar. A REAL scrub is a jump that then holds
+ * still; a clock that keeps moving (or oscillates) while the state claims
+ * `paused` is a provider contradiction, not a scrub — writing it would
+ * chase the pathology one PATCH per tick, and the heartbeat carries the
+ * position anyway. So the candidate position must be >1 s away from the
+ * session's AND stable across two consecutive ticks (same reading ± report
+ * jitter) before it is written.
+ */
+export interface PausedScrubTracker {
+  lastReadMs: number | null;
+}
+
+export const pausedScrubTracker = (): PausedScrubTracker => ({ lastReadMs: null });
+
+export const PAUSED_SCRUB_MIN_DELTA_MS = 1000;
+export const PAUSED_SCRUB_JITTER_MS = 100;
+
+export function pausedScrubWrite(
+  t: PausedScrubTracker,
+  currentTimeMs: number | null,
+  sessionPositionMs: number,
+): { tracker: PausedScrubTracker; write: boolean } {
+  if (currentTimeMs == null) return { tracker: { lastReadMs: null }, write: false };
+  const moved = Math.abs(currentTimeMs - sessionPositionMs) > PAUSED_SCRUB_MIN_DELTA_MS;
+  const stable =
+    t.lastReadMs != null && Math.abs(currentTimeMs - t.lastReadMs) <= PAUSED_SCRUB_JITTER_MS;
+  return { tracker: { lastReadMs: currentTimeMs }, write: moved && stable };
+}
+
 export const AUTOPLAY_GRACE_MS = 3000;
 export const IDLE_BOOT_GRACE_MS = 12_000;
 

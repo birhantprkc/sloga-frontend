@@ -401,7 +401,7 @@ function Stats() {
             st().driftMs == null ? "—" : `${st().driftMs} ms`
           } · rate ${st().nudgeRate} · off ${st().offsetMs} ms · seq ${st().seq} · hb ${
             st().heartbeatAgeMs == null ? "—" : `${Math.round(st().heartbeatAgeMs! / 1000)}s`
-          }${transcode() ? ` · ${transcode()}` : ""}`}
+          } · wr ${st().writesLastMin}/m${transcode() ? ` · ${transcode()}` : ""}`}
         </StatsLine>
       )}
     </Show>

@@ -52,9 +52,13 @@ import {
 } from "@revolt/ui/components/features/voice/watch/syncController";
 import {
   hostUnreachable,
+  hostWriteIsNoop,
   needsTapToStart,
   pauseIsEnvironmental,
+  pausedScrubTracker,
+  pausedScrubWrite,
   shouldResumeSuspendedHost,
+  type PausedScrubTracker,
 } from "@revolt/ui/components/features/voice/watch/watchPolicy";
 
 /** Viewer corrector tick. */
@@ -94,6 +98,9 @@ export interface WatchStats {
   heartbeatAgeMs: number | null;
   providerState: string;
   nudgeRate: number;
+  /** PATCHes actually sent in the last 60 s (host; 0 for viewers) — the
+   * §7.2c write-rate check, on the stats line where the leg can see it. */
+  writesLastMin: number;
 }
 
 export interface WatchContext {
@@ -187,6 +194,10 @@ export class WatchTogether {
   #inFlight: Promise<void> | undefined;
   #queued: { playing?: boolean; positionMs?: number; ratePermille?: number; media?: WatchMediaData } | undefined;
   #scrubTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Paused-scrub stability across ticks (§7.2c write-rate governor). */
+  #scrubTrack: PausedScrubTracker = pausedScrubTracker();
+  /** Local send times of the last minute's PATCHes, for the stats line. */
+  #writeSentAt: number[] = [];
   #nudgeRate = RATE_NORMAL;
   /** Jellyfin: the per-server client + the current PlaybackInfo choice, so
    * playstate can be reported and the transcode freed on teardown (§5.5). */
@@ -500,6 +511,7 @@ export class WatchTogether {
     this.#nudgeRate = RATE_NORMAL;
     this.#hostOpinion = null;
     this.#lastProviderState = undefined;
+    this.#scrubTrack = pausedScrubTracker();
     if (s.media.provider === "youtube") {
       const p = new YouTubeProvider({
         videoId: s.media.video_id,
@@ -810,14 +822,18 @@ export class WatchTogether {
       // Host is ground truth: no correction. But a host scrubbing YouTube's
       // own bar WHILE PAUSED produces no state transition — the viewers
       // would only learn the new position at the next heartbeat. Write when
-      // the real position has moved away from the session's by > 1 s.
-      if (
-        st.currentTimeMs != null &&
-        !s.playing &&
-        this.#hostOpinion === "paused" &&
-        Math.abs(st.currentTimeMs - s.position_ms) > 1000
-      ) {
-        this.#queueWrite({ positionMs: st.currentTimeMs }, /* scrub */ true);
+      // the real position has moved away from the session's by > 1 s AND
+      // held still for two ticks (`pausedScrubWrite` — a clock that keeps
+      // moving under a paused claim is a provider contradiction, and
+      // chasing it once wrote ~1 PATCH per tick, §7.2c).
+      if (!s.playing && this.#hostOpinion === "paused") {
+        const d = pausedScrubWrite(this.#scrubTrack, st.currentTimeMs, s.position_ms);
+        this.#scrubTrack = d.tracker;
+        if (d.write && st.currentTimeMs != null) {
+          this.#queueWrite({ positionMs: st.currentTimeMs }, /* scrub */ true);
+        }
+      } else {
+        this.#scrubTrack = pausedScrubTracker();
       }
       this.#setStats({
         driftMs: null,
@@ -828,6 +844,7 @@ export class WatchTogether {
         heartbeatAgeMs: this.#lastUpdateLocalMs == null ? null : nowLocal - this.#lastUpdateLocalMs,
         providerState: st.state,
         nudgeRate: RATE_NORMAL,
+        writesLastMin: this.#writesLastMin(nowLocal),
       });
       return;
     }
@@ -851,6 +868,7 @@ export class WatchTogether {
         heartbeatAgeMs: this.#lastUpdateLocalMs == null ? null : nowLocal - this.#lastUpdateLocalMs,
         providerState: st.state,
         nudgeRate: this.#nudgeRate,
+        writesLastMin: this.#writesLastMin(nowLocal),
       });
       return;
     }
@@ -905,7 +923,16 @@ export class WatchTogether {
       heartbeatAgeMs: this.#lastUpdateLocalMs == null ? null : nowLocal - this.#lastUpdateLocalMs,
       providerState: st.state,
       nudgeRate: this.#nudgeRate,
+      writesLastMin: this.#writesLastMin(nowLocal),
     });
+  }
+
+  /** Prune-and-count the last minute's sent PATCHes. */
+  #writesLastMin(nowLocal: number): number {
+    while (this.#writeSentAt.length && nowLocal - this.#writeSentAt[0] > 60_000) {
+      this.#writeSentAt.shift();
+    }
+    return this.#writeSentAt.length;
   }
 
   #apply(p: Provider, a: SyncAction) {
@@ -988,6 +1015,29 @@ export class WatchTogether {
       ),
     );
     const ratePermille = over.ratePermille ?? s.rate_permille;
+    // Write governor (§7.2c): a keyed write whose body tells the server
+    // nothing the session doesn't already say is dropped — whatever
+    // provider flap composed it, the steady-state rate stays bounded by
+    // the heartbeat (which, as an EMPTY override, always goes: it carries
+    // the TTL refresh and the host-liveness signal).
+    if (
+      hostWriteIsNoop({
+        isHeartbeat: Object.keys(over).length === 0,
+        hasMedia: over.media !== undefined,
+        playing,
+        positionMs,
+        ratePermille,
+        sessionPlaying: s.playing,
+        sessionRatePermille: s.rate_permille,
+        sessionExpectedMs: expectedPosition(
+          { playing: s.playing, positionMs: s.position_ms, positionAt: s.position_at, ratePermille: s.rate_permille },
+          this.#serverNow(),
+        ),
+      })
+    ) {
+      return;
+    }
+    this.#writeSentAt.push(Date.now());
     this.#inFlight = (async () => {
       const r = await ch.updateWatch({
         playing,
