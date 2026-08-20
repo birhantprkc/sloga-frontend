@@ -1,8 +1,7 @@
 import { useNavigate } from "@solidjs/router";
-import { Show, createSignal, onCleanup, onMount } from "solid-js";
+import { Show, createSignal, onCleanup } from "solid-js";
 
 import { useLingui } from "@lingui-solid/solid/macro";
-import { createResizeObserver } from "@solid-primitives/resize-observer";
 import { styled } from "styled-system/jsx";
 
 import { CONFIGURATION } from "@revolt/common";
@@ -19,10 +18,6 @@ import { VoiceSoundboardButton } from "./VoiceSoundboardButton";
 import { VoiceStatsOverlay } from "./VoiceStatsOverlay";
 import { VoiceTranscribeButton } from "./VoiceTranscribeButton";
 import { VoiceWatchButton } from "./VoiceWatchButton";
-
-/** Extra width required before an overflowed bar unfolds, so the boundary
- *  doesn't flip back and forth while the window is being dragged. */
-const EXPAND_SLACK = 8;
 
 export function VoiceCallCardActions(props: { size: "xs" | "sm" }) {
   const voice = useVoice();
@@ -43,75 +38,27 @@ export function VoiceCallCardActions(props: { size: "xs" | "sm" }) {
     typeof navigator !== "undefined" &&
     typeof navigator.mediaDevices?.getDisplayMedia === "function";
 
-  // When the docked card is too narrow for every control, the secondary set
-  // folds into an overflow menu so the essentials (mic / deafen / camera /
-  // share / hang up) always stay on one visible row. The secondary controls
-  // can't be counted from here — several gate themselves on flags, permissions
-  // and live call state — so fitting is decided by measurement instead:
-  // whenever the rendered set is on one row its width is the fold threshold,
-  // and the bar wrapping is the signal that it no longer fits.
-  const [collapsed, setCollapsed] = createSignal(false);
-  const [overflowOpen, setOverflowOpen] = createSignal(false);
-  let actionsEl: HTMLDivElement | undefined;
-  let overflowEl: HTMLDivElement | undefined;
-  let fullSetWidth = 0;
-
-  function evaluateFit() {
-    const el = actionsEl;
-    const parent = el?.parentElement;
-    if (!el || !parent) return;
-    // The whole controls row is the width to fit into: the side holders have
-    // flex-basis 0 / min-width 0, so they yield before the bar has to wrap.
-    const available = parent.clientWidth;
-
-    if (collapsed()) {
-      if (fullSetWidth && available >= fullSetWidth + EXPAND_SLACK) {
-        // Optimistic unfold: if the control set grew while folded, the next
-        // observer pass sees the wrap and folds again with a raised threshold.
-        setOverflowOpen(false);
-        setCollapsed(false);
-      }
-      return;
-    }
-
-    const children = Array.from(el.children) as HTMLElement[];
-    const wrapped =
-      children.length > 1 &&
-      children.some((c) => c.offsetTop !== children[0].offsetTop);
-    if (!wrapped) {
-      // Single row: this is the true full-set width, remember it as the
-      // unfold threshold.
-      fullSetWidth = el.offsetWidth;
-      return;
-    }
-    // Wrapped before a single-row width was ever observed (mounted into an
-    // already-narrow window): all that's known is "wider than what's here".
-    fullSetWidth = Math.max(fullSetWidth, available + 1);
-    setCollapsed(true);
-  }
-
-  onMount(() => {
-    // The PiP card never collapses — it already renders only the essentials.
-    if (compact() || !actionsEl?.parentElement) return;
-    createResizeObserver(
-      () => [actionsEl!, actionsEl!.parentElement!],
-      evaluateFit,
-    );
-  });
+  // The docked bar keeps only the everyday controls visible — mic, camera,
+  // camera settings, share (plus give-control while sharing), record, hang up.
+  // Everything else starts hidden behind the More button and shows in a
+  // floating panel while it is toggled open. Not persisted: every call starts
+  // folded, which keeps the bar predictable and the panel one press away.
+  const [extrasOpen, setExtrasOpen] = createSignal(false);
+  let extrasEl: HTMLDivElement | undefined;
 
   function onPointerDown(event: PointerEvent) {
-    if (overflowEl && !overflowEl.contains(event.target as Node)) {
-      setOverflowOpen(false);
+    if (extrasEl && !extrasEl.contains(event.target as Node)) {
+      setExtrasOpen(false);
       document.removeEventListener("pointerdown", onPointerDown);
     }
   }
 
-  function toggleOverflow() {
-    if (overflowOpen()) {
-      setOverflowOpen(false);
+  function toggleExtras() {
+    if (extrasOpen()) {
+      setExtrasOpen(false);
       document.removeEventListener("pointerdown", onPointerDown);
     } else {
-      setOverflowOpen(true);
+      setExtrasOpen(true);
       document.addEventListener("pointerdown", onPointerDown);
     }
   }
@@ -119,7 +66,7 @@ export function VoiceCallCardActions(props: { size: "xs" | "sm" }) {
   onCleanup(() => document.removeEventListener("pointerdown", onPointerDown));
 
   return (
-    <Actions ref={actionsEl}>
+    <Actions>
       <Show when={props.size === "xs"}>
         <IconButton
           variant="standard"
@@ -158,29 +105,12 @@ export function VoiceCallCardActions(props: { size: "xs" | "sm" }) {
           <Symbol>mic</Symbol>
         </Show>
       </IconButton>
-      <IconButton
-        size={props.size}
-        variant={voice.deafen() || !voice.listenPermission ? "tonal" : "filled"}
-        onPress={() => voice.toggleDeafen()}
-        use:floating={{
-          tooltip: {
-            placement: "top",
-            content: voice.listenPermission
-              ? voice.deafen()
-                ? t`Undeafen`
-                : t`Deafen`
-              : t`Missing permission`,
-          },
-        }}
-        isDisabled={!voice.listenPermission}
-      >
-        <Show
-          when={voice.deafen() || !voice.listenPermission}
-          fallback={<Symbol>headset</Symbol>}
-        >
-          <Symbol>headset_off</Symbol>
-        </Show>
-      </IconButton>
+      {/* Deafen lives in the extras panel on the docked card, but the PiP
+          panel does not exist there — keep it inline on the PiP so a deafened
+          user browsing other channels can still undeafen in one press. */}
+      <Show when={compact()}>
+        <DeafenButton size={props.size} />
+      </Show>
       <IconButton
         size={props.size}
         variant={enableVideo && voice.video() ? "filled" : "tonal"}
@@ -201,7 +131,7 @@ export function VoiceCallCardActions(props: { size: "xs" | "sm" }) {
       >
         <Symbol>camera_video</Symbol>
       </IconButton>
-      <Show when={!compact() && !collapsed()}>
+      <Show when={!compact()}>
         <CameraSettingsButton size={props.size} />
       </Show>
       <IconButton
@@ -235,24 +165,35 @@ export function VoiceCallCardActions(props: { size: "xs" | "sm" }) {
           <Symbol>stop_screen_share</Symbol>
         </Show>
       </IconButton>
-      <Show when={!compact() && !collapsed()}>
-        <SecondaryControls size={props.size} />
+      {/* "Give control" sits on the sharer's own share, Teams-style, so it
+          renders right beside the share button it acts on — it stays out of
+          the extras panel on purpose. The component gates itself on
+          `CONFIGURATION.ENABLE_VIDEO`, a native command probe, and an
+          actually-live screenshare, so it simply is not there on a shell
+          that cannot do it. */}
+      <Show when={!compact()}>
+        <VoiceGiveControlButton size={props.size} />
       </Show>
-      {/* The active states hidden by folding all keep a visible surface of
-          their own on the docked card (recording banner, captions display,
-          transcript panel), so the trigger itself carries no state badge. */}
-      <Show when={!compact() && collapsed()}>
-        <OverflowAnchor ref={overflowEl}>
-          <Show when={overflowOpen()}>
-            <OverflowPanel>
-              <CameraSettingsButton size={props.size} />
+      {/* Recording stays on the bar rather than in the extras panel: its side
+          effect is telling everyone in the call something, and the control
+          that both starts and DISCLOSES that should never be hidden. Off the
+          compact PiP card though — the 300px card only fits the essentials,
+          and a consequential control is a poor candidate for a cramped row
+          where it could be hit by accident. */}
+      <Show when={!compact()}>
+        <VoiceRecordButton size={props.size} />
+      </Show>
+      <Show when={!compact()}>
+        <ExtrasAnchor ref={extrasEl}>
+          <Show when={extrasOpen()}>
+            <ExtrasPanel>
               <SecondaryControls size={props.size} />
-            </OverflowPanel>
+            </ExtrasPanel>
           </Show>
           <IconButton
             size={props.size}
-            variant={overflowOpen() ? "filled" : "tonal"}
-            onPress={toggleOverflow}
+            variant={extrasOpen() ? "filled" : "tonal"}
+            onPress={toggleExtras}
             use:floating={{
               tooltip: {
                 placement: "top",
@@ -262,7 +203,7 @@ export function VoiceCallCardActions(props: { size: "xs" | "sm" }) {
           >
             <Symbol>more_horiz</Symbol>
           </IconButton>
-        </OverflowAnchor>
+        </ExtrasAnchor>
       </Show>
       <Button
         size={props.size}
@@ -282,9 +223,42 @@ export function VoiceCallCardActions(props: { size: "xs" | "sm" }) {
 }
 
 /**
- * Opens the camera settings modal. Sits beside the camera toggle when the bar
- * has room, and folds into the overflow menu with the other secondary
- * controls when it doesn't.
+ * Deafen toggle. Renders inline on the compact PiP card and inside the extras
+ * panel on the docked card.
+ */
+function DeafenButton(props: { size: "xs" | "sm" }) {
+  const voice = useVoice();
+  const { t } = useLingui();
+
+  return (
+    <IconButton
+      size={props.size}
+      variant={voice.deafen() || !voice.listenPermission ? "tonal" : "filled"}
+      onPress={() => voice.toggleDeafen()}
+      use:floating={{
+        tooltip: {
+          placement: "top",
+          content: voice.listenPermission
+            ? voice.deafen()
+              ? t`Undeafen`
+              : t`Deafen`
+            : t`Missing permission`,
+        },
+      }}
+      isDisabled={!voice.listenPermission}
+    >
+      <Show
+        when={voice.deafen() || !voice.listenPermission}
+        fallback={<Symbol>headset</Symbol>}
+      >
+        <Symbol>headset_off</Symbol>
+      </Show>
+    </IconButton>
+  );
+}
+
+/**
+ * Opens the camera settings modal. Sits beside the camera toggle.
  */
 function CameraSettingsButton(props: { size: "xs" | "sm" }) {
   const modals = useModals();
@@ -310,26 +284,18 @@ function CameraSettingsButton(props: { size: "xs" | "sm" }) {
 }
 
 /**
- * The secondary controls of the docked call card — everything beyond
- * mic / deafen / camera / share / hang up. Rendered inline while the bar has
- * room, and inside the overflow panel when it has folded. Never on the
- * compact PiP card: the 300px card only fits the essentials, and controls
- * whose side effect is telling everyone in the call something (recording,
- * transcription, captions) are poor candidates for a cramped row where they
- * could be hit by accident — the docked card stays reachable for those.
+ * The controls folded behind the More button on the docked call card: deafen,
+ * soundboard, watch together, transcription, captions, device switcher and
+ * stats. Never on the compact PiP card — the 300px card only fits the
+ * essentials, and deafen (the one essential in this set) is rendered inline
+ * there instead.
  */
 function SecondaryControls(props: { size: "xs" | "sm" }) {
   const voice = useVoice();
 
   return (
     <>
-      {/* "Give control" sits on the sharer's own share, Teams-style, so it
-          renders right beside the share button it acts on (adjacency is lost
-          in the overflow panel, where the label carries the meaning). The
-          component gates itself on `CONFIGURATION.ENABLE_VIDEO`, a native
-          command probe, and an actually-live screenshare, so it simply is not
-          there on a shell that cannot do it. */}
-      <VoiceGiveControlButton size={props.size} />
+      <DeafenButton size={props.size} />
       <Show
         when={
           voice.channel()?.serverId &&
@@ -341,7 +307,6 @@ function SecondaryControls(props: { size: "xs" | "sm" }) {
       {/* Watch together: gates itself on the ENABLE_WATCH_TOGETHER flag +
           the UseWatchTogether bit via watchPolicy. */}
       <VoiceWatchButton size={props.size} />
-      <VoiceRecordButton size={props.size} />
       <VoiceTranscribeButton size={props.size} />
       <VoiceCaptionsButton size={props.size} />
       <VoiceDeviceSelector size={props.size} />
@@ -382,13 +347,13 @@ const Actions = styled("div", {
 // `overflow: hidden`; leaving this static lets the absolute panel resolve its
 // containing block to the call Card above the clipping box. The wrapper still
 // groups button + panel for click-outside detection.
-const OverflowAnchor = styled("div", {
+const ExtrasAnchor = styled("div", {
   base: {
     display: "flex",
   },
 });
 
-const OverflowPanel = styled("div", {
+const ExtrasPanel = styled("div", {
   base: {
     position: "absolute",
     // Fixed offset (not `100%`) because the containing block is the call
