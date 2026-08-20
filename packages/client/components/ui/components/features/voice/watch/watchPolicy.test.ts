@@ -225,6 +225,8 @@ test("isHostTransition: same session under a new host, and only that", () => {
     isHostTransition({ prevId: "s1", prevHostId: "alice", nextId: "s1", nextHostId: "alice" }),
     false,
   );
+});
+
 test("strip: every veto input vetoes on its own (4c)", () => {
   const base = { userPref: true, hasTracks: true, widthPx: WATCH_STRIP_MIN_WIDTH_PX };
   assert.equal(watchStripVisible(base), true);
