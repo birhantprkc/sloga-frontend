@@ -64,6 +64,21 @@ export function LanguageSettings() {
 const RE_LANG = /_/g;
 
 /**
+ * Languages whose catalogs are actually translated. The rest of the list
+ * renders almost entirely in English and reads as broken, so those entries
+ * stay hidden until their catalogs are filled — add them back here then.
+ * A user already on a hidden language keeps it in the list so their current
+ * selection stays visible and they can switch away from it.
+ */
+const READY_LANGUAGES: Language[] = [
+  Language.ENGLISH,
+  Language.ENGLISH_STUPEFIED,
+  Language.PORTUGUESE_BRAZIL,
+  Language.SPANISH,
+  Language.SPANISH_LATIN_AMERICA,
+];
+
+/**
  * Pick user's preferred language
  */
 function PickLanguage() {
@@ -72,7 +87,9 @@ function PickLanguage() {
 
   //@ts-expect-error unfilled object
   const langOpts: { [k in Language]: CategorySelectOption } = {};
-  const langIds = Object.keys(Languages) as Language[];
+  const langIds = (Object.keys(Languages) as Language[]).filter(
+    (id) => READY_LANGUAGES.includes(id) || id === (i18n().locale as Language),
+  );
 
   //Move user's system language to top
   //TODO: Make browserPreferredLanguage() reactive, then make langOpts a memo
