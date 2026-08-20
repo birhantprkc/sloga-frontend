@@ -612,6 +612,11 @@ const VoiceCallControlHolder = styled("div", {
   base: {
     display: "flex",
     flex: "1",
+    // Yield to the actions bar under pressure: without this the holders'
+    // content set a floor (min-width:auto), pushing the row past the card
+    // and into `VoiceCallControls`' overflow:hidden clip before the bar's
+    // own wrap threshold ever triggered.
+    minWidth: 0,
     alignSelf: "center",
     gap: "var(--gap-md)",
     padding: "var(--gap-md)",

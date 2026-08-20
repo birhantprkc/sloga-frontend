@@ -1,7 +1,8 @@
 import { useNavigate } from "@solidjs/router";
-import { Show } from "solid-js";
+import { Show, createSignal, onCleanup, onMount } from "solid-js";
 
 import { useLingui } from "@lingui-solid/solid/macro";
+import { createResizeObserver } from "@solid-primitives/resize-observer";
 import { styled } from "styled-system/jsx";
 
 import { CONFIGURATION } from "@revolt/common";
@@ -19,10 +20,13 @@ import { VoiceStatsOverlay } from "./VoiceStatsOverlay";
 import { VoiceTranscribeButton } from "./VoiceTranscribeButton";
 import { VoiceWatchButton } from "./VoiceWatchButton";
 
+/** Extra width required before an overflowed bar unfolds, so the boundary
+ *  doesn't flip back and forth while the window is being dragged. */
+const EXPAND_SLACK = 8;
+
 export function VoiceCallCardActions(props: { size: "xs" | "sm" }) {
   const voice = useVoice();
   const state = useState();
-  const modals = useModals();
   const navigate = useNavigate();
   const { t } = useLingui();
 
@@ -39,8 +43,83 @@ export function VoiceCallCardActions(props: { size: "xs" | "sm" }) {
     typeof navigator !== "undefined" &&
     typeof navigator.mediaDevices?.getDisplayMedia === "function";
 
+  // When the docked card is too narrow for every control, the secondary set
+  // folds into an overflow menu so the essentials (mic / deafen / camera /
+  // share / hang up) always stay on one visible row. The secondary controls
+  // can't be counted from here — several gate themselves on flags, permissions
+  // and live call state — so fitting is decided by measurement instead:
+  // whenever the rendered set is on one row its width is the fold threshold,
+  // and the bar wrapping is the signal that it no longer fits.
+  const [collapsed, setCollapsed] = createSignal(false);
+  const [overflowOpen, setOverflowOpen] = createSignal(false);
+  let actionsEl: HTMLDivElement | undefined;
+  let overflowEl: HTMLDivElement | undefined;
+  let fullSetWidth = 0;
+
+  function evaluateFit() {
+    const el = actionsEl;
+    const parent = el?.parentElement;
+    if (!el || !parent) return;
+    // The whole controls row is the width to fit into: the side holders have
+    // flex-basis 0 / min-width 0, so they yield before the bar has to wrap.
+    const available = parent.clientWidth;
+
+    if (collapsed()) {
+      if (fullSetWidth && available >= fullSetWidth + EXPAND_SLACK) {
+        // Optimistic unfold: if the control set grew while folded, the next
+        // observer pass sees the wrap and folds again with a raised threshold.
+        setOverflowOpen(false);
+        setCollapsed(false);
+      }
+      return;
+    }
+
+    const children = Array.from(el.children) as HTMLElement[];
+    const wrapped =
+      children.length > 1 &&
+      children.some((c) => c.offsetTop !== children[0].offsetTop);
+    if (!wrapped) {
+      // Single row: this is the true full-set width, remember it as the
+      // unfold threshold.
+      fullSetWidth = el.offsetWidth;
+      return;
+    }
+    // Wrapped before a single-row width was ever observed (mounted into an
+    // already-narrow window): all that's known is "wider than what's here".
+    fullSetWidth = Math.max(fullSetWidth, available + 1);
+    setCollapsed(true);
+  }
+
+  onMount(() => {
+    // The PiP card never collapses — it already renders only the essentials.
+    if (compact() || !actionsEl?.parentElement) return;
+    createResizeObserver(
+      () => [actionsEl!, actionsEl!.parentElement!],
+      evaluateFit,
+    );
+  });
+
+  function onPointerDown(event: PointerEvent) {
+    if (overflowEl && !overflowEl.contains(event.target as Node)) {
+      setOverflowOpen(false);
+      document.removeEventListener("pointerdown", onPointerDown);
+    }
+  }
+
+  function toggleOverflow() {
+    if (overflowOpen()) {
+      setOverflowOpen(false);
+      document.removeEventListener("pointerdown", onPointerDown);
+    } else {
+      setOverflowOpen(true);
+      document.addEventListener("pointerdown", onPointerDown);
+    }
+  }
+
+  onCleanup(() => document.removeEventListener("pointerdown", onPointerDown));
+
   return (
-    <Actions>
+    <Actions ref={actionsEl}>
       <Show when={props.size === "xs"}>
         <IconButton
           variant="standard"
@@ -122,20 +201,8 @@ export function VoiceCallCardActions(props: { size: "xs" | "sm" }) {
       >
         <Symbol>camera_video</Symbol>
       </IconButton>
-      <Show when={enableVideo && !compact()}>
-        <IconButton
-          size={props.size}
-          variant="tonal"
-          onPress={() => modals.openModal({ type: "camera_settings" })}
-          use:floating={{
-            tooltip: {
-              placement: "top",
-              content: t`Camera settings`,
-            },
-          }}
-        >
-          <Symbol>tune</Symbol>
-        </IconButton>
+      <Show when={!compact() && !collapsed()}>
+        <CameraSettingsButton size={props.size} />
       </Show>
       <IconButton
         size={props.size}
@@ -168,51 +235,34 @@ export function VoiceCallCardActions(props: { size: "xs" | "sm" }) {
           <Symbol>stop_screen_share</Symbol>
         </Show>
       </IconButton>
-      {/* "Give control" sits on the sharer's own share, Teams-style, so it
-          renders right beside the share button it acts on. The component
-          gates itself on `CONFIGURATION.ENABLE_VIDEO`, a native command
-          probe, and an actually-live screenshare, so it simply is not there
-          on a shell that cannot do it. */}
-      <Show when={!compact()}>
-        <VoiceGiveControlButton size={props.size} />
+      <Show when={!compact() && !collapsed()}>
+        <SecondaryControls size={props.size} />
       </Show>
-      <Show
-        when={
-          !compact() &&
-          voice.channel()?.serverId &&
-          voice.channel()?.havePermission("UseSoundboard")
-        }
-      >
-        <VoiceSoundboardButton size={props.size} />
-      </Show>
-      {/* Watch together: off the compact card (its overlay needs the docked
-          participant area). Gates itself on the ENABLE_WATCH_TOGETHER flag +
-          the UseWatchTogether bit via watchPolicy. */}
-      <Show when={!compact()}>
-        <VoiceWatchButton size={props.size} />
-      </Show>
-      {/* Recording stays OFF the compact PiP card. The 300px card only fits
-          the essentials, and a control whose side effect is telling everyone
-          in the call something is a poor candidate for a cramped row where it
-          could be hit by accident. Stopping is still possible: the banner and
-          the docked card both remain reachable. */}
-      <Show when={!compact()}>
-        <VoiceRecordButton size={props.size} />
-      </Show>
-      {/* Transcription is off the compact card for the same reason as
-          recording: its side effect is telling everyone in the call
-          something, which is a poor fit for a cramped row. */}
-      <Show when={!compact()}>
-        <VoiceTranscribeButton size={props.size} />
-      </Show>
-      {/* Captions share transcription's reasoning: enabling them broadcasts
-          your speech as text to the call. */}
-      <Show when={!compact()}>
-        <VoiceCaptionsButton size={props.size} />
-      </Show>
-      <Show when={!compact()}>
-        <VoiceDeviceSelector size={props.size} />
-        <VoiceStatsOverlay size={props.size} />
+      {/* The active states hidden by folding all keep a visible surface of
+          their own on the docked card (recording banner, captions display,
+          transcript panel), so the trigger itself carries no state badge. */}
+      <Show when={!compact() && collapsed()}>
+        <OverflowAnchor ref={overflowEl}>
+          <Show when={overflowOpen()}>
+            <OverflowPanel>
+              <CameraSettingsButton size={props.size} />
+              <SecondaryControls size={props.size} />
+            </OverflowPanel>
+          </Show>
+          <IconButton
+            size={props.size}
+            variant={overflowOpen() ? "filled" : "tonal"}
+            onPress={toggleOverflow}
+            use:floating={{
+              tooltip: {
+                placement: "top",
+                content: t`More call controls`,
+              },
+            }}
+          >
+            <Symbol>more_horiz</Symbol>
+          </IconButton>
+        </OverflowAnchor>
       </Show>
       <Button
         size={props.size}
@@ -231,9 +281,84 @@ export function VoiceCallCardActions(props: { size: "xs" | "sm" }) {
   );
 }
 
+/**
+ * Opens the camera settings modal. Sits beside the camera toggle when the bar
+ * has room, and folds into the overflow menu with the other secondary
+ * controls when it doesn't.
+ */
+function CameraSettingsButton(props: { size: "xs" | "sm" }) {
+  const modals = useModals();
+  const { t } = useLingui();
+
+  return (
+    <Show when={CONFIGURATION.ENABLE_VIDEO}>
+      <IconButton
+        size={props.size}
+        variant="tonal"
+        onPress={() => modals.openModal({ type: "camera_settings" })}
+        use:floating={{
+          tooltip: {
+            placement: "top",
+            content: t`Camera settings`,
+          },
+        }}
+      >
+        <Symbol>tune</Symbol>
+      </IconButton>
+    </Show>
+  );
+}
+
+/**
+ * The secondary controls of the docked call card — everything beyond
+ * mic / deafen / camera / share / hang up. Rendered inline while the bar has
+ * room, and inside the overflow panel when it has folded. Never on the
+ * compact PiP card: the 300px card only fits the essentials, and controls
+ * whose side effect is telling everyone in the call something (recording,
+ * transcription, captions) are poor candidates for a cramped row where they
+ * could be hit by accident — the docked card stays reachable for those.
+ */
+function SecondaryControls(props: { size: "xs" | "sm" }) {
+  const voice = useVoice();
+
+  return (
+    <>
+      {/* "Give control" sits on the sharer's own share, Teams-style, so it
+          renders right beside the share button it acts on (adjacency is lost
+          in the overflow panel, where the label carries the meaning). The
+          component gates itself on `CONFIGURATION.ENABLE_VIDEO`, a native
+          command probe, and an actually-live screenshare, so it simply is not
+          there on a shell that cannot do it. */}
+      <VoiceGiveControlButton size={props.size} />
+      <Show
+        when={
+          voice.channel()?.serverId &&
+          voice.channel()?.havePermission("UseSoundboard")
+        }
+      >
+        <VoiceSoundboardButton size={props.size} />
+      </Show>
+      {/* Watch together: gates itself on the ENABLE_WATCH_TOGETHER flag +
+          the UseWatchTogether bit via watchPolicy. */}
+      <VoiceWatchButton size={props.size} />
+      <VoiceRecordButton size={props.size} />
+      <VoiceTranscribeButton size={props.size} />
+      <VoiceCaptionsButton size={props.size} />
+      <VoiceDeviceSelector size={props.size} />
+      <VoiceStatsOverlay size={props.size} />
+    </>
+  );
+}
+
 const Actions = styled("div", {
   base: {
-    flexShrink: 0,
+    // Shrinkable on purpose: `maxWidth: 100%` alone only caps the bar at the
+    // full controls-row width, so with non-empty side holders there was a
+    // band of window widths where the row overflowed (and clipped) before
+    // the bar ever hit its cap. Letting the bar shrink converts that
+    // pressure into wrapping instead — the side holders have flex-basis 0,
+    // so the shrink lands entirely here.
+    flexShrink: 1,
     gap: "var(--gap-md)",
     padding: "var(--gap-md)",
     zIndex: 2,
@@ -249,5 +374,39 @@ const Actions = styled("div", {
 
     borderRadius: "var(--borderRadius-full)",
     background: "var(--md-sys-color-surface-container)",
+  },
+});
+
+// NOTE: intentionally NOT position:relative — same containing-block trick as
+// VoiceDeviceSelector. The bar lives inside `VoiceCallControls` which has
+// `overflow: hidden`; leaving this static lets the absolute panel resolve its
+// containing block to the call Card above the clipping box. The wrapper still
+// groups button + panel for click-outside detection.
+const OverflowAnchor = styled("div", {
+  base: {
+    display: "flex",
+  },
+});
+
+const OverflowPanel = styled("div", {
+  base: {
+    position: "absolute",
+    // Fixed offset (not `100%`) because the containing block is the call
+    // Card, not this wrapper — sit just above the controls bar.
+    bottom: "64px",
+    left: "50%",
+    transform: "translateX(-50%)",
+    zIndex: 10,
+
+    display: "flex",
+    flexWrap: "wrap",
+    justifyContent: "center",
+    gap: "var(--gap-md)",
+    padding: "var(--gap-md)",
+    maxWidth: "90%",
+
+    borderRadius: "var(--borderRadius-full)",
+    background: "var(--md-sys-color-surface-container-highest)",
+    boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
   },
 });

@@ -3991,6 +3991,10 @@ msgstr "Monthly"
 msgid "More Contrast"
 msgstr "More Contrast"
 
+#: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx
+msgid "More call controls"
+msgstr "More call controls"
+
 #: src/interface/channels/text/Composition.tsx
 msgid "More options"
 msgstr "More options"
