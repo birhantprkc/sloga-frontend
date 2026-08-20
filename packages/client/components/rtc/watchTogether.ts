@@ -85,6 +85,10 @@ const LS_DUCK = "sloga:watch:duck";
 /** Duck ramp cadence / step — full 1↔0.6 swing in ~5 steps (~250 ms). */
 const DUCK_RAMP_MS = 50;
 const DUCK_RAMP_STEP = 0.08;
+/** How long a playlist host's `ended` may sit before it is believed to be
+ * the END of the playlist rather than the gap between videos (§7.3 4f,
+ * review finding 2). Comfortably above the observed ~1-2 s advance gap. */
+const PLAYLIST_END_GRACE_MS = 4000;
 
 /** A neutral provider status for surfacing an error before/without a player. */
 const EMPTY_STATUS: ProviderStatus = {
@@ -251,6 +255,13 @@ export class WatchTogether {
   #duckMult = 1;
   #duckTarget = 1;
   #duckRamp: ReturnType<typeof setInterval> | undefined;
+  /** The list the CURRENT provider iframe was built with (§7.3 4f) — set
+   * only on the host's playlist embed; a demotion uses it to know the
+   * embed self-advances and must be rebuilt (review finding 1). */
+  #providerListId: string | undefined;
+  /** Pending is-this-really-the-end check for a playlist host's `ended`
+   * (review finding 2). Dies with the provider. */
+  #playlistEndGrace: ReturnType<typeof setTimeout> | undefined;
 
   constructor() {
     [this.session, this.#setSession] = createSignal<WatchSessionData | undefined>();
@@ -383,7 +394,13 @@ export class WatchTogether {
    * nudged rate (±10 %) as the new ground truth and every heartbeat writes
    * that fast clock — the whole call then chases an accelerating timeline.
    * The provider itself is deliberately NOT re-keyed (an iframe rebuild
-   * reloads the video and its ad break).
+   * reloads the video and its ad break) — with ONE exception: an embed
+   * built in PLAYLIST mode keeps auto-advancing on its own after a
+   * demotion, changing WHAT PLAYS out from under the corrector, so it must
+   * be rebuilt as a single-video embed (post-implementation review
+   * finding 1). Playlist state itself never survives a handoff either —
+   * a re-promoted ex-host with a stale list + drifted embed would
+   * otherwise immediately write its drifted video over the whole call.
    */
   #onHostTransition(s: WatchSessionData) {
     this.#hostOpinion = null;
@@ -403,6 +420,10 @@ export class WatchTogether {
     // A stale environment-pause latch gates the opinion path (it is not
     // host-scoped) and would misbehave on a later re-promotion.
     this.#hostSuspended = false;
+    // Playlist mode dies with the handoff, and a playlist-mode embed is
+    // rebuilt (the #ensureProvider call that follows sees no provider).
+    this.#setHostPlaylist(undefined);
+    if (this.#providerListId) this.#disposeProvider();
   }
 
   onEnd(detail: { channelId: string; id: string }) {
@@ -493,6 +514,7 @@ export class WatchTogether {
     const ch = this.#ctx?.channel();
     if (!ch) return false;
     this.#setBusy(true);
+    this.#setError(undefined);
     try {
       const r = await ch.watchHost(userId);
       if (!r.ok) {
@@ -700,16 +722,16 @@ export class WatchTogether {
     this.#lastProviderState = undefined;
     this.#scrubTrack = pausedScrubTracker();
     if (s.media.provider === "youtube") {
+      // Playlist mode is host-only and host-local (§7.3 4f). Remembered on
+      // #providerListId so a demotion knows THIS embed self-advances and
+      // must be rebuilt (finding 1).
+      const listId = this.isHost() ? this.hostPlaylist() : undefined;
       const p = new YouTubeProvider({
         videoId: s.media.video_id,
         // The host gets YouTube's own bar as a control surface; viewers
         // don't, so scrubbing it can't desync them (plan §4.1).
         controls: this.isHost(),
-        // Playlist mode is host-only and host-local (§7.3 4f).
-        ...(() => {
-          const listId = this.isHost() ? this.hostPlaylist() : undefined;
-          return listId ? { listId } : {};
-        })(),
+        ...(listId ? { listId } : {}),
         // A paused session must not blip audio at 0 before the corrector
         // pauses it; the corrector issues play() when the host plays.
         autoplay: s.playing,
@@ -717,6 +739,7 @@ export class WatchTogether {
         volume: this.#effectiveVolume(),
         muted: this.muted(),
       });
+      this.#providerListId = listId;
       this.#provider = p;
       this.host.appendChild(p.element);
       this.#providerUnsub = p.onChange((st) => this.#onProviderChange(st));
@@ -892,14 +915,21 @@ export class WatchTogether {
     // itself stays (WatchDuck owns it and lifts it on detach).
     this.#stopDuckRamp();
     this.#duckMult = this.#duckTarget;
+    this.#stopPlaylistEndGrace();
     this.#teardownJellyfin();
     this.#providerUnsub?.();
     this.#providerUnsub = undefined;
     this.#provider?.dispose();
     this.#provider = undefined;
     this.#providerKey = undefined;
+    this.#providerListId = undefined;
     this.#hostSuspended = false;
     this.#setProviderStatus(undefined);
+  }
+
+  #stopPlaylistEndGrace() {
+    if (this.#playlistEndGrace) clearTimeout(this.#playlistEndGrace);
+    this.#playlistEndGrace = undefined;
   }
 
   /** The "Sign in to {server}" button landed a token — retry the provider. */
@@ -936,10 +966,31 @@ export class WatchTogether {
       } else if (!(this.#hostSuspended && st.state === "paused")) {
         // While suspended, repeat paused reports (volume changes etc.)
         // must not sneak the opinion back to paused either — and a playlist
-        // host's `ended` is the embed BETWEEN videos (§7.3 4f), not the end
-        // of the show: adopting it would write playing:false and pause every
-        // viewer for the gap. The advance write below carries the truth.
-        if (!(this.isHost() && this.hostPlaylist() && st.state === "ended")) {
+        // host's `ended` is USUALLY the embed between videos (§7.3 4f), not
+        // the end of the show: adopting it would write playing:false and
+        // pause every viewer for the gap. But the LAST video's `ended` has
+        // no next video and no advance write — unconditional suppression
+        // would leave the session playing forever (post-implementation
+        // review finding 2). So the suppression carries a grace: if no
+        // video change lands within it and the embed still says ended, the
+        // ended opinion is adopted and the pause written.
+        if (this.isHost() && this.hostPlaylist() && st.state === "ended") {
+          if (!this.#playlistEndGrace) {
+            this.#playlistEndGrace = setTimeout(() => {
+              this.#playlistEndGrace = undefined;
+              const now = this.#provider?.status();
+              const cur = this.session();
+              if (
+                now?.state === "ended" &&
+                cur?.media.provider === "youtube" &&
+                (!now.videoId || now.videoId === cur.media.video_id)
+              ) {
+                this.#hostOpinion = "ended";
+                this.#queueWrite({ playing: false });
+              }
+            }, PLAYLIST_END_GRACE_MS);
+          }
+        } else {
           this.#hostOpinion = st.state;
         }
       }
@@ -958,6 +1009,8 @@ export class WatchTogether {
         s?.media.provider === "youtube" &&
         st.videoId !== s.media.video_id
       ) {
+        // The advance arrived — the between-videos ended was transient.
+        this.#stopPlaylistEndGrace();
         this.#queueWrite({
           media: {
             provider: "youtube",

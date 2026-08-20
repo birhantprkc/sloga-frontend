@@ -14,6 +14,7 @@ import { cva } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 
 import { UserContextMenu } from "@revolt/app";
+import { CONFIGURATION } from "@revolt/common";
 import { useUser } from "@revolt/markdown/users";
 import { InRoom } from "@revolt/rtc";
 
@@ -119,7 +120,9 @@ function ParticipantLive(props: { channel: Channel }) {
       camera={state()?.isCamera() ?? false}
       screenshare={screenAudioOnly(state())}
       sharingScreen={state()?.isScreenVideo() ?? false}
-      watching={state()?.isWatching() ?? false}
+      // Flag-gated so a deliberately-dark shell never renders a hint for a
+      // feature it cannot join (the release-gate posture).
+      watching={CONFIGURATION.ENABLE_WATCH_TOGETHER && (state()?.isWatching() ?? false)}
       isLive
     />
   );
@@ -138,7 +141,7 @@ function ParticipantPreview(props: { participant: VoiceParticipant }) {
       camera={props.participant.isCamera()}
       screenshare={screenAudioOnly(props.participant)}
       sharingScreen={props.participant.isScreenVideo()}
-      watching={props.participant.isWatching()}
+      watching={CONFIGURATION.ENABLE_WATCH_TOGETHER && props.participant.isWatching()}
     />
   );
 }

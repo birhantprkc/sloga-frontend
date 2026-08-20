@@ -101,9 +101,12 @@ export function WatchOverlay() {
   const canControl = () =>
     watch.isHost() || !!voice.channel()?.havePermission("ManageChannel");
 
-  // Handoff (§7.3 4a): every other current call participant, from the same
-  // roster the sidebar renders. The backend re-validates (in-call, not a
-  // bot, holds the bit in server channels), so a stale row just errors.
+  // Handoff (§7.3 4a): every current call participant EXCEPT the current
+  // host, from the same roster the sidebar renders. Deliberately not
+  // "except self": a ManageChannel non-host sees themselves and can take
+  // host — the moderator's natural move. The backend re-validates (in-call,
+  // not a bot, holds the bit in server channels), so a stale row just
+  // errors.
   const [handoffOpen, setHandoffOpen] = createSignal(false);
   const handoffCandidates = createMemo(() => {
     const hostId = watch.session()?.host_id;
@@ -139,7 +142,11 @@ export function WatchOverlay() {
   const [overlayW, setOverlayW] = createSignal(0);
   const [rootRef, setRootRef] = createSignal<HTMLDivElement>();
   createEffect(() => {
-    const el = rootRef();
+    // `visible()` is a dependency ON PURPOSE: the Overlay lives inside
+    // <Show>, so on session end it unmounts while this effect's owner does
+    // not — without the dependency the observer would stay connected to the
+    // detached element until the next session (review finding 7).
+    const el = visible() ? rootRef() : undefined;
     if (!el) return;
     const ro = new ResizeObserver(() => setOverlayW(el.clientWidth));
     ro.observe(el);
@@ -318,7 +325,13 @@ export function WatchOverlay() {
                 PlayerSlot ends up with — the strip just takes its column. */}
             <StripCol style={{ "--vc-tile-width": "160px" }}>
               <InRoom>
-                <TrackLoop tracks={stripTracks}>{() => <ParticipantTile />}</TrackLoop>
+                <TrackLoop tracks={stripTracks}>
+                  {() => (
+                    <StripTile>
+                      <ParticipantTile />
+                    </StripTile>
+                  )}
+                </TrackLoop>
               </InRoom>
             </StripCol>
           </Show>
@@ -621,10 +634,18 @@ const StripCol = styled("div", {
     display: "flex",
     flexDirection: "column",
     gap: "var(--gap-sm)",
+    // The COLUMN stays interactive so it can scroll (a pointer-events:none
+    // element can never be a wheel/touch target — review finding 3)…
     overflowY: "auto",
-    // Tap-inert by construction: ParticipantTile's click is toggleFocus
-    // against the hidden grid, and the RC capture machinery hangs off it.
+  },
+});
+const StripTile = styled("div", {
+  base: {
+    // …while each TILE is tap-inert by construction: ParticipantTile's
+    // click is toggleFocus against the hidden grid, and the RC capture
+    // machinery hangs off focus changes.
     pointerEvents: "none",
+    flexShrink: 0,
   },
 });
 const PlayerSlot = styled("div", {

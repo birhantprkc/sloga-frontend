@@ -6090,7 +6090,7 @@ msgstr "Test Microphone"
 msgid "Text Channel"
 msgstr "Text Channel"
 
-#: components/modal/modals/settings/LinkChannel.tsx
+#: src/index.tsx
 msgid "That account has no channel to link."
 msgstr "That account has no channel to link."
 

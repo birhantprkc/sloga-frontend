@@ -59,8 +59,11 @@ export function watchCanStart(i: WatchStartInputs): boolean {
  * - `hasTracks` — REAL publications only: raw `vidTracks()` includes a
  *   camera placeholder for every participant, which would default the strip
  *   on in every call showing avatar tiles beside the movie;
- * - `widthPx` — below this the strip would starve the player (the resizable
- *   card's small/PiP sizes).
+ * - `widthPx` — below this the strip would starve the player. This is ALSO
+ *   the PiP veto: there is no discrete PiP mode on current cards — the card
+ *   resizes continuously — so the measured overlay width covers every small
+ *   size, PiP-like or dragged. If a discrete PiP state ever returns, give
+ *   it its own input rather than leaning on this threshold.
  */
 export const WATCH_STRIP_MIN_WIDTH_PX = 560;
 

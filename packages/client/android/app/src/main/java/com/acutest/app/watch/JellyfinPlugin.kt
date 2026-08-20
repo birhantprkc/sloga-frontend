@@ -135,8 +135,14 @@ class JellyfinPlugin : Plugin() {
                 // 526 marks a TLS/certificate failure specifically (the
                 // desktop shells' code for the same thing), so the connect
                 // flow can offer per-server trust only when trusting would
-                // help. Everything else (DNS/refused/timeout) stays opaque.
-                if (e is javax.net.ssl.SSLException) {
+                // help. Deliberately NARROW — handshake/peer verification
+                // only, never the broad SSLException, which also wraps
+                // mid-handshake connection resets from a sleeping NAS or
+                // flaky Wi-Fi and would train exactly the trust-click the
+                // marker exists to prevent. Everything else stays opaque.
+                if (e is javax.net.ssl.SSLHandshakeException ||
+                    e is javax.net.ssl.SSLPeerUnverifiedException
+                ) {
                     val ret = JSObject()
                     ret.put("status", 526)
                     ret.put("body", "")
