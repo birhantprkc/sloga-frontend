@@ -101,12 +101,25 @@ export function transportProblem(baseUrl: string): "mixed-content" | null {
  */
 export const PROBE_SERVER_ID = "connect-probe-0";
 
+/**
+ * The connect flow's in-flight probe URL. Kept here so EVERY push appends
+ * it: a concurrent `registerServers` (host media-swap, `JellyfinBrowser`
+ * mount) is a replace-all on the shell side, and without this it would
+ * silently drop the provisional entry mid-connect — the Quick Connect poll
+ * would then dead-end on unknown-server errors with no visible failure.
+ */
+let activeProbeUrl: string | null = null;
+
 function toSpecList(servers: SavedServer[]) {
-  return servers.map((s) => ({
+  const list = servers.map((s) => ({
     id: s.id,
     baseUrl: s.baseUrl,
     trustSelfSigned: s.trustSelfSigned === true,
   }));
+  if (activeProbeUrl !== null) {
+    list.push({ id: PROBE_SERVER_ID, baseUrl: activeProbeUrl, trustSelfSigned: false });
+  }
+  return list;
 }
 
 async function pushServers(
@@ -152,17 +165,21 @@ export async function registerServers(servers: SavedServer[]): Promise<void> {
 /**
  * Register the connect flow's typed-but-unsaved URL under
  * `PROBE_SERVER_ID`, alongside the saved list, so the pre-save probe and
- * sign-in calls can cross a native shell's forwarder at all. Replaced —
- * and the provisional entry dropped — by the next `registerServers`.
+ * sign-in calls can cross a native shell's forwarder at all. The entry
+ * survives concurrent `registerServers` pushes (they re-append it) until
+ * `clearProbeServer` — the connect flow calls that on finish/cancel.
  */
 export async function registerProbeServer(
   baseUrl: string,
   saved: SavedServer[],
 ): Promise<void> {
-  await pushServers([
-    ...toSpecList(saved),
-    { id: PROBE_SERVER_ID, baseUrl, trustSelfSigned: false },
-  ]);
+  activeProbeUrl = baseUrl;
+  await pushServers(toSpecList(saved));
+}
+
+/** Drop the provisional connect-flow entry from every future push. */
+export function clearProbeServer(): void {
+  activeProbeUrl = null;
 }
 
 /** Build a fetchable URL for a Jellyfin path against a saved server. */

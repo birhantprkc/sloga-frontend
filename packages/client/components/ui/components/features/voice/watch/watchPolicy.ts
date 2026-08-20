@@ -75,8 +75,16 @@ export function hostUnreachable(i: {
  * there — without it they stare at a frozen player with no affordance.
  * `buffering` stays out (still trying), `playing` obviously, and `error`
  * has its own surface. `ended` means it played; not a block.
+ *
+ * The `idle` grace is anchored on the provider's ready moment when it
+ * reports one (§7.2b item 7): a slow (>3 s) iframe boot sits in `idle`
+ * through no fault of autoplay, and flashing the prompt there is noise.
+ * A never-ready player still prompts, just after the longer boot grace —
+ * tapping replays the queued play() once the player does come up, and a
+ * player that never comes up at all ends in `error`, not here.
  */
 export const AUTOPLAY_GRACE_MS = 3000;
+export const IDLE_BOOT_GRACE_MS = 12_000;
 
 export function needsTapToStart(i: {
   /** The SESSION says playing (the host's truth, not our player's). */
@@ -85,8 +93,21 @@ export function needsTapToStart(i: {
   playAskedAtMs: number | null;
   nowLocalMs: number;
   providerState: string;
+  /**
+   * When the provider became ready (`Provider.readyAtMs()`): a number once
+   * ready, null while booting, undefined for providers that don't report
+   * readiness (legacy behavior — grace from `playAskedAtMs` alone).
+   */
+  readyAtMs?: number | null;
 }): boolean {
   if (!i.sessionPlaying || i.playAskedAtMs == null) return false;
+  if (i.providerState === "idle" && i.readyAtMs !== undefined) {
+    if (i.readyAtMs === null) {
+      // Still booting: only the long grace may prompt (bug-B backstop).
+      return i.nowLocalMs - i.playAskedAtMs > IDLE_BOOT_GRACE_MS;
+    }
+    return i.nowLocalMs - Math.max(i.playAskedAtMs, i.readyAtMs) > AUTOPLAY_GRACE_MS;
+  }
   if (i.nowLocalMs - i.playAskedAtMs <= AUTOPLAY_GRACE_MS) return false;
   return (
     i.providerState === "cued" ||

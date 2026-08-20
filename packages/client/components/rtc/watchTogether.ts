@@ -226,6 +226,12 @@ export class WatchTogether {
     host.style.cssText =
       "position:absolute;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:auto;overflow:hidden;border-radius:8px;background:#000;z-index:3";
     this.host = host;
+
+    // Repopulate the native shell's forwarding table on boot: the shell's
+    // state outlives a webview reload, so whatever the last page pushed
+    // (including a mid-connect probe entry) would otherwise linger until
+    // the next change (§7.2b item 6). No-op on web.
+    void registerServers(listServers());
   }
 
   /** Wire the Voice state's accessors (once, from the Voice constructor). */
@@ -822,17 +828,22 @@ export class WatchTogether {
     for (const a of result.actions) this.#apply(p, a);
 
     // Autoplay-blocked detection: we asked for play and nothing happened.
-    // The rule (incl. `idle` — §7.2a bug B) lives in watchPolicy so it runs
-    // under `node --test`.
+    // The rule (incl. `idle` — §7.2a bug B — and the ready-anchored idle
+    // grace) lives in watchPolicy so it runs under `node --test`.
     if (
       needsTapToStart({
         sessionPlaying: s.playing,
         playAskedAtMs: this.#playAskedAt,
         nowLocalMs: nowLocal,
         providerState: st.state,
+        readyAtMs: p.readyAtMs ? p.readyAtMs() : undefined,
       })
     ) {
       this.#setNeedsTap(true);
+    } else if (!s.playing && this.needsTap()) {
+      // The prompt is a set-only latch otherwise — a session the host
+      // paused (or that ended playback) has nothing to tap-start anymore.
+      this.#setNeedsTap(false);
     }
 
     this.#setStats({

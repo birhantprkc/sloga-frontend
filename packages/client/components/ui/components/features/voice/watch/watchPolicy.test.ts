@@ -6,6 +6,7 @@ import { test } from "node:test";
 import {
   AUTOPLAY_GRACE_MS,
   HOST_UNREACHABLE_AFTER_MS,
+  IDLE_BOOT_GRACE_MS,
   hostUnreachable,
   needsTapToStart,
   watchButtonVisible,
@@ -57,6 +58,30 @@ test("needsTapToStart: fires past the grace from every parked state, incl. idle 
   for (const providerState of ["buffering", "playing", "error", "ended"]) {
     assert.equal(needsTapToStart({ ...base, providerState }), false, providerState);
   }
+});
+
+test("needsTapToStart: idle grace anchors on the provider's ready moment (7.2b item 7)", () => {
+  const base = { sessionPlaying: true, playAskedAtMs: 0, providerState: "idle" };
+  // Booting (ready not reported yet): the short grace must NOT flash…
+  assert.equal(needsTapToStart({ ...base, nowLocalMs: AUTOPLAY_GRACE_MS + 1, readyAtMs: null }), false);
+  // …but the long boot grace still prompts eventually (bug-B backstop).
+  assert.equal(needsTapToStart({ ...base, nowLocalMs: IDLE_BOOT_GRACE_MS + 1, readyAtMs: null }), true);
+  // Ready landed late: the grace restarts from readyAtMs, not playAskedAtMs.
+  const readyAtMs = 5000;
+  assert.equal(needsTapToStart({ ...base, nowLocalMs: readyAtMs + AUTOPLAY_GRACE_MS, readyAtMs }), false);
+  assert.equal(needsTapToStart({ ...base, nowLocalMs: readyAtMs + AUTOPLAY_GRACE_MS + 1, readyAtMs }), true);
+  // A play() asked AFTER ready anchors on the ask.
+  assert.equal(
+    needsTapToStart({ ...base, playAskedAtMs: 8000, nowLocalMs: 8000 + AUTOPLAY_GRACE_MS, readyAtMs }),
+    false,
+  );
+  // Providers that don't report readiness keep the legacy rule.
+  assert.equal(needsTapToStart({ ...base, nowLocalMs: AUTOPLAY_GRACE_MS + 1 }), true);
+  // Non-idle states never consult readiness.
+  assert.equal(
+    needsTapToStart({ ...base, providerState: "paused", nowLocalMs: AUTOPLAY_GRACE_MS + 1, readyAtMs: null }),
+    true,
+  );
 });
 
 test("needsTapToStart: session paused, never-asked, and in-grace all stay quiet", () => {

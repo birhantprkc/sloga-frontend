@@ -91,29 +91,47 @@ class JellyfinPlugin : Plugin() {
         }
         val body = call.getString("body")
         executor.execute {
+            var conn: java.net.HttpURLConnection? = null
             try {
-                val conn = JellyfinServers.open(entry, path)
-                conn.requestMethod = method
-                for ((k, v) in headers) conn.setRequestProperty(k, v)
+                val c = JellyfinServers.open(entry, path)
+                conn = c
+                c.requestMethod = method
+                for ((k, v) in headers) c.setRequestProperty(k, v)
                 if (body != null && (method == "POST" || method == "DELETE")) {
-                    conn.doOutput = true
-                    conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+                    c.doOutput = true
+                    c.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
                 }
-                val status = conn.responseCode
+                val status = c.responseCode
+                // An unfollowed redirect must not surface: following it
+                // natively would escape the saved-servers rule, and handing
+                // the Location to the webview would invite the same.
+                if (status in 300..399) {
+                    c.disconnect()
+                    val ret = JSObject()
+                    ret.put("status", 502)
+                    ret.put("body", "")
+                    call.resolve(ret)
+                    return@execute
+                }
                 val stream: InputStream? =
                     try {
-                        if (status >= 400) conn.errorStream else conn.inputStream
+                        if (status >= 400) c.errorStream else c.inputStream
                     } catch (e: Exception) {
                         null
                     }
                 val text =
-                    stream?.use { it.readBytes().toString(charsetOf(conn.contentType)) } ?: ""
-                conn.disconnect()
+                    stream?.use { it.readBytes().toString(charsetOf(c.contentType)) } ?: ""
+                c.disconnect()
                 val ret = JSObject()
                 ret.put("status", status)
                 ret.put("body", text)
                 call.resolve(ret)
             } catch (e: Exception) {
+                try {
+                    conn?.disconnect()
+                } catch (ignored: Exception) {
+                    /* already dead */
+                }
                 // Opaque: DNS/refused/TLS all look the same to the webview.
                 call.reject("network")
             }

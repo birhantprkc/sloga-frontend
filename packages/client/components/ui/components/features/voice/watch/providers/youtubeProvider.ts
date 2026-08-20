@@ -68,6 +68,8 @@ export class YouTubeProvider implements Provider {
   /** Stuck-state repair (bug §7.2a A — see trackStuckState). */
   #stuck = stuckStateTracker();
   #ready = false;
+  /** When `onReady` landed — the "Tap to start" idle-grace anchor. */
+  #readyAt: number | null = null;
   /** Commands issued before `onReady` are replayed once it lands. */
   #queue: string[] = [];
   #onMessage = (e: MessageEvent) => {
@@ -77,6 +79,7 @@ export class YouTubeProvider implements Provider {
     switch (parsed.kind) {
       case "ready": {
         this.#ready = true;
+        if (this.#readyAt === null) this.#readyAt = Date.now();
         for (const msg of this.#queue) this.#post(msg);
         this.#queue = [];
         break;
@@ -86,6 +89,9 @@ export class YouTubeProvider implements Provider {
         break;
       }
       case "info": {
+        // A missed `ready` must not park the idle-grace forever: the first
+        // infoDelivery proves the player is up just as well.
+        if (this.#readyAt === null) this.#readyAt = Date.now();
         const i = parsed.info;
         const patch: Partial<ProviderStatus> = {};
         if (i.currentTimeMs != null) {
@@ -156,6 +162,10 @@ export class YouTubeProvider implements Provider {
   onChange(listener: (s: ProviderStatus) => void): () => void {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
+  }
+
+  readyAtMs(): number | null {
+    return this.#readyAt;
   }
 
   play() {

@@ -97,6 +97,11 @@ object JellyfinServers {
     /** Open a connection to `{entry.baseUrl}{pathAndQuery}` with the entry's TLS policy. */
     fun open(entry: Entry, pathAndQuery: String): HttpURLConnection {
         val conn = URL(entry.baseUrl + pathAndQuery).openConnection() as HttpURLConnection
+        // Never follow redirects: the stack would carry X-Emby-Authorization
+        // (and this entry's TLS relaxation) to whatever host the server
+        // 302s to, escaping the saved-servers-only rule. The callers map an
+        // unfollowed 3xx to an opaque error instead.
+        conn.instanceFollowRedirects = false
         if (conn is HttpsURLConnection && entry.trustSelfSigned) {
             conn.sslSocketFactory = trustAllFactory
             conn.setHostnameVerifier { _, _ -> true }

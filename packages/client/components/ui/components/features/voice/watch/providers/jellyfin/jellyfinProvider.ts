@@ -87,6 +87,8 @@ export class JellyfinProvider implements Provider {
    * EMA — used to overshoot the next seek so it lands on the line. */
   #seekCostMs = 0;
   #seekStartedAt = 0;
+  /** First `loadedmetadata` — the "Tap to start" idle-grace anchor. */
+  #readyAt: number | null = null;
   #onFatal?: (detail: string) => void;
 
   constructor(opts: JellyfinProviderOptions) {
@@ -106,10 +108,18 @@ export class JellyfinProvider implements Provider {
     this.#status.durationMs = opts.runtimeMs > 0 ? opts.runtimeMs : null;
 
     v.addEventListener("loadedmetadata", () => {
+      if (this.#readyAt === null) this.#readyAt = Date.now();
       if (Number.isFinite(v.duration) && v.duration > 0) {
         this.#update({ durationMs: Math.round(v.duration * 1000) });
       }
     });
+    // A rejected autoplay play() leaves the element paused with no further
+    // events — without these two the state parks in `buffering` (readyState
+    // was < 3 at the last recompute), which the corrector treats as "still
+    // trying" and "Tap to start" never fires (§7.2b item 8). Once buffered,
+    // recompute lands on `paused` and both surfaces work.
+    v.addEventListener("loadeddata", () => this.#recompute());
+    v.addEventListener("canplay", () => this.#recompute());
     v.addEventListener("play", () => this.#recompute());
     v.addEventListener("playing", () => {
       if (this.#seeking) {
@@ -173,6 +183,10 @@ export class JellyfinProvider implements Provider {
   onChange(listener: (s: ProviderStatus) => void): () => void {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
+  }
+
+  readyAtMs(): number | null {
+    return this.#readyAt;
   }
 
   play() {

@@ -11,6 +11,7 @@ import { normalizeServerUrl, statusText } from "./providers/jellyfin/jellyfinWir
 import { type SavedServer, listServers, saveServer } from "./providers/jellyfin/servers";
 import {
   PROBE_SERVER_ID,
+  clearProbeServer,
   registerProbeServer,
   registerServers,
   transportProblem,
@@ -44,10 +45,22 @@ export function JellyfinConnect(props: {
   const [error, setError] = createSignal<string | undefined>();
 
   let quickPoll: ReturnType<typeof setInterval> | undefined;
-  onCleanup(() => {
+  const stopQuickPoll = () => {
     if (quickPoll) clearInterval(quickPoll);
+    quickPoll = undefined;
+  };
+  // Leaving the Quick Connect screen must always kill its poll — "Back"
+  // then a second "Use Quick Connect" would otherwise leave the first
+  // interval polling a stale secret forever.
+  const goToStep = (s: "url" | "method" | "quick" | "password") => {
+    stopQuickPoll();
+    setStep(s);
+  };
+  onCleanup(() => {
+    stopQuickPoll();
     // Drop the provisional probe entry from the shell's forwarding table
-    // if the flow is abandoned mid-way (finish() already replaces it).
+    // whether the flow finished or was abandoned mid-way.
+    clearProbeServer();
     void registerServers(listServers());
   });
 
@@ -90,7 +103,7 @@ export function JellyfinConnect(props: {
         qc = false;
       }
       setQuickEnabled(qc);
-      setStep("method");
+      goToStep("method");
     } catch (e) {
       setError(errText(e));
     } finally {
@@ -103,27 +116,35 @@ export function JellyfinConnect(props: {
     if (!s) return;
     setBusy(true);
     setError(undefined);
-    setStep("quick");
+    goToStep("quick");
     try {
       const api = bareApi(s.baseUrl);
       const init = await api.quickConnectInitiate();
       setQuickCode(init.Code);
       quickPoll = setInterval(async () => {
+        let approved = false;
         try {
           const state = await api.quickConnectState(init.Secret);
-          if (state.Authenticated) {
-            if (quickPoll) clearInterval(quickPoll);
-            quickPoll = undefined;
-            const auth = await api.authenticateWithQuickConnect(init.Secret);
-            await finish(s, auth.AccessToken, auth.User.Id);
-          }
+          approved = state.Authenticated;
         } catch {
           /* keep polling; the user may not have approved yet */
+          return;
+        }
+        if (!approved) return;
+        stopQuickPoll();
+        try {
+          const auth = await api.authenticateWithQuickConnect(init.Secret);
+          await finish(s, auth.AccessToken, auth.User.Id);
+        } catch (e) {
+          // Post-approval failure is terminal for this code — dead-ending
+          // silently on the "waiting" screen would look like a hang.
+          setError(errText(e));
+          goToStep("method");
         }
       }, 2000);
     } catch (e) {
       setError(errText(e));
-      setStep("method");
+      goToStep("method");
     } finally {
       setBusy(false);
     }
@@ -158,6 +179,7 @@ export function JellyfinConnect(props: {
       lastUsed: Date.now(),
     };
     saveServer(saved);
+    clearProbeServer();
     await registerServers(listServers());
     props.onDone(saved);
   }
@@ -201,7 +223,7 @@ export function JellyfinConnect(props: {
                 {t`Use Quick Connect`}
               </Button>
             </Show>
-            <Button variant="secondary" onPress={() => setStep("password")}>
+            <Button variant="secondary" onPress={() => goToStep("password")}>
               {t`Sign in with a password`}
             </Button>
           </>
@@ -212,7 +234,7 @@ export function JellyfinConnect(props: {
         <Found>{t`Open Jellyfin on your phone or another device and enter this code:`}</Found>
         <Code>{quickCode() ?? "…"}</Code>
         <Hint>{t`Waiting for you to approve it in your Jellyfin app…`}</Hint>
-        <Button variant="secondary" onPress={() => setStep("method")}>
+        <Button variant="secondary" onPress={() => goToStep("method")}>
           {t`Back`}
         </Button>
       </Show>

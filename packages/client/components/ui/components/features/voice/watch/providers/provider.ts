@@ -51,4 +51,12 @@ export interface Provider {
    * Absent/false on providers whose seeks are cheap (YouTube).
    */
   postSeekHold?(): boolean;
+  /**
+   * `Date.now()` of the moment the underlying player first became able to
+   * accept commands (YouTube `onReady`, `<video>` first `loadedmetadata`),
+   * or null while it is still booting. The "Tap to start" rule measures its
+   * grace for the `idle` state from this, so a slow embed boot doesn't
+   * flash the prompt (plan §7.2b item 7). Absent = treat as ready.
+   */
+  readyAtMs?(): number | null;
 }
