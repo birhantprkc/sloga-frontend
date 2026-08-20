@@ -5,6 +5,7 @@ import { test } from "node:test";
 
 import {
   AUTOPLAY_GRACE_MS,
+  WATCH_STRIP_MIN_WIDTH_PX,
   HOST_UNREACHABLE_AFTER_MS,
   IDLE_BOOT_GRACE_MS,
   PAUSED_SCRUB_JITTER_MS,
@@ -19,6 +20,7 @@ import {
   watchButtonVisible,
   watchCanStart,
   watchOverlayVisible,
+  watchStripVisible,
 } from "./watchPolicy.ts";
 
 const LIVE = { enabled: true, connected: true, hasSession: true, immersive: false };
@@ -223,4 +225,10 @@ test("isHostTransition: same session under a new host, and only that", () => {
     isHostTransition({ prevId: "s1", prevHostId: "alice", nextId: "s1", nextHostId: "alice" }),
     false,
   );
+test("strip: every veto input vetoes on its own (4c)", () => {
+  const base = { userPref: true, hasTracks: true, widthPx: WATCH_STRIP_MIN_WIDTH_PX };
+  assert.equal(watchStripVisible(base), true);
+  assert.equal(watchStripVisible({ ...base, userPref: false }), false);
+  assert.equal(watchStripVisible({ ...base, hasTracks: false }), false);
+  assert.equal(watchStripVisible({ ...base, widthPx: WATCH_STRIP_MIN_WIDTH_PX - 1 }), false);
 });
