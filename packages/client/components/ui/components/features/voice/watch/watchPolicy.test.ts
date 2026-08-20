@@ -4,8 +4,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  AUTOPLAY_GRACE_MS,
   HOST_UNREACHABLE_AFTER_MS,
   hostUnreachable,
+  needsTapToStart,
   watchButtonVisible,
   watchCanStart,
   watchOverlayVisible,
@@ -44,4 +46,28 @@ test("hostUnreachable: only while playing, only past the window", () => {
   assert.equal(hostUnreachable({ playing: true, lastUpdateLocalMs: 0, nowLocalMs: HOST_UNREACHABLE_AFTER_MS + 1 }), true);
   assert.equal(hostUnreachable({ playing: false, lastUpdateLocalMs: 0, nowLocalMs: 10 * HOST_UNREACHABLE_AFTER_MS }), false);
   assert.equal(hostUnreachable({ playing: true, lastUpdateLocalMs: null, nowLocalMs: 1e9 }), false);
+});
+
+test("needsTapToStart: fires past the grace from every parked state, incl. idle (bug 7.2a B)", () => {
+  const base = { sessionPlaying: true, playAskedAtMs: 0, nowLocalMs: AUTOPLAY_GRACE_MS + 1 };
+  for (const providerState of ["cued", "unstarted", "paused", "idle"]) {
+    assert.equal(needsTapToStart({ ...base, providerState }), true, providerState);
+  }
+  // Still trying / already going / has its own surface / finished: no tap.
+  for (const providerState of ["buffering", "playing", "error", "ended"]) {
+    assert.equal(needsTapToStart({ ...base, providerState }), false, providerState);
+  }
+});
+
+test("needsTapToStart: session paused, never-asked, and in-grace all stay quiet", () => {
+  const idle = { providerState: "idle", playAskedAtMs: 0, nowLocalMs: AUTOPLAY_GRACE_MS + 1 };
+  assert.equal(needsTapToStart({ ...idle, sessionPlaying: false }), false);
+  assert.equal(
+    needsTapToStart({ providerState: "idle", sessionPlaying: true, playAskedAtMs: null, nowLocalMs: 10_000 }),
+    false,
+  );
+  assert.equal(
+    needsTapToStart({ providerState: "idle", sessionPlaying: true, playAskedAtMs: 0, nowLocalMs: AUTOPLAY_GRACE_MS }),
+    false,
+  );
 });

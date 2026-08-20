@@ -66,3 +66,32 @@ export function hostUnreachable(i: {
   if (!i.playing || i.lastUpdateLocalMs == null) return false;
   return i.nowLocalMs - i.lastUpdateLocalMs > HOST_UNREACHABLE_AFTER_MS;
 }
+
+/**
+ * Autoplay-blocked rule (plan §2.1 "Tap to start"): we asked the provider
+ * to play and, past a grace window, it still reports a state that means
+ * "not even trying". `idle` belongs in that set (§7.2a bug B): a
+ * late-joining viewer whose embed never emitted a playerState at all sits
+ * there — without it they stare at a frozen player with no affordance.
+ * `buffering` stays out (still trying), `playing` obviously, and `error`
+ * has its own surface. `ended` means it played; not a block.
+ */
+export const AUTOPLAY_GRACE_MS = 3000;
+
+export function needsTapToStart(i: {
+  /** The SESSION says playing (the host's truth, not our player's). */
+  sessionPlaying: boolean;
+  /** When we last issued play() ourselves; null = we never asked. */
+  playAskedAtMs: number | null;
+  nowLocalMs: number;
+  providerState: string;
+}): boolean {
+  if (!i.sessionPlaying || i.playAskedAtMs == null) return false;
+  if (i.nowLocalMs - i.playAskedAtMs <= AUTOPLAY_GRACE_MS) return false;
+  return (
+    i.providerState === "cued" ||
+    i.providerState === "unstarted" ||
+    i.providerState === "paused" ||
+    i.providerState === "idle"
+  );
+}

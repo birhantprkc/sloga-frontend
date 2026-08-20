@@ -50,6 +50,57 @@ export function providerStateFromYt(playerState: number | undefined): ProviderSt
   }
 }
 
+/**
+ * Stuck-state repair (bug §7.2a A): `infoDelivery` carries `playerState`
+ * ONLY on change, so a missed transition (listener raced the user's click
+ * on the embed itself) leaves the merged state at `unstarted`/`cued`
+ * forever while `currentTime` streams on. The sync controller treats those
+ * states as "no opinion", so such a viewer would never be corrected.
+ *
+ * Repair rule, pure so it runs under `node --test`: while the claimed
+ * state is one that CANNOT legitimately have an advancing clock, count
+ * consecutive reports whose `currentTime` moved forward by more than
+ * report jitter; at two in a row (~500 ms of real playback at the ~264 ms
+ * cadence), the claim is stale — report `playing`. Any report that does
+ * not advance resets the count, so a genuinely parked player never trips
+ * it. `paused`/`buffering`/`ended` are NOT repaired: their frozen clock is
+ * the normal case, and `buffering` advancing briefly is a real state the
+ * corrector's post-seek hold relies on.
+ */
+export interface StuckStateTracker {
+  lastMs: number | null;
+  advances: number;
+}
+
+export const stuckStateTracker = (): StuckStateTracker => ({ lastMs: null, advances: 0 });
+
+/** More than inter-report jitter, less than one report interval of playback. */
+export const STUCK_ADVANCE_MIN_MS = 100;
+export const STUCK_ADVANCES_NEEDED = 2;
+
+const STALE_WHEN_ADVANCING: ReadonlySet<ProviderState> = new Set([
+  "unstarted",
+  "cued",
+  "idle",
+]);
+
+export function trackStuckState(
+  t: StuckStateTracker,
+  state: ProviderState,
+  currentTimeMs: number | null | undefined,
+): { tracker: StuckStateTracker; state: ProviderState } {
+  if (currentTimeMs == null) return { tracker: t, state };
+  if (!STALE_WHEN_ADVANCING.has(state)) {
+    return { tracker: { lastMs: currentTimeMs, advances: 0 }, state };
+  }
+  const advanced = t.lastMs != null && currentTimeMs >= t.lastMs + STUCK_ADVANCE_MIN_MS;
+  const advances = advanced ? t.advances + 1 : 0;
+  return {
+    tracker: { lastMs: currentTimeMs, advances },
+    state: advances >= STUCK_ADVANCES_NEEDED ? "playing" : state,
+  };
+}
+
 /** Human text for an `onError` code (plan §4.3). */
 export function youtubeErrorText(code: number): string {
   switch (code) {

@@ -50,7 +50,10 @@ import {
   type SyncAction,
   type SyncState,
 } from "@revolt/ui/components/features/voice/watch/syncController";
-import { hostUnreachable } from "@revolt/ui/components/features/voice/watch/watchPolicy";
+import {
+  hostUnreachable,
+  needsTapToStart,
+} from "@revolt/ui/components/features/voice/watch/watchPolicy";
 
 /** Viewer corrector tick. */
 const TICK_MS = 500;
@@ -58,8 +61,6 @@ const TICK_MS = 500;
 const HEARTBEAT_MS = 5000;
 /** Host scrub coalescing: at most one PATCH per this window while seeking. */
 const SCRUB_DEBOUNCE_MS = 250;
-/** "Tap to start": no `playing` within this after we asked → autoplay blocked. */
-const AUTOPLAY_GRACE_MS = 3000;
 /** Host-unreachable re-check cadence. */
 const UNREACHABLE_CHECK_MS = 5000;
 /** Jellyfin playstate progress report (plan §5.5: every 10 s). */
@@ -821,12 +822,15 @@ export class WatchTogether {
     for (const a of result.actions) this.#apply(p, a);
 
     // Autoplay-blocked detection: we asked for play and nothing happened.
+    // The rule (incl. `idle` — §7.2a bug B) lives in watchPolicy so it runs
+    // under `node --test`.
     if (
-      s.playing &&
-      this.#playAskedAt != null &&
-      st.state !== "playing" &&
-      nowLocal - this.#playAskedAt > AUTOPLAY_GRACE_MS &&
-      (st.state === "cued" || st.state === "unstarted" || st.state === "paused")
+      needsTapToStart({
+        sessionPlaying: s.playing,
+        playAskedAtMs: this.#playAskedAt,
+        nowLocalMs: nowLocal,
+        providerState: st.state,
+      })
     ) {
       this.#setNeedsTap(true);
     }

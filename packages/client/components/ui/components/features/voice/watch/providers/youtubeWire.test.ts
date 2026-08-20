@@ -9,6 +9,8 @@ import {
   parseYouTubeInput,
   parseYouTubeMessage,
   providerStateFromYt,
+  stuckStateTracker,
+  trackStuckState,
   youtubeEmbedUrl,
   youtubeErrorText,
 } from "./youtubeWire.ts";
@@ -104,4 +106,59 @@ test("state map + error text", () => {
   assert.match(youtubeErrorText(150), /disabled embedding/);
   assert.match(youtubeErrorText(101), /disabled embedding/);
   assert.match(youtubeErrorText(100), /not found/);
+});
+
+test("trackStuckState: a stale unstarted claim with an advancing clock becomes playing", () => {
+  // Simulates the §7.2a bug A trace: playerState stuck at -1 (transition
+  // missed) while currentTime streams on at the ~264 ms cadence.
+  let t = stuckStateTracker();
+  let r = trackStuckState(t, "unstarted", 1000);
+  assert.equal(r.state, "unstarted"); // first sample only seeds
+  r = trackStuckState(r.tracker, "unstarted", 1264);
+  assert.equal(r.state, "unstarted"); // one advance is not proof
+  r = trackStuckState(r.tracker, "unstarted", 1528);
+  assert.equal(r.state, "playing"); // two consecutive advances = playing
+  // ...and idle/cued repair the same way (late join never got a state).
+  t = stuckStateTracker();
+  r = trackStuckState(t, "idle", 500);
+  r = trackStuckState(r.tracker, "idle", 800);
+  r = trackStuckState(r.tracker, "idle", 1100);
+  assert.equal(r.state, "playing");
+});
+
+test("trackStuckState: parked, jittering, or legitimately frozen players are never repaired", () => {
+  // Genuinely parked at 0:00 — clock never moves.
+  let r = trackStuckState(stuckStateTracker(), "unstarted", 0);
+  for (let i = 0; i < 10; i++) r = trackStuckState(r.tracker, "unstarted", 0);
+  assert.equal(r.state, "unstarted");
+  // Sub-jitter wobble (< STUCK_ADVANCE_MIN_MS per report) never counts.
+  r = trackStuckState(stuckStateTracker(), "cued", 1000);
+  r = trackStuckState(r.tracker, "cued", 1050);
+  r = trackStuckState(r.tracker, "cued", 1099);
+  assert.equal(r.state, "cued");
+  // A single advance then a stall resets the count.
+  r = trackStuckState(stuckStateTracker(), "unstarted", 1000);
+  r = trackStuckState(r.tracker, "unstarted", 1300);
+  r = trackStuckState(r.tracker, "unstarted", 1300);
+  r = trackStuckState(r.tracker, "unstarted", 1600);
+  assert.equal(r.state, "unstarted");
+  // paused/buffering are outside the repair set even when advancing.
+  r = trackStuckState(stuckStateTracker(), "paused", 1000);
+  r = trackStuckState(r.tracker, "paused", 1300);
+  r = trackStuckState(r.tracker, "paused", 1600);
+  assert.equal(r.state, "paused");
+  r = trackStuckState(stuckStateTracker(), "buffering", 1000);
+  r = trackStuckState(r.tracker, "buffering", 1300);
+  r = trackStuckState(r.tracker, "buffering", 1600);
+  assert.equal(r.state, "buffering");
+  // Reports with no currentTime leave the tracker untouched.
+  const seed = trackStuckState(stuckStateTracker(), "unstarted", 1000);
+  const noTime = trackStuckState(seed.tracker, "unstarted", null);
+  assert.deepEqual(noTime.tracker, seed.tracker);
+  // Once a REAL state arrives the tracker resets (no repair carry-over).
+  r = trackStuckState(stuckStateTracker(), "unstarted", 1000);
+  r = trackStuckState(r.tracker, "unstarted", 1300);
+  r = trackStuckState(r.tracker, "playing", 1600);
+  r = trackStuckState(r.tracker, "unstarted", 1900);
+  assert.equal(r.state, "unstarted");
 });

@@ -16,6 +16,8 @@ import {
   listeningMessage,
   parseYouTubeMessage,
   providerStateFromYt,
+  stuckStateTracker,
+  trackStuckState,
   YOUTUBE_EMBED_ORIGIN,
   youtubeEmbedUrl,
   youtubeErrorText,
@@ -63,6 +65,8 @@ export class YouTubeProvider implements Provider {
   /** Last reported position + when, for de-staling. */
   #lastReportMs: number | null = null;
   #lastReportAt = 0;
+  /** Stuck-state repair (bug §7.2a A — see trackStuckState). */
+  #stuck = stuckStateTracker();
   #ready = false;
   /** Commands issued before `onReady` are replayed once it lands. */
   #queue: string[] = [];
@@ -96,6 +100,15 @@ export class YouTubeProvider implements Provider {
         if (i.playerState != null) {
           const s = providerStateFromYt(i.playerState);
           if (s) patch.state = s;
+        }
+        // `playerState` rides infoDelivery only ON CHANGE, so a missed
+        // transition leaves the merged state claiming unstarted/cued while
+        // the clock advances — and the corrector then never acts (§7.2a A).
+        {
+          const claimed = patch.state ?? this.#status.state;
+          const repaired = trackStuckState(this.#stuck, claimed, i.currentTimeMs);
+          this.#stuck = repaired.tracker;
+          if (repaired.state !== claimed) patch.state = repaired.state;
         }
         this.#update(patch);
         break;
