@@ -53,6 +53,8 @@ import {
 import {
   hostUnreachable,
   needsTapToStart,
+  pauseIsEnvironmental,
+  shouldResumeSuspendedHost,
 } from "@revolt/ui/components/features/voice/watch/watchPolicy";
 
 /** Viewer corrector tick. */
@@ -200,6 +202,11 @@ export class WatchTogether {
   /** Guards against two concurrent async Jellyfin provider builds for the
    * same session (a re-entrant onUpdate while PlaybackInfo is in flight). */
   #jellyfinStarting: string | undefined;
+  /** The browser paused OUR (host) player in a hidden tab — not host
+   * intent. While set, the session keeps playing, heartbeats extrapolate
+   * the position from the session timeline, and the tick rejoins it once
+   * the tab is shown (plan §7.2c finding 1). */
+  #hostSuspended = false;
 
   constructor() {
     [this.session, this.#setSession] = createSignal<WatchSessionData | undefined>();
@@ -682,6 +689,7 @@ export class WatchTogether {
     this.#provider?.dispose();
     this.#provider = undefined;
     this.#providerKey = undefined;
+    this.#hostSuspended = false;
     this.#setProviderStatus(undefined);
   }
 
@@ -700,9 +708,27 @@ export class WatchTogether {
     if (st.state === "playing") {
       this.#playAskedAt = null;
       this.#setNeedsTap(false);
+      this.#hostSuspended = false;
     }
     if (st.state === "playing" || st.state === "paused" || st.state === "ended") {
-      this.#hostOpinion = st.state;
+      if (
+        pauseIsEnvironmental({
+          isHost: this.isHost(),
+          providerState: st.state,
+          documentHidden: documentHidden(),
+          sessionPlaying: this.session()?.playing === true,
+        })
+      ) {
+        // The browser paused our muted player in a hidden tab (§7.2c) —
+        // never host intent (a hidden tab cannot be clicked). The opinion
+        // stays "playing" so neither this transition nor a heartbeat writes
+        // a pause; the tick rejoins the timeline when the tab is shown.
+        this.#hostSuspended = true;
+      } else if (!(this.#hostSuspended && st.state === "paused")) {
+        // While suspended, repeat paused reports (volume changes etc.)
+        // must not sneak the opinion back to paused either.
+        this.#hostOpinion = st.state;
+      }
     }
     if (this.isHost()) {
       // A STATE TRANSITION the host's player reports (clicked the video,
@@ -757,6 +783,30 @@ export class WatchTogether {
     const nowServer = this.#serverNow();
 
     if (this.isHost()) {
+      // Environment-suspended (§7.2c): the browser paused our player in a
+      // hidden tab. Rejoin the session's timeline once the tab is shown;
+      // a real session pause (moderator, our own control) clears the mode.
+      if (this.#hostSuspended) {
+        if (!s.playing) {
+          this.#hostSuspended = false;
+        } else if (
+          shouldResumeSuspendedHost({
+            suspended: true,
+            documentHidden: documentHidden(),
+            sessionPlaying: s.playing,
+          })
+        ) {
+          // Re-issued each tick until the playing transition clears the
+          // flag — the first play() after a long suspension can be eaten
+          // by a still-booting embed.
+          const expected = expectedPosition(
+            { playing: s.playing, positionMs: s.position_ms, positionAt: s.position_at, ratePermille: s.rate_permille },
+            nowServer,
+          );
+          p.seek(expected);
+          p.play();
+        }
+      }
       // Host is ground truth: no correction. But a host scrubbing YouTube's
       // own bar WHILE PAUSED produces no state transition — the viewers
       // would only learn the new position at the next heartbeat. Write when
@@ -922,7 +972,21 @@ export class WatchTogether {
     // (every seek, every pause passes through it) keeps the last opinion.
     const playing =
       over.playing ?? (this.#hostOpinion ? this.#hostOpinion === "playing" : s.playing);
-    const positionMs = Math.max(0, Math.round(over.positionMs ?? st?.currentTimeMs ?? s.position_ms));
+    // A suspended host's player clock is frozen by the browser (§7.2c) —
+    // heartbeats extrapolate from the session timeline instead, so viewers
+    // are not dragged back to the freeze point every 5 s.
+    const positionMs = Math.max(
+      0,
+      Math.round(
+        over.positionMs ??
+          (this.#hostSuspended
+            ? expectedPosition(
+                { playing: s.playing, positionMs: s.position_ms, positionAt: s.position_at, ratePermille: s.rate_permille },
+                this.#serverNow(),
+              )
+            : st?.currentTimeMs ?? s.position_ms),
+      ),
+    );
     const ratePermille = over.ratePermille ?? s.rate_permille;
     this.#inFlight = (async () => {
       const r = await ch.updateWatch({
@@ -947,6 +1011,11 @@ export class WatchTogether {
     });
     await this.#inFlight;
   }
+}
+
+/** Whether the document is hidden — the environment-pause tell (§7.2c). */
+function documentHidden(): boolean {
+  return typeof document !== "undefined" && document.hidden === true;
 }
 
 function providerKey(m: WatchMediaData): string {

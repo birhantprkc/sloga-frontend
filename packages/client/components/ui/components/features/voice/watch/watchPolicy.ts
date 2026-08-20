@@ -83,6 +83,41 @@ export function hostUnreachable(i: {
  * tapping replays the queued play() once the player does come up, and a
  * player that never comes up at all ends in `error`, not here.
  */
+/**
+ * Environment-pause rule (plan §7.2c finding 1): Chrome pauses a MUTED
+ * video in a hidden/unfocused tab. On the host that pause used to be
+ * written as host truth — a muted host switching tabs paused the movie for
+ * the whole call. A pause that arrives while the document is hidden cannot
+ * be host intent (a hidden tab cannot be clicked), so it is classified as
+ * the browser suspending the player: the session keeps playing, heartbeats
+ * extrapolate the position, and the host rejoins the session timeline when
+ * the tab is shown again.
+ *
+ * Accepted miss: a hardware media-key pause routed to a hidden tab would
+ * also be classified environmental. Media keys route to audible tabs and
+ * this pause only fires on muted playback, so the overlap is negligible —
+ * and the old behavior (every tab switch pauses everyone) was worse.
+ */
+export function pauseIsEnvironmental(i: {
+  isHost: boolean;
+  providerState: string;
+  documentHidden: boolean;
+  /** The SESSION is playing (a pause agreeing with a paused session is moot). */
+  sessionPlaying: boolean;
+}): boolean {
+  return i.isHost && i.sessionPlaying && i.providerState === "paused" && i.documentHidden;
+}
+
+/** A suspended host rejoins the session timeline only once its tab is
+ * shown again — issuing play() while still hidden just fights the browser. */
+export function shouldResumeSuspendedHost(i: {
+  suspended: boolean;
+  documentHidden: boolean;
+  sessionPlaying: boolean;
+}): boolean {
+  return i.suspended && i.sessionPlaying && !i.documentHidden;
+}
+
 export const AUTOPLAY_GRACE_MS = 3000;
 export const IDLE_BOOT_GRACE_MS = 12_000;
 

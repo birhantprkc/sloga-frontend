@@ -9,6 +9,8 @@ import {
   IDLE_BOOT_GRACE_MS,
   hostUnreachable,
   needsTapToStart,
+  pauseIsEnvironmental,
+  shouldResumeSuspendedHost,
   watchButtonVisible,
   watchCanStart,
   watchOverlayVisible,
@@ -82,6 +84,30 @@ test("needsTapToStart: idle grace anchors on the provider's ready moment (7.2b i
     needsTapToStart({ ...base, providerState: "paused", nowLocalMs: AUTOPLAY_GRACE_MS + 1, readyAtMs: null }),
     true,
   );
+});
+
+test("pauseIsEnvironmental: only a host pause in a hidden tab during a playing session (7.2c)", () => {
+  const env = { isHost: true, providerState: "paused", documentHidden: true, sessionPlaying: true };
+  assert.equal(pauseIsEnvironmental(env), true);
+  // A visible tab CAN be clicked — that pause is host intent.
+  assert.equal(pauseIsEnvironmental({ ...env, documentHidden: false }), false);
+  // Viewers have their own corrector; the rule is host-only.
+  assert.equal(pauseIsEnvironmental({ ...env, isHost: false }), false);
+  // A pause agreeing with a paused session changes nothing.
+  assert.equal(pauseIsEnvironmental({ ...env, sessionPlaying: false }), false);
+  // Only pause is ever environmental — ended/playing are real.
+  assert.equal(pauseIsEnvironmental({ ...env, providerState: "ended" }), false);
+  assert.equal(pauseIsEnvironmental({ ...env, providerState: "playing" }), false);
+});
+
+test("shouldResumeSuspendedHost: rejoin only when shown and still playing", () => {
+  const base = { suspended: true, documentHidden: false, sessionPlaying: true };
+  assert.equal(shouldResumeSuspendedHost(base), true);
+  // Still hidden: play() would just fight the browser.
+  assert.equal(shouldResumeSuspendedHost({ ...base, documentHidden: true }), false);
+  // Session paused for real in the meantime: nothing to rejoin.
+  assert.equal(shouldResumeSuspendedHost({ ...base, sessionPlaying: false }), false);
+  assert.equal(shouldResumeSuspendedHost({ ...base, suspended: false }), false);
 });
 
 test("needsTapToStart: session paused, never-asked, and in-grace all stay quiet", () => {
