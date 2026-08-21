@@ -1,6 +1,15 @@
-import { Match, Show, Switch, createSignal, onMount } from "solid-js";
+import {
+  Match,
+  Show,
+  Switch,
+  createEffect,
+  createResource,
+  createSignal,
+  onCleanup,
+  onMount,
+} from "solid-js";
 
-import { Trans } from "@lingui-solid/solid/macro";
+import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import { PublicChannelInvite } from "stoat.js";
 import { css, cva } from "styled-system/css";
 import { styled } from "styled-system/jsx";
@@ -51,6 +60,14 @@ const DOT_COLORS = [
  * exactly like the loader — so the same brand animation can drive them.
  */
 const O = { cx: 115, cy: 55, ring: 29, core: 10 };
+
+/**
+ * How often the moderation queue counts on the home tiles are refreshed. Only
+ * privileged accounts poll at all, and only while the home screen is mounted
+ * and visible; acting on a queue refreshes it immediately when the modal
+ * closes, so this is just the backstop for items filed by someone else.
+ */
+const QUEUE_POLL_INTERVAL = 60_000;
 
 /** Length of one click-burst; long enough to read the spiral, short enough to feel like a flourish. */
 const BURST_DURATION = "2400ms";
@@ -173,6 +190,30 @@ export function SlogaWordmark(props: {
 }
 
 /**
+ * Count of items still awaiting a decision, shown on the moderation tiles.
+ * Hidden entirely at zero, so a badge only ever means "there is work here".
+ */
+const QueueBadge = styled("div", {
+  base: {
+    minWidth: "20px",
+    height: "20px",
+    padding: "0 6px",
+    flexShrink: 0,
+
+    display: "grid",
+    placeItems: "center",
+
+    borderRadius: "var(--borderRadius-full)",
+    background: "var(--md-sys-color-error)",
+    color: "var(--md-sys-color-on-error)",
+
+    fontSize: "12px",
+    fontWeight: 600,
+    lineHeight: 1,
+  },
+});
+
+/**
  * Base layout of the home page (i.e. the header/background)
  */
 const Base = styled("div", {
@@ -235,9 +276,76 @@ const SeparatedColumn = styled(Column, {
  * Home page
  */
 export function HomePage() {
-  const { openModal } = useModals();
+  const { openModal, isOpen } = useModals();
+  const { t } = useLingui();
   const navigate = useNavigate();
   const client = useClient();
+
+  const isPrivileged = () => !!client()!.user?.privileged;
+
+  /**
+   * Pending counts for the two moderation queues.
+   *
+   * These hit the same routes the queue modals do — and for the same reason
+   * they use fetch directly: stoat-api's typed client silently drops requests
+   * to routes missing from its generated route tables. Each side is settled
+   * independently so one failing route still leaves the other's badge correct;
+   * a failed side reports `undefined`, which renders as no badge rather than a
+   * misleading zero.
+   */
+  const [queues, { refetch: refetchQueues }] = createResource(
+    () => (isPrivileged() ? client()! : undefined),
+    async (c) => {
+      const api = c.api as unknown as {
+        baseURL: string;
+        auth: Record<string, string>;
+      };
+
+      const get = async (path: string) => {
+        const response = await fetch(api.baseURL + path, {
+          headers: { ...api.auth },
+        });
+        if (!response.ok) throw await response.text();
+        return response.json();
+      };
+
+      const [reports, listings] = await Promise.allSettled([
+        get("/safety/reports"),
+        get("/discover/requests"),
+      ]);
+
+      return {
+        reports:
+          reports.status === "fulfilled"
+            ? (reports.value as { status: string }[]).filter(
+                (report) => report.status === "Created",
+              ).length
+            : undefined,
+        listings:
+          listings.status === "fulfilled"
+            ? ((listings.value as { servers?: unknown[] }).servers ?? []).length
+            : undefined,
+      };
+    },
+  );
+
+  onMount(() => {
+    const timer = setInterval(() => {
+      // Don't poll a screen nobody is looking at.
+      if (isPrivileged() && !document.hidden) refetchQueues();
+    }, QUEUE_POLL_INTERVAL);
+
+    onCleanup(() => clearInterval(timer));
+  });
+
+  // Refresh as soon as a queue modal closes, so clearing the last item drops
+  // the badge right away instead of waiting out the poll.
+  let queueModalWasOpen = false;
+  createEffect(() => {
+    const open = isOpen("report_queue") || isOpen("discovery_queue");
+    if (queueModalWasOpen && !open) refetchQueues();
+    queueModalWasOpen = open;
+  });
 
   // check if we're stoat.chat; if so, check if the user is in the Lounge
   const showLoungeButton = CONFIGURATION.IS_STOAT;
@@ -344,7 +452,9 @@ export function HomePage() {
               <Trans>Add a Friend</Trans>
             </CategoryButton>
             </div>
+            <div style={{"--md-sys-color-primary": "#27A163", "--md-sys-color-on-primary": "#05090F"}}>
             <CategoryButton
+              variant="filled"
               onClick={() => navigate("/discover")}
               description={
                 <Trans>
@@ -355,6 +465,7 @@ export function HomePage() {
             >
               <Trans>Discover Sloga</Trans>
             </CategoryButton>
+            </div>
             <Show when={client()!.user?.privileged}>
               <CategoryButton
                 onClick={() =>
@@ -364,6 +475,17 @@ export function HomePage() {
                   <Trans>Review and resolve open content reports.</Trans>
                 }
                 icon={<MdReport />}
+                action={
+                  <Show when={queues()?.reports}>
+                    {(count) => (
+                      <QueueBadge
+                        aria-label={t`${count()} reports awaiting review`}
+                      >
+                        {count()}
+                      </QueueBadge>
+                    )}
+                  </Show>
+                }
               >
                 <Trans>Report queue</Trans>
               </CategoryButton>
@@ -377,6 +499,17 @@ export function HomePage() {
                   </Trans>
                 }
                 icon={<MdTravelExplore />}
+                action={
+                  <Show when={queues()?.listings}>
+                    {(count) => (
+                      <QueueBadge
+                        aria-label={t`${count()} listing requests awaiting review`}
+                      >
+                        {count()}
+                      </QueueBadge>
+                    )}
+                  </Show>
+                }
               >
                 <Trans>Listing requests</Trans>
               </CategoryButton>
