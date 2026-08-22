@@ -164,14 +164,32 @@ const Dock = styled("button", {
     boxShadow: "0 2px 10px rgba(0,0,0,0.45)",
     transition: "opacity .3s, border-color .3s",
 
-    // The mark wants to stay small and unobtrusive, but 34px is well under the
-    // 44px minimum touch target — so the hit area is grown invisibly rather
-    // than by making the dot bigger.
+    // On a pointer device the mark stays small and unobtrusive, but 34px is
+    // well under the 44px minimum touch target — so the hit area is grown
+    // invisibly rather than by making the dot bigger.
     "&::after": {
       content: '""',
       position: "absolute",
       inset: "-5px",
       borderRadius: "50%",
+    },
+
+    // Phones get a genuinely bigger mark: at 34px on a high-density screen the
+    // eight dots are too small to read as the brand, and this is the platform
+    // where the indicator matters most. Same condition MainBar uses, so it
+    // also covers a phone held in landscape.
+    _phone: {
+      width: "46px",
+      height: "46px",
+      padding: "7px",
+
+      // 46px already clears the touch-target minimum on its own, so the
+      // invisible growth is dropped here. Left in, it would put a ~56px
+      // transparent circle over the top-centre of the screen — right where the
+      // channel title sits — and silently eat taps meant for it.
+      "&::after": {
+        inset: "0",
+      },
     },
   },
   variants: {
