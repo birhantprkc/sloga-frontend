@@ -45,32 +45,32 @@ msgstr "(los cambios se están guardando…)"
 #. placeholder {0}: attachmentCount()
 #: src/interface/ServerEvents.tsx
 msgid "{0, plural, one {# / 10 file attached} other {# / 10 files attached}}"
-msgstr "{0, plural, uno {# / 10 file attached} otro {# / 10 files attached}}"
+msgstr "{0, plural, one {# / 10 archivo adjunto} other {# / 10 archivos adjuntos}}"
 
 #. placeholder {0}: props.count
 #: components/ui/components/features/messaging/elements/BlockedMessage.tsx
 msgid "{0, plural, one {# blocked message} other {# blocked messages}}"
-msgstr "{0, plural, uno {# blocked message} otro {# blocked messages}}"
+msgstr "{0, plural, one {# mensaje bloqueado} other {# mensajes bloqueados}}"
 
 #. placeholder {0}: props.server.memberCount
 #: components/modal/modals/DiscoverJoin.tsx
 msgid "{0, plural, one {# member} other {# members}}"
-msgstr "{0, plural, uno {# member} otro {# members}}"
+msgstr "{0, plural, one {# miembro} other {# miembros}}"
 
 #. placeholder {0}: current().total_reserves
 #: src/interface/ServerEvents.tsx
 msgid "{0, plural, one {# raider reserved} other {# raiders reserved}}"
-msgstr "{0, plural, uno {# raider reserved} otro {# raiders reserved}}"
+msgstr "{0, plural, one {# raider reservado} other {# raiders reservados}}"
 
 #. placeholder {0}: items().length
 #: components/ui/components/utils/files/FileDropAnywhereCollector.tsx
 msgid "{0, plural, one {Drop a file} other {Drop # files}}"
-msgstr "{0, plural, uno {Drop a file} otro {Drop # files}}"
+msgstr "{0, plural, one {Suelta un archivo} other {Suelta # archivos}}"
 
 #. placeholder {0}: lastInvite()!.invited
 #: src/interface/ServerEvents.tsx
 msgid "{0, plural, one {Invited # member} other {Invited # members}}"
-msgstr "{0, plural, uno {Invited # member} otro {Invited # members}}"
+msgstr "{0, plural, one {# miembro invitado} other {# miembros invitados}}"
 
 #. placeholder {0}: preset.label
 #. placeholder {0}: existingHash ? "Update Password" : "Set Password"
