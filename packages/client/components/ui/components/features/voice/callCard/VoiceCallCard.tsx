@@ -76,22 +76,43 @@ export function VoiceCallCardContext(props: { children: JSX.Element }) {
     }
   }
 
+  /**
+   * Where the card's top-left lands for this pointer, clamped to the viewport.
+   * A drag is otherwise free to carry the card off-screen, and `mouseUp` is the
+   * only thing that ever brings it back — which is exactly the step a cancelled
+   * gesture skips.
+   */
+  function cardPos(e: PointerEvent) {
+    const { width, height } = ref!.getBoundingClientRect();
+    return {
+      width,
+      height,
+      x: Math.min(
+        Math.max(e.clientX - ofsX, 0),
+        Math.max(0, innerWidth - width),
+      ),
+      y: Math.min(
+        Math.max(e.clientY - ofsY, 0),
+        Math.max(0, innerHeight - height),
+      ),
+    };
+  }
+
   function mouseMove(e: PointerEvent) {
     if (e.pointerId !== pid) return;
     e.preventDefault();
-    const x = e.clientX - ofsX,
-      y = e.clientY - ofsY;
+    const { x, y } = cardPos(e);
     ref!.style.transform = `translate(${x}px, ${y}px)`;
   }
 
   function mouseUp(e: PointerEvent) {
     if (e.pointerId !== pid) return;
     const sty = ref!.style,
-      pos = ref!.getBoundingClientRect(),
+      pos = cardPos(e),
       // Card centre as a fraction of the viewport; outer thirds dock to that
       // edge/corner, the middle third docks to the centre of the axis.
-      cx = (e.clientX - ofsX + pos.width / 2) / innerWidth,
-      cy = (e.clientY - ofsY + pos.height / 2) / innerHeight,
+      cx = (pos.x + pos.width / 2) / innerWidth,
+      cy = (pos.y + pos.height / 2) / innerHeight,
       h = cx < 1 / 3 ? "l" : cx > 2 / 3 ? "r" : "c",
       v = cy < 1 / 3 ? "t" : cy > 2 / 3 ? "b" : "c";
 
@@ -119,6 +140,13 @@ export function VoiceCallCardContext(props: { children: JSX.Element }) {
     const opt = { passive: false, signal: events.signal };
     document.addEventListener("pointermove", mouseMove, opt);
     document.addEventListener("pointerup", mouseUp, opt);
+    // Android hands a drag over to the system — edge swipe, notification
+    // shade, an incoming call — by firing pointercancel INSTEAD of pointerup.
+    // Without this the card keeps whatever raw transform the last move wrote,
+    // `mode` stays "moving", and `mouseDown` then refuses to re-arm because it
+    // only starts a drag from "floating": the card is stranded, half off the
+    // screen, for the rest of the session.
+    document.addEventListener("pointercancel", mouseUp, opt);
   }
 
   function resetEvents() {
