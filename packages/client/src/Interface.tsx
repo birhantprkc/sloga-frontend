@@ -246,6 +246,20 @@ const Layout = styled("div", {
     height: "100%",
     minWidth: 0,
 
+    // Containing block for the nav block. At phone widths `MainBar` is
+    // `position: absolute; height: 100%` with no `top`, so it takes its STATIC
+    // position — below whatever chrome precedes it — while sizing itself
+    // against its containing block. With no positioned ancestor here that was
+    // `#root`, i.e. the whole viewport, so the moment the connection banner
+    // (or the streamer banner) appeared, MainBar hung its own top offset past
+    // the bottom of the screen and took the floating user bar with it: the bar
+    // sat ~19px below the fold and its second line was cut off. Reported from
+    // a real device on 2026-08-22, and reproducible exactly.
+    //
+    // Layout's used height already excludes that chrome, so anchoring here
+    // clamps MainBar to the visible area in every combination.
+    position: "relative",
+
     // These two used to be the "connected" half of a `disconnected` variant
     // copied down from the title bar. The other half painted this whole
     // container brand-accent blue whenever the socket was down, which is not
