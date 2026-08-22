@@ -17,6 +17,8 @@ import MdMinimize from "@material-symbols/svg-400/outlined/minimize.svg?componen
 import Wordmark from "../../../../scripts/assets_fallback/web/wordmark.svg?component-solid";
 import { pendingUpdate } from "../../../../src/serviceWorkerInterface";
 
+import { ConnectionIndicator } from "../ConnectionIndicator";
+
 const isMacOS = navigator.platform.startsWith("Mac");
 
 /**
@@ -102,83 +104,69 @@ export function Titlebar() {
     ].includes(lifecycle.state());
   }
 
-  /** Trouble that clears on its own, versus trouble the user may have to act on. */
-  function isTransient() {
-    return [State.Connecting, State.Reconnecting].includes(lifecycle.state());
-  }
-
   function maximise() {
     window.native.maximise();
     setIsMaximised((t) => !t);
   }
 
   return (
-    <Presence>
-      <Show when={hasCustomFrame() || isDisconnected()}>
+    <Show when={hasCustomFrame()} fallback={<ConnectionIndicator />}>
+      <Presence>
         <Motion.div
           initial={{ height: 0 }}
           animate={{ height: "29px" }}
           exit={{ height: 0 }}
         >
-          <Show
-            when={hasCustomFrame()}
-            fallback={
-              <Banner severity={isTransient() ? "transient" : "lost"}>
-                <ConnectionStatus />
-              </Banner>
-            }
-          >
-            <Base disconnected={isDisconnected()}>
-              <Title
-                macos={isMacOS}
-                style={{
-                  "-webkit-user-select": "none",
-                  "-webkit-app-region": "drag",
-                }}
-              >
-                <Wordmark
-                  class={css({
-                    height: "18px",
-                    marginBlockStart: "1px",
-                  })}
-                />{" "}
-                <Show when={import.meta.env.DEV}>
-                  <MdBuild {...symbolSize(16)} />
-                </Show>
-              </Title>
-              <DragHandle
-                macos={isMacOS}
-                style={{
-                  "-webkit-user-select": "none",
-                  "-webkit-app-region": "drag",
-                }}
-              >
-                <ConnectionStatus />
-              </DragHandle>
-              <Show when={window.native && !isMacOS}>
-                <Action onClick={window.native.minimise}>
-                  <Ripple />
-                  <MdMinimize {...symbolSize(20)} />
-                </Action>
-                <Action onClick={maximise}>
-                  <Ripple />
-                  <Show
-                    when={isMaximised()}
-                    fallback={<MdExpandContent {...symbolSize(20)} />}
-                  >
-                    <MdCollapseContent {...symbolSize(20)} />
-                  </Show>
-                </Action>
-                <Action onClick={window.native.close}>
-                  <Ripple />
-                  <MdClose {...symbolSize(20)} />
-                </Action>
+          <Base disconnected={isDisconnected()}>
+            <Title
+              macos={isMacOS}
+              style={{
+                "-webkit-user-select": "none",
+                "-webkit-app-region": "drag",
+              }}
+            >
+              <Wordmark
+                class={css({
+                  height: "18px",
+                  marginBlockStart: "1px",
+                })}
+              />{" "}
+              <Show when={import.meta.env.DEV}>
+                <MdBuild {...symbolSize(16)} />
               </Show>
-            </Base>
-          </Show>
+            </Title>
+            <DragHandle
+              macos={isMacOS}
+              style={{
+                "-webkit-user-select": "none",
+                "-webkit-app-region": "drag",
+              }}
+            >
+              <ConnectionStatus />
+            </DragHandle>
+            <Show when={window.native && !isMacOS}>
+              <Action onClick={window.native.minimise}>
+                <Ripple />
+                <MdMinimize {...symbolSize(20)} />
+              </Action>
+              <Action onClick={maximise}>
+                <Ripple />
+                <Show
+                  when={isMaximised()}
+                  fallback={<MdExpandContent {...symbolSize(20)} />}
+                >
+                  <MdCollapseContent {...symbolSize(20)} />
+                </Show>
+              </Action>
+              <Action onClick={window.native.close}>
+                <Ripple />
+                <MdClose {...symbolSize(20)} />
+              </Action>
+            </Show>
+          </Base>
         </Motion.div>
-      </Show>
-    </Presence>
+      </Presence>
+    </Show>
   );
 }
 
@@ -202,46 +190,6 @@ const Base = styled("div", {
       false: {
         color: "var(--md-sys-color-outline)",
         background: "var(--md-sys-color-surface-container-high)",
-      },
-    },
-  },
-});
-
-/**
- * The connection notice everywhere that does NOT paint its own window chrome.
- *
- * Kept a separate presentation rather than a narrower title bar, because the
- * bar above is window furniture: wordmark, drag region, minimise / maximise /
- * close. None of that means anything on a phone, and on Android it shipped as
- * a 29px slab of brand accent with the desktop furniture crammed into it.
- * Same height, so the enter/exit animation is unchanged.
- */
-const Banner = styled("div", {
-  base: {
-    height: "100%",
-
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: "var(--gap-sm)",
-
-    paddingInline: "var(--gap-md)",
-    fontSize: "0.8em",
-    fontWeight: 600,
-    whiteSpace: "nowrap",
-    userSelect: "none",
-  },
-  variants: {
-    severity: {
-      /** Connecting / Reconnecting — quiet, this usually clears in a second. */
-      transient: {
-        color: "var(--md-sys-color-on-secondary-container)",
-        background: "var(--md-sys-color-secondary-container)",
-      },
-      /** Disconnected / Offline — the user has to notice, and may have to act. */
-      lost: {
-        color: "var(--md-sys-color-on-error-container)",
-        background: "var(--md-sys-color-error-container)",
       },
     },
   },
