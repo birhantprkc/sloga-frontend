@@ -119,6 +119,27 @@ class Lifecycle {
 
     this.client = null!;
     this.dispose();
+
+    // State.Offline was a DEAD END. `DeviceOnline` is the only way out of it
+    // besides a manual Retry, and nothing in the app ever dispatched it — so
+    // once the device dropped its network, restoring the network changed
+    // nothing and the offline notice stayed up until the user tapped
+    // "reconnect now". Reported from a real Android device on 2026-08-22:
+    // wifi off, wifi back on, bar never cleared.
+    //
+    // Bound here rather than in dispose(): dispose() reruns for every new
+    // client and would stack a duplicate listener each time.
+    //
+    // The state guard is not decoration — `DeviceOnline` is only handled by
+    // the Offline arm, so firing it in any other state trips the
+    // "An unhandled transition occurred!" branch at the bottom of transition().
+    if (typeof window !== "undefined") {
+      window.addEventListener("online", () => {
+        if (this.state() === State.Offline) {
+          this.transition({ type: TransitionType.DeviceOnline });
+        }
+      });
+    }
   }
 
   private dispose() {
