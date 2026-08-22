@@ -18,7 +18,6 @@ import { Titlebar } from "@revolt/app/interface/desktop/Titlebar";
 import { useClient, useClientLifecycle } from "@revolt/client";
 import { ActivityWorker } from "@revolt/client/ActivityWorker";
 import { ApkUpdateWorker } from "@revolt/client/ApkUpdateWorker";
-import { State } from "@revolt/client/Controller";
 import { DiscordImportWorker } from "@revolt/client/DiscordImportWorker";
 import { NotificationsWorker } from "@revolt/client/NotificationsWorker";
 import { StreamerModeWorker } from "@revolt/client/StreamerModeWorker";
@@ -85,15 +84,6 @@ const Interface = (props: { children: JSX.Element }) => {
     }
   });
 
-  function isDisconnected() {
-    return [
-      State.Connecting,
-      State.Disconnected,
-      State.Reconnecting,
-      State.Offline,
-    ].includes(lifecycle.state());
-  }
-
   //Drawer slider for mobile
   let rootRef, sDrawer: SlideDrawer | undefined;
   const [contRef, setContRef] = createSignal<HTMLDivElement>();
@@ -149,7 +139,6 @@ const Interface = (props: { children: JSX.Element }) => {
                 at the root — this subtree used to do it alone, which left
                 modals, portals and the login page navigating away */}
             <Layout
-              disconnected={isDisconnected()}
               navRight={sides().nav === "right"}
               style={{ "flex-grow": 1, "min-height": 0 }}
             >
@@ -256,6 +245,15 @@ const Layout = styled("div", {
     display: "flex",
     height: "100%",
     minWidth: 0,
+
+    // These two used to be the "connected" half of a `disconnected` variant
+    // copied down from the title bar. The other half painted this whole
+    // container brand-accent blue whenever the socket was down, which is not
+    // something an app-wide container should ever do; the connection notice
+    // belongs to <Titlebar/> above. Kept as the base so every connected state
+    // looks exactly as it did.
+    color: "var(--md-sys-color-outline)",
+    background: "var(--md-sys-color-surface-container-high)",
   },
   variants: {
     /**
@@ -267,16 +265,6 @@ const Layout = styled("div", {
     navRight: {
       true: {
         flexDirection: "row-reverse",
-      },
-    },
-    disconnected: {
-      true: {
-        color: "var(--md-sys-color-on-primary-container)",
-        background: "var(--md-sys-color-primary-container)",
-      },
-      false: {
-        color: "var(--md-sys-color-outline)",
-        background: "var(--md-sys-color-surface-container-high)",
       },
     },
   },
