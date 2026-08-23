@@ -14,6 +14,8 @@ import {
   probeNode,
   resetVoiceNodeCache,
   selectVoiceNode,
+  serverVoiceRegion,
+  voiceNodeForChannel,
 } from "./voiceNode.ts";
 
 const NJ: VoiceNodeInfo = {
@@ -162,5 +164,60 @@ test("selectVoiceNode without a configuration uses the default", async () => {
       fetch: impl,
     }),
     DEFAULT_VOICE_NODE,
+  );
+});
+
+test("serverVoiceRegion only honours a region the API still advertises", () => {
+  const withServer = (voiceRegion?: string) =>
+    ({ server: { voiceRegion } }) as never;
+  assert.equal(serverVoiceRegion(withServer("brazil"), [NJ, BR]), "brazil");
+  assert.equal(
+    serverVoiceRegion(withServer("worldwide"), [NJ, BR]),
+    "worldwide",
+  );
+  // Auto
+  assert.equal(serverVoiceRegion(withServer(undefined), [NJ, BR]), undefined);
+  // a retired node name must not be sent — the latency pick takes over
+  assert.equal(serverVoiceRegion(withServer("moon"), [NJ, BR]), undefined);
+  // DM / group: no server at all
+  assert.equal(
+    serverVoiceRegion({ server: undefined } as never, [NJ, BR]),
+    undefined,
+  );
+});
+
+test("voiceNodeForChannel prefers the server region and never probes for it", async () => {
+  resetVoiceNodeCache();
+  const { impl, calls } = fakeFetch({
+    "https://app.sloga.gg/livekit/": 5,
+    "https://br1.sloga.gg/": 60,
+  });
+  const client = {
+    configuration: {
+      features: { livekit: { enabled: true, nodes: [NJ, BR] } },
+    },
+  } as never;
+
+  // region set: the (slower) Brazilian node is named without a single probe
+  const pinned = { server: { voiceRegion: "brazil" } } as never;
+  assert.equal(
+    await voiceNodeForChannel(client, pinned, { fetch: impl }),
+    "brazil",
+  );
+  assert.equal(calls.length, 0);
+
+  // Auto: falls through to the latency pick
+  const auto = { server: { voiceRegion: undefined } } as never;
+  assert.equal(
+    await voiceNodeForChannel(client, auto, { fetch: impl }),
+    "worldwide",
+  );
+  assert.ok(calls.length > 0, "the auto path must probe");
+
+  // a region the API no longer advertises also falls through (cached pick)
+  const stale = { server: { voiceRegion: "moon" } } as never;
+  assert.equal(
+    await voiceNodeForChannel(client, stale, { fetch: impl }),
+    "worldwide",
   );
 });

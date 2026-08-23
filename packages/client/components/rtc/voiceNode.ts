@@ -21,7 +21,7 @@
  * back to {@link DEFAULT_VOICE_NODE} — the behaviour before this existed —
  * so a broken or unreachable node can never block joining a call.
  */
-import type { Client } from "stoat.js";
+import type { Channel, Client } from "stoat.js";
 
 /** The node the client used before selection existed. */
 export const DEFAULT_VOICE_NODE = "worldwide";
@@ -132,6 +132,45 @@ export function resetVoiceNodeCache(): void {
   cached = undefined;
 }
 
+/** The advertised node list, as the API root published it. */
+export function advertisedVoiceNodes(client: Client): VoiceNodeInfo[] {
+  return (client.configuration?.features?.livekit?.nodes ??
+    []) as VoiceNodeInfo[];
+}
+
+/**
+ * A server's configured voice region, if it names a node the API currently
+ * advertises. A region naming a node that has since been retired (or a
+ * DM/group channel, which has no server) yields `undefined` so the caller
+ * falls back to the latency pick instead of naming a node that no longer
+ * exists — the backend applies the same rule on its side.
+ */
+export function serverVoiceRegion(
+  channel: Pick<Channel, "server">,
+  nodes: readonly VoiceNodeInfo[],
+): string | undefined {
+  const region = channel.server?.voiceRegion;
+  if (!region) return undefined;
+  return nodes.some((node) => node.name === region) ? region : undefined;
+}
+
+/**
+ * The node to name in `join_call` for THIS channel: the owning server's
+ * voice region when one is set (Server Settings → Overview → Voice region),
+ * otherwise the cached lowest-latency pick. Only decisive for a room's first
+ * joiner — the server pins a channel to the node that opened it.
+ */
+export async function voiceNodeForChannel(
+  client: Client,
+  channel: Pick<Channel, "server">,
+  opts: ProbeOptions & { now?: () => number } = {},
+): Promise<string> {
+  return (
+    serverVoiceRegion(channel, advertisedVoiceNodes(client)) ??
+    (await selectVoiceNode(client, opts))
+  );
+}
+
 /**
  * The node to name in `join_call` for this client, cached for
  * {@link PICK_TTL_MS}. Reads the node list the API root advertised.
@@ -143,8 +182,7 @@ export async function selectVoiceNode(
   const now = opts.now ?? Date.now;
   if (cached && now() - cached.at < PICK_TTL_MS) return cached.node;
 
-  const nodes = (client.configuration?.features?.livekit?.nodes ??
-    []) as VoiceNodeInfo[];
+  const nodes = advertisedVoiceNodes(client);
   let node = DEFAULT_VOICE_NODE;
   try {
     node = await pickVoiceNode(nodes, opts);

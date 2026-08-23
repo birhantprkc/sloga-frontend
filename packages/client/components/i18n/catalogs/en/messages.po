@@ -1090,6 +1090,10 @@ msgstr "Audio output"
 msgid "Authenticator App"
 msgstr "Authenticator App"
 
+#: components/app/interface/settings/server/Overview.tsx
+msgid "Auto (lowest latency)"
+msgstr "Auto (lowest latency)"
+
 #: components/app/interface/settings/user/voice/CameraOptions.tsx
 #: components/app/interface/settings/user/voice/CameraOptions.tsx
 msgid "Auto"
@@ -5796,6 +5800,10 @@ msgstr "Something went wrong while signing you in with Google. Please try again.
 msgid "Something went wrong! {error}"
 msgstr "Something went wrong! {error}"
 
+#: components/app/interface/settings/server/Overview.tsx
+msgid "South America (São Paulo)"
+msgstr "South America (São Paulo)"
+
 #: components/app/interface/settings/user/voice/EntranceSoundOptions.tsx
 msgid "Sound"
 msgstr "Sound"
@@ -6597,6 +6605,10 @@ msgstr "Unsolicited advertising or spam"
 msgid "Until I turn it back on"
 msgstr "Until I turn it back on"
 
+#: components/app/interface/settings/server/Overview.tsx
+msgid "US East"
+msgstr "US East"
+
 #: src/interface/ServerEvents.tsx
 msgid "Upcoming"
 msgstr "Upcoming"
@@ -6805,6 +6817,7 @@ msgstr "Virtual background"
 #: src/interface/Friends.tsx
 #: components/app/interface/settings/UserSettings.tsx
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
+#: components/app/interface/settings/server/Overview.tsx
 msgid "Voice"
 msgstr "Voice"
 
@@ -6827,6 +6840,10 @@ msgstr "Voice Channel"
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "Voice Processing"
 msgstr "Voice Processing"
+
+#: components/app/interface/settings/server/Overview.tsx
+msgid "Voice region"
+msgstr "Voice region"
 
 #: src/interface/navigation/UserFooter.tsx
 msgid "Voice Settings"
@@ -6929,6 +6946,10 @@ msgstr "When I speak"
 #: components/app/interface/settings/user/voice/AttenuationOptions.tsx
 msgid "When others speak"
 msgstr "When others speak"
+
+#: components/app/interface/settings/server/Overview.tsx
+msgid "Where new calls in this server are hosted. Auto picks the closest node for whoever starts the call; a fixed region is better when most members are in one place. Calls already in progress keep their region."
+msgstr "Where new calls in this server are hosted. Auto picks the closest node for whoever starts the call; a fixed region is better when most members are in one place. Calls already in progress keep their region."
 
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Whether other users can edit these settings"
