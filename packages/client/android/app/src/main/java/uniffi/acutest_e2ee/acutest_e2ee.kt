@@ -878,6 +878,12 @@ internal open class UniffiVTableCallbackInterfaceKeyProtector(
 
 
 
+
+
+
+
+
+
 // For large crates we prevent `MethodTooLargeException` (see #2340)
 // N.B. the name of the extension is very misleading, since it is 
 // rather `InterfaceTooLargeException`, caused by too many methods 
@@ -932,6 +938,8 @@ fun uniffi_acutest_e2ee_checksum_method_e2eeengine_decrypt(
 fun uniffi_acutest_e2ee_checksum_method_e2eeengine_device_removed(
 ): Short
 fun uniffi_acutest_e2ee_checksum_method_e2eeengine_downgrade(
+): Short
+fun uniffi_acutest_e2ee_checksum_method_e2eeengine_downgraded_conversations(
 ): Short
 fun uniffi_acutest_e2ee_checksum_method_e2eeengine_enable(
 ): Short
@@ -997,9 +1005,13 @@ fun uniffi_acutest_e2ee_checksum_method_e2eeengine_mls_publish_key_packages(
 ): Short
 fun uniffi_acutest_e2ee_checksum_method_e2eeengine_mls_replenish(
 ): Short
+fun uniffi_acutest_e2ee_checksum_method_e2eeengine_notify_downgrade(
+): Short
 fun uniffi_acutest_e2ee_checksum_method_e2eeengine_open_attachment_for_render(
 ): Short
 fun uniffi_acutest_e2ee_checksum_method_e2eeengine_pending_downgrades(
+): Short
+fun uniffi_acutest_e2ee_checksum_method_e2eeengine_pin_call_identities(
 ): Short
 fun uniffi_acutest_e2ee_checksum_method_e2eeengine_post_restore_rekey(
 ): Short
@@ -1125,6 +1137,8 @@ fun uniffi_acutest_e2ee_fn_method_e2eeengine_device_removed(`ptr`: Pointer,`user
 ): Unit
 fun uniffi_acutest_e2ee_fn_method_e2eeengine_downgrade(`ptr`: Pointer,`conversationId`: RustBuffer.ByValue,`selfUserId`: RustBuffer.ByValue,`bundlesJson`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+fun uniffi_acutest_e2ee_fn_method_e2eeengine_downgraded_conversations(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 fun uniffi_acutest_e2ee_fn_method_e2eeengine_enable(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 fun uniffi_acutest_e2ee_fn_method_e2eeengine_enable_group(`ptr`: Pointer,`conversationId`: RustBuffer.ByValue,`roster`: RustBuffer.ByValue,`selfUserId`: RustBuffer.ByValue,`bundlesJson`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1189,9 +1203,13 @@ fun uniffi_acutest_e2ee_fn_method_e2eeengine_mls_publish_key_packages(`ptr`: Poi
 ): RustBuffer.ByValue
 fun uniffi_acutest_e2ee_fn_method_e2eeengine_mls_replenish(`ptr`: Pointer,`userId`: RustBuffer.ByValue,`serverRemaining`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+fun uniffi_acutest_e2ee_fn_method_e2eeengine_notify_downgrade(`ptr`: Pointer,`conversationId`: RustBuffer.ByValue,`selfUserId`: RustBuffer.ByValue,`bundlesJson`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 fun uniffi_acutest_e2ee_fn_method_e2eeengine_open_attachment_for_render(`ptr`: Pointer,`messageId`: RustBuffer.ByValue,`idx`: Int,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 fun uniffi_acutest_e2ee_fn_method_e2eeengine_pending_downgrades(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_acutest_e2ee_fn_method_e2eeengine_pin_call_identities(`ptr`: Pointer,`selfUserId`: RustBuffer.ByValue,`userId`: RustBuffer.ByValue,`targets`: RustBuffer.ByValue,`devicesJson`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 fun uniffi_acutest_e2ee_fn_method_e2eeengine_post_restore_rekey(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -1399,16 +1417,19 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_confirm_peer_downgrade() != 40636.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_conversation_state() != 54856.toShort()) {
+    if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_conversation_state() != 51294.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_decrypt() != 52603.toShort()) {
+    if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_decrypt() != 47904.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_device_removed() != 54135.toShort()) {
+    if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_device_removed() != 62585.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_downgrade() != 48428.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_downgraded_conversations() != 56217.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_enable() != 42257.toShort()) {
@@ -1423,7 +1444,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_encrypt_group() != 31947.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_group_reconcile() != 29133.toShort()) {
+    if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_group_reconcile() != 58081.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_group_state() != 36195.toShort()) {
@@ -1432,7 +1453,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_handle_receipts() != 39596.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_history() != 16857.toShort()) {
+    if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_history() != 42752.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_is_provisioned() != 23814.toShort()) {
@@ -1507,16 +1528,22 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_mls_replenish() != 21555.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_notify_downgrade() != 62209.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_open_attachment_for_render() != 17452.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_pending_downgrades() != 48108.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_pin_call_identities() != 10275.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_post_restore_rekey() != 44810.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_reconcile_devices() != 19649.toShort()) {
+    if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_reconcile_devices() != 25250.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_replenish() != 25166.toShort()) {
@@ -1540,7 +1567,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_sign_claim() != 48068.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_status() != 31447.toShort()) {
+    if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_status() != 12604.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_wipe() != 31954.toShort()) {
@@ -2103,6 +2130,8 @@ public interface E2eeEngineInterface {
     
     /**
      * JSON `ConversationState`.
+     * Never-provision fast path: fresh-store answer — no pins, no sticky
+     * state (HIGH-1 belt).
      */
     fun `conversationState`(`peerUserId`: kotlin.String): kotlin.String
     
@@ -2110,11 +2139,17 @@ public interface E2eeEngineInterface {
      * Process one incoming envelope (JSON `E2EEMessage`); returns the JSON
      * `DecryptOutcome`. The caller MUST ack the returned id for every
      * outcome (message, duplicate, undecryptable).
+     * Never-provision fast path (post-wipe design rev 2, HIGH-1 belt): a
+     * stale-enabled webview routing an envelope here in the wipe window
+     * gets what a fresh store gives (`NotEnabled`), never a reprovision.
      */
     fun `decrypt`(`envelopeJson`: kotlin.String): kotlin.String
     
     /**
      * A bonfire `E2EEDeviceDelete` event for a peer (or own) device.
+     * Never-provision fast path (post-wipe design §1): our own wipe's
+     * server-side revoke fans this event back to us seconds after the
+     * local store is destroyed — handling it must not resurrect the store.
      */
     fun `deviceRemoved`(`userId`: kotlin.String, `deviceId`: kotlin.String)
     
@@ -2125,6 +2160,12 @@ public interface E2eeEngineInterface {
      * only to the post-confirm path.
      */
     fun `downgrade`(`conversationId`: kotlin.String, `selfUserId`: kotlin.String, `bundlesJson`: kotlin.String?): kotlin.String
+    
+    /**
+     * Confirmed-downgraded conversations (§2 self-trigger enumeration).
+     * Never-provision fast path: fresh store ⇒ none.
+     */
+    fun `downgradedConversations`(): kotlin.String
     
     /**
      * Generate identity + initial key batch. Returns the JSON
@@ -2155,6 +2196,10 @@ public interface E2eeEngineInterface {
     /**
      * Reconcile a group's displayed member list against the pinned roster;
      * returns the JSON `GroupReconcileReport`.
+     * Never-provision fast path (post-wipe design rev 2, verify-pass
+     * HIGH): group-channel opens invoke this with no UI gate; a fresh
+     * store has no group row ⇒ the same typed error, minus the
+     * store-creating open.
      */
     fun `groupReconcile`(`conversationId`: kotlin.String, `displayed`: List<kotlin.String>, `selfUserId`: kotlin.String): kotlin.String
     
@@ -2171,6 +2216,7 @@ public interface E2eeEngineInterface {
     
     /**
      * JSON array of history rows — the ONLY history for E2EE DMs.
+     * Never-provision fast path: no store ⇒ no rows (HIGH-1 belt).
      */
     fun `history`(`peerUserId`: kotlin.String, `before`: kotlin.String?, `limit`: kotlin.UInt): kotlin.String
     
@@ -2367,6 +2413,13 @@ public interface E2eeEngineInterface {
     fun `mlsReplenish`(`userId`: kotlin.String, `serverRemaining`: kotlin.ULong): kotlin.String
     
     /**
+     * Late-device downgrade notify (needs-bundle slice §2) — no prompt,
+     * no local state change. Never-provision fast path: a fresh store has
+     * no conversation row — the same typed refusal, minus the open.
+     */
+    fun `notifyDowngrade`(`conversationId`: kotlin.String, `selfUserId`: kotlin.String, `bundlesJson`: kotlin.String?): kotlin.String
+    
+    /**
      * Decrypt an attachment for rendering — the WebView-interceptor path.
      * The id validation, digest-verified decrypt and mime whitelist all
      * live in the core's shared `serve_attachment_for_render` (slice 5:
@@ -2383,6 +2436,17 @@ public interface E2eeEngineInterface {
     fun `pendingDowngrades`(): kotlin.String
     
     /**
+     * Pin specific media-call roster devices from a JSON
+     * `GET /e2ee/devices/{user}` listing; returns the JSON array of device
+     * ids ACTUALLY pinned. See `Session::pin_call_identities` for why a
+     * signed listing is sufficient evidence for an MLS leaf and why the
+     * resulting pins stay out of the text plane. Same never-provision fast
+     * path, plus a sharper reason: joining a call is not consent to
+     * provision E2EE state on a device that never opted in.
+     */
+    fun `pinCallIdentities`(`selfUserId`: kotlin.String, `userId`: kotlin.String, `targets`: List<kotlin.String>, `devicesJson`: kotlin.String): kotlin.String
+    
+    /**
      * After a restore, mint a FRESH one-time-key batch + rotate the fallback
      * key; returns the JSON `PUT /e2ee/keys` publish payload. The webview
      * publishes it with `replace_one_time_keys: true` so the server drops the
@@ -2392,7 +2456,10 @@ public interface E2eeEngineInterface {
     
     /**
      * Reconcile a JSON `GET /e2ee/devices/{user}` listing; returns the
-     * JSON `ReconcileReport`.
+     * JSON `ReconcileReport`. Never-provision fast path (post-wipe design
+     * §1): device events and DM-open reconciles fire without user action;
+     * an unprovisioned device has no pins — the honest answer is the
+     * empty report, not a store-creating open.
      */
     fun `reconcileDevices`(`userId`: kotlin.String, `devicesJson`: kotlin.String): kotlin.String
     
@@ -2451,6 +2518,10 @@ public interface E2eeEngineInterface {
     
     /**
      * JSON `Status` (no key material — public snapshot only).
+     * Never-provision fast path (post-wipe design §1): an unprovisioned
+     * device answers from the filesystem — byte-identical to what
+     * open-then-`status()` returns on a fresh directory — instead of
+     * recreating the store the user just wiped (which bricks restore).
      */
     fun `status`(): kotlin.String
     
@@ -2837,6 +2908,8 @@ open class E2eeEngine: Disposable, AutoCloseable, E2eeEngineInterface
     
     /**
      * JSON `ConversationState`.
+     * Never-provision fast path: fresh-store answer — no pins, no sticky
+     * state (HIGH-1 belt).
      */
     @Throws(E2eeException::class)override fun `conversationState`(`peerUserId`: kotlin.String): kotlin.String {
             return FfiConverterString.lift(
@@ -2855,6 +2928,9 @@ open class E2eeEngine: Disposable, AutoCloseable, E2eeEngineInterface
      * Process one incoming envelope (JSON `E2EEMessage`); returns the JSON
      * `DecryptOutcome`. The caller MUST ack the returned id for every
      * outcome (message, duplicate, undecryptable).
+     * Never-provision fast path (post-wipe design rev 2, HIGH-1 belt): a
+     * stale-enabled webview routing an envelope here in the wipe window
+     * gets what a fresh store gives (`NotEnabled`), never a reprovision.
      */
     @Throws(E2eeException::class)override fun `decrypt`(`envelopeJson`: kotlin.String): kotlin.String {
             return FfiConverterString.lift(
@@ -2871,6 +2947,9 @@ open class E2eeEngine: Disposable, AutoCloseable, E2eeEngineInterface
     
     /**
      * A bonfire `E2EEDeviceDelete` event for a peer (or own) device.
+     * Never-provision fast path (post-wipe design §1): our own wipe's
+     * server-side revoke fans this event back to us seconds after the
+     * local store is destroyed — handling it must not resurrect the store.
      */
     @Throws(E2eeException::class)override fun `deviceRemoved`(`userId`: kotlin.String, `deviceId`: kotlin.String)
         = 
@@ -2896,6 +2975,23 @@ open class E2eeEngine: Disposable, AutoCloseable, E2eeEngineInterface
     uniffiRustCallWithError(E2eeException) { _status ->
     UniffiLib.INSTANCE.uniffi_acutest_e2ee_fn_method_e2eeengine_downgrade(
         it, FfiConverterString.lower(`conversationId`),FfiConverterString.lower(`selfUserId`),FfiConverterOptionalString.lower(`bundlesJson`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Confirmed-downgraded conversations (§2 self-trigger enumeration).
+     * Never-provision fast path: fresh store ⇒ none.
+     */
+    @Throws(E2eeException::class)override fun `downgradedConversations`(): kotlin.String {
+            return FfiConverterString.lift(
+    callWithPointer {
+    uniffiRustCallWithError(E2eeException) { _status ->
+    UniffiLib.INSTANCE.uniffi_acutest_e2ee_fn_method_e2eeengine_downgraded_conversations(
+        it, _status)
 }
     }
     )
@@ -2976,6 +3072,10 @@ open class E2eeEngine: Disposable, AutoCloseable, E2eeEngineInterface
     /**
      * Reconcile a group's displayed member list against the pinned roster;
      * returns the JSON `GroupReconcileReport`.
+     * Never-provision fast path (post-wipe design rev 2, verify-pass
+     * HIGH): group-channel opens invoke this with no UI gate; a fresh
+     * store has no group row ⇒ the same typed error, minus the
+     * store-creating open.
      */
     @Throws(E2eeException::class)override fun `groupReconcile`(`conversationId`: kotlin.String, `displayed`: List<kotlin.String>, `selfUserId`: kotlin.String): kotlin.String {
             return FfiConverterString.lift(
@@ -3025,6 +3125,7 @@ open class E2eeEngine: Disposable, AutoCloseable, E2eeEngineInterface
     
     /**
      * JSON array of history rows — the ONLY history for E2EE DMs.
+     * Never-provision fast path: no store ⇒ no rows (HIGH-1 belt).
      */
     @Throws(E2eeException::class)override fun `history`(`peerUserId`: kotlin.String, `before`: kotlin.String?, `limit`: kotlin.UInt): kotlin.String {
             return FfiConverterString.lift(
@@ -3487,6 +3588,24 @@ open class E2eeEngine: Disposable, AutoCloseable, E2eeEngineInterface
 
     
     /**
+     * Late-device downgrade notify (needs-bundle slice §2) — no prompt,
+     * no local state change. Never-provision fast path: a fresh store has
+     * no conversation row — the same typed refusal, minus the open.
+     */
+    @Throws(E2eeException::class)override fun `notifyDowngrade`(`conversationId`: kotlin.String, `selfUserId`: kotlin.String, `bundlesJson`: kotlin.String?): kotlin.String {
+            return FfiConverterString.lift(
+    callWithPointer {
+    uniffiRustCallWithError(E2eeException) { _status ->
+    UniffiLib.INSTANCE.uniffi_acutest_e2ee_fn_method_e2eeengine_notify_downgrade(
+        it, FfiConverterString.lower(`conversationId`),FfiConverterString.lower(`selfUserId`),FfiConverterOptionalString.lower(`bundlesJson`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
      * Decrypt an attachment for rendering — the WebView-interceptor path.
      * The id validation, digest-verified decrypt and mime whitelist all
      * live in the core's shared `serve_attachment_for_render` (slice 5:
@@ -3525,6 +3644,28 @@ open class E2eeEngine: Disposable, AutoCloseable, E2eeEngineInterface
 
     
     /**
+     * Pin specific media-call roster devices from a JSON
+     * `GET /e2ee/devices/{user}` listing; returns the JSON array of device
+     * ids ACTUALLY pinned. See `Session::pin_call_identities` for why a
+     * signed listing is sufficient evidence for an MLS leaf and why the
+     * resulting pins stay out of the text plane. Same never-provision fast
+     * path, plus a sharper reason: joining a call is not consent to
+     * provision E2EE state on a device that never opted in.
+     */
+    @Throws(E2eeException::class)override fun `pinCallIdentities`(`selfUserId`: kotlin.String, `userId`: kotlin.String, `targets`: List<kotlin.String>, `devicesJson`: kotlin.String): kotlin.String {
+            return FfiConverterString.lift(
+    callWithPointer {
+    uniffiRustCallWithError(E2eeException) { _status ->
+    UniffiLib.INSTANCE.uniffi_acutest_e2ee_fn_method_e2eeengine_pin_call_identities(
+        it, FfiConverterString.lower(`selfUserId`),FfiConverterString.lower(`userId`),FfiConverterSequenceString.lower(`targets`),FfiConverterString.lower(`devicesJson`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
      * After a restore, mint a FRESH one-time-key batch + rotate the fallback
      * key; returns the JSON `PUT /e2ee/keys` publish payload. The webview
      * publishes it with `replace_one_time_keys: true` so the server drops the
@@ -3545,7 +3686,10 @@ open class E2eeEngine: Disposable, AutoCloseable, E2eeEngineInterface
     
     /**
      * Reconcile a JSON `GET /e2ee/devices/{user}` listing; returns the
-     * JSON `ReconcileReport`.
+     * JSON `ReconcileReport`. Never-provision fast path (post-wipe design
+     * §1): device events and DM-open reconciles fire without user action;
+     * an unprovisioned device has no pins — the honest answer is the
+     * empty report, not a store-creating open.
      */
     @Throws(E2eeException::class)override fun `reconcileDevices`(`userId`: kotlin.String, `devicesJson`: kotlin.String): kotlin.String {
             return FfiConverterString.lift(
@@ -3692,6 +3836,10 @@ open class E2eeEngine: Disposable, AutoCloseable, E2eeEngineInterface
     
     /**
      * JSON `Status` (no key material — public snapshot only).
+     * Never-provision fast path (post-wipe design §1): an unprovisioned
+     * device answers from the filesystem — byte-identical to what
+     * open-then-`status()` returns on a fresh directory — instead of
+     * recreating the store the user just wiped (which bricks restore).
      */
     @Throws(E2eeException::class)override fun `status`(): kotlin.String {
             return FfiConverterString.lift(
