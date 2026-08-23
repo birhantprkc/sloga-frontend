@@ -74,7 +74,11 @@ const CSP = [
   "img-src 'self' data: blob: https://app.sloga.gg",
   "media-src 'self' blob: https://app.sloga.gg",
   "font-src 'self' data:",
-  "connect-src 'self' blob: https://app.sloga.gg wss://app.sloga.gg https://translate.googleapis.com https://api.drand.sh https://hcaptcha.com https://*.hcaptcha.com",
+  // *.sloga.gg: regional LiveKit media nodes (br1.sloga.gg first) are
+  // separate origins the voice node picker probes and then signals to. Every
+  // name under sloga.gg is Sloga-operated — no attacker-readable sink is
+  // added — and a wildcard means a new region never needs a shell release.
+  "connect-src 'self' blob: https://app.sloga.gg wss://app.sloga.gg https://*.sloga.gg wss://*.sloga.gg https://translate.googleapis.com https://api.drand.sh https://hcaptcha.com https://*.hcaptcha.com",
   "worker-src 'self' blob:",
   "manifest-src 'self'",
   "frame-src https://hcaptcha.com https://*.hcaptcha.com https://www.youtube.com https://www.youtube-nocookie.com https://player.twitch.tv https://open.spotify.com https://w.soundcloud.com https://bandcamp.com https://new.lightspeed.tv",
