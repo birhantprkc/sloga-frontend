@@ -34,6 +34,27 @@ function workletUrl(): string {
 /** Whisper's sample rate. Asking for it here avoids resampling by hand. */
 export const TAP_SAMPLE_RATE = 16_000;
 
+/**
+ * Whether a publication is somebody TALKING, which is the only thing a
+ * transcript is about.
+ *
+ * "Audio kind" is too wide: it also matches `ScreenShareAudio`, so a shared
+ * video's soundtrack was fed to Whisper and transcribed as if the sharer had
+ * said it — attributed to them by name, since the tap keys on identity. That
+ * has been true for desktop shares all along; a phone screen leg (Android
+ * plan §6.8) would have published its screen audio under a THIRD identity and
+ * produced a speaker the roster has no name for at all.
+ */
+function isSpeech(publication: {
+  kind: Track.Kind;
+  source: Track.Source;
+}): boolean {
+  return (
+    publication.kind === Track.Kind.Audio &&
+    publication.source === Track.Source.Microphone
+  );
+}
+
 export interface TrackTapperEvents {
   /** A chunk of one participant's audio, 16kHz mono. */
   onAudio(identity: string, pcm: Float32Array): void;
@@ -132,7 +153,7 @@ export class TrackTapper {
   #attachExisting(): void {
     for (const participant of this.#room.remoteParticipants.values()) {
       for (const publication of participant.trackPublications.values()) {
-        if (publication.kind !== Track.Kind.Audio) continue;
+        if (!isSpeech(publication)) continue;
         const track = publication.track;
         if (track) {
           this.#addTap(
@@ -146,7 +167,7 @@ export class TrackTapper {
 
     const local = this.#room.localParticipant;
     for (const publication of local.trackPublications.values()) {
-      if (publication.kind !== Track.Kind.Audio) continue;
+      if (!isSpeech(publication)) continue;
       const track = publication.track;
       if (track) {
         this.#addTap(publication.trackSid, local.identity, localAudio(track));
@@ -214,11 +235,15 @@ export class TrackTapper {
   }
 
   #onSubscribed = (
-    track: { kind: Track.Kind; mediaStreamTrack: MediaStreamTrack },
+    track: {
+      kind: Track.Kind;
+      source: Track.Source;
+      mediaStreamTrack: MediaStreamTrack;
+    },
     publication: { trackSid: string },
     participant: { identity: string },
   ) => {
-    if (track.kind !== Track.Kind.Audio) return;
+    if (!isSpeech(track)) return;
     this.#addTap(
       publication.trackSid,
       participant.identity,
@@ -233,12 +258,13 @@ export class TrackTapper {
   #onLocalPublished = (publication: {
     trackSid: string;
     kind: Track.Kind;
+    source: Track.Source;
     track?: {
       mediaStreamTrack: MediaStreamTrack;
       processedTrack?: MediaStreamTrack;
     };
   }) => {
-    if (publication.kind !== Track.Kind.Audio) return;
+    if (!isSpeech(publication)) return;
     if (!publication.track) return;
     this.#addTap(
       publication.trackSid,

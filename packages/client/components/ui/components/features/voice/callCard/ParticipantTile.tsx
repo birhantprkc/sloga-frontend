@@ -28,7 +28,11 @@ import { Row } from "@revolt/ui/components/layout";
 import { OverflowingText } from "@revolt/ui/components/utils";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
-import { participantUserId } from "../participantIdentity";
+import {
+  isScreenLeg,
+  participantUserId,
+  stripLeg,
+} from "../participantIdentity";
 import { VoiceStatefulUserIcons } from "../VoiceStatefulUserIcons";
 
 import { AnnotationCapture } from "./AnnotationCapture";
@@ -134,8 +138,26 @@ export function ParticipantTile(props: TileProps) {
   let reAskTimer: ReturnType<typeof setTimeout> | undefined;
   onCleanup(() => clearTimeout(reAskTimer));
 
+  /**
+   * My OWN device's screen leg (Android plan §6.3/§7.3).
+   *
+   * A leg is a separate SFU participant, so `participant.isLocal` is FALSE on
+   * the very tile that shows the phone its own share — every "is this someone
+   * else's?" gate below would answer yes. Left alone, the sharer would be
+   * offered "ask for control" and "draw" on their own screen, and would lose
+   * the sharer-side annotation banner that says who is drawing on it.
+   *
+   * Compared by DEVICE, not by user: another of my devices' legs is a genuine
+   * remote share I may legitimately ask to control.
+   */
+  const isSelfLeg = () =>
+    isScreenLeg(participant.identity) &&
+    stripLeg(participant.identity) === voice.room()?.localParticipant.identity;
+  /** This tile is mine — my participant, or my own device's screen leg. */
+  const isOwnTile = () => participant.isLocal || isSelfLeg();
+
   const canAsk = () =>
-    isScreenShare() && !participant.isLocal && rcSupported() && !controlling();
+    isScreenShare() && !isOwnTile() && rcSupported() && !controlling();
 
   async function askForTurn() {
     const sharerId = participantUserId(participant.identity);
@@ -172,7 +194,7 @@ export function ParticipantTile(props: TileProps) {
   const sharerUserId = () => participantUserId(participant.identity);
   const canDraw = () =>
     isScreenShare() &&
-    !participant.isLocal &&
+    !isOwnTile() &&
     !controlling() &&
     voice.annotations.mayDraw(sharerUserId(), voice.annotations.localUserId);
   // Consent revoked (or the share/control state changed): leave draw mode
@@ -185,8 +207,14 @@ export function ParticipantTile(props: TileProps) {
    *  §2.4 says the sharer sees WHO, and a last-batch-wins name would
    *  mis-attribute concurrent helpers' ink to whoever flushed last. */
   const activeAnnotatorIds = () => {
-    if (!participant.isLocal || !isScreenShare()) return [];
-    const batches = voice.annotations.batches.get(participant.identity);
+    if (!isOwnTile() || !isScreenShare()) return [];
+    // Keyed by the PRIMARY: the server resolves an annotation's
+    // `target_identity` through the voice-identity mapping, which knows only
+    // primaries, so ink aimed at a phone share arrives under the owner's
+    // identity (plan §6.5).
+    const batches = voice.annotations.batches.get(
+      stripLeg(participant.identity),
+    );
     if (!batches) return [];
     return [...new Set(batches.map((batch) => batch.annotatorId))];
   };
@@ -194,7 +222,7 @@ export function ParticipantTile(props: TileProps) {
   const activeAnnotator = useUser(() => activeAnnotatorId() ?? "");
   /** Sharer side: is my allowlist non-empty (the revoke affordance gate)? */
   const hasAllowedAnnotators = () =>
-    participant.isLocal &&
+    isOwnTile() &&
     isScreenShare() &&
     (voice.annotations.consent.get(voice.annotations.localUserId)?.length ??
       0) > 0;
@@ -240,10 +268,16 @@ export function ParticipantTile(props: TileProps) {
    * measure is OUR OWN link to the server — a remote participant's RTT to the
    * SFU is not observable from this client. It is therefore polled only on the
    * local tile; remote tiles fall back to LiveKit's quality bucket (below).
+   *
+   * My own screen leg counts as mine, but it is a SEPARATE peer connection
+   * owned by the native plugin and publishes no mic or camera, so the read
+   * below finds no publication and leaves the badge on the quality bucket.
+   * That is the honest answer: this client genuinely cannot measure the leg's
+   * link, and claiming the WebView's RTT for it would be a fabricated number.
    */
   const [rttMs, setRttMs] = createSignal<number>();
 
-  if (participant.isLocal) {
+  if (isOwnTile()) {
     const readRtt = async () => {
       const pub =
         participant.getTrackPublication(Track.Source.Microphone) ??
@@ -474,10 +508,19 @@ export function ParticipantTile(props: TileProps) {
             placement bug. Passive at z5 (the ParticipantCaption precedent):
             above video and hover chrome, below the z8 draw surface and the
             z20 RC capture, never intercepting a click. Renders on EVERY
-            viewer's tile for this share, including the sharer's own. */}
+            viewer's tile for this share, including the sharer's own.
+
+            `stripLeg` because the SERVER resolves an annotation's
+            `target_identity` through the voice-identity mapping, which knows
+            only primaries — so ink aimed at a phone screen leg is stored under
+            the owner's `user:device`, while this tile carries the leg's
+            three-segment identity. Without the strip the lookup misses and ink
+            never renders on a phone share at all (plan §6.5). Same reason on
+            the capture surface below, whose batches must be addressed the way
+            the server will key them. */}
         <Show when={isScreenShare()}>
           <AnnotationLayer
-            identity={participant.identity}
+            identity={stripLeg(participant.identity)}
             videoDims={videoDims}
           />
         </Show>
@@ -487,7 +530,7 @@ export function ParticipantTile(props: TileProps) {
           <AnnotationCapture
             video={videoRef}
             videoDims={videoDims}
-            sharerIdentity={participant.identity}
+            sharerIdentity={stripLeg(participant.identity)}
             sharerUserId={sharerUserId()}
             onRefused={() => setDrawMode(false)}
           />
@@ -886,11 +929,26 @@ const StopDrawingButton = styled("button", {
 function ParticipantLock(props: { identity: string; userId: string }) {
   const voice = useVoice();
 
+  // A screen leg (Android plan §6.3) holds no MLS leaf of its own — its key is
+  // DERIVED from its owner's, so the owner's lock is the leg's lock. Matching
+  // the raw three-segment identity finds nothing in the roster and the share
+  // tile renders no badge at all: the one tile where "is this encrypted?" is
+  // most asked would be the only one that never answers.
+  const ownerIdentity = () => stripLeg(props.identity);
+
   const member = () =>
     voice
       .callRoster()
-      .members.find((m) => `${m.user_id}:${m.device_id}` === props.identity);
-  const nonEnrolled = () => voice.callNonEnrolled().includes(props.identity);
+      .members.find((m) => `${m.user_id}:${m.device_id}` === ownerIdentity());
+  // Both spellings, and the asymmetry is deliberate. A CANONICALIZED leg is
+  // reported under its owner (`u:d`); a leg that stayed RAW — an orphan, or
+  // one declaring plaintext in an encrypted call (§5.3 rule 2) — is reported
+  // under its own identity, and that is precisely the leg that must show the
+  // slashed lock.
+  const nonEnrolled = () => {
+    const set = voice.callNonEnrolled();
+    return set.includes(props.identity) || set.includes(ownerIdentity());
+  };
 
   return (
     <Show when={voice.callMode() && voice.callMode()!.kind !== "off"}>

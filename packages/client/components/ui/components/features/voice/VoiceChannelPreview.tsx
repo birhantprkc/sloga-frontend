@@ -1,4 +1,4 @@
-import { For, Show, splitProps } from "solid-js";
+import { For, Show, createMemo, splitProps } from "solid-js";
 import {
   TrackLoop,
   useEnsureParticipant,
@@ -21,7 +21,7 @@ import { InRoom } from "@revolt/rtc";
 import { Avatar, Ripple, livePill, typography } from "../../design";
 import { Row } from "../../layout";
 
-import { participantUserId } from "./participantIdentity";
+import { dropLegPlaceholders, participantUserId } from "./participantIdentity";
 
 import { VoiceStatefulUserIcons } from "./VoiceStatefulUserIcons";
 
@@ -47,10 +47,14 @@ export function VoiceChannelPreview(props: { channel: Channel }) {
  * Track state still comes from the channel roster — see `ParticipantLive`.
  */
 function VariantLive(props: { channel: Channel }) {
-  const tracks = useTracks(
+  const allTracks = useTracks(
     [{ source: Track.Source.Camera, withPlaceholder: true }],
     { onlySubscribed: false },
   );
+  // A screen leg publishes screen share and nothing else, so `withPlaceholder`
+  // synthesizes a Camera placeholder for it — a duplicate avatar for someone
+  // this list already shows via their primary (plan §6.2).
+  const tracks = createMemo(() => dropLegPlaceholders(allTracks()));
 
   return (
     <Base>

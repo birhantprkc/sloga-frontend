@@ -1,4 +1,4 @@
-import { Show } from "solid-js";
+import { createMemo, Show } from "solid-js";
 import {
   TrackLoop,
   TrackReference,
@@ -19,17 +19,21 @@ import { Avatar } from "@revolt/ui/components/design";
 import { Row } from "@revolt/ui/components/layout";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
-import { participantUserId } from "../participantIdentity";
+import { dropLegPlaceholders, participantUserId } from "../participantIdentity";
 
 import { VoiceCallCardActions } from "./VoiceCallCardActions";
 import { VoiceCallCardStatus } from "./VoiceCallCardStatus";
 
 export function VoiceCallCardPiP() {
   const voice = useVoice();
-  const audTracks = useTracks(
+  const allAudTracks = useTracks(
     [{ source: Track.Source.Microphone, withPlaceholder: true }],
     { onlySubscribed: false },
   );
+  // A screen leg never publishes a microphone, so `withPlaceholder` gives it a
+  // phantom Microphone row — a second, permanently-muted avatar in the PiP
+  // strip for someone already there (plan §6.2).
+  const audTracks = createMemo(() => dropLegPlaceholders(allAudTracks()));
 
   const hasFocusVideo = () => {
     const track = voice.focusTrack();

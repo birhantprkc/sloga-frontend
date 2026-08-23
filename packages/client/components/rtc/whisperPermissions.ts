@@ -1,9 +1,13 @@
 import type { ParticipantTrackPermission } from "livekit-client";
 
+import { participantUserId } from "../ui/components/features/voice/participantIdentity.ts";
+
 /**
  * Pure half of the whisper feature (see whisper.ts for the controller and
  * the privacy model): track-name addressing and the subscription-permission
- * table. Kept free of runtime imports so the specs run under plain Node.
+ * table. Kept free of runtime imports so the specs run under plain Node —
+ * `participantIdentity.ts` is equally import-free, so reaching across to it
+ * keeps that property.
  */
 
 const WHISPER_PREFIX = "whisper:";
@@ -20,12 +24,18 @@ export function whisperTarget(trackName?: string): string | undefined {
   return target || undefined;
 }
 
-/** Identities are device-qualified (`user:device`) on E2EE calls — same
- * convention as participantIdentity.ts, duplicated here because rtc/ must not
- * import from ui/. */
-export function identityUserId(identity: string): string {
-  return identity.split(":")[0];
-}
+/**
+ * Identities are device-qualified (`user:device`) on E2EE calls, and a screen
+ * leg adds a third segment (`user:device:screen`) — taking segment 0 is right
+ * for all three shapes.
+ *
+ * This WAS a second copy of `participantUserId`, duplicated to keep rtc/ from
+ * importing ui/. It is now that same function: two copies of an identity
+ * parser is exactly how a leg-aware rule ends up applied on one path and not
+ * the other. Re-exported under the old name so existing rtc/ call sites read
+ * unchanged.
+ */
+export { participantUserId as identityUserId };
 
 /**
  * The full permission table while whispering to `targetUserId`:
@@ -40,7 +50,7 @@ export function computeWhisperPermissions(
   normalTrackSids: string[],
 ): ParticipantTrackPermission[] {
   return remoteIdentities.map((identity) =>
-    identityUserId(identity) === targetUserId
+    participantUserId(identity) === targetUserId
       ? { participantIdentity: identity, allowAll: true }
       : {
           participantIdentity: identity,

@@ -1,0 +1,125 @@
+/**
+ * SFU∪MLS roster reconciliation — the PURE core of slice 6.4 step 5, extracted
+ * from `mlsCallSession` so it is unit-testable in isolation (the house
+ * no-vitest split; this module must stay dependency-free so `node --test` can
+ * load it, same rule as `mlsCallModePolicy` / `mlsAdmitPolicy`).
+ *
+ * The extraction happened with the Android screen-leg rules (plan §5.3): they
+ * are asymmetric, they fail in opposite directions, and they were the first
+ * thing here worth pinning with a spec rather than reading carefully.
+ */
+import {
+  isScreenLeg,
+  stripLeg,
+} from "../ui/components/features/voice/participantIdentity.ts";
+
+/**
+ * The two-directional SFU∪MLS roster divergence (plan §1.4/§3.4):
+ *  - `nonEnrolled` — device-qualified identities in the SFU call but NOT in the
+ *    MLS group. The **trusted downgrade-trigger enumeration** (§3.4): a live
+ *    participant we cannot encrypt to ⇒ the call is mixed ⇒ loud state + pause
+ *    (the client can only ever OVER-warn here, never suppress a real one). Also
+ *    the load-bearing hostile-DS T-15 backstop (audit H2): a DS that steers us
+ *    into another channel's group yields a roster inconsistent with THIS
+ *    channel's SFU set, caught here before enable/publish.
+ *  - `ghosts` — MLS leaves with NO SFU participant. Render from the MLS roster
+ *    (crypto truth), flag divergence, and after a bounded timeout any member
+ *    removes the ghost leaf.
+ */
+export interface RosterReconcileResult {
+  nonEnrolled: string[];
+  ghosts: string[];
+}
+
+/**
+ * SCREEN-LEG inputs (Android screen-share plan §5.3). A leg
+ * `{user}:{device}:screen` is a second SFU participant published natively by a
+ * phone; it holds no MLS leaf, so without special handling every phone share
+ * reads as a non-enrolled participant and drops the whole call to `mixed`.
+ */
+export interface RosterLegInputs {
+  /**
+   * Whether the call is in `e2ee` mode. Rule 2(b) is checked ONLY there: in a
+   * confirmed-plaintext call every publication legitimately declares NONE, and
+   * applying it would report a leg as non-enrolled in a call the user has
+   * already agreed is unencrypted.
+   */
+  e2ee: boolean;
+  /**
+   * Leg identities where EVERY publication declares `trackInfo.encryption !==
+   * NONE`. A leg absent from this set has at least one publication claiming
+   * plaintext (or has not published at all yet), and is NOT folded onto its
+   * owner.
+   */
+  encryptedLegs: readonly string[];
+}
+
+/**
+ * Diff the SFU participant set against the MLS roster, both directions (§1.4).
+ * `localIdentity` is excluded from BOTH sides: we are always in our own call and
+ * driving our own group, so a transient self-asymmetry during join/leave must
+ * never read as non-enrolled or a ghost.
+ *
+ * 🔴 SCREEN LEGS ARE HANDLED ASYMMETRICALLY, AND THE ASYMMETRY IS THE POINT
+ * (Android plan §5.3 / §0-R.4). Folding a leg onto its owner in BOTH
+ * directions was the rev-1 design, and it re-opened two holes at once:
+ *
+ *  - the GHOST direction (the invariant-7 / T-18 backstop): a server-minted
+ *    `victim:device:screen` under a DEPARTED device's identity would make that
+ *    device look present, suppress the 30 s ghost Remove, and keep a departed
+ *    leaf in the group indefinitely. So `ghosts` is computed from the RAW SFU
+ *    set with legs dropped outright — a leg never keeps a leaf alive, whatever
+ *    it is named.
+ *
+ *  - the NON-ENROLLED direction: folding unconditionally would turn a
+ *    non-member plaintext publisher into an attributed, trusted-looking
+ *    stream. A leg folds onto its owner only under BOTH guards:
+ *      (a) the owner's primary is itself in the RAW SFU set — an ORPHAN leg is
+ *          the §5.4 server-minted impostor and must still be reported; and
+ *      (b) in `e2ee` mode, every publication of the leg declares encryption
+ *          other than NONE — a leg declaring plaintext inside an encrypted
+ *          call reads as non-enrolled, which is exactly the loud path.
+ *
+ * The client may only ever OVER-warn here, never suppress a real mix.
+ */
+export function reconcileRoster(
+  sfuIdentities: readonly string[],
+  mlsIdentities: readonly string[],
+  localIdentity: string,
+  legs: RosterLegInputs = { e2ee: false, encryptedLegs: [] },
+): RosterReconcileResult {
+  const rawSfu = new Set(sfuIdentities);
+  const mls = new Set(mlsIdentities);
+  rawSfu.delete(localIdentity);
+  mls.delete(localIdentity);
+
+  const encryptedLegs = new Set(legs.encryptedLegs);
+  /** Rule 2: what a leg answers for, or itself when it must not fold. */
+  const effective = (identity: string): string => {
+    if (!isScreenLeg(identity)) return identity;
+    const owner = stripLeg(identity);
+    // (a) Owner present in the RAW set. `localIdentity` counts: it was deleted
+    // from `rawSfu` above, and our own device's leg is the most legitimate leg
+    // there is.
+    if (!rawSfu.has(owner) && owner !== localIdentity) return identity;
+    if (legs.e2ee && !encryptedLegs.has(identity)) return identity; // (b)
+    return owner;
+  };
+
+  const nonEnrolled: string[] = [];
+  const seen = new Set<string>();
+  for (const identity of rawSfu) {
+    const id = effective(identity);
+    // A folded leg collapses onto its owner: ONE non-enrolled participant, not
+    // two rows for the same person.
+    if (id === localIdentity || mls.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    nonEnrolled.push(id);
+  }
+
+  const primaries = new Set(
+    [...rawSfu].filter((identity) => !isScreenLeg(identity)),
+  );
+  const ghosts = [...mls].filter((id) => !primaries.has(id));
+  return { nonEnrolled, ghosts };
+}

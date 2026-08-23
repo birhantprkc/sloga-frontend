@@ -1,0 +1,180 @@
+// Specs for SFU∪MLS roster reconciliation with SCREEN LEGS (Android
+// screen-share plan §5.3, rev-2 review item §0-R.4) — run with Node's
+// built-in runner:
+//   node --test components/rtc/rosterReconcile.test.ts
+//
+// This function decides two things that fail in opposite directions, which is
+// why the leg rules are asymmetric and why each direction is pinned here:
+//
+//   nonEnrolled → drives the mixed banner, the loud chip and pause-publish.
+//                 Over-warning is safe; under-warning silently attributes a
+//                 non-member's plaintext stream to a member.
+//   ghosts      → drives the 30 s Remove of a departed leaf. Over-warning
+//                 removes a live member; UNDER-warning keeps a departed
+//                 device's leaf in the group forever (invariant 7 / T-18).
+//
+// The rev-1 design folded legs onto their owner in BOTH directions and broke
+// both. Reverting any single assertion below re-opens one of those holes.
+import assert from "node:assert/strict";
+import { test } from "node:test";
+
+import { reconcileRoster } from "./mlsRosterPolicy.ts";
+
+const SELF = "01SELF:devS";
+const ALICE = "01ALICE:devA";
+const BOB = "01BOB:devB";
+const ALICE_LEG = `${ALICE}:screen`;
+const BOB_LEG = `${BOB}:screen`;
+
+/** In `e2ee` mode with every named leg declaring encryption. */
+const keyed = (...legs: string[]) => ({ e2ee: true, encryptedLegs: legs });
+
+test("a keyed leg whose owner is present is silent in both directions", () => {
+  const result = reconcileRoster(
+    [SELF, ALICE, ALICE_LEG],
+    [SELF, ALICE],
+    SELF,
+    keyed(ALICE_LEG),
+  );
+  assert.deepEqual(result.nonEnrolled, []);
+  assert.deepEqual(result.ghosts, []);
+});
+
+test("🔴 an ORPHAN leg is non-enrolled AND its owner is still a ghost", () => {
+  // The §5.4 server-minted impostor: a leg under a departed device's identity.
+  // Folding it onto its owner would make the owner look present and suppress
+  // the ghost Remove — a departed leaf kept alive by a participant the SERVER
+  // named. Both directions must fire.
+  const result = reconcileRoster(
+    [SELF, ALICE_LEG],
+    [SELF, ALICE],
+    SELF,
+    keyed(ALICE_LEG),
+  );
+  assert.deepEqual(
+    result.nonEnrolled,
+    [ALICE_LEG],
+    "an orphan leg keeps its raw identity and is reported",
+  );
+  assert.deepEqual(
+    result.ghosts,
+    [ALICE],
+    "a leg must never keep its owner's leaf alive",
+  );
+});
+
+test("🔴 a leg declaring plaintext inside an e2ee call reads as non-enrolled", () => {
+  // Rule 2(b). Without it, a publisher that says NONE borrows its owner's
+  // membership and renders as an ordinary, trusted-looking share.
+  const result = reconcileRoster(
+    [SELF, ALICE, ALICE_LEG],
+    [SELF, ALICE],
+    SELF,
+    { e2ee: true, encryptedLegs: [] },
+  );
+  assert.deepEqual(result.nonEnrolled, [ALICE_LEG]);
+  // The owner is a member and present, so no ghost either way.
+  assert.deepEqual(result.ghosts, []);
+});
+
+test("rule 2(b) is not applied outside e2ee mode", () => {
+  // In a CONFIRMED-plaintext call every publication legitimately declares
+  // NONE; applying 2(b) there would report a leg as non-enrolled in a call the
+  // user has already agreed is unencrypted.
+  const result = reconcileRoster(
+    [SELF, ALICE, ALICE_LEG],
+    [SELF, ALICE],
+    SELF,
+    {
+      e2ee: false,
+      encryptedLegs: [],
+    },
+  );
+  assert.deepEqual(result.nonEnrolled, []);
+});
+
+test("a non-enrolled device and its leg collapse to ONE row", () => {
+  // Both the primary and its leg are outside the group. The banner names a
+  // person, so it must not list the same person twice.
+  const result = reconcileRoster(
+    [SELF, ALICE, ALICE, BOB, BOB_LEG],
+    [SELF, ALICE],
+    SELF,
+    keyed(BOB_LEG),
+  );
+  assert.deepEqual(result.nonEnrolled, [BOB]);
+});
+
+test("a leg LEAVING does not make its owner a ghost", () => {
+  // The share ended; the sharer never left. If the leg's absence armed a
+  // Remove, ending a screen share would evict its owner from the group.
+  const before = reconcileRoster(
+    [SELF, ALICE, ALICE_LEG],
+    [SELF, ALICE],
+    SELF,
+    keyed(ALICE_LEG),
+  );
+  const after = reconcileRoster([SELF, ALICE], [SELF, ALICE], SELF, keyed());
+  assert.deepEqual(before.ghosts, []);
+  assert.deepEqual(after.ghosts, []);
+  assert.deepEqual(after.nonEnrolled, []);
+});
+
+test("our OWN leg is never reported against us", () => {
+  const selfLeg = `${SELF}:screen`;
+  const result = reconcileRoster(
+    [SELF, selfLeg, ALICE],
+    [SELF, ALICE],
+    SELF,
+    keyed(selfLeg),
+  );
+  assert.deepEqual(result.nonEnrolled, []);
+  assert.deepEqual(result.ghosts, []);
+});
+
+test("🔴 the two-segment `user:screen` is a PRIMARY, not a leg", () => {
+  // §0-R.3. `01BOB:screen` is the legitimate identity of a device whose id is
+  // "screen". Reading it as a leg would fold it onto the bare `01BOB` and, if
+  // some `01BOB` were in the group, exempt a stranger's device from the check
+  // entirely.
+  const result = reconcileRoster(
+    [SELF, "01BOB:screen"],
+    [SELF, "01BOB"],
+    SELF,
+    keyed("01BOB:screen"),
+  );
+  assert.deepEqual(result.nonEnrolled, ["01BOB:screen"]);
+  assert.deepEqual(result.ghosts, ["01BOB"]);
+});
+
+test("the bare-primary grammar `user::screen` folds onto the bare user", () => {
+  // A plaintext / unprovisioned primary carries a bare user id, and its leg
+  // gets an EMPTY device segment. Reconcile does not run without a group, but
+  // the mixed case (a bare joiner in an E2EE call) does reach here.
+  const bare = "01CAROL";
+  const bareLeg = "01CAROL::screen";
+  const result = reconcileRoster(
+    [SELF, ALICE, bare, bareLeg],
+    [SELF, ALICE],
+    SELF,
+    keyed(bareLeg),
+  );
+  assert.deepEqual(
+    result.nonEnrolled,
+    [bare],
+    "the bare primary is the one non-enrolled participant, listed once",
+  );
+});
+
+test("legs change nothing about ordinary non-enrolled and ghost detection", () => {
+  // The pre-leg behaviour, unchanged: a stranger in the SFU set is
+  // non-enrolled, a member with no SFU participant is a ghost, and self is
+  // excluded from both sides.
+  const result = reconcileRoster([SELF, ALICE], [SELF, BOB], SELF, keyed());
+  assert.deepEqual(result.nonEnrolled, [ALICE]);
+  assert.deepEqual(result.ghosts, [BOB]);
+
+  // Default leg inputs (no argument) behave as a plain, leg-free call.
+  const legacy = reconcileRoster([SELF, ALICE], [SELF, BOB], SELF);
+  assert.deepEqual(legacy, result);
+});

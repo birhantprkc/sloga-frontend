@@ -3,6 +3,7 @@ import {
   batch,
   createContext,
   createEffect,
+  createMemo,
   createRoot,
   createSignal,
   JSX,
@@ -105,6 +106,11 @@ import {
   Voice as VoiceSettings,
 } from "@revolt/state/stores/Voice";
 import { VoiceCallCardContext } from "@revolt/ui/components/features/voice/callCard/VoiceCallCard";
+import {
+  dropLegPlaceholders,
+  isScreenLeg,
+  stripLeg,
+} from "@revolt/ui/components/features/voice/participantIdentity";
 import { ReactiveMap } from "@solid-primitives/map";
 import { Attenuation } from "./attenuation";
 import { CaptureClaim } from "./captureClaim";
@@ -1750,13 +1756,20 @@ class Voice {
 
     this.disposeTrackRoot?.();
     this.disposeTrackRoot = createRoot((dispose) => {
-      this.vidTracks = useTracks(
+      const allVidTracks = useTracks(
         [
           { source: Track.Source.Camera, withPlaceholder: true },
           { source: Track.Source.ScreenShare, withPlaceholder: false },
         ],
         { room, onlySubscribed: false },
       );
+      // The widest of the three placeholder sites (plan §6.2): `vidTracks()`
+      // feeds the grid, focus, theater, the PiP video row, `shares` and
+      // `#watchScreenShareFocus`. A screen leg publishes screen share only, so
+      // the Camera placeholder would put a second, permanently-muted avatar
+      // for the sharer in every one of them. Its REAL ScreenShare publication
+      // has no placeholder and survives — that tile is the feature.
+      this.vidTracks = createMemo(() => dropLegPlaceholders(allVidTracks()));
       // Lives in this root (not in a component) so it is armed for the whole
       // call and torn down with the track list on disconnect — the call card
       // unmounts whenever the user browses to another channel.
@@ -1892,9 +1905,17 @@ class Voice {
     });
 
     room.addListener("participantConnected", (participant) => {
-      this.sound.playSound("userJoinVoice");
+      // A screen leg is a share starting, not a person arriving (plan §6.8):
+      // the join chime belongs to its owner's primary, which is already in the
+      // call. `streamStart` on the ScreenShare publication below is the sound
+      // this event actually deserves.
+      if (!isScreenLeg(participant.identity))
+        this.sound.playSound("userJoinVoice");
       // Roster reconciliation (6.4 step 5): a reconnect within leave-grace
       // cancels a pending Remove; a new SFU participant kicks a fresh reconcile.
+      // Passed RAW, legs included (§5.3 rule 3) — a leg changes the SFU set and
+      // must be reconciled, but canonicalizing here would let a leg cancel a
+      // pending ghost-Remove of its owner.
       this.#mlsSession?.onParticipantJoined(participant.identity);
       // The chip's participant/track domain changed (R2-3/FE-8): bump the
       // version so the derived chip re-runs (remoteParticipants is not reactive).
@@ -1902,9 +1923,13 @@ class Voice {
     });
 
     room.addListener("participantDisconnected", (participant) => {
-      this.sound.playSound("userLeaveVoice");
+      if (!isScreenLeg(participant.identity))
+        this.sound.playSound("userLeaveVoice");
       // Arm the 10 s leave-grace before removing the departed leaf from the MLS
-      // group (a transient blip must not churn remove+rejoin).
+      // group (a transient blip must not churn remove+rejoin). RAW again: a
+      // leg holds no MLS leaf, so this is inert for it — and MUST stay inert
+      // rather than being canonicalized, or ending a share would arm a Remove
+      // of the sharer, who never left (§5.3 rule 3).
       this.#mlsSession?.onParticipantLeft(participant.identity);
       this.#setCallParticipantsVersion((v) => v + 1);
     });
@@ -1916,11 +1941,18 @@ class Voice {
       if (kind === "videoinput") void this.reapplyCameraEffects();
     });
 
-    room.addListener("trackPublished", (pub) => {
+    room.addListener("trackPublished", (pub, participant) => {
       // Gate (b)'s quantification domain changed (R2-3): a trackless-then-
       // publishing REMOTE participant must drop the chip from green
       // immediately, not on the next unrelated join/leave.
       this.#setCallParticipantsVersion((v) => v + 1);
+      // A screen leg declares its encryption only once it publishes, and until
+      // then it fails closed as non-enrolled (§5.3 rule 2(b) — see
+      // `encryptedLegs` in #buildMediaBinding). Reconcile on the publication
+      // itself so a legitimate phone share clears the mixed banner in that
+      // moment rather than waiting out the periodic tick.
+      if (isScreenLeg(participant.identity))
+        void this.#mlsSession?.reconcileNow();
       if (pub.source === Track.Source.ScreenShare) {
         pub.once("subscribed", (track) => {
           // Play the sound once playback starts, which might be quite a bit after subscription
@@ -2463,6 +2495,18 @@ class Voice {
         room.localParticipant.identity,
         ...[...room.remoteParticipants.values()].map((p) => p.identity),
       ],
+      // §5.3 rule 2(b): the legs whose OWN declaration says they are
+      // encrypted, which is the only witness a viewer has before a frame
+      // decrypts. `Participant.isEncrypted` is `size > 0 && every(encrypted)`,
+      // so a leg that has joined but published nothing yet is NOT here — it
+      // over-warns for the join→publish window rather than lending it the
+      // owner's trust in advance. The `trackPublished` listener kicks a fresh
+      // reconcile for a leg so that window closes on the publish, not on the
+      // next periodic tick.
+      encryptedLegs: () =>
+        [...room.remoteParticipants.values()]
+          .filter((p) => isScreenLeg(p.identity) && p.isEncrypted)
+          .map((p) => p.identity),
       onEncryptionState: (state, error) => {
         // Latch a loud media-plane failure into the existing structured signal
         // (6.5 classifies RE-SECURING vs NOT-ENCRYPTED from callEncryption +
@@ -4385,12 +4429,22 @@ class Voice {
     const mode = this.callMode();
     const publishing: string[] = [];
     if (room) {
+      const localIdentity = room.localParticipant.identity;
       for (const [identity, p] of [
-        [room.localParticipant.identity, room.localParticipant] as const,
+        [localIdentity, room.localParticipant] as const,
         ...[...room.remoteParticipants.values()].map(
           (p) => [p.identity, p] as const,
         ),
       ]) {
+        // Our OWN screen leg is excluded (plan §6.7). This device minted the
+        // leg's key and does not subscribe to it (§0.9), so LiveKit never
+        // reports an encryption status for it — leaving it in `publishing`
+        // with nothing in `observed` reads as "a publisher we cannot vouch
+        // for" and pins the sharer's own phone at amber "re-securing" for the
+        // whole share. Compared by DEVICE, not user: another of our devices'
+        // legs is a genuine remote publisher we DO observe.
+        if (isScreenLeg(identity) && stripLeg(identity) === localIdentity)
+          continue;
         // Only participants with ≥1 published track ever report an encryption
         // status (FE-2); trackless listeners are covered by MLS membership.
         if (p.trackPublications.size > 0) publishing.push(identity);
@@ -4600,7 +4654,16 @@ class Voice {
     if (this.callMode()?.kind !== "e2ee") return false;
     const room = this.room();
     if (!room) return false;
-    return room.remoteParticipants.size + 1 > MAX_VIDEO_PARTICIPANTS;
+    // Count DEVICES, not SFU participants (plan §6.8): a screen leg is a
+    // second participant for a device already counted, so counting raw
+    // identities would let two phone shares push a 29-device call over the cap
+    // and silently switch everyone's video off. Distinct `stripLeg` values,
+    // plus ourselves.
+    const devices = new Set<string>();
+    for (const p of room.remoteParticipants.values())
+      devices.add(stripLeg(p.identity));
+    devices.delete(stripLeg(room.localParticipant.identity));
+    return devices.size + 1 > MAX_VIDEO_PARTICIPANTS;
   }
 
   #startPushToTalk(room: Room) {

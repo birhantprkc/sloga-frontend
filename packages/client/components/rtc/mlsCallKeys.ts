@@ -73,6 +73,40 @@ export function localInstallEntries(
   return frameKeys.keys.filter((k) => k.livekit_identity === localIdentity);
 }
 
+/** The send key handed to this device's native screen leg (§5.1/§5.2). */
+export interface LocalScreenKey {
+  /** 32 bytes of raw HKDF material, unpadded standard base64. */
+  keyB64: string;
+  /** LiveKit keyring index for the epoch (`epoch mod 16`). */
+  keyIndex: number;
+  /** The MLS epoch this key belongs to — the fence a stale push is caught by. */
+  epoch: number;
+}
+
+/**
+ * This device's SCREEN LEG entry for the current epoch (Android plan §5.1).
+ *
+ * e2ee-core derives one leg key per roster MEMBER, so `frameKeys.keys` carries
+ * a `{user}:{device}:screen` entry for everybody. Only OUR OWN is a send key;
+ * every other member's is a receive key installed as an ordinary remote —
+ * `remoteInstallEntries` filters on the exact local identity, so our own leg
+ * entry falls through into the remote set too. That is harmless and left
+ * alone: the phone never subscribes to its own leg (§0.9), so the key is
+ * simply never used on the receive side.
+ *
+ * Read from `keys` (the CURRENT epoch) and never from `previous`: the leg is a
+ * SENDER, and handing a sender an old epoch's key is exactly the invariant-7
+ * regression `remoteInstallEntries` excludes the local identity to prevent.
+ */
+export function localScreenLegEntry(
+  frameKeys: MlsFrameKeys,
+  localIdentity: string,
+): MlsFrameKey | undefined {
+  return frameKeys.keys.find(
+    (k) => k.livekit_identity === `${localIdentity}:screen`,
+  );
+}
+
 /**
  * Full install order: previous(remote-only) → current remotes → current LOCAL
  * last. The local participant's `setKey` IS the send-index switch (§1.5), so it
@@ -92,8 +126,48 @@ export class MlsKeyProvider extends BaseKeyProvider {
   /** Identities that currently hold a key (reconnect / test hygiene). */
   #applied = new Set<string>();
 
+  /**
+   * This device's current screen-leg send key (Android plan §5.2).
+   *
+   * THE ONLY place leg key material is held in JS. It is kept here rather than
+   * in `rtc/state.tsx` because this is the one layer that sees `MlsFrameKeys`
+   * at all — and, more importantly, because every rule that decides WHEN the
+   * local send key becomes current (the ≤2 s Add-grace deferral, the NEW-1
+   * epoch fence, the Remove-immediate switch, the reconnect re-assert) already
+   * terminates in `applyLocalKey`. Reading the leg key anywhere else means
+   * re-deriving those rules, and getting them wrong means the phone encrypts
+   * under a key a just-removed member still holds.
+   */
+  #lastLocalScreenKey: LocalScreenKey | undefined;
+
+  /**
+   * Notified whenever this device's leg send key changes — the Android branch
+   * forwards it to `plugin.setFrameKey` (slice 3).
+   *
+   * 🔴 The listener OWNS its failure. It is awaited inside `applyLocalKey`, so
+   * a rotation does not report the local key installed until the phone has
+   * taken the new one — that ordering is the whole point on a Remove-driven
+   * rotation. A listener that cannot push MUST stop the leg (`plugin.stop()` +
+   * a toast) and resolve: a leg left running on the previous epoch's key is
+   * readable by the member who was just removed. If it rejects instead, the
+   * rejection reaches the session's media-error path and the call goes loud —
+   * a deliberate backstop, not the intended path.
+   */
+  onLocalScreenKey?: (key: LocalScreenKey) => void | Promise<void>;
+
   constructor() {
     super({ sharedKey: false, ratchetWindowSize: 0, failureTolerance: 0 });
+  }
+
+  /**
+   * The leg send key for the CURRENT epoch, or undefined before the first
+   * local install. Read by the Android publisher at `plugin.connect()` time,
+   * which is why it is exposed rather than only pushed: a leg starting
+   * mid-call has to be handed the key that is already current, and there is no
+   * rotation event to wait for.
+   */
+  lastLocalScreenKey(): LocalScreenKey | undefined {
+    return this.#lastLocalScreenKey;
   }
 
   /** Import one entry's raw HKDF material and push it to the worker. */
@@ -185,6 +259,49 @@ export class MlsKeyProvider extends BaseKeyProvider {
       localInstallEntries(frameKeys, localIdentity),
     );
     if (installed.length) this.#applied.add(localIdentity);
+    await this.#applyLocalScreenKey(frameKeys, localIdentity);
+  }
+
+  /**
+   * Update + push this device's screen-leg send key (§5.2).
+   *
+   * Called from `applyLocalKey` and NOWHERE ELSE — deliberately not from
+   * `applyRemoteKeys`. During an Add-grace we install remotes at the new epoch
+   * while still publishing on the OLD local key for up to 2 s; pushing the new
+   * leg key there would switch the phone's send key ahead of the WebView's,
+   * and lagging receivers would lose the share for exactly the window the
+   * grace exists to cover.
+   */
+  async #applyLocalScreenKey(
+    frameKeys: MlsFrameKeys,
+    localIdentity: string,
+  ): Promise<void> {
+    const entry = localScreenLegEntry(frameKeys, localIdentity);
+    if (!entry) return;
+    const key: LocalScreenKey = {
+      keyB64: entry.frame_key_b64,
+      keyIndex: entry.key_index,
+      epoch: entry.epoch,
+    };
+    const previous = this.#lastLocalScreenKey;
+    // Recorded BEFORE the push, and that is correct rather than optimistic:
+    // this field answers "what key should the leg be using now", which is the
+    // current epoch's whether or not the push landed. A failed push means the
+    // listener stops the leg, so nothing is running under the stale key — and
+    // a leg started afterwards must be handed THIS key, not the old one.
+    this.#lastLocalScreenKey = key;
+    // Idempotent: a reconnect re-assert at the same epoch re-installs the
+    // primary but must not churn the bridge (each push crosses into native and
+    // re-keys the sender cryptor).
+    if (
+      previous &&
+      previous.epoch === key.epoch &&
+      previous.keyIndex === key.keyIndex &&
+      previous.keyB64 === key.keyB64
+    ) {
+      return;
+    }
+    await this.onLocalScreenKey?.(key);
   }
 
   /** Identities currently keyed (current + previous epoch senders). */

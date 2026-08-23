@@ -28,7 +28,10 @@ import {
 import { useClient } from "@revolt/client";
 import { userInformation } from "@revolt/markdown/users";
 import { useState } from "@revolt/state";
-import { participantUserId } from "@revolt/ui/components/features/voice/participantIdentity";
+import {
+  isScreenLeg,
+  participantUserId,
+} from "@revolt/ui/components/features/voice/participantIdentity";
 
 import { readRttMs } from "../rtt";
 import { useVoice } from "../state";
@@ -132,6 +135,11 @@ export function OverlayBridgeWorker() {
         ) as RemoteParticipant[]),
       ];
       for (const participant of all) {
+        // A screen leg has no microphone by construction, so the
+        // "no publication reads as muted" rule below would give it a
+        // permanently-muted row for someone the overlay already lists
+        // (plan §6.8). It is a publisher, not a speaker.
+        if (isScreenLeg(participant.identity)) continue;
         const mic = participant.getTrackPublication(Track.Source.Microphone);
         devices.push({
           identity: participant.identity,

@@ -95,6 +95,11 @@ import {
   spliceParkedAfterWelcome,
 } from "./mlsDrainPolicy";
 import { joinRequestAction } from "./mlsJoinRequestPolicy";
+import {
+  type RosterLegInputs,
+  type RosterReconcileResult,
+  reconcileRoster,
+} from "./mlsRosterPolicy";
 
 // ---- Timings + bounds (plan §1.4 / §3.3; all bounded — nothing spins) -------
 
@@ -411,43 +416,13 @@ export function lagAction(currentEpoch: number, ourEpoch: number): LagAction {
 
 // ---- Roster reconciliation (step 5; plan §1.4 / §3.4, carried item 5) --------
 
-/**
- * The two-directional SFU∪MLS roster divergence (plan §1.4/§3.4):
- *  - `nonEnrolled` — device-qualified identities in the SFU call but NOT in the
- *    MLS group. The **trusted downgrade-trigger enumeration** (§3.4): a live
- *    participant we cannot encrypt to ⇒ the call is mixed ⇒ loud state + pause
- *    (the client can only ever OVER-warn here, never suppress a real one). Also
- *    the load-bearing hostile-DS T-15 backstop (audit H2): a DS that steers us
- *    into another channel's group yields a roster inconsistent with THIS
- *    channel's SFU set, caught here before enable/publish.
- *  - `ghosts` — MLS leaves with NO SFU participant. Render from the MLS roster
- *    (crypto truth), flag divergence, and after a bounded timeout any member
- *    removes the ghost leaf.
- */
-export interface RosterReconcileResult {
-  nonEnrolled: string[];
-  ghosts: string[];
-}
-
-/**
- * Diff the SFU participant set against the MLS roster, both directions (§1.4).
- * `localIdentity` is excluded from BOTH sides: we are always in our own call and
- * driving our own group, so a transient self-asymmetry during join/leave must
- * never read as non-enrolled or a ghost. Pure + exported for audit.
- */
-export function reconcileRoster(
-  sfuIdentities: readonly string[],
-  mlsIdentities: readonly string[],
-  localIdentity: string,
-): RosterReconcileResult {
-  const sfu = new Set(sfuIdentities);
-  const mls = new Set(mlsIdentities);
-  sfu.delete(localIdentity);
-  mls.delete(localIdentity);
-  const nonEnrolled = [...sfu].filter((id) => !mls.has(id));
-  const ghosts = [...mls].filter((id) => !sfu.has(id));
-  return { nonEnrolled, ghosts };
-}
+// The roster diff itself is a pure policy and lives in `mlsRosterPolicy.ts`
+// with the other unit-tested call policies — the screen-leg rules there are
+// asymmetric and fail in opposite directions, so they carry their own spec
+// (`rosterReconcile.test.ts`). Re-exported here because this module is where
+// every existing consumer imports it from.
+export { reconcileRoster };
+export type { RosterLegInputs, RosterReconcileResult };
 
 // ---- Metrics decision helpers (step 8) --------------------------------------
 
@@ -514,8 +489,22 @@ export interface MlsMediaBinding {
   /**
    * Device-qualified identities of ALL current SFU participants (local +
    * remote), for roster reconciliation (step 5). Read live from the Room.
+   *
+   * 🔴 RAW — screen legs INCLUDED, exactly as the SFU reports them (Android
+   * plan §5.3 rule 3). `reconcileRoster` owns the canonicalization and needs
+   * the raw set to apply it; `#removeMember`'s rejoin check needs an exact
+   * match; and the §3.4 downgrade dialog passes this straight to native, which
+   * runs its own copy of the rule. Folding legs here instead would push the
+   * decision into three places that must not disagree.
    */
   sfuParticipants(): string[];
+  /**
+   * Screen-leg identities whose EVERY publication declares `encryption !==
+   * NONE` — rule 2(b) of §5.3. Absent (or an empty list) means no leg may be
+   * folded onto its owner in `e2ee` mode, which is the fail-closed direction:
+   * an unwitnessed leg over-warns rather than borrowing its owner's trust.
+   */
+  encryptedLegs?(): string[];
   /** Surface the media-plane state for the 6.5 chip / callEncryptionError. */
   onEncryptionState?(state: MediaEncryptionState, error?: unknown): void;
   /**
@@ -2861,6 +2850,12 @@ export class MlsCallSession {
       media.sfuParticipants(),
       mlsIdentities,
       localIdentity,
+      {
+        // Rule 2(b) is checked only in `e2ee`: in a confirmed-plaintext call
+        // every publication declares NONE by design (§5.3).
+        e2ee: this.#callMode.kind === "e2ee",
+        encryptedLegs: media.encryptedLegs?.() ?? [],
+      },
     );
     this.#nonEnrolled = result.nonEnrolled;
     // Surface the VERIFIED MLS roster + divergent ghosts for the 6.5 panel.
