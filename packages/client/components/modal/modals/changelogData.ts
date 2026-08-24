@@ -8,6 +8,46 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // v0.51.0: regional voice servers reach every platform + the per-server
+  // voice region control. Copy constraints, load-bearing:
+  // - The South American server is REAL and live (Sao Paulo). Routing to it
+  //   already shipped to every platform in the previous update, so it is
+  //   correct to describe it as working everywhere TODAY. The new thing in
+  //   this release is the per-server CONTROL.
+  // - The control is web-first at publish time; the shells pick it up with
+  //   this sweep. Keep the closing line honest about that.
+  // - Do NOT quote these UI strings (they are this release's grep markers):
+  //   "Voice region", "US East", "South America (Sao Paulo)". Paraphrase —
+  //   lowercase "voice region", "Sao Paulo", "US east coast" are all fine and
+  //   deliberately differ from the marker strings.
+  // - Never imply Sloga stores or records call media on any node: the nodes
+  //   are stateless relays and calls stay end-to-end encrypted. Do not
+  //   promise specific millisecond numbers.
+  // - EXCLUDED as dark or unproven: remote-control couch co-op (no UI, not
+  //   shipped), Android screen share (flag never lit), slash-command bots
+  //   (no live smoke, docs unpublished), server boosts, the public server
+  //   directory (empty in production).
+  {
+    id: "sloga-2026-08-23",
+    title: "Patch Notes",
+    published_at: "2026-08-23T22:30:00.000Z",
+    markdown_content: `## v0.51.0 — Calls closer to home
+
+### 🌎 A voice server in South America
+- **Calls can now run out of Sao Paulo.** Sloga runs voice servers in more than one place, and your app quietly checks which one answers fastest a moment before you join. If you're in Brazil or nearby, that's a machine in Sao Paulo instead of one on the US east coast — less delay, and a steadier call on a busy connection.
+- **Nothing to switch on.** It happens by itself, on web, desktop and Android.
+- **Same privacy either way.** These servers only pass your call along — they don't record it, and calls stay end-to-end encrypted whichever one you land on.
+
+### 🎛️ Pick a region for your community
+- **Server owners can now pin where their calls run.** In Server Settings → Overview there's a new voice region choice: leave it on Auto, or fix the server to South America or the US east coast. Handy when most of your members are in one place, because otherwise whoever starts a call decides for everyone in it.
+- **Auto is still the smart default.** It measures rather than guesses, and it's the right answer for most communities — a fixed region is for when you already know where your people are.
+- **Nobody gets moved mid-call.** Changing the setting applies to the next call that starts, never one that's already running.
+- Requires the Manage Server permission.
+
+Direct messages and group calls always pick the fastest server automatically — there's nothing to set there.
+
+On the web now; desktop and Android pick the region control up with their next update.`,
+  },
   // v0.48.0: watch together + the tidied call bar + pt-BR. Copy constraints,
   // load-bearing:
   // - Sloga never uploads, hosts, proxies or relays the video — settled

@@ -19,7 +19,11 @@ import {
 
 import { useModals } from "@revolt/modal";
 
+import { advertisedVoiceNodes } from "../../../../rtc/voiceNode";
 import { ServerSettingsProps } from "../ServerSettings";
+
+/** Sentinel select value for "no region" — the field is REMOVED, not set. */
+const VOICE_REGION_AUTO = "auto";
 
 /**
  * Server overview
@@ -77,7 +81,25 @@ export default function ServerOverview(props: ServerSettingsProps) {
     sys_user_banned: createFormControl(
       props.server.systemMessages?.user_banned ?? "none",
     ),
+    voice_region: createFormControl(
+      props.server.voiceRegion ?? VOICE_REGION_AUTO,
+    ),
   });
+
+  /**
+   * Voice nodes the API advertises, with human labels. Unknown node names
+   * fall back to the raw name so a newly added node is still selectable
+   * before this list learns about it.
+   */
+  const voiceRegionLabels: Record<string, string> = {
+    worldwide: t`US East`,
+    brazil: t`South America (São Paulo)`,
+  };
+  const voiceRegions = () =>
+    advertisedVoiceNodes(client()).map((node) => ({
+      value: node.name,
+      label: voiceRegionLabels[node.name] ?? node.name,
+    }));
 
   const channels = () =>
     props.server.channels.map((channel) => ({
@@ -144,6 +166,9 @@ export default function ServerOverview(props: ServerSettingsProps) {
     );
     editGroup.controls.sys_user_banned.setValue(
       props.server.systemMessages?.user_banned ?? "none",
+    );
+    editGroup.controls.voice_region.setValue(
+      props.server.voiceRegion ?? VOICE_REGION_AUTO,
     );
   }
 
@@ -239,6 +264,16 @@ export default function ServerOverview(props: ServerSettingsProps) {
       } else {
         changes.system_messages!.user_banned =
           editGroup.controls.sys_user_banned.value;
+      }
+    }
+
+    if (editGroup.controls.voice_region.isDirty) {
+      const region = editGroup.controls.voice_region.value;
+      if (region === VOICE_REGION_AUTO) {
+        // stoat-api's generated FieldsServer predates the field
+        changes.remove!.push("VoiceRegion" as never);
+      } else {
+        (changes as { voice_region?: string }).voice_region = region;
       }
     }
 
@@ -345,6 +380,32 @@ export default function ServerOverview(props: ServerSettingsProps) {
                 )}
               </For>
             </Form2.Select>
+          </Column>
+          <Text class="title" size="small">
+            <Trans>Voice</Trans>
+          </Text>
+          <Column>
+            <Form2.Select
+              label={t`Voice region`}
+              control={editGroup.controls.voice_region}
+            >
+              <MenuItem value={VOICE_REGION_AUTO}>
+                <Trans>Auto (lowest latency)</Trans>
+              </MenuItem>
+              <For each={voiceRegions()}>
+                {(region) => (
+                  <MenuItem value={region.value}>{region.label}</MenuItem>
+                )}
+              </For>
+            </Form2.Select>
+            <Text class="label">
+              <Trans>
+                Where new calls in this server are hosted. Auto picks the
+                closest node for whoever starts the call; a fixed region is
+                better when most members are in one place. Calls already in
+                progress keep their region.
+              </Trans>
+            </Text>
           </Column>
           <Row>
             <Form2.Reset group={editGroup} onReset={onReset} />

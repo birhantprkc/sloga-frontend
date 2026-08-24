@@ -117,6 +117,7 @@ import { CaptureClaim } from "./captureClaim";
 import { entranceSoundFor } from "./entranceSound";
 import { watchLocalUserId } from "./localUserIdentity";
 import { RemoteControl } from "./remoteControl";
+import { voiceNodeForChannel } from "./voiceNode";
 import { WatchDuck } from "./watchDuck";
 import { WatchTogether } from "./watchTogether";
 import {
@@ -2092,12 +2093,12 @@ class Voice {
       }
 
       if (!auth) {
-        auth = await channel.joinCall(
-          "worldwide",
-          true,
-          undefined,
-          e2eeDeviceId,
-        );
+        // The server's configured voice region, else the lowest-latency
+        // advertised node (cached 10 min; falls back to "worldwide"). Only
+        // decisive for the room's first joiner — the server pins a channel
+        // to the node that opened it.
+        const node = await voiceNodeForChannel(this.getClient(), channel);
+        auth = await channel.joinCall(node, true, undefined, e2eeDeviceId);
       }
       // Superseded during joinCall → abandon this Room, leave the newer
       // connect()'s shared state intact.

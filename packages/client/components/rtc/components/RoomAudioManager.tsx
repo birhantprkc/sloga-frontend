@@ -10,29 +10,11 @@ import {
 } from "livekit-client";
 
 import { useState } from "@revolt/state";
-
 import { participantUserId } from "@revolt/ui/components/features/voice/participantIdentity";
 
 import { TrackNormalizer, ensureNormalizerWorklet } from "../audioNormalizer";
 import { useVoice } from "../state";
-import { whisperTarget } from "../whisperPermissions";
-
-/**
- * Per-user audio preferences are stored by USER id (`Voice.ts` does no
- * normalization, and `UserContextMenu` writes `props.user.id`), but every
- * lookup in here used to pass `participant.identity` — which has been
- * DEVICE-QUALIFIED (`user:device`) on E2EE calls since slice 6.1.
- *
- * So on an encrypted call the stored key and the looked-up key never matched:
- * "Mute screen share" and the per-user volume slider wrote a preference that
- * this component never read. It was masked by v0.47.0 making screen-share
- * audio audible by DEFAULT — the mute simply did nothing and the volume
- * stayed at 100%. Fixed independently of the screen leg (plan §6.6), which
- * would have added a third segment and broken it a second way.
- */
-function preferenceKey(identity: string): string {
-  return participantUserId(identity);
-}
+import { identityUserId, whisperTarget } from "../whisperPermissions";
 
 export function RoomAudioManager() {
   const voice = useVoice();
@@ -40,7 +22,7 @@ export function RoomAudioManager() {
 
   const myUserId = () => {
     const identity = voice.room()?.localParticipant.identity;
-    return identity ? participantUserId(identity) : undefined;
+    return identity ? identityUserId(identity) : undefined;
   };
 
   const tracks = useTracks(
@@ -221,11 +203,12 @@ export function RoomAudioManager() {
 
       const sid = publication.trackSid;
       seen.add(sid);
-      // Same key the <AudioTrack> volume prop uses below: the USER id, which
-      // is what the per-user slider writes.
+      // Same key the <AudioTrack> volume prop uses below: the bare USER id,
+      // matching what the per-user slider writes — SFU identities are
+      // device-qualified on encrypted calls.
       const manualGain =
         outputVolume *
-        state.voice.getUserVolume(preferenceKey(ref.participant.identity));
+        state.voice.getUserVolume(participantUserId(ref.participant.identity));
 
       const existing = normalizers.get(sid);
       if (existing && existing.track === track) {
@@ -276,12 +259,15 @@ export function RoomAudioManager() {
     <div style={{ display: "none" }}>
       <Key each={filteredTracks()} by={(item) => getTrackReferenceId(item)}>
         {(track) => {
-          const key = () => preferenceKey(track().participant.identity);
+          // Per-user settings are keyed by USER id (what the context menu
+          // writes), never the device-qualified SFU identity.
+          const settingsUserId = () =>
+            participantUserId(track().participant.identity);
           const effectiveVolume = () =>
             state.voice.outputVolume *
             (track().source === Track.Source.ScreenShareAudio
-              ? state.voice.getScreenShareVolume(key())
-              : state.voice.getUserVolume(key()));
+              ? state.voice.getScreenShareVolume(settingsUserId())
+              : state.voice.getUserVolume(settingsUserId()));
           return (
             <AudioTrack
               trackRef={track()}
@@ -295,8 +281,8 @@ export function RoomAudioManager() {
               volume={Math.max(effectiveVolume(), 0.0001)}
               muted={
                 (track().source === Track.Source.ScreenShareAudio
-                  ? state.voice.getScreenShareMuted(key())
-                  : state.voice.getUserMuted(key())) ||
+                  ? state.voice.getScreenShareMuted(settingsUserId())
+                  : state.voice.getUserMuted(settingsUserId())) ||
                 effectiveVolume() === 0 ||
                 voice.deafen()
               }

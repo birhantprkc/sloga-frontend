@@ -5,11 +5,13 @@ import { useLingui } from "@lingui-solid/solid/macro";
 import { useState } from "@revolt/state";
 
 import { Symbol } from "../../utils/Symbol";
+import { participantUserId } from "./participantIdentity";
 
 /**
  * Component that shows user voice status icons populated with client state
  */
 export function VoiceStatefulUserIcons(props: {
+  /** Bare user id, or a device-qualified participant identity — both accepted */
   userId: string;
   muted?: boolean;
   deafened?: boolean;
@@ -23,7 +25,9 @@ export function VoiceStatefulUserIcons(props: {
   const state = useState();
 
   const isMuted = () =>
-    state.voice.getUserMuted(props.userId) ? "by-user" : props.muted || false;
+    state.voice.getUserMuted(participantUserId(props.userId))
+      ? "by-user"
+      : props.muted || false;
 
   return (
     <>
