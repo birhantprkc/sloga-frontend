@@ -10,6 +10,7 @@ import {
 } from "livekit-client";
 
 import { useState } from "@revolt/state";
+import { participantUserId } from "@revolt/ui/components/features/voice/participantIdentity";
 
 import { TrackNormalizer, ensureNormalizerWorklet } from "../audioNormalizer";
 import { useVoice } from "../state";
@@ -202,10 +203,12 @@ export function RoomAudioManager() {
 
       const sid = publication.trackSid;
       seen.add(sid);
-      // Same key the <AudioTrack> volume prop uses below: the raw participant
-      // identity, matching what the per-user slider writes.
+      // Same key the <AudioTrack> volume prop uses below: the bare USER id,
+      // matching what the per-user slider writes — SFU identities are
+      // device-qualified on encrypted calls.
       const manualGain =
-        outputVolume * state.voice.getUserVolume(ref.participant.identity);
+        outputVolume *
+        state.voice.getUserVolume(participantUserId(ref.participant.identity));
 
       const existing = normalizers.get(sid);
       if (existing && existing.track === track) {
@@ -256,11 +259,15 @@ export function RoomAudioManager() {
     <div style={{ display: "none" }}>
       <Key each={filteredTracks()} by={(item) => getTrackReferenceId(item)}>
         {(track) => {
+          // Per-user settings are keyed by USER id (what the context menu
+          // writes), never the device-qualified SFU identity.
+          const settingsUserId = () =>
+            participantUserId(track().participant.identity);
           const effectiveVolume = () =>
             state.voice.outputVolume *
             (track().source === Track.Source.ScreenShareAudio
-              ? state.voice.getScreenShareVolume(track().participant.identity)
-              : state.voice.getUserVolume(track().participant.identity));
+              ? state.voice.getScreenShareVolume(settingsUserId())
+              : state.voice.getUserVolume(settingsUserId()));
           return (
             <AudioTrack
               trackRef={track()}
@@ -274,10 +281,8 @@ export function RoomAudioManager() {
               volume={Math.max(effectiveVolume(), 0.0001)}
               muted={
                 (track().source === Track.Source.ScreenShareAudio
-                  ? state.voice.getScreenShareMuted(
-                      track().participant.identity,
-                    )
-                  : state.voice.getUserMuted(track().participant.identity)) ||
+                  ? state.voice.getScreenShareMuted(settingsUserId())
+                  : state.voice.getUserMuted(settingsUserId())) ||
                 effectiveVolume() === 0 ||
                 voice.deafen()
               }
