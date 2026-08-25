@@ -17,6 +17,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(SpeechToTextPlugin.class);
         registerPlugin(com.acutest.app.e2ee.E2eePlugin.class);
         registerPlugin(com.acutest.app.watch.JellyfinPlugin.class);
+        registerPlugin(com.acutest.app.screenshare.ScreenSharePlugin.class);
         super.onCreate(savedInstanceState);
         // One WebViewClient serves both native interceptors: decrypted E2EE
         // attachments (/_e2ee-att/, in the E2eeWebViewClient base) and

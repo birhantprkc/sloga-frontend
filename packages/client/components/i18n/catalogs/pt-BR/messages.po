@@ -6713,3 +6713,31 @@ msgstr "Sua suspensão expirou. Tente fazer login novamente."
 #: components/i18n/errors.ts
 msgid "Your user has already been created? Try logging in again or refreshing the app."
 msgstr "Seu usuário já foi criado? Tente fazer login novamente ou atualizar o aplicativo."
+
+#: components/modal/modals/AndroidScreenShareSheet.tsx
+msgid "Share your screen"
+msgstr ""
+
+#: components/modal/modals/AndroidScreenShareSheet.tsx
+msgid "Data saver"
+msgstr ""
+
+#: components/modal/modals/AndroidScreenShareSheet.tsx
+msgid "Standard"
+msgstr ""
+
+#: components/modal/modals/AndroidScreenShareSheet.tsx
+msgid "High quality"
+msgstr ""
+
+#: components/modal/modals/AndroidScreenShareSheet.tsx
+msgid "Android will ask you to confirm every time you start sharing."
+msgstr ""
+
+#: components/modal/modals/AndroidScreenShareSheet.tsx
+msgid "Sharing stops if the call stops being end-to-end encrypted or your connection changes."
+msgstr ""
+
+#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
+msgid "You're sharing your screen"
+msgstr ""
