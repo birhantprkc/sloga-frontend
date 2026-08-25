@@ -6,7 +6,6 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
-import android.content.res.Configuration
 import android.media.AudioManager
 import android.media.projection.MediaProjectionManager
 import android.os.Build
@@ -102,8 +101,6 @@ class ScreenSharePlugin : Plugin() {
      * [tearDown] if teardown moved it.
      */
     private var savedAudioMode: Int? = null
-
-    private var configListener: android.content.ComponentCallbacks? = null
 
     @PluginMethod
     fun isAvailable(call: PluginCall) {
@@ -311,8 +308,6 @@ class ScreenSharePlugin : Plugin() {
             assertSenderKeyIndex(currentKeyIndex)
         }
 
-        registerConfigListener(longSide, fps)
-
         notifyListeners("started", JSObject())
         val ok = JSObject()
         ok.put("ok", true)
@@ -459,8 +454,6 @@ class ScreenSharePlugin : Plugin() {
     private suspend fun tearDown(reason: String?) {
         if (stopping) return
         stopping = true
-        configListener?.let { context.applicationContext.unregisterComponentCallbacks(it) }
-        configListener = null
         eventsJob?.cancel()
         eventsJob = null
         val room = this.room
@@ -501,60 +494,75 @@ class ScreenSharePlugin : Plugin() {
     }
 
     /**
-     * MediaProjection letterboxes a mismatched aspect, so the capture aspect
-     * follows the REAL display (§4.3 step 3). Long side capped by the tier;
-     * both dimensions forced even for the encoder.
+     * The capture size as (LONG side, SHORT side) — always, regardless of the
+     * device's current orientation.
+     *
+     * 🔴 That is livekit-android's contract for a SCREENCAST track, not a
+     * guess: `LocalScreencastVideoTrack.startCapture` ignores
+     * `super.startCapture` and re-derives the format itself, documenting
+     * *"Use captureParams.width as longest side and captureParams.height as
+     * shortest side"* — for a portrait display it passes
+     * (params.height, params.width) to the capturer. Handing it a
+     * portrait-ordered pair therefore publishes the TRANSPOSE: proven live on
+     * 2026-08-25, where a portrait 1080x2340 emulator produced a landscape
+     * `WebRTC_ScreenCapture ... 1080 x 498` virtual display and a 1080x498
+     * track on the viewer. The SDK also owns rotation from here (see the note
+     * further down), so orientation never enters this calculation.
+     *
+     * The aspect still follows the REAL display — MediaProjection letterboxes
+     * a mismatched one — with the long side capped by the tier and both
+     * dimensions forced even for the encoder.
      */
     private fun captureDimensions(longSide: Int): Pair<Int, Int> {
-        // The REAL display, not the app window: MediaProjection captures the
-        // whole screen, and an app-window aspect (minus bars) letterboxes
-        // every share slightly.
-        val windowManager = context.applicationContext
-            .getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
+        // 🔴 The metrics MUST come from a VISUAL context (the Activity), not
+        // the application context. `WindowManager` from an application context
+        // is documented as not tracking the display's current configuration,
+        // and on the API-36 emulator it reported the screen LANDSCAPE while
+        // the device was portrait 1080x2340 — which published a transposed
+        // 1080x498 capture (proven on the virtual display: "WebRTC_
+        // ScreenCapture ... 1080 x 498"). MediaProjection letterboxes a
+        // mismatched aspect, so that is a visibly wrong share on every device
+        // the misreport happens on. Fall back to the application resources
+        // only if there is no Activity, which cannot happen on the consent
+        // path that precedes this.
+        val visual: Context = activity ?: context
         val (screenW, screenH) = if (Build.VERSION.SDK_INT >= 30) {
-            val bounds = windowManager.maximumWindowMetrics.bounds
+            val windowManager = visual
+                .getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
+            val bounds = windowManager.currentWindowMetrics.bounds
             Pair(bounds.width(), bounds.height())
         } else {
             val metrics = android.util.DisplayMetrics()
             @Suppress("DEPRECATION")
-            windowManager.defaultDisplay.getRealMetrics(metrics)
+            (visual.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager)
+                .defaultDisplay.getRealMetrics(metrics)
             Pair(metrics.widthPixels, metrics.heightPixels)
         }
-        val landscape = screenW >= screenH
         val longPx = maxOf(screenW, screenH)
         val shortPx = minOf(screenW, screenH)
         val long = minOf(longSide, longPx)
         val short = (long.toLong() * shortPx / longPx).toInt()
         fun even(v: Int) = v and 0x1.inv()
-        return if (landscape) Pair(even(long), even(short)) else Pair(even(short), even(long))
+        val dims = Pair(even(long), even(short))
+        // Dimensions only — no key material, no call data (§4.2 hygiene). This
+        // is the one field-diagnosable cause of a letterboxed share, and it is
+        // invisible without a log: MediaProjection silently pillarboxes a
+        // mismatched aspect rather than failing.
+        android.util.Log.i(
+            "ScreenSharePlugin",
+            "capture long=${dims.first} short=${dims.second} " +
+                "(screen ${screenW}x${screenH}, tier long side $longSide)",
+        )
+        return dims
     }
 
-    /**
-     * MediaProjection letterboxes a capture whose aspect no longer matches the
-     * display, so rotation must retune the capture format (§4.3 step 3):
-     * recompute (w,h) for the new orientation and drive the LIVE capturer via
-     * `changeCaptureFormat` — never a track restart, which would end the share
-     * (the consent Intent is single-use).
-     */
-    private fun registerConfigListener(longSide: Int, fps: Int) {
-        val callbacks = object : android.content.ComponentCallbacks {
-            override fun onConfigurationChanged(newConfig: Configuration) {
-                val room = this@ScreenSharePlugin.room ?: return
-                val pub = room.localParticipant.getTrackPublication(Track.Source.SCREEN_SHARE)
-                val track = pub?.track as? io.livekit.android.room.track.LocalVideoTrack ?: return
-                val (w, h) = captureDimensions(longSide)
-                try {
-                    track.capturer.changeCaptureFormat(w, h, fps)
-                } catch (_: Throwable) {
-                    // Worst case the projection letterboxes until re-share.
-                }
-            }
-
-            override fun onLowMemory() {}
-        }
-        configListener = callbacks
-        context.applicationContext.registerComponentCallbacks(callbacks)
-    }
+    // 🔴 Rotation is the SDK's job, not ours (proven live 2026-08-25).
+    // `LocalScreencastVideoTrack` installs its own `OrientationEventListener`
+    // and re-runs `changeCaptureFormat` whenever the display dimensions
+    // change. An `onConfigurationChanged` hook here would race that with a
+    // second, differently-derived format — plan §4.3 step 3's rotation
+    // instruction is already satisfied by the SDK, so this plugin
+    // deliberately registers nothing.
 
     private fun buildNotification(): Notification {
         val channelId = CHANNEL_ID
