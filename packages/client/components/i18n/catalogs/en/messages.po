@@ -13,6 +13,9 @@ msgstr ""
 "Language-Team: \n"
 "Plural-Forms: \n"
 
+msgid "Add your player IDs so friends can find you in-game. Shown on your profile, click-to-copy."
+msgstr "Add your player IDs so friends can find you in-game. Shown on your profile, click-to-copy."
+
 #: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
 msgid "Arrangement"
 msgstr "Arrangement"
@@ -20,6 +23,12 @@ msgstr "Arrangement"
 #: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
 msgid "Auto keeps the member list with the channels, unless Ultrawide layout moves it to the other side. Applies to this device only."
 msgstr "Auto keeps the member list with the channels, unless Ultrawide layout moves it to the other side. Applies to this device only."
+
+msgid "Click to copy"
+msgstr "Click to copy"
+
+msgid "Could not update your game IDs, try again."
+msgstr "Could not update your game IDs, try again."
 
 #: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
 msgid "Custom"
@@ -29,9 +38,18 @@ msgstr "Custom"
 msgid "Discord"
 msgstr "Discord"
 
+msgid "e.g. they/them"
+msgstr "e.g. they/them"
+
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "Evens out loud and quiet people automatically. Only voices are leveled — music and screen share audio are never touched."
 msgstr "Evens out loud and quiet people automatically. Only voices are leveled — music and screen share audio are never touched."
+
+msgid "Game IDs"
+msgstr "Game IDs"
+
+msgid "Give respect"
+msgstr "Give respect"
 
 #: components/ui/components/features/voice/watch/WatchOverlay.tsx:198
 msgid "Hosted by {name}"
@@ -94,9 +112,24 @@ msgstr "Only the host (or a channel manager) can control playback."
 msgid "Paste a YouTube link. Everyone in the call watches it in sync, each from YouTube directly — Sloga never touches the video."
 msgstr "Paste a YouTube link. Everyone in the call watches it in sync, each from YouTube directly — Sloga never touches the video."
 
+msgid "Platform"
+msgstr "Platform"
+
 #: components/ui/components/features/voice/watch/WatchOverlay.tsx:250
 msgid "Playback speed"
 msgstr "Playback speed"
+
+msgid "Player ID or handle"
+msgstr "Player ID or handle"
+
+msgid "Pronouns"
+msgstr "Pronouns"
+
+msgid "Respect"
+msgstr "Respect"
+
+msgid "Rewrite your respect…"
+msgstr "Rewrite your respect…"
 
 #: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
 #: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
@@ -202,6 +235,12 @@ msgstr "Moves the member list out of the channel column and into the space besid
 msgid "Requires a 21:9 or wider display. This display is {0}."
 msgstr "Requires a 21:9 or wider display. This display is {0}."
 
+msgid "Unknown user"
+msgstr "Unknown user"
+
+msgid "Update"
+msgstr "Update"
+
 #: components/ui/components/features/voice/watch/WatchOverlay.tsx:306
 msgid "Watch"
 msgstr "Watch"
@@ -257,6 +296,9 @@ msgstr "Hug the channel list"
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
 msgid "Full"
 msgstr "Full"
+
+msgid "Write something nice…"
+msgstr "Write something nice…"
 
 #: components/i18n/errors.ts
 msgid "You need to be in the call to do that."

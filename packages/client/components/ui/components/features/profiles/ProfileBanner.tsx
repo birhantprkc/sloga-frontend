@@ -81,6 +81,9 @@ export function ProfileBanner(props: {
               </span>
             </Username>
           </Tooltip>
+          <Show when={props.user.pronouns}>
+            <Pronouns>{props.user.pronouns}</Pronouns>
+          </Show>
         </UserShort>
       </Row>
     </Banner>
@@ -141,5 +144,13 @@ const Username = styled("span", {
     _hover: {
       textDecoration: "underline",
     },
+  },
+});
+
+const Pronouns = styled("span", {
+  base: {
+    fontSize: "0.75rem",
+    fontWeight: 400,
+    opacity: 0.8,
   },
 });
