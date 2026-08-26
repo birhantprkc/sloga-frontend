@@ -75,6 +75,7 @@ import type {
   ResponseSubmitMlsCommit,
 } from "@revolt/client";
 
+import { isScreenLeg } from "../ui/components/features/voice/participantIdentity";
 import {
   type AdmitAbort,
   admitAbortIsBenign,
@@ -192,6 +193,30 @@ const LAG_DESYNC_THRESHOLD = 12;
  * disconnect vs the slow backstop for an unexplained ghost leaf).
  */
 const LEAVE_GRACE_MS = 10_000;
+/**
+ * Admit-grace — the JOIN-direction mirror of the leave-grace. A participant we
+ * watched join the SFU counts as `pending` (not non-enrolled) for its grace
+ * window, so a mid-call join does not instantly flip the call to `mixed` —
+ * which pauses the mic and one-way STOPS an Android screen leg (§0.4) while
+ * the admit is still in flight. The window is `base + primaries · stagger`,
+ * bounded by the ceiling: the Add is issued by an existing member at
+ * `leafIndex · ADMIT_STAGGER_MS`, and the EFFECTIVE admitter can be a high
+ * leaf when lower ones are wedged, so a window sized only to the best-case
+ * (low-leaf, sub-second) admit would expire mid-admit in larger or laggier
+ * calls and reproduce the very leg-stop it exists to prevent. The primary
+ * count approximates the highest live leaf index (churn can push indices
+ * higher — the ceiling bounds that error). Fail-closed on expiry: a joiner
+ * still absent from the MLS roster when the window closes becomes
+ * non-enrolled and the loud path fires as before — delayed, never hidden.
+ * Pending is NOT consistent — enable/resume keep waiting for it to drain
+ * (`rosterConsistent`, `#evaluateEnable`) — and the grace is armed only by a
+ * live `participantConnected`, never for the initial SFU set, so the
+ * enable-time T-15 backstop is unchanged.
+ */
+const ADMIT_GRACE_BASE_MS = 10_000;
+/** Hard ceiling on one admit-grace window: past this a never-admitting joiner
+ *  goes loud no matter the roster size. */
+const ADMIT_GRACE_MAX_MS = 30_000;
 /**
  * Ghost-leaf divergence timeout (plan §1.4): an MLS leaf with NO SFU
  * participant that we did not see leave is removed after this long by any
@@ -891,6 +916,9 @@ export class MlsCallSession {
   // --- Roster reconciliation (step 5) ----------------------------------------
   /** Pending 10 s leave-grace removals, keyed by device-qualified identity. */
   #leaveGrace = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Open admit-grace windows for freshly-joined SFU participants, keyed by
+   *  identity (the join-direction mirror of `#leaveGrace`). */
+  #admitGrace = new Map<string, ReturnType<typeof setTimeout>>();
   /** Pending 30 s ghost-divergence removals, keyed by identity. */
   #ghostTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Last-computed non-enrolled identities (step 6 reads this synchronously). */
@@ -2802,6 +2830,35 @@ export class MlsCallSession {
     if (this.#terminal()) return;
     this.#clearLeaveGrace(identity);
     this.#clearGhostTimer(identity);
+    // Open the admit-grace window (never for self, never for a screen leg —
+    // an unfolded leg must stay instantly loud and never admits anyway):
+    // until it expires, the reconcile below reports this identity as
+    // `pending`, not non-enrolled, so the in-flight staggered Add does not
+    // flip the call to `mixed`. Cleared on admit (reconcile sees it in the
+    // MLS roster), on leave, or here on expiry — which kicks a fresh
+    // reconcile so a joiner that never admitted goes loud without waiting
+    // for the tick. Window sizing: see `ADMIT_GRACE_BASE_MS`.
+    if (
+      identity !== this.#media?.localIdentity() &&
+      !isScreenLeg(identity) &&
+      !this.#admitGrace.has(identity)
+    ) {
+      const primaries =
+        this.#media
+          ?.sfuParticipants()
+          .filter((participant) => !isScreenLeg(participant)).length ?? 0;
+      const graceMs = Math.min(
+        ADMIT_GRACE_BASE_MS + primaries * ADMIT_STAGGER_MS,
+        ADMIT_GRACE_MAX_MS,
+      );
+      const timer = setTimeout(() => {
+        this.#admitGrace.delete(identity);
+        this.#timers.delete(timer);
+        void this.reconcileNow();
+      }, graceMs);
+      this.#admitGrace.set(identity, timer);
+      this.#timers.add(timer);
+    }
     void this.reconcileNow();
   }
 
@@ -2813,6 +2870,7 @@ export class MlsCallSession {
   onParticipantLeft(identity: string): void {
     if (this.#terminal() || this.#state !== "active") return;
     if (identity === this.#media?.localIdentity()) return; // never remove self
+    this.#clearAdmitGrace(identity); // a leaver holds no admit window
     if (this.#leaveGrace.has(identity)) return; // already pending
     const timer = setTimeout(() => {
       this.#leaveGrace.delete(identity);
@@ -2845,6 +2903,14 @@ export class MlsCallSession {
     }
     if (this.#state !== "active" || !this.#groupId) return null;
 
+    // An admitted joiner's grace window is spent: clear it BEFORE the diff so
+    // the window never outlives the admit (and never masks a later divergence
+    // for the same identity).
+    const mlsSet = new Set(mlsIdentities);
+    for (const identity of [...this.#admitGrace.keys()]) {
+      if (mlsSet.has(identity)) this.#clearAdmitGrace(identity);
+    }
+
     const localIdentity = media.localIdentity() ?? "";
     const result = reconcileRoster(
       media.sfuParticipants(),
@@ -2856,6 +2922,7 @@ export class MlsCallSession {
         e2ee: this.#callMode.kind === "e2ee",
         encryptedLegs: media.encryptedLegs?.() ?? [],
       },
+      [...this.#admitGrace.keys()],
     );
     this.#nonEnrolled = result.nonEnrolled;
     // Surface the VERIFIED MLS roster + divergent ghosts for the 6.5 panel.
@@ -2894,7 +2961,13 @@ export class MlsCallSession {
    */
   async rosterConsistent(): Promise<boolean> {
     const result = await this.reconcileNow();
-    return !!result && result.nonEnrolled.length === 0;
+    // Strict on purpose: a `pending` joiner is not a mix, but it is not
+    // consistent either — enable/resume wait for the admit to finish (or the
+    // grace to expire into non-enrolled). The admit-grace never relaxes this
+    // precondition.
+    return (
+      !!result && result.nonEnrolled.length === 0 && result.pending.length === 0
+    );
   }
 
   /** The current non-enrolled identities (step 6 reads this synchronously). */
@@ -2971,6 +3044,11 @@ export class MlsCallSession {
       this.#timers.delete(timer);
     }
     this.#leaveGrace.clear();
+    for (const timer of this.#admitGrace.values()) {
+      clearTimeout(timer);
+      this.#timers.delete(timer);
+    }
+    this.#admitGrace.clear();
     for (const timer of this.#ghostTimers.values()) {
       clearTimeout(timer);
       this.#timers.delete(timer);
@@ -2985,6 +3063,15 @@ export class MlsCallSession {
       clearTimeout(timer);
       this.#timers.delete(timer);
       this.#leaveGrace.delete(identity);
+    }
+  }
+
+  #clearAdmitGrace(identity: string): void {
+    const timer = this.#admitGrace.get(identity);
+    if (timer) {
+      clearTimeout(timer);
+      this.#timers.delete(timer);
+      this.#admitGrace.delete(identity);
     }
   }
 
@@ -3012,6 +3099,13 @@ export class MlsCallSession {
     if (!this.#media || this.#state !== "active") return;
     const consistent = result.nonEnrolled.length === 0;
     const inInterlude = this.#callMode.kind === "interlude";
+
+    // Admit-grace HOLD: only pending joiners diverge — not a mix (do not
+    // pause / stop the Android leg / cancel an interlude re-upgrade for an
+    // admit still in flight), but not consistent either (do not enable, do
+    // not resume a paused mix). The next reconcile — admit, expiry, or the
+    // 5 s tick — resolves it one way or the other.
+    if (consistent && result.pending.length > 0) return;
 
     if (!consistent) {
       // A live participant we cannot encrypt to ⇒ mixed call ⇒ pause (never

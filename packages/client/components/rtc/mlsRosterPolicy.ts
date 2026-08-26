@@ -28,6 +28,16 @@ import {
  */
 export interface RosterReconcileResult {
   nonEnrolled: string[];
+  /**
+   * Would-be non-enrolled identities still inside the caller's admit-grace
+   * window (the join-direction mirror of the leave-grace): in the SFU, not yet
+   * in the MLS group, and joined recently enough that the staggered Add is
+   * plausibly still in flight. NOT a mix trigger — but also NOT consistent:
+   * enable/resume must keep waiting for these to drain. When the caller's
+   * window expires the identity moves to `nonEnrolled` and the loud path fires
+   * as before, so a joiner that never admits still fails closed.
+   */
+  pending: string[];
   ghosts: string[];
 }
 
@@ -81,12 +91,33 @@ export interface RosterLegInputs {
  *          call reads as non-enrolled, which is exactly the loud path.
  *
  * The client may only ever OVER-warn here, never suppress a real mix.
+ *
+ * `pendingAdmits` — identities the caller saw JOIN the SFU within its
+ * admit-grace window (mirroring the leave-grace on the other direction).
+ * A would-be non-enrolled identity in this set is reported as `pending`
+ * instead of `nonEnrolled`, so a mid-call joiner whose staggered Add is still
+ * in flight does not flip the call to `mixed` — which would pause the mic and
+ * one-way STOP an Android screen leg (§0.4) on EVERY join. Three guards keep
+ * this from weakening the mix detection:
+ *  - it only ever applies to identities the caller watched join; the initial
+ *    SFU set at enable time gets no grace, so the hostile-DS T-15 backstop
+ *    (`rosterConsistent` before enable/publish) is untouched;
+ *  - a SCREEN LEG is never pending, whatever the caller passed: an unfolded
+ *    leg is either the §5.4 orphan impostor or a plaintext-declaring
+ *    publication (rule 2(b)) and both must stay instantly loud;
+ *  - `pending` is not "consistent" — callers gate enable/resume on BOTH lists
+ *    being empty, and when the grace expires the identity falls through to
+ *    `nonEnrolled` and the loud path fires exactly as before.
+ * During the window the call keeps publishing under the CURRENT epoch's keys,
+ * which the un-admitted joiner does not hold — no frame becomes readable to a
+ * non-member, and no plaintext path opens.
  */
 export function reconcileRoster(
   sfuIdentities: readonly string[],
   mlsIdentities: readonly string[],
   localIdentity: string,
   legs: RosterLegInputs = { e2ee: false, encryptedLegs: [] },
+  pendingAdmits: readonly string[] = [],
 ): RosterReconcileResult {
   const rawSfu = new Set(sfuIdentities);
   const mls = new Set(mlsIdentities);
@@ -106,7 +137,9 @@ export function reconcileRoster(
     return owner;
   };
 
+  const graced = new Set(pendingAdmits);
   const nonEnrolled: string[] = [];
+  const pending: string[] = [];
   const seen = new Set<string>();
   for (const identity of rawSfu) {
     const id = effective(identity);
@@ -114,12 +147,15 @@ export function reconcileRoster(
     // two rows for the same person.
     if (id === localIdentity || mls.has(id) || seen.has(id)) continue;
     seen.add(id);
-    nonEnrolled.push(id);
+    // Admit-grace: a freshly-joined PRIMARY (never a leg — see above) is
+    // pending, not non-enrolled, until the caller's window expires.
+    if (!isScreenLeg(id) && graced.has(id)) pending.push(id);
+    else nonEnrolled.push(id);
   }
 
   const primaries = new Set(
     [...rawSfu].filter((identity) => !isScreenLeg(identity)),
   );
   const ghosts = [...mls].filter((id) => !primaries.has(id));
-  return { nonEnrolled, ghosts };
+  return { nonEnrolled, pending, ghosts };
 }

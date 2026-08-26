@@ -166,6 +166,87 @@ test("the bare-primary grammar `user::screen` folds onto the bare user", () => {
   );
 });
 
+// ---- Admit-grace (Android plan §17.7 finding F3) ---------------------------
+// A mid-call joiner sits in the SFU seconds before its staggered Add commits;
+// declaring it non-enrolled in that window flips the call to `mixed`, pauses
+// the mic and one-way STOPS an Android screen leg (§0.4) on EVERY join. The
+// caller passes the identities it watched join within the admit window; they
+// are reported as `pending` — held out of the mix trigger but NOT consistent
+// (enable/resume still wait on the caller side).
+
+test("a pending-admit joiner is pending, not non-enrolled", () => {
+  const result = reconcileRoster(
+    [SELF, ALICE, BOB],
+    [SELF, ALICE],
+    SELF,
+    keyed(),
+    [BOB],
+  );
+  assert.deepEqual(result.nonEnrolled, []);
+  assert.deepEqual(result.pending, [BOB]);
+  assert.deepEqual(result.ghosts, []);
+});
+
+test("grace on one joiner never masks a different non-enrolled participant", () => {
+  const result = reconcileRoster([SELF, ALICE, BOB], [SELF], SELF, keyed(), [
+    BOB,
+  ]);
+  assert.deepEqual(result.nonEnrolled, [ALICE]);
+  assert.deepEqual(result.pending, [BOB]);
+});
+
+test("🔴 the admit-grace never covers a screen leg", () => {
+  // An unfolded leg is either the §5.4 orphan impostor or a plaintext
+  // publication in an e2ee call (rule 2(b)); both must stay instantly loud
+  // even if the caller (wrongly) graced the leg identity.
+  const orphan = reconcileRoster(
+    [SELF, ALICE_LEG],
+    [SELF, ALICE],
+    SELF,
+    keyed(ALICE_LEG),
+    [ALICE_LEG],
+  );
+  assert.deepEqual(orphan.nonEnrolled, [ALICE_LEG]);
+  assert.deepEqual(orphan.pending, []);
+
+  const plaintext = reconcileRoster(
+    [SELF, ALICE, ALICE_LEG],
+    [SELF, ALICE],
+    SELF,
+    { e2ee: true, encryptedLegs: [] },
+    [ALICE_LEG],
+  );
+  assert.deepEqual(plaintext.nonEnrolled, [ALICE_LEG]);
+  assert.deepEqual(plaintext.pending, []);
+});
+
+test("an admitted identity still in the grace set is neither pending nor non-enrolled", () => {
+  const result = reconcileRoster([SELF, ALICE], [SELF, ALICE], SELF, keyed(), [
+    ALICE,
+  ]);
+  assert.deepEqual(result.nonEnrolled, []);
+  assert.deepEqual(result.pending, []);
+});
+
+test("a pending primary and its keyed leg collapse to ONE pending row", () => {
+  // Same dedupe rule as non-enrolled: the banner-side consumer names people.
+  const result = reconcileRoster(
+    [SELF, BOB, BOB_LEG],
+    [SELF],
+    SELF,
+    keyed(BOB_LEG),
+    [BOB],
+  );
+  assert.deepEqual(result.nonEnrolled, []);
+  assert.deepEqual(result.pending, [BOB]);
+});
+
+test("no pendingAdmits argument behaves exactly as before, with an empty pending", () => {
+  const result = reconcileRoster([SELF, ALICE], [SELF], SELF, keyed());
+  assert.deepEqual(result.nonEnrolled, [ALICE]);
+  assert.deepEqual(result.pending, []);
+});
+
 test("legs change nothing about ordinary non-enrolled and ghost detection", () => {
   // The pre-leg behaviour, unchanged: a stranger in the SFU set is
   // non-enrolled, a member with no SFU participant is a ghost, and self is

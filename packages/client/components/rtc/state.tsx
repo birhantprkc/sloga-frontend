@@ -2624,7 +2624,12 @@ class Voice {
     // (§0.4) — on reason ADD, before awaiting the WebView pause ops, and
     // deliberately NOT in #applyPublishGate, which re-runs on every
     // LocalTrackPublished. The gate cannot pause the leg: it is a separate
-    // native participant the WebView's publication sweep never sees.
+    // native participant the WebView's publication sweep never sees. The stop
+    // is one-way, so name the reason that fired it.
+    if (this.#androidLeg?.active())
+      console.warn(
+        `[rtc] publish gate "${reason}" stopped the Android screen leg`,
+      );
     void this.#stopAndroidLeg();
     await this.#applyPublishGate(room);
   }
