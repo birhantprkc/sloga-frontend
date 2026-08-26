@@ -8,6 +8,47 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // v0.53.0: the profile update — respect wall + game IDs + pronouns. Copy
+  // constraints, load-bearing:
+  // - Do NOT quote these UI strings (they are this release's grep markers):
+  //   "Give respect", "Write something nice", "Player ID or handle".
+  //   Paraphrase — "give someone respect" lowercase in prose is fine.
+  // - One entry per friend per wall, edit-in-place — say it, it's the
+  //   anti-spam design. The owner can delete anything on their own wall.
+  // - Walls are plain text ON PURPOSE (no pings, no links) — safe to state.
+  // - Blocking someone removes your words from each other's walls — safe to
+  //   state. A plain unfriend does NOT (deliberate); don't promise it does.
+  // - The wall honors the friends-only profile visibility setting.
+  // - Game IDs are self-typed handles, NOT verified accounts — never imply
+  //   linking/verification. Click copies the handle.
+  // - Web-only at publish time: desktop/Linux/Android still carry the
+  //   v0.52.0 bundle — keep the "with their next update" close.
+  // - EXCLUDED as dark or unproven: Android screen share (flag never lit),
+  //   remote-control couch co-op, server boosts, the public directory,
+  //   slash-command bot docs.
+  {
+    id: "sloga-2026-08-26",
+    title: "Patch Notes",
+    published_at: "2026-08-26T04:30:00.000Z",
+    markdown_content: `## v0.53.0 — Your profile, with people in it
+
+### 💙 Respect
+- **Friends can now write on your profile.** Open someone's profile and leave them a short note — a compliment, an inside joke, a thank-you for carrying the raid. It shows up on their profile for anyone who can see it.
+- **One note per friend, and it's yours to rewrite.** Writing again edits what you said before, so a wall reads like a guestbook, not a comment feed.
+- **Your wall, your rules.** Remove anything from your own wall whenever you like. Blocking someone clears their words from your wall and yours from theirs, both at once.
+- **Plain text only, on purpose.** Nothing on a wall can ping you, embed anything, or link anywhere.
+- If your profile is set to friends-only, your wall is too.
+
+### 🎮 Game IDs
+- **Put your player IDs on your profile.** Steam, Epic, Battle.net, PlayStation, Xbox, Riot, Ubisoft, Rockstar, Activision, Nintendo, EA, GOG — and GGG for the Path of Exile crowd. Add them in Settings → Profile.
+- **One click copies the handle.** No more typing your friend code into chat for the fifth time — it's on your profile, and anyone who can see it can copy it straight into a friend search.
+- These are handles you type in yourself, shown as text on your profile — add the ones you want people to find you by.
+
+### 🏷️ Pronouns
+- **Profiles can now carry your pronouns.** Set them in Settings → Profile and they appear under your name wherever your profile shows.
+
+On the web now; the desktop and mobile apps pick these up with their next update.`,
+  },
   // v0.51.0: regional voice servers reach every platform + the per-server
   // voice region control. Copy constraints, load-bearing:
   // - The South American server is REAL and live (Sao Paulo). Routing to it
