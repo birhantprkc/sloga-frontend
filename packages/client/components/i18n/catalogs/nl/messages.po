@@ -929,8 +929,8 @@ msgid "Attenuation Strength"
 msgstr ""
 
 #: components/modal/modals/ScreenShareSettings.tsx
-msgid "Audio disabled by browser"
-msgstr ""
+#~ msgid "Audio disabled by browser"
+#~ msgstr ""
 
 #: components/ui/components/features/voice/callCard/VoiceDeviceSelector.tsx
 msgid "Audio output"
@@ -4618,6 +4618,10 @@ msgstr "Oudste"
 msgid "On"
 msgstr "Aan"
 
+#: components/modal/modals/ScreenShareSettings.tsx
+msgid "On macOS the browser can only capture audio when sharing a tab — restart the share and pick a tab to include its sound."
+msgstr ""
+
 #: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
 msgid "On the same side as the channels, the member list shares their column. Overrides Ultrawide layout's member list placement."
 msgstr ""
@@ -6554,6 +6558,10 @@ msgstr ""
 msgid "System"
 msgstr ""
 
+#: components/modal/modals/ScreenShareSettings.tsx
+msgid "System audio capture isn't supported on Linux yet."
+msgstr ""
+
 #: components/app/interface/settings/server/Overview.tsx
 msgid "System message channels"
 msgstr ""
@@ -6931,6 +6939,10 @@ msgstr ""
 #. placeholder {0}: info().serverUrl
 #: components/ui/components/features/voice/watch/WatchOverlay.tsx
 msgid "This session is playing from {0}. Sign in to that Jellyfin to watch along."
+msgstr ""
+
+#: components/modal/modals/ScreenShareSettings.tsx
+msgid "This share has no audio. To include sound, restart the share and pick a tab or your entire screen with \"Share system audio\" enabled."
 msgstr ""
 
 #: src/interface/channels/text/TextChannel.tsx

@@ -7,9 +7,17 @@ import { ScreenShareQualityName } from "@revolt/state/stores/Voice";
 import { Column, Dialog, DialogProps, Form2 } from "@revolt/ui";
 import { VideoTrack } from "solid-livekit-components";
 
-import { Show } from "solid-js";
+import { Match, Show, Switch } from "solid-js";
 import { ScreenShareQualityLabel } from "./ScreenShareQualityLabel";
 import { Modals } from "../types";
+
+// Why the capture came back without audio differs by OS, and the old
+// one-liner ("Audio disabled by browser") read as breakage everywhere.
+// Android's WebView reports platform "Linux armv8l", so exclude it rather
+// than tell phone users about desktop Linux.
+const isLinux =
+  navigator.platform.includes("Linux") && !/Android/i.test(navigator.userAgent);
+const isMac = navigator.platform.startsWith("Mac");
 
 export function ScreenShareSettingsModal(
   props: DialogProps & Modals & { type: "screen_share_settings" },
@@ -118,7 +126,27 @@ export function ScreenShareSettingsModal(
           </Form2.Checkbox>
           <Show when={!props.audio}>
             <small>
-              <Trans>Audio disabled by browser</Trans>
+              <Switch
+                fallback={
+                  <Trans>
+                    This share has no audio. To include sound, restart the share
+                    and pick a tab or your entire screen with "Share system
+                    audio" enabled.
+                  </Trans>
+                }
+              >
+                <Match when={isLinux}>
+                  <Trans>
+                    System audio capture isn't supported on Linux yet.
+                  </Trans>
+                </Match>
+                <Match when={isMac}>
+                  <Trans>
+                    On macOS the browser can only capture audio when sharing a
+                    tab — restart the share and pick a tab to include its sound.
+                  </Trans>
+                </Match>
+              </Switch>
             </small>
           </Show>
         </Column>

@@ -929,8 +929,8 @@ msgid "Attenuation Strength"
 msgstr "Attenuation Strength"
 
 #: components/modal/modals/ScreenShareSettings.tsx
-msgid "Audio disabled by browser"
-msgstr "Audio disabled by browser"
+#~ msgid "Audio disabled by browser"
+#~ msgstr "Audio disabled by browser"
 
 #: components/ui/components/features/voice/callCard/VoiceDeviceSelector.tsx
 msgid "Audio output"
@@ -4604,6 +4604,10 @@ msgstr "Oldest"
 msgid "On"
 msgstr "On"
 
+#: components/modal/modals/ScreenShareSettings.tsx
+msgid "On macOS the browser can only capture audio when sharing a tab — restart the share and pick a tab to include its sound."
+msgstr "On macOS the browser can only capture audio when sharing a tab — restart the share and pick a tab to include its sound."
+
 #: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
 msgid "On the same side as the channels, the member list shares their column. Overrides Ultrawide layout's member list placement."
 msgstr "On the same side as the channels, the member list shares their column. Overrides Ultrawide layout's member list placement."
@@ -6536,6 +6540,10 @@ msgstr "Sync your currently chosen language."
 msgid "System"
 msgstr "System"
 
+#: components/modal/modals/ScreenShareSettings.tsx
+msgid "System audio capture isn't supported on Linux yet."
+msgstr "System audio capture isn't supported on Linux yet."
+
 #: components/app/interface/settings/server/Overview.tsx
 msgid "System message channels"
 msgstr "System message channels"
@@ -6906,6 +6914,10 @@ msgstr "This server's certificate can't be verified. Only trust it if this is yo
 #: components/ui/components/features/voice/watch/WatchOverlay.tsx
 msgid "This session is playing from {0}. Sign in to that Jellyfin to watch along."
 msgstr "This session is playing from {0}. Sign in to that Jellyfin to watch along."
+
+#: components/modal/modals/ScreenShareSettings.tsx
+msgid "This share has no audio. To include sound, restart the share and pick a tab or your entire screen with \"Share system audio\" enabled."
+msgstr "This share has no audio. To include sound, restart the share and pick a tab or your entire screen with \"Share system audio\" enabled."
 
 #: src/interface/channels/text/TextChannel.tsx
 msgid "This thread is archived"
