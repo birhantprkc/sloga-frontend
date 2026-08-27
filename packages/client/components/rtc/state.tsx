@@ -2566,6 +2566,13 @@ class Voice {
             (p) => isScreenLeg(p.identity) && p.trackPublications.size === 0,
           )
           .map((p) => p.identity),
+      // Publication-silent remotes: an expiring admit-grace re-arms while its
+      // joiner is here (an enrolling client's own negotiating gate publishes
+      // nothing; a plaintext client's mic shows up within seconds).
+      unpublishedParticipants: () =>
+        [...room.remoteParticipants.values()]
+          .filter((p) => p.trackPublications.size === 0)
+          .map((p) => p.identity),
       onEncryptionState: (state, error) => {
         // Latch a loud media-plane failure into the existing structured signal
         // (6.5 classifies RE-SECURING vs NOT-ENCRYPTED from callEncryption +

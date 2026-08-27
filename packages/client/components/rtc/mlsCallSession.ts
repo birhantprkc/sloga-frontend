@@ -546,6 +546,16 @@ export interface MlsMediaBinding {
    * sends nothing and its token cannot subscribe.
    */
   unpublishedLegs?(): string[];
+  /**
+   * ALL remote SFU identities with ZERO publications. An expiring admit-grace
+   * window re-arms (up to the hard deadline) while its joiner is still here:
+   * an E2EE-capable joiner publishes nothing until enrolled (its own
+   * `negotiating` gate holds publishing), so publication-silence is the
+   * discriminator between a slow admit and an actual plaintext publisher —
+   * the latter publishes its mic within seconds and goes loud as fast as
+   * before.
+   */
+  unpublishedParticipants?(): string[];
   /** Surface the media-plane state for the 6.5 chip / callEncryptionError. */
   onEncryptionState?(state: MediaEncryptionState, error?: unknown): void;
   /**
@@ -2886,9 +2896,8 @@ export class MlsCallSession {
         ADMIT_GRACE_MAX_MS,
       );
       const timer = setTimeout(() => {
-        this.#admitGrace.delete(identity);
         this.#timers.delete(timer);
-        void this.reconcileNow();
+        this.#onAdmitGraceExpiry(identity);
       }, graceMs);
       this.#admitGrace.set(identity, {
         timer,
@@ -3117,6 +3126,40 @@ export class MlsCallSession {
    * un-declares loud), and never past the identity's hard `deadline`, so a
    * joiner that spams join requests forever still goes loud.
    */
+  /**
+   * An admit-grace window ran out. Before letting the joiner fall through to
+   * non-enrolled (and the call to `mixed`), re-arm the window while the
+   * joiner is still PUBLICATION-SILENT and the hard deadline permits: an
+   * E2EE-capable joiner's own `negotiating` gate keeps it from publishing
+   * anything until it is enrolled, and its first observable MLS activity can
+   * arrive later than any fixed initial window on a slow device — while a
+   * silent joiner also sends nothing that could need the loud warning yet. A
+   * joiner that HAS published (a plaintext client's mic appears within
+   * seconds) expires here and goes loud exactly as before; a silent
+   * never-enroller goes loud at the `deadline` ceiling.
+   */
+  #onAdmitGraceExpiry(identity: string): void {
+    const entry = this.#admitGrace.get(identity);
+    if (!entry) return; // cleared concurrently
+    const remaining = entry.deadline - Date.now();
+    const silent =
+      this.#media?.unpublishedParticipants?.().includes(identity) ?? false;
+    if (remaining > 0 && silent) {
+      const timer = setTimeout(
+        () => {
+          this.#timers.delete(timer);
+          this.#onAdmitGraceExpiry(identity);
+        },
+        Math.min(ADMIT_GRACE_BASE_MS, remaining),
+      );
+      entry.timer = timer;
+      this.#timers.add(timer);
+      return;
+    }
+    this.#admitGrace.delete(identity);
+    void this.reconcileNow();
+  }
+
   #refreshAdmitGrace(identity: string): void {
     const entry = this.#admitGrace.get(identity);
     if (!entry) return;
@@ -3126,9 +3169,8 @@ export class MlsCallSession {
     this.#timers.delete(entry.timer);
     const timer = setTimeout(
       () => {
-        this.#admitGrace.delete(identity);
         this.#timers.delete(timer);
-        void this.reconcileNow();
+        this.#onAdmitGraceExpiry(identity);
       },
       Math.min(ADMIT_GRACE_BASE_MS, remaining),
     );
