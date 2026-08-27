@@ -283,6 +283,11 @@ interface SettingsDefinition {
   "streamer:disable_sounds": boolean;
 
   /**
+   * Streamer Mode: show the reminder banner above the app while active
+   */
+  "streamer:show_banner": boolean;
+
+  /**
    * Entrance sound for every server: soundboard sound id triggered when you
    * join a server voice channel. "" = none.
    */
@@ -346,6 +351,7 @@ const EXPECTED_TYPES: { [K in keyof SettingsDefinition]: ValueType<K> } = {
   "streamer:hide_invites": "boolean",
   "streamer:disable_notifications": "boolean",
   "streamer:disable_sounds": "boolean",
+  "streamer:show_banner": "boolean",
   "soundboard:entrance": "string",
   "soundboard:entrance_servers": (value) => {
     if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -398,6 +404,7 @@ const DEFAULT_VALUES: TypeSettings = {
   "streamer:hide_invites": true,
   "streamer:disable_notifications": true,
   "streamer:disable_sounds": true,
+  "streamer:show_banner": true,
   "soundboard:entrance": "",
   "soundboard:entrance_servers": {},
 };
@@ -465,6 +472,7 @@ export class Settings extends AbstractStore<"settings", TypeSettings> {
       "streamer:hide_invites": true,
       "streamer:disable_notifications": true,
       "streamer:disable_sounds": true,
+      "streamer:show_banner": true,
       "soundboard:entrance": "",
       "soundboard:entrance_servers": {},
     };

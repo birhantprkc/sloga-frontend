@@ -97,6 +97,17 @@ export function StreamerModeSettings() {
             <Trans>Mute message, call and notification sounds.</Trans>
           }
         />
+        <ToggleSetting
+          key="streamer:show_banner"
+          icon={<Symbol size={22}>web_asset</Symbol>}
+          title={<Trans>Show reminder banner</Trans>}
+          description={
+            <Trans>
+              Show the banner above the app while Streamer Mode is active. You
+              can also hide it from the banner itself.
+            </Trans>
+          }
+        />
       </CategoryButton.Group>
     </Column>
   );
