@@ -214,9 +214,17 @@ const LEAVE_GRACE_MS = 10_000;
  * enable-time T-15 backstop is unchanged.
  */
 const ADMIT_GRACE_BASE_MS = 10_000;
-/** Hard ceiling on one admit-grace window: past this a never-admitting joiner
- *  goes loud no matter the roster size. */
-const ADMIT_GRACE_MAX_MS = 30_000;
+/**
+ * Absolute ceiling on ONE joiner's total pending time, measured from the
+ * first arm. The window REFRESHES while the joiner is observably still
+ * enrolling (each seen join request / own admit attempt re-arms up to
+ * `ADMIT_GRACE_BASE_MS`, never past this deadline) — admits can legitimately
+ * take tens of seconds on slow devices once the stagger, the joiner's 10 s
+ * re-broadcast cadence, and the admitter re-drives stack up. The ceiling is
+ * what keeps the suppression bounded: a joiner that spams join requests
+ * forever (or never enrolls at all) still goes loud, at the latest here.
+ */
+const ADMIT_GRACE_MAX_MS = 60_000;
 /**
  * Ghost-leaf divergence timeout (plan §1.4): an MLS leaf with NO SFU
  * participant that we did not see leave is removed after this long by any
@@ -917,8 +925,12 @@ export class MlsCallSession {
   /** Pending 10 s leave-grace removals, keyed by device-qualified identity. */
   #leaveGrace = new Map<string, ReturnType<typeof setTimeout>>();
   /** Open admit-grace windows for freshly-joined SFU participants, keyed by
-   *  identity (the join-direction mirror of `#leaveGrace`). */
-  #admitGrace = new Map<string, ReturnType<typeof setTimeout>>();
+   *  identity (the join-direction mirror of `#leaveGrace`). `deadline` is the
+   *  absolute refresh ceiling (first arm + `ADMIT_GRACE_MAX_MS`). */
+  #admitGrace = new Map<
+    string,
+    { timer: ReturnType<typeof setTimeout>; deadline: number }
+  >();
   /** Pending 30 s ghost-divergence removals, keyed by identity. */
   #ghostTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Last-computed non-enrolled identities (step 6 reads this synchronously). */
@@ -1521,6 +1533,10 @@ export class MlsCallSession {
     if (action === "ignore") return;
 
     const key = `${request.user_id}:${request.device_id}`;
+    // The joiner is observably still enrolling — keep its admit-grace open
+    // (bounded; see #refreshAdmitGrace) so the roster reconcile does not
+    // declare it mixed while this very admit is in flight.
+    this.#refreshAdmitGrace(key);
 
     // These two used to drop the request outright. Both are transient — the
     // session may still be establishing, or a re-establish may be swapping the
@@ -1782,6 +1798,10 @@ export class MlsCallSession {
 
   async #tryAdmit(request: MlsJoinRequest): Promise<void> {
     const key = `${request.user_id}:${request.device_id}`;
+    // An attempt is in flight for this joiner — keep its admit-grace open.
+    // This also covers the re-drive ladder, which keeps trying after the
+    // joiner's own ~40 s of re-broadcasts have stopped.
+    this.#refreshAdmitGrace(key);
     if (this.#state !== "active") {
       return this.#abortAdmit(key, request, "not_active");
     }
@@ -2856,7 +2876,10 @@ export class MlsCallSession {
         this.#timers.delete(timer);
         void this.reconcileNow();
       }, graceMs);
-      this.#admitGrace.set(identity, timer);
+      this.#admitGrace.set(identity, {
+        timer,
+        deadline: Date.now() + ADMIT_GRACE_MAX_MS,
+      });
       this.#timers.add(timer);
     }
     void this.reconcileNow();
@@ -3044,9 +3067,9 @@ export class MlsCallSession {
       this.#timers.delete(timer);
     }
     this.#leaveGrace.clear();
-    for (const timer of this.#admitGrace.values()) {
-      clearTimeout(timer);
-      this.#timers.delete(timer);
+    for (const entry of this.#admitGrace.values()) {
+      clearTimeout(entry.timer);
+      this.#timers.delete(entry.timer);
     }
     this.#admitGrace.clear();
     for (const timer of this.#ghostTimers.values()) {
@@ -3067,12 +3090,43 @@ export class MlsCallSession {
   }
 
   #clearAdmitGrace(identity: string): void {
-    const timer = this.#admitGrace.get(identity);
-    if (timer) {
-      clearTimeout(timer);
-      this.#timers.delete(timer);
+    const entry = this.#admitGrace.get(identity);
+    if (entry) {
+      clearTimeout(entry.timer);
+      this.#timers.delete(entry.timer);
       this.#admitGrace.delete(identity);
     }
+  }
+
+  /**
+   * Extend a still-OPEN admit-grace window for a joiner that is observably
+   * still enrolling — a join request seen from it, or our own admit ladder
+   * driving an attempt for it. Admits legitimately outlast the initial window
+   * on slow devices (stagger + the joiner's 10 s re-broadcast cadence +
+   * admitter re-drives), and expiring mid-admit would re-fire the exact
+   * mixed→leg-stop this grace exists to prevent. Two bounds keep it honest:
+   * only an OPEN window refreshes (once expired, the declared mix stands
+   * until the admit itself completes and clears it — activity never
+   * un-declares loud), and never past the identity's hard `deadline`, so a
+   * joiner that spams join requests forever still goes loud.
+   */
+  #refreshAdmitGrace(identity: string): void {
+    const entry = this.#admitGrace.get(identity);
+    if (!entry) return;
+    const remaining = entry.deadline - Date.now();
+    if (remaining <= 0) return; // ceiling reached — let the open window lapse
+    clearTimeout(entry.timer);
+    this.#timers.delete(entry.timer);
+    const timer = setTimeout(
+      () => {
+        this.#admitGrace.delete(identity);
+        this.#timers.delete(timer);
+        void this.reconcileNow();
+      },
+      Math.min(ADMIT_GRACE_BASE_MS, remaining),
+    );
+    entry.timer = timer;
+    this.#timers.add(timer);
   }
 
   #clearGhostTimer(identity: string): void {
