@@ -13,183 +13,6 @@ msgstr ""
 "Language-Team: \n"
 "Plural-Forms: \n"
 
-msgid "Add your player IDs so friends can find you in-game. Shown on your profile, click-to-copy."
-msgstr "Add your player IDs so friends can find you in-game. Shown on your profile, click-to-copy."
-
-#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
-msgid "Arrangement"
-msgstr "Arrangement"
-
-#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
-msgid "Auto keeps the member list with the channels, unless Ultrawide layout moves it to the other side. Applies to this device only."
-msgstr "Auto keeps the member list with the channels, unless Ultrawide layout moves it to the other side. Applies to this device only."
-
-msgid "Click to copy"
-msgstr "Click to copy"
-
-msgid "Could not update your game IDs, try again."
-msgstr "Could not update your game IDs, try again."
-
-#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
-msgid "Custom"
-msgstr "Custom"
-
-#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
-msgid "Discord"
-msgstr "Discord"
-
-msgid "e.g. they/them"
-msgstr "e.g. they/them"
-
-#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
-msgid "Evens out loud and quiet people automatically. Only voices are leveled — music and screen share audio are never touched."
-msgstr "Evens out loud and quiet people automatically. Only voices are leveled — music and screen share audio are never touched."
-
-msgid "Game IDs"
-msgstr "Game IDs"
-
-msgid "Give respect"
-msgstr "Give respect"
-
-#: components/ui/components/features/voice/watch/WatchOverlay.tsx:198
-msgid "Hosted by {name}"
-msgstr "Hosted by {name}"
-
-#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
-msgid "How far a quiet voice may be raised. Loud voices are always tamed, at any strength."
-msgstr "How far a quiet voice may be raised. Loud voices are always tamed, at any strength."
-
-#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
-msgid "Incoming Voices"
-msgstr "Incoming Voices"
-
-#: components/ui/components/features/voice/watch/WatchOverlay.tsx:160
-msgid "Jellyfin playback isn't available in this build yet."
-msgstr "Jellyfin playback isn't available in this build yet."
-
-#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
-#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
-msgid "Left"
-msgstr "Left"
-
-#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
-msgid "Level Incoming Voices"
-msgstr "Level Incoming Voices"
-
-#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
-msgid "Leveling Strength"
-msgstr "Leveling Strength"
-
-#: components/ui/components/features/voice/watch/WatchOverlay.tsx:316
-msgid "Loads from youtube-nocookie.com. The server sees what you watch — also in encrypted calls. Videos with embedding disabled won't play. Headphones recommended: an open mic will carry the movie into the call."
-msgstr "Loads from youtube-nocookie.com. The server sees what you watch — also in encrypted calls. Videos with embedding disabled won't play. Headphones recommended: an open mic will carry the movie into the call."
-
-#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
-msgid "Member list"
-msgstr "Member list"
-
-#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
-msgid "Member list: on the left. Press left or right arrow to move."
-msgstr "Member list: on the left. Press left or right arrow to move."
-
-#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
-msgid "Member list: on the right. Press left or right arrow to move."
-msgstr "Member list: on the right. Press left or right arrow to move."
-
-#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
-msgid "Mirrored"
-msgstr "Mirrored"
-
-#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
-msgid "On the same side as the channels, the member list shares their column. Overrides Ultrawide layout's member list placement."
-msgstr "On the same side as the channels, the member list shares their column. Overrides Ultrawide layout's member list placement."
-
-#: components/i18n/errors.ts
-msgid "Only the host (or a channel manager) can control playback."
-msgstr "Only the host (or a channel manager) can control playback."
-
-#: components/ui/components/features/voice/watch/WatchOverlay.tsx:292
-msgid "Paste a YouTube link. Everyone in the call watches it in sync, each from YouTube directly — Sloga never touches the video."
-msgstr "Paste a YouTube link. Everyone in the call watches it in sync, each from YouTube directly — Sloga never touches the video."
-
-msgid "Platform"
-msgstr "Platform"
-
-#: components/ui/components/features/voice/watch/WatchOverlay.tsx:250
-msgid "Playback speed"
-msgstr "Playback speed"
-
-msgid "Player ID or handle"
-msgstr "Player ID or handle"
-
-msgid "Pronouns"
-msgstr "Pronouns"
-
-msgid "Respect"
-msgstr "Respect"
-
-msgid "Rewrite your respect…"
-msgstr "Rewrite your respect…"
-
-#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
-#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
-msgid "Right"
-msgstr "Right"
-
-#: components/ui/components/features/voice/watch/WatchOverlay.tsx:243
-msgid "Seek"
-msgstr "Seek"
-
-#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
-msgid "Server list and channels"
-msgstr "Server list and channels"
-
-#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
-msgid "Server list and channels: on the left. Press left or right arrow to move."
-msgstr "Server list and channels: on the left. Press left or right arrow to move."
-
-#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
-msgid "Server list and channels: on the right. Press left or right arrow to move."
-msgstr "Server list and channels: on the right. Press left or right arrow to move."
-
-#: components/i18n/errors.ts
-msgid "Someone in this call is already watching together — stop that session first."
-msgstr "Someone in this call is already watching together — stop that session first."
-
-#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx:436
-#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx:437
-msgid "Start and control synced video playback in a voice call"
-msgstr "Start and control synced video playback in a voice call"
-
-#: components/ui/components/features/voice/watch/WatchOverlay.tsx:147
-msgid "Stop watching together"
-msgstr "Stop watching together"
-
-#. placeholder {0}: voice.audioNormalizationStrength
-#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
-msgid "Strength: {0}%"
-msgstr "Strength: {0}%"
-
-#: components/ui/components/features/voice/watch/WatchOverlay.tsx:137
-msgid "Sync stats"
-msgstr "Sync stats"
-
-#: components/ui/components/features/voice/watch/WatchOverlay.tsx:167
-msgid "Tap to start"
-msgstr "Tap to start"
-
-#: components/ui/components/features/voice/watch/WatchOverlay.tsx:310
-msgid "That doesn't look like a YouTube link or video id."
-msgstr "That doesn't look like a YouTube link or video id."
-
-#: components/ui/components/features/voice/watch/WatchOverlay.tsx:173
-msgid "The host seems to have dropped — waiting for them to come back…"
-msgstr "The host seems to have dropped — waiting for them to come back…"
-
-#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
-msgid "Unavailable while the shared audio mix is off. Turning the mix back on takes effect when you next join a call."
-msgstr "Unavailable while the shared audio mix is off. Turning the mix back on takes effect when you next join a call."
-
 #. js-lingui-explicit-id
 #: components/i18n/dayjs.tsx
 msgid "[Yesterday at] LT"
@@ -210,14 +33,6 @@ msgstr "[Tomorrow at] LT"
 msgid "[Last] dddd [at] LT"
 msgstr "[Last] dddd [at] LT"
 
-#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
-msgid "Comfortable"
-msgstr "Comfortable"
-
-#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
-msgid "Centered"
-msgstr "Centered"
-
 #. js-lingui-explicit-id
 #: components/i18n/dayjs.tsx
 msgid "dddd [at] LT"
@@ -226,91 +41,6 @@ msgstr "dddd [at] LT"
 #: components/app/interface/settings/server/roles/ServerRoleOverview.tsx
 msgid "(changes are being saved…)"
 msgstr "(changes are being saved…)"
-
-#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
-msgid "Moves the member list out of the channel column and into the space beside your messages. The area past it is left empty on purpose."
-msgstr "Moves the member list out of the channel column and into the space beside your messages. The area past it is left empty on purpose."
-
-#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
-msgid "Requires a 21:9 or wider display. This display is {0}."
-msgstr "Requires a 21:9 or wider display. This display is {0}."
-
-msgid "Unknown user"
-msgstr "Unknown user"
-
-msgid "Update"
-msgstr "Update"
-
-#: components/ui/components/features/voice/watch/WatchOverlay.tsx:306
-msgid "Watch"
-msgstr "Watch"
-
-#: components/ui/components/features/voice/watch/WatchOverlay.tsx:112
-msgid "Watch together"
-msgstr "Watch together"
-
-#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx:434
-msgid "Watch Together"
-msgstr "Watch Together"
-
-#: components/ui/components/features/voice/callCard/VoiceWatchButton.tsx:59
-msgid "Watch together — paste a YouTube link, everyone in the call stays in sync"
-msgstr "Watch together — paste a YouTube link, everyone in the call stays in sync"
-
-#: components/ui/components/features/voice/callCard/VoiceWatchButton.tsx:58
-msgid "Watching together"
-msgstr "Watching together"
-
-#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
-msgid "Wide"
-msgstr "Wide"
-
-#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
-msgid "Ultrawide layout"
-msgstr "Ultrawide layout"
-
-#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
-msgid "Narrow"
-msgstr "Narrow"
-
-#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
-msgid "Message width"
-msgstr "Message width"
-
-#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
-msgid "Messages"
-msgstr "Messages"
-
-#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
-msgid "Message alignment"
-msgstr "Message alignment"
-
-#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
-msgid "Layout"
-msgstr "Layout"
-
-#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
-msgid "Hug the channel list"
-msgstr "Hug the channel list"
-
-#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
-msgid "Full"
-msgstr "Full"
-
-msgid "Write something nice…"
-msgstr "Write something nice…"
-
-#: components/i18n/errors.ts
-msgid "You need to be in the call to do that."
-msgstr "You need to be in the call to do that."
-
-#: components/ui/components/features/voice/watch/WatchOverlay.tsx:130
-msgid "You're hosting"
-msgstr "You're hosting"
-
-#: components/ui/components/features/voice/watch/WatchOverlay.tsx:169
-msgid "Your browser blocked autoplay — one tap and you're in sync."
-msgstr "Your browser blocked autoplay — one tap and you're in sync."
 
 #. placeholder {0}: attachmentCount()
 #: src/interface/ServerEvents.tsx
@@ -322,7 +52,11 @@ msgstr "{0, plural, one {# / 10 file attached} other {# / 10 files attached}}"
 msgid "{0, plural, one {# blocked message} other {# blocked messages}}"
 msgstr "{0, plural, one {# blocked message} other {# blocked messages}}"
 
+#. placeholder {0}: server.memberCount
+#. placeholder {0}: server.member_count
 #. placeholder {0}: props.server.memberCount
+#: src/interface/Discover.tsx
+#: components/modal/modals/DiscoveryQueue.tsx
 #: components/modal/modals/DiscoverJoin.tsx
 msgid "{0, plural, one {# member} other {# members}}"
 msgstr "{0, plural, one {# member} other {# members}}"
@@ -377,6 +111,17 @@ msgstr "{0} emoji slots remaining"
 msgid "{0} files exceed the maximum size limit of {maxSizeFormatted} and were not uploaded."
 msgstr "{0} files exceed the maximum size limit of {maxSizeFormatted} and were not uploaded."
 
+#. placeholder {0}: controller().username
+#. placeholder {1}: sharer().username
+#: components/ui/components/features/voice/callCard/VoiceCallRosterPanel.tsx
+msgid "{0} is controlling {1}'s screen"
+msgstr "{0} is controlling {1}'s screen"
+
+#. placeholder {0}: activeAnnotator().username
+#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
+msgid "{0} is drawing on your screen"
+msgstr "{0} is drawing on your screen"
+
 #. placeholder {0}: name()
 #: components/ui/components/features/voice/callCard/RemoteControlOverlays.tsx
 msgid "{0} is giving you control of their screen"
@@ -413,6 +158,11 @@ msgstr "{0} is recording audio."
 msgid "{0} is typing…"
 msgstr "{0} is typing…"
 
+#. placeholder {0}: senderName()
+#: components/ui/components/features/voice/callCard/VoiceCallWhisperBanner.tsx
+msgid "{0} is whispering to you"
+msgstr "{0} is whispering to you"
+
 #. placeholder {0}: (message.systemMessage as UserSystemMessage).user?.username
 #: components/client/NotificationsWorker.tsx
 msgid "{0} joined"
@@ -422,6 +172,11 @@ msgstr "{0} joined"
 #: components/client/NotificationsWorker.tsx
 msgid "{0} left"
 msgstr "{0} left"
+
+#. placeholder {0}: count()
+#: src/interface/Home.tsx
+msgid "{0} listing requests awaiting review"
+msgstr "{0} listing requests awaiting review"
 
 #. placeholder {0}: (message.systemMessage as ChannelOwnershipChangeSystemMessage).from ?.username
 #. placeholder {1}: (message.systemMessage as ChannelOwnershipChangeSystemMessage).to ?.username
@@ -465,6 +220,11 @@ msgstr "{0} renamed the channel"
 #: components/client/NotificationsWorker.tsx
 msgid "{0} reported ({1})"
 msgstr "{0} reported ({1})"
+
+#. placeholder {0}: count()
+#: src/interface/Home.tsx
+msgid "{0} reports awaiting review"
+msgstr "{0} reports awaiting review"
 
 #. placeholder {0}: state()?.totalReserves ?? 0
 #: components/app/interface/channels/text/SoftResMessage.tsx
@@ -838,6 +598,7 @@ msgstr "Activity"
 
 #: components/modal/modals/AddMembersToGroup.tsx
 #: components/modal/modals/AddBot.tsx
+#: components/app/interface/settings/user/profile/GameLinksEditor.tsx
 #: components/app/interface/settings/server/apps/AppsList.tsx
 msgid "Add"
 msgstr "Add"
@@ -846,10 +607,18 @@ msgstr "Add"
 msgid "Add a Friend"
 msgstr "Add a Friend"
 
+#: components/ui/components/features/voice/watch/JellyfinConnect.tsx
+msgid "Add a Jellyfin server"
+msgstr "Add a Jellyfin server"
+
 #: src/interface/Friends.tsx
 #: components/modal/modals/AddFriend.tsx
 msgid "Add a new friend"
 msgstr "Add a new friend"
+
+#: components/ui/components/features/voice/watch/JellyfinBrowser.tsx
+msgid "Add another server"
+msgstr "Add another server"
 
 #: components/modal/modals/CreatePoll.tsx
 msgid "Add answer"
@@ -885,12 +654,21 @@ msgid "Add tag"
 msgstr "Add tag"
 
 #: components/modal/modals/ImportDiscord.tsx
+#: components/modal/modals/ImportDiscord.tsx
 msgid "Add the importer bot on Discord"
 msgstr "Add the importer bot on Discord"
 
 #: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
+msgid "Add to rotation"
+msgstr "Add to rotation"
+
+#: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
 msgid "Add to the rotation"
 msgstr "Add to the rotation"
+
+#: components/app/interface/settings/user/profile/GameLinksEditor.tsx
+msgid "Add your player IDs so friends can find you in-game. Shown on your profile, click-to-copy."
+msgstr "Add your player IDs so friends can find you in-game. Shown on your profile, click-to-copy."
 
 #: components/app/interface/settings/server/apps/AppsList.tsx
 msgid "Added ✓"
@@ -973,7 +751,7 @@ msgstr "Also read translated captions aloud using your device's voice. Runs on t
 msgid "Always Ask for Screen Share Quality"
 msgstr "Always Ask for Screen Share Quality"
 
-#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+#: components/app/interface/settings/user/Encryption.tsx
 msgid "Always on. Your voice and video are end-to-end encrypted on this device whenever everyone in the call supports it."
 msgstr "Always on. Your voice and video are end-to-end encrypted on this device whenever everyone in the call supports it."
 
@@ -984,6 +762,10 @@ msgstr "American (MM/DD/YYYY)"
 #: components/modal/modals/Error2.tsx
 msgid "An error occurred."
 msgstr "An error occurred."
+
+#: components/i18n/errors.ts
+msgid "An internal error occurred."
+msgstr "An internal error occurred."
 
 #. placeholder {0}: err.location
 #: components/i18n/errors.ts
@@ -1036,9 +818,17 @@ msgstr "App Settings"
 msgid "Appearance"
 msgstr "Appearance"
 
-#: components/modal/modals/ImageEditor.tsx
+#: components/modal/modals/ImageEditorCore.tsx
 msgid "Apply"
 msgstr "Apply"
+
+#: components/modal/modals/DiscoveryQueue.tsx
+msgid "Approve"
+msgstr "Approve"
+
+#: src/interface/Home.tsx
+msgid "Approve or reject servers asking to be publicly listed."
+msgstr "Approve or reject servers asking to be publicly listed."
 
 #: components/app/interface/settings/ServerSettings.tsx
 #: components/app/interface/settings/ServerSettings.tsx
@@ -1072,6 +862,18 @@ msgstr "Are you sure you want to remove {0} from {1}?"
 msgid "Are you sure you want to Sign out?"
 msgstr "Are you sure you want to Sign out?"
 
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Arrangement"
+msgstr "Arrangement"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Arrow"
+msgstr "Arrow"
+
+#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
+msgid "Ask for a turn"
+msgstr "Ask for a turn"
+
 #: components/app/interface/settings/server/Overview.tsx
 msgid "Ask for this server to be shown in the public directory. Its name, icon, description and member count become publicly visible once approved."
 msgstr "Ask for this server to be shown in the public directory. Its name, icon, description and member count become publicly visible once approved."
@@ -1079,6 +881,14 @@ msgstr "Ask for this server to be shown in the public directory. Its name, icon,
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
 msgid "Ask them to move their mouse. Their pointer should move on the screen you are sharing. Keys and clicks are still blocked until you confirm."
 msgstr "Ask them to move their mouse. Their pointer should move on the screen you are sharing. Keys and clicks are still blocked until you confirm."
+
+#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
+msgid "Asked"
+msgstr "Asked"
+
+#: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
+msgid "Asked for a turn"
+msgstr "Asked for a turn"
 
 #: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
 msgid "asks twice"
@@ -1132,18 +942,32 @@ msgstr "Audio output"
 msgid "Authenticator App"
 msgstr "Authenticator App"
 
+#: components/app/interface/settings/user/voice/CameraOptions.tsx
+#: components/app/interface/settings/user/voice/CameraOptions.tsx
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Auto"
+msgstr "Auto"
+
 #: components/app/interface/settings/server/Overview.tsx
 msgid "Auto (lowest latency)"
 msgstr "Auto (lowest latency)"
 
-#: components/app/interface/settings/user/voice/CameraOptions.tsx
-#: components/app/interface/settings/user/voice/CameraOptions.tsx
-msgid "Auto"
-msgstr "Auto"
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Auto keeps the member list with the channels, unless Ultrawide layout moves it to the other side. Applies to this device only."
+msgstr "Auto keeps the member list with the channels, unless Ultrawide layout moves it to the other side. Applies to this device only."
 
 #: components/modal/modals/CreateThread.tsx
 msgid "Auto-archive after inactivity"
 msgstr "Auto-archive after inactivity"
+
+#: components/modal/modals/ImageEditorCore.tsx
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Auto-redact"
+msgstr "Auto-redact"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Auto-redact couldn't run on this image."
+msgstr "Auto-redact couldn't run on this image."
 
 #: components/app/interface/settings/user/Language.tsx
 #: components/app/interface/settings/user/Language.tsx
@@ -1182,9 +1006,11 @@ msgstr "Avatars and names"
 msgid "Avatars only"
 msgstr "Avatars only"
 
+#: src/interface/channels/SpoilerGate.tsx
 #: src/interface/channels/PasswordGate.tsx
 #: src/interface/channels/AgeGate.tsx
 #: src/interface/channels/AgeGate.tsx
+#: components/ui/components/features/voice/watch/JellyfinConnect.tsx
 #: components/modal/modals/ReportQueue.tsx
 #: components/modal/modals/MFAFlow.tsx
 #: components/auth/src/flows/FlowLogin.tsx
@@ -1198,6 +1024,10 @@ msgstr "Back"
 #: src/interface/channels/text/TextChannel.tsx
 msgid "Back to #{0}"
 msgstr "Back to #{0}"
+
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Back to games"
+msgstr "Back to games"
 
 #: components/auth/src/flows/FlowOAuthCallback.tsx
 msgid "Back to login"
@@ -1266,6 +1096,10 @@ msgstr "Bans"
 #: components/app/interface/settings/user/voice/CameraOptions.tsx
 msgid "Beautify: {0}%"
 msgstr "Beautify: {0}%"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Black bar"
+msgstr "Black bar"
 
 #: components/app/menus/UserContextMenu.tsx
 msgid "Block user"
@@ -1375,6 +1209,7 @@ msgstr "Calls are end-to-end encrypted"
 
 #: components/ui/components/features/voice/callCard/VoiceDeviceSelector.tsx
 #: components/modal/modals/CameraSettings.tsx
+#: components/app/interface/settings/user/voice/VideoSettings.tsx
 msgid "Camera"
 msgstr "Camera"
 
@@ -1404,8 +1239,8 @@ msgid "Camera settings"
 msgstr "Camera settings"
 
 #: components/app/interface/settings/user/voice/CameraOptions.tsx
-msgid "Camera Settings"
-msgstr "Camera Settings"
+#~ msgid "Camera Settings"
+#~ msgstr "Camera Settings"
 
 #: components/app/interface/settings/user/voice/CameraPreview.tsx
 msgid "Camera unavailable — check permissions and that no other app is using it."
@@ -1413,6 +1248,7 @@ msgstr "Camera unavailable — check permissions and that no other app is using 
 
 #: src/interface/ServerEvents.tsx
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
+#: components/modal/modals/TimelockCompose.tsx
 #: components/modal/modals/SuspendUser.tsx
 #: components/modal/modals/SignOutSessions.tsx
 #: components/modal/modals/ServerIdentity.tsx
@@ -1432,6 +1268,7 @@ msgstr "Camera unavailable — check permissions and that no other app is using 
 #: components/modal/modals/InviteToServer.tsx
 #: components/modal/modals/Invite.tsx
 #: components/modal/modals/ImportDiscord.tsx
+#: components/modal/modals/ImageEditorCore.tsx
 #: components/modal/modals/ForwardMessage.tsx
 #: components/modal/modals/FollowChannel.tsx
 #: components/modal/modals/EditCategory.tsx
@@ -1486,6 +1323,22 @@ msgstr "Cannot delete account until servers are deleted or transferred"
 msgid "Cannot edit this message."
 msgstr "Cannot edit this message."
 
+#: components/ui/components/features/voice/callCard/VoiceCaptionsButton.tsx
+msgid "Captions aren't available on end-to-end encrypted calls"
+msgstr "Captions aren't available on end-to-end encrypted calls"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "card"
+msgstr "card"
+
+#: components/modal/modals/CreateChannel.tsx
+msgid "Category"
+msgstr "Category"
+
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Centered"
+msgstr "Centered"
+
 #: components/modal/modals/EditUsername.tsx
 #: components/modal/modals/EditPassword.tsx
 msgid "Change"
@@ -1532,7 +1385,7 @@ msgstr "Change own avatar"
 msgid "Change own nickname"
 msgstr "Change own nickname"
 
-#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+#: components/app/interface/settings/user/Encryption.tsx
 msgid "Change recovery code"
 msgstr "Change recovery code"
 
@@ -1586,6 +1439,7 @@ msgid "Channel unlinked."
 msgstr "Channel unlinked."
 
 #: components/ui/components/features/profiles/ProfileConnections.tsx
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Channels"
 msgstr "Channels"
@@ -1614,6 +1468,10 @@ msgstr "Check your mail!"
 msgid "Choose a background image in Settings → Voice."
 msgstr "Choose a background image in Settings → Voice."
 
+#: components/ui/components/features/voice/watch/JellyfinBrowser.tsx
+msgid "Choose a server"
+msgstr "Choose a server"
+
 #: components/auth/src/flows/FlowOAuthCallback.tsx
 #: components/auth/src/flows/FlowLogin.tsx
 msgid "Choose a username"
@@ -1626,6 +1484,10 @@ msgstr "Choose how Sloga asks before someone in a call can use this computer's m
 #: components/modal/modals/Onboarding.tsx
 msgid "Choose username"
 msgstr "Choose username"
+
+#: components/app/interface/settings/user/Privacy.tsx
+msgid "Choose who can see your bio, banner, and connections. People you share a server or group with can always see your name and avatar."
+msgstr "Choose who can see your bio, banner, and connections. People you share a server or group with can always see your name and avatar."
 
 #: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
 msgid "Clear"
@@ -1647,10 +1509,15 @@ msgstr "Click Record, speak for up to 5 seconds, then hear yourself played back.
 msgid "Click to change the push to talk keybind."
 msgstr "Click to change the push to talk keybind."
 
+#: components/ui/components/features/profiles/ProfileGameIds.tsx
+msgid "Click to copy"
+msgstr "Click to copy"
+
 #: components/ui/components/features/profiles/ProfileBanner.tsx
 msgid "Click to copy username"
 msgstr "Click to copy username"
 
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
 #: components/ui/components/features/voice/minigame/MinigameChip.tsx
 msgid "Click to play again"
 msgstr "Click to play again"
@@ -1663,6 +1530,10 @@ msgstr "Click to show full description"
 #: components/ui/components/utils/Spoiler.tsx
 msgid "Click to show spoiler"
 msgstr "Click to show spoiler"
+
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Click to start"
+msgstr "Click to start"
 
 #: components/app/interface/settings/user/voice/MicrophoneLevelMeter.tsx
 msgid "Click to stop"
@@ -1677,10 +1548,12 @@ msgid "Clicks on the shared screen go to their computer, so Sloga's own buttons 
 msgstr "Clicks on the shared screen go to their computer, so Sloga's own buttons over the video will not respond. Resize from here instead."
 
 #: components/app/interface/settings/UserSettings.tsx
-msgid "Client Settings"
-msgstr "Client Settings"
+#~ msgid "Client Settings"
+#~ msgstr "Client Settings"
 
 #: src/interface/ServerEvents.tsx
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
 #: components/modal/modals/UserProfileRoles.tsx
 #: components/modal/modals/UserProfileMutualGroups.tsx
 #: components/modal/modals/UserProfileMutualFriends.tsx
@@ -1700,6 +1573,7 @@ msgstr "Client Settings"
 #: components/modal/modals/E2EEVerify.tsx
 #: components/modal/modals/E2EEIdentityChange.tsx
 #: components/modal/modals/E2EEDisable.tsx
+#: components/modal/modals/DiscoveryQueue.tsx
 #: components/modal/modals/DeleteChannel.tsx
 #: components/modal/modals/CustomStatus.tsx
 #: components/modal/modals/CreateWebhook.tsx
@@ -1747,6 +1621,10 @@ msgstr "Color filter"
 msgid "Colors"
 msgstr "Colors"
 
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Comfortable"
+msgstr "Comfortable"
+
 #: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx
 #: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx
 msgid "Coming soon! 👀"
@@ -1783,6 +1661,7 @@ msgstr "Confirm action"
 msgid "Confirm identity"
 msgstr "Confirm identity"
 
+#: components/ui/components/features/voice/watch/JellyfinConnect.tsx
 #: components/app/interface/settings/user/Connections.tsx
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Connect"
@@ -1800,6 +1679,11 @@ msgstr "Connect with someone by adding them as a friend."
 #: components/ui/components/features/voice/callCard/VoiceCallCardStatus.tsx
 msgid "Connected"
 msgstr "Connected"
+
+#. placeholder {0}: s().name
+#: components/ui/components/features/voice/watch/JellyfinConnect.tsx
+msgid "Connected to {0}"
+msgstr "Connected to {0}"
 
 #: components/ui/components/features/voice/callCard/VoiceCallCardStatus.tsx
 msgid "Connecting"
@@ -1838,10 +1722,16 @@ msgstr "Continue unencrypted — new messages will be readable by the server —
 msgid "Continue with Google"
 msgstr "Continue with Google"
 
+#. placeholder {0}: controllerUser().username
+#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
+msgid "Controlled by {0}"
+msgstr "Controlled by {0}"
+
 #: components/modal/modals/SoftResExport.tsx
 msgid "Copied"
 msgstr "Copied"
 
+#: components/ui/components/features/profiles/ProfileGameIds.tsx
 #: components/ui/components/features/profiles/ProfileBanner.tsx
 msgid "Copied!"
 msgstr "Copied!"
@@ -1976,6 +1866,10 @@ msgstr "Could not unlink the channel, try again."
 msgid "Could not update profile visibility, try again."
 msgstr "Could not update profile visibility, try again."
 
+#: components/app/interface/settings/user/profile/GameLinksEditor.tsx
+msgid "Could not update your game IDs, try again."
+msgstr "Could not update your game IDs, try again."
+
 #: components/app/interface/settings/server/apps/AppsList.tsx
 msgid "Couldn't add the app — try again."
 msgstr "Couldn't add the app — try again."
@@ -1987,6 +1881,22 @@ msgstr "Couldn't hand over. The last turn has ended — press Next to try again.
 #: src/interface/ServerEvents.tsx
 msgid "Couldn't load events"
 msgstr "Couldn't load events"
+
+#: components/ui/components/features/voice/watch/JellyfinBrowser.tsx
+msgid "Couldn't load items"
+msgstr "Couldn't load items"
+
+#: components/ui/components/features/voice/watch/JellyfinBrowser.tsx
+msgid "Couldn't load libraries"
+msgstr "Couldn't load libraries"
+
+#: src/interface/Discover.tsx
+msgid "Couldn't load the directory. Try again in a moment."
+msgstr "Couldn't load the directory. Try again in a moment."
+
+#: components/app/interface/channels/text/TimelockMessage.tsx
+msgid "Couldn't unlock this message yet."
+msgstr "Couldn't unlock this message yet."
 
 #: src/interface/ServerEvents.tsx
 #: components/modal/modals/CreateWebhook.tsx
@@ -2025,17 +1935,17 @@ msgstr "Create a new group"
 msgid "Create a new role"
 msgstr "Create a new role"
 
-#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+#: components/app/interface/settings/user/Encryption.tsx
 msgid "Create a recovery code"
 msgstr "Create a recovery code"
 
 #: components/modal/modals/E2EEEnable.tsx
-msgid "Create a recovery code so you can restore your identity and message history if you lose this device. Without one, encrypted history is gone for good if the device is lost. You can also do this later from Settings › Privacy & Safety › Encryption."
-msgstr "Create a recovery code so you can restore your identity and message history if you lose this device. Without one, encrypted history is gone for good if the device is lost. You can also do this later from Settings › Privacy & Safety › Encryption."
+#~ msgid "Create a recovery code so you can restore your identity and message history if you lose this device. Without one, encrypted history is gone for good if the device is lost. You can also do this later from E2E Encryption settings."
+#~ msgstr "Create a recovery code so you can restore your identity and message history if you lose this device. Without one, encrypted history is gone for good if the device is lost. You can also do this later from E2E Encryption settings."
 
 #: components/modal/modals/E2EEEnable.tsx
-msgid "Create a recovery code so you can restore your identity and message history if you lose this device. Without one, encrypted history is gone for good if the device is lost. You can also do this later from E2E Encryption settings."
-msgstr "Create a recovery code so you can restore your identity and message history if you lose this device. Without one, encrypted history is gone for good if the device is lost. You can also do this later from E2E Encryption settings."
+msgid "Create a recovery code so you can restore your identity and message history if you lose this device. Without one, encrypted history is gone for good if the device is lost. You can also do this later from Settings › Privacy & Safety › Encryption."
+msgstr "Create a recovery code so you can restore your identity and message history if you lose this device. Without one, encrypted history is gone for good if the device is lost. You can also do this later from Settings › Privacy & Safety › Encryption."
 
 #: components/modal/modals/CreateWebhook.tsx
 msgid "Create a webhook"
@@ -2059,14 +1969,17 @@ msgstr "Create and edit webhooks"
 msgid "Create Bot"
 msgstr "Create Bot"
 
+#: src/interface/navigation/channels/ServerSidebar.tsx
 #: components/app/menus/ServerSidebarContextMenu.tsx
 #: components/app/menus/CategoryContextMenu.tsx
 msgid "Create category"
 msgstr "Create category"
 
+#: src/interface/navigation/channels/ServerSidebar.tsx
 #: components/modal/modals/CreateChannel.tsx
 #: components/app/menus/ServerSidebarContextMenu.tsx
 #: components/app/menus/ChannelContextMenu.tsx
+#: components/app/menus/CategoryContextMenu.tsx
 msgid "Create channel"
 msgstr "Create channel"
 
@@ -2152,6 +2065,10 @@ msgstr "Creating your server…"
 msgid "Creation date"
 msgstr "Creation date"
 
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Crop"
+msgstr "Crop"
+
 #: components/modal/modals/EditUsername.tsx
 #: components/modal/modals/EditPassword.tsx
 #: components/modal/modals/EditEmail.tsx
@@ -2161,6 +2078,10 @@ msgstr "Current Password"
 #: components/app/interface/settings/user/Sessions.tsx
 msgid "Current Session"
 msgstr "Current Session"
+
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Custom"
+msgstr "Custom"
 
 #: components/modal/modals/ImportDiscord.tsx
 msgid "Custom emojis and the server icon aren't in a Discord template, so they can't come across this way."
@@ -2261,7 +2182,7 @@ msgstr "Delete Account"
 msgid "Delete and pin messages sent by other members"
 msgstr "Delete and pin messages sent by other members"
 
-#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+#: components/app/interface/settings/user/Encryption.tsx
 msgid "Delete backup"
 msgstr "Delete backup"
 
@@ -2314,6 +2235,8 @@ msgstr "Description (optional)"
 msgid "Description provided by {0}"
 msgstr "Description provided by {0}"
 
+#: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
+#: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
 #: components/app/interface/settings/UserSettings.tsx
 msgid "Desktop"
 msgstr "Desktop"
@@ -2348,7 +2271,7 @@ msgstr "Dice roll failed ({0})"
 msgid "Dice rolls are only available in server channels."
 msgstr "Dice rolls are only available in server channels."
 
-#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+#: components/app/interface/settings/user/Encryption.tsx
 msgid "Direct messages with contacts who also have encryption on are end-to-end encrypted on this device. Encrypted history is stored only here — uncheck to turn encryption off on this device."
 msgstr "Direct messages with contacts who also have encryption on are end-to-end encrypted on this device. Encrypted history is stored only here — uncheck to turn encryption off on this device."
 
@@ -2385,6 +2308,7 @@ msgid "Disappearing messages: Off"
 msgstr "Disappearing messages: Off"
 
 #: components/ui/components/features/voice/callCard/VoiceTranscriptPanel.tsx
+#: components/modal/modals/ImageEditorCore.tsx
 msgid "Discard"
 msgstr "Discard"
 
@@ -2407,21 +2331,30 @@ msgstr "Disconnect Sound Style"
 msgid "Disconnected"
 msgstr "Disconnected"
 
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Discord"
+msgstr "Discord"
+
 #: components/app/interface/settings/user/Native.tsx
 msgid "Discord RPC"
 msgstr "Discord RPC"
+
+#: src/interface/Discover.tsx
+msgid "Discover"
+msgstr "Discover"
 
 #: src/interface/Home.tsx
 msgid "Discover Sloga"
 msgstr "Discover Sloga"
 
+#: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
 #: components/app/interface/channels/text/Message.tsx
 msgid "Dismiss"
 msgstr "Dismiss"
 
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
-msgid "Display & Text"
-msgstr "Display & Text"
+#~ msgid "Display & Text"
+#~ msgstr "Display & Text"
 
 #: components/app/interface/settings/user/profile/UserProfileEditor.tsx
 msgid "Display Name"
@@ -2477,9 +2410,17 @@ msgstr "Done"
 msgid "Downloading the speech model… {0}%"
 msgstr "Downloading the speech model… {0}%"
 
+#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
+msgid "Draw"
+msgstr "Draw"
+
 #: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
 msgid "driving"
 msgstr "driving"
+
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Drop the ball, clear the pegs."
+msgstr "Drop the ball, clear the pegs."
 
 #: components/modal/modals/ReportContent.tsx
 msgid "Drugs or illegal goods"
@@ -2489,9 +2430,13 @@ msgstr "Drugs or illegal goods"
 msgid "Duration"
 msgstr "Duration"
 
+#: components/app/interface/settings/user/profile/UserProfileEditor.tsx
+msgid "e.g. they/them"
+msgstr "e.g. they/them"
+
 #: components/app/interface/settings/UserSettings.tsx
-msgid "E2E Encryption"
-msgstr "E2E Encryption"
+#~ msgid "E2E Encryption"
+#~ msgstr "E2E Encryption"
 
 #. placeholder {0}: props.member.displayName
 #: components/modal/modals/UserProfileRoles.tsx
@@ -2534,7 +2479,6 @@ msgstr "Edit identity"
 msgid "Edit Identity"
 msgstr "Edit Identity"
 
-#: components/modal/modals/ImageEditor.tsx
 #: components/ui/components/features/messaging/composition/FileCarousel.tsx
 msgid "Edit image"
 msgstr "Edit image"
@@ -2572,6 +2516,14 @@ msgstr "Edited"
 #: components/modal/modals/PolicyChange.tsx
 msgid "Effective <0/> (<1/>)"
 msgstr "Effective <0/> (<1/>)"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Ellipse"
+msgstr "Ellipse"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "email"
+msgstr "email"
 
 #: components/modal/modals/EditEmail.tsx
 #: components/auth/src/flows/Form.tsx
@@ -2631,7 +2583,7 @@ msgstr "Enable Streamer Mode"
 msgid "Enable transparency glass/blur effects (slow on older machines)"
 msgstr "Enable transparency glass/blur effects (slow on older machines)"
 
-#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+#: components/app/interface/settings/user/Encryption.tsx
 msgid "Encrypt my calls"
 msgstr "Encrypt my calls"
 
@@ -2643,11 +2595,11 @@ msgstr "Encrypt this group"
 msgid "Encrypted · unverified"
 msgstr "Encrypted · unverified"
 
-#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+#: components/app/interface/settings/user/Encryption.tsx
 msgid "Encrypted calls aren't available on this device yet."
 msgstr "Encrypted calls aren't available on this device yet."
 
-#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+#: components/app/interface/settings/user/Encryption.tsx
 msgid "Encrypted direct messages"
 msgstr "Encrypted direct messages"
 
@@ -2655,7 +2607,7 @@ msgstr "Encrypted direct messages"
 msgid "Encrypted direct messages are on for this device. Messages you send in an encrypted conversation are stored only on the devices that receive them — not on the server, and not in your web session."
 msgstr "Encrypted direct messages are on for this device. Messages you send in an encrypted conversation are stored only on the devices that receive them — not on the server, and not in your web session."
 
-#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+#: components/app/interface/settings/user/Encryption.tsx
 msgid "Encrypted messaging is on"
 msgstr "Encrypted messaging is on"
 
@@ -2714,12 +2666,13 @@ msgid "Ends on"
 msgstr "Ends on"
 
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "Enhanced"
 msgstr "Enhanced"
 
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
-msgid "Enhanced (RNNoise)"
-msgstr "Enhanced (RNNoise)"
+#~ msgid "Enhanced (RNNoise)"
+#~ msgstr "Enhanced (RNNoise)"
 
 #: components/modal/modals/RenameSession.tsx
 msgid "Enter a new name for this session"
@@ -2761,6 +2714,10 @@ msgstr "Enter your preferred username."
 msgid "Entrance Sound"
 msgstr "Entrance Sound"
 
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Evens out loud and quiet people automatically. Only voices are leveled — music and screen share audio are never touched."
+msgstr "Evens out loud and quiet people automatically. Only voices are leveled — music and screen share audio are never touched."
+
 #: src/interface/ServerEvents.tsx
 msgid "Event title"
 msgstr "Event title"
@@ -2777,7 +2734,11 @@ msgstr "Every"
 msgid "Every post must have at least one tag"
 msgstr "Every post must have at least one tag"
 
-#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+#: components/app/interface/settings/user/Privacy.tsx
+msgid "Everyone"
+msgstr "Everyone"
+
+#: components/app/interface/settings/user/RemoteControl.tsx
 msgid "Everyone above goes back to needing both confirmations."
 msgstr "Everyone above goes back to needing both confirmations."
 
@@ -2802,7 +2763,7 @@ msgstr "Export"
 msgid "Export soft reserves"
 msgstr "Export soft reserves"
 
-#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+#: components/app/interface/settings/user/RemoteControl.tsx
 msgid "Express Connect"
 msgstr "Express Connect"
 
@@ -2890,13 +2851,17 @@ msgstr "Final results"
 msgid "Find a community based on your hobbies or interests."
 msgstr "Find a community based on your hobbies or interests."
 
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Find and black out emails, phone numbers, card numbers, passwords and keys"
+msgstr "Find and black out emails, phone numbers, card numbers, passwords and keys"
+
 #: components/ui/components/features/messaging/composition/VoiceMessageButton.tsx
 #: components/ui/components/features/messaging/composition/CameraMessageButton.tsx
 msgid "Finish recording"
 msgstr "Finish recording"
 
 #: components/modal/modals/E2EEReenroll.tsx
-#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+#: components/app/interface/settings/user/Encryption.tsx
 msgid "Finish restoring on this device"
 msgstr "Finish restoring on this device"
 
@@ -2965,7 +2930,7 @@ msgstr "For 3 hours"
 msgid "For 8 hours"
 msgstr "For 8 hours"
 
-#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+#: components/app/interface/settings/user/RemoteControl.tsx
 msgid "For people you have remembered, Sloga asks when you click instead of after they answer, so you do not have to come back to your computer. It is the same one confirmation, and it cannot show a verification code. People you have not remembered are unaffected."
 msgstr "For people you have remembered, Sloga asks when you click instead of after they answer, so you do not have to come back to your computer. It is the same one confirmation, and it cannot show a verification code. People you have not remembered are unaffected."
 
@@ -2973,9 +2938,13 @@ msgstr "For people you have remembered, Sloga asks when you click instead of aft
 msgid "For the RollFor addon on Turtle WoW: open its soft-res import window, paste the string and import."
 msgstr "For the RollFor addon on Turtle WoW: open its soft-res import window, paste the string and import."
 
-#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+#: components/app/interface/settings/user/RemoteControl.tsx
 msgid "Forget everyone"
 msgstr "Forget everyone"
+
+#: components/ui/components/features/voice/watch/JellyfinBrowser.tsx
+msgid "Forget this server"
+msgstr "Forget this server"
 
 #: components/app/interface/settings/ChannelSettings.tsx
 msgid "Forum"
@@ -3025,6 +2994,10 @@ msgstr "Friend Request"
 msgid "Friends"
 msgstr "Friends"
 
+#: components/app/interface/settings/user/Privacy.tsx
+msgid "Friends only"
+msgstr "Friends only"
+
 #. placeholder {0}: server.name
 #: components/app/interface/channels/text/Message.tsx
 msgid "From {0} • #{name}"
@@ -3038,6 +3011,10 @@ msgstr "From another server"
 msgid "Fruit Salad"
 msgstr "Fruit Salad"
 
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Full"
+msgstr "Full"
+
 #. placeholder {0}: voice.microphoneGain
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "Gain: {0}%"
@@ -3046,6 +3023,19 @@ msgstr "Gain: {0}%"
 #: components/modal/modals/CreateSoftRes.tsx
 msgid "Game edition"
 msgstr "Game edition"
+
+#: components/ui/components/features/profiles/ProfileGameIds.tsx
+#: components/app/interface/settings/user/profile/GameLinksEditor.tsx
+msgid "Game IDs"
+msgstr "Game IDs"
+
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Game over"
+msgstr "Game over"
+
+#: components/app/interface/settings/UserSettings.tsx
+msgid "Game Overlay"
+msgstr "Game Overlay"
 
 #: components/modal/modals/E2EEEnableGroup.tsx
 msgid "Gathering keys for every member…"
@@ -3095,6 +3085,10 @@ msgstr "Give control of this computer"
 msgid "Give control of this screen"
 msgstr "Give control of this screen"
 
+#: components/ui/components/features/profiles/ProfileRespect.tsx
+msgid "Give respect"
+msgstr "Give respect"
+
 #: components/modal/modals/ReportContent.tsx
 msgid "Give us some detail"
 msgstr "Give us some detail"
@@ -3117,8 +3111,8 @@ msgid "Go to Account Info to edit your username"
 msgstr "Go to Account Info to edit your username"
 
 #: components/app/interface/settings/user/profile/UserProfileEditor.tsx
-msgid "Go to account settings to edit your username"
-msgstr "Go to account settings to edit your username"
+#~ msgid "Go to account settings to edit your username"
+#~ msgstr "Go to account settings to edit your username"
 
 #: src/interface/Home.tsx
 #: components/app/interface/settings/user/Feedback.tsx
@@ -3225,13 +3219,33 @@ msgstr "High Contrast"
 msgid "High quality voice chat"
 msgstr "High quality voice chat"
 
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Highlighter"
+msgstr "Highlighter"
+
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "Hold a key to unmute while in a voice channel."
 msgstr "Hold a key to unmute while in a voice channel."
 
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Hold the rim, clear the web."
+msgstr "Hold the rim, clear the web."
+
 #: src/interface/Home.tsx
 msgid "Home"
 msgstr "Home"
+
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx
+msgid "Hosted by {name}"
+msgstr "Hosted by {name}"
+
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "How far a quiet voice may be raised. Loud voices are always tamed, at any strength."
+msgstr "How far a quiet voice may be raised. Loud voices are always tamed, at any strength."
+
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Hug the channel list"
+msgstr "Hug the channel list"
 
 #: src/interface/channels/AgeGate.tsx
 msgid "I confirm that I am at least 18 years old."
@@ -3312,9 +3326,18 @@ msgstr "Importing stickers…"
 msgid "Importing…"
 msgstr "Importing…"
 
+#: components/modal/modals/TimelockCompose.tsx
 #: components/modal/modals/ScheduleMessage.tsx
 msgid "In 1 hour"
 msgstr "In 1 hour"
+
+#: components/modal/modals/TimelockCompose.tsx
+msgid "In 24 hours"
+msgstr "In 24 hours"
+
+#: components/modal/modals/TimelockCompose.tsx
+msgid "In 30 days"
+msgstr "In 30 days"
 
 #: components/modal/modals/ScheduleMessage.tsx
 msgid "In 30 minutes"
@@ -3324,9 +3347,14 @@ msgstr "In 30 minutes"
 msgid "In 4 hours"
 msgstr "In 4 hours"
 
+#: components/modal/modals/TimelockCompose.tsx
 #: components/modal/modals/ScheduleMessage.tsx
 msgid "In a week"
 msgstr "In a week"
+
+#: components/modal/modals/TimelockCompose.tsx
+msgid "In a year"
+msgstr "In a year"
 
 #: components/modal/modals/ImportDiscord.tsx
 msgid "In Discord, go to:"
@@ -3359,6 +3387,10 @@ msgstr "Incoming Call"
 #: components/app/interface/settings/user/notifications/Sounds.tsx
 msgid "Incoming Call Ringtone"
 msgstr "Incoming Call Ringtone"
+
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Incoming Voices"
+msgstr "Incoming Voices"
 
 #: src/interface/channels/PasswordGate.tsx
 msgid "Incorrect password."
@@ -3451,6 +3483,10 @@ msgstr "Inviter"
 msgid "Invites"
 msgstr "Invites"
 
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "IP"
+msgstr "IP"
+
 #: components/ui/components/features/profiles/ProfileBadges.tsx
 msgid "irrelevant joke badge 1"
 msgstr "irrelevant joke badge 1"
@@ -3466,6 +3502,17 @@ msgstr "ISO Standard (YYYY-MM-DD)"
 #: components/modal/modals/CreateSoftRes.tsx
 msgid "Items taken off the table before reserves open — raiders cannot soft-reserve them."
 msgstr "Items taken off the table before reserves open — raiders cannot soft-reserve them."
+
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx
+msgid "Jellyfin"
+msgstr "Jellyfin"
+
+#~ msgid "Jellyfin isn't available on Android yet — use the desktop app or web."
+#~ msgstr "Jellyfin isn't available on Android yet — use the desktop app or web."
+
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx
+#~ msgid "Jellyfin playback isn't available in this build yet."
+#~ msgstr "Jellyfin playback isn't available in this build yet."
 
 #: components/modal/modals/JoinServer.tsx
 #: components/modal/modals/Invite.tsx
@@ -3566,6 +3613,10 @@ msgstr "Latest activity"
 msgid "Launch Sloga when you log into your computer."
 msgstr "Launch Sloga when you log into your computer."
 
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Layout"
+msgstr "Layout"
+
 #: components/modal/modals/LeaveServer.tsx
 #: components/modal/modals/DeleteChannel.tsx
 msgid "Leave"
@@ -3595,13 +3646,30 @@ msgstr "Leave server"
 msgid "Leave Thread"
 msgstr "Leave Thread"
 
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Left"
+msgstr "Left"
+
 #: components/app/interface/settings/user/Native.tsx
 msgid "Let Sloga use its own custom titlebar."
 msgstr "Let Sloga use its own custom titlebar."
 
+#: components/app/menus/UserContextMenu.tsx
+msgid "Let them draw on my shared screen"
+msgstr "Let them draw on my shared screen"
+
 #: components/modal/modals/SoftResReserve.tsx
 msgid "Letters only, 2–12 characters (WoW name rules)."
 msgstr "Letters only, 2–12 characters (WoW name rules)."
+
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Level Incoming Voices"
+msgstr "Level Incoming Voices"
+
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Leveling Strength"
+msgstr "Leveling Strength"
 
 #: components/app/menus/UserContextMenu.tsx
 msgid "Lift platform suspension"
@@ -3633,6 +3701,11 @@ msgstr "Listen"
 msgid "Listing requested — waiting for approval by the Sloga team."
 msgstr "Listing requested — waiting for approval by the Sloga team."
 
+#: src/interface/Home.tsx
+#: components/modal/modals/DiscoveryQueue.tsx
+msgid "Listing requests"
+msgstr "Listing requests"
+
 #: components/app/interface/settings/user/voice/CameraPreview.tsx
 msgid "Live"
 msgstr "Live"
@@ -3653,6 +3726,7 @@ msgstr "Live call captions"
 msgid "Load file ({0})"
 msgstr "Load file ({0})"
 
+#: src/interface/Discover.tsx
 #: src/interface/channels/forum/ForumChannel.tsx
 msgid "Load more"
 msgstr "Load more"
@@ -3664,6 +3738,14 @@ msgstr "Load more attendees"
 #: components/modal/modals/CreateSoftRes.tsx
 msgid "Loading catalog…"
 msgstr "Loading catalog…"
+
+#: src/interface/Discover.tsx
+msgid "Loading communities…"
+msgstr "Loading communities…"
+
+#: components/modal/modals/ImageEditor.tsx
+msgid "Loading editor…"
+msgstr "Loading editor…"
 
 #: src/interface/ServerEvents.tsx
 msgid "Loading events…"
@@ -3677,14 +3759,23 @@ msgstr "Loading loot table…"
 msgid "Loading reports…"
 msgstr "Loading reports…"
 
+#: components/modal/modals/DiscoveryQueue.tsx
+msgid "Loading requests…"
+msgstr "Loading requests…"
+
 #: components/modal/modals/ReportQueue.tsx
 msgid "Loading snapshots…"
 msgstr "Loading snapshots…"
 
 #: src/interface/ServerEvents.tsx
+#: components/ui/components/features/voice/watch/JellyfinBrowser.tsx
 #: components/modal/modals/PollVoters.tsx
 msgid "Loading…"
 msgstr "Loading…"
+
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx
+msgid "Loads from youtube-nocookie.com. The server sees what you watch — also in encrypted calls. Videos with embedding disabled won't play. Headphones recommended: an open mic will carry the movie into the call."
+msgstr "Loads from youtube-nocookie.com. The server sees what you watch — also in encrypted calls. Videos with embedding disabled won't play. Headphones recommended: an open mic will carry the movie into the call."
 
 #: src/interface/ServerEvents.tsx
 msgid "Location (optional)"
@@ -3821,15 +3912,15 @@ msgstr "Mark as mature"
 msgid "Mark as Mature"
 msgstr "Mark as Mature"
 
-#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
-msgid "Material You"
-msgstr "Material You"
-
 #: components/app/menus/ServerContextMenu.tsx
 #: components/app/menus/ChannelContextMenu.tsx
 #: components/app/menus/CategoryContextMenu.tsx
 msgid "Mark as read"
 msgstr "Mark as read"
+
+#: components/app/interface/settings/channel/Overview.tsx
+msgid "Mark as Spoiler"
+msgstr "Mark as Spoiler"
 
 #: components/app/menus/MessageContextMenu.tsx
 msgid "Mark as unread"
@@ -3847,6 +3938,10 @@ msgstr "Mark this channel as mature?"
 msgid "Masquerade"
 msgstr "Masquerade"
 
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Material You"
+msgstr "Material You"
+
 #. placeholder {0}: (voice.cameraMaxBitrateKbps / 1000).toFixed(1)
 #: components/app/interface/settings/user/voice/CameraOptions.tsx
 msgid "Max bitrate: {0} Mbps"
@@ -3861,7 +3956,21 @@ msgstr "Max bitrate: Auto"
 msgid "Maximize & hide participants"
 msgstr "Maximize & hide participants"
 
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Member list"
+msgstr "Member list"
+
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Member list: on the left. Press left or right arrow to move."
+msgstr "Member list: on the left. Press left or right arrow to move."
+
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Member list: on the right. Press left or right arrow to move."
+msgstr "Member list: on the right. Press left or right arrow to move."
+
 #: components/app/interface/settings/ServerSettings.tsx
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Members"
 msgstr "Members"
@@ -3874,6 +3983,10 @@ msgstr "Members can send one message every {0}."
 #: components/modal/modals/ImportDiscord.tsx
 msgid "Members can't be copied either; we'll hand you an invite link at the end to bring them over."
 msgstr "Members can't be copied either; we'll hand you an invite link at the end to bring them over."
+
+#: components/app/interface/settings/channel/Overview.tsx
+msgid "Members must choose to reveal a spoiler channel before its contents are shown, without marking the channel as mature."
+msgstr "Members must choose to reveal a spoiler channel before its contents are shown, without marking the channel as mature."
 
 #: components/app/menus/UserContextMenu.tsx
 msgid "Mention"
@@ -3917,6 +4030,10 @@ msgid "Message {0}"
 msgstr "Message {0}"
 
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Message alignment"
+msgstr "Message alignment"
+
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
 msgid "Message Group Spacing"
 msgstr "Message Group Spacing"
 
@@ -3948,6 +4065,14 @@ msgstr "Message Sound Style"
 #: components/app/interface/channels/text/Message.tsx
 msgid "Message was sent on another platform"
 msgstr "Message was sent on another platform"
+
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Message width"
+msgstr "Message width"
+
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Messages"
+msgstr "Messages"
 
 #. placeholder {0}: disappearOption().label
 #: src/interface/channels/text/Composition.tsx
@@ -4014,6 +4139,10 @@ msgstr "Middle right"
 msgid "Minimize to Tray"
 msgstr "Minimize to Tray"
 
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Mirrored"
+msgstr "Mirrored"
+
 #: src/interface/navigation/UserFooter.tsx
 #: src/interface/navigation/UserFooter.tsx
 #: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx
@@ -4045,13 +4174,13 @@ msgstr "Monospace Font"
 msgid "Monthly"
 msgstr "Monthly"
 
-#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
-msgid "More Contrast"
-msgstr "More Contrast"
-
 #: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx
 msgid "More call controls"
 msgstr "More call controls"
+
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "More Contrast"
+msgstr "More Contrast"
 
 #: src/interface/channels/text/Composition.tsx
 msgid "More options"
@@ -4065,6 +4194,10 @@ msgstr "Move Members"
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Move members between voice channels"
 msgstr "Move members between voice channels"
+
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Moves the member list out of the channel column and into the space beside your messages. The area past it is left empty on purpose."
+msgstr "Moves the member list out of the channel column and into the space beside your messages. The area past it is left empty on purpose."
 
 #: components/i18n/errors.ts
 msgid "Multi-factor authentication is already enabled for this account."
@@ -4125,8 +4258,8 @@ msgid "Mutual Groups"
 msgstr "Mutual Groups"
 
 #: components/app/interface/settings/user/_AccountCard.tsx
-msgid "My Account"
-msgstr "My Account"
+#~ msgid "My Account"
+#~ msgstr "My Account"
 
 #: components/app/interface/settings/UserSettings.tsx
 msgid "My Bots"
@@ -4144,6 +4277,10 @@ msgstr "Name"
 #: components/app/interface/settings/user/voice/OverlaySettings.tsx
 msgid "Names only"
 msgstr "Names only"
+
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Narrow"
+msgstr "Narrow"
 
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
 msgid "Neutral"
@@ -4240,6 +4377,10 @@ msgstr "No archived threads"
 msgid "No cap"
 msgstr "No cap"
 
+#: components/modal/modals/CreateChannel.tsx
+msgid "No category"
+msgstr "No category"
+
 #: components/app/interface/settings/channel/Overview.tsx
 msgid "No channels are following yet."
 msgstr "No channels are following yet."
@@ -4260,6 +4401,14 @@ msgstr "No channels where you can manage webhooks. You need the Manage Webhooks 
 msgid "No channels where you can send messages."
 msgstr "No channels where you can send messages."
 
+#: src/interface/Discover.tsx
+msgid "No communities are listed yet. Server owners can request a listing from Server Settings → Overview."
+msgstr "No communities are listed yet. Server owners can request a listing from Server Settings → Overview."
+
+#: src/interface/Discover.tsx
+msgid "No communities match your search."
+msgstr "No communities match your search."
+
 #: src/interface/ServerEvents.tsx
 msgid "No events on this day."
 msgstr "No events on this day."
@@ -4279,6 +4428,10 @@ msgstr "No open reports. All clear!"
 #: components/modal/modals/E2EEIdentityChange.tsx
 msgid "No pending identity changes remain."
 msgstr "No pending identity changes remain."
+
+#: components/modal/modals/DiscoveryQueue.tsx
+msgid "No pending listing requests. All clear!"
+msgstr "No pending listing requests. All clear!"
 
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsOverview.tsx
 msgid "No permissions set yet"
@@ -4328,6 +4481,7 @@ msgstr "Nobody here right now!"
 #: components/app/menus/ServerContextMenu.tsx
 #: components/app/menus/shared/NotificationContextMenu.tsx
 #: components/app/menus/shared/NotificationContextMenu.tsx
+#: components/app/interface/settings/user/voice/EntranceSoundOptions.tsx
 #: components/app/interface/settings/user/voice/CameraOptions.tsx
 #: components/app/interface/settings/user/voice/CameraOptions.tsx
 #: components/app/interface/settings/user/voice/CameraOptions.tsx
@@ -4368,8 +4522,8 @@ msgstr "Not of minimum age to use the platform"
 msgid "Note"
 msgstr "Note"
 
-#: components/modal/modals/AddFriend.tsx
 #: components/modal/modals/CreateSoftRes.tsx
+#: components/modal/modals/AddFriend.tsx
 msgid "Note (optional)"
 msgstr "Note (optional)"
 
@@ -4386,6 +4540,14 @@ msgstr "Notes"
 msgid "Nothing has been transcribed yet."
 msgstr "Nothing has been transcribed yet."
 
+#: components/ui/components/features/voice/watch/JellyfinBrowser.tsx
+msgid "Nothing here."
+msgstr "Nothing here."
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Nothing sensitive was recognized. Text that is small, stylized, or not English can be missed — use the Black bar tool for anything you can see."
+msgstr "Nothing sensitive was recognized. Text that is small, stylized, or not English can be missed — use the Black bar tool for anything you can see."
+
 #: components/app/menus/ServerContextMenu.tsx
 #: components/app/menus/shared/NotificationContextMenu.tsx
 #: components/app/interface/settings/UserSettings.tsx
@@ -4396,7 +4558,9 @@ msgstr "Notifications"
 msgid "occurrences"
 msgstr "occurrences"
 
+#: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
 #: components/ui/components/features/messaging/composition/MessageReplyPreview.tsx
+#: components/app/interface/settings/user/voice/AttenuationOptions.tsx
 msgid "Off"
 msgstr "Off"
 
@@ -4424,6 +4588,8 @@ msgid "Offline"
 msgstr "Offline"
 
 #: components/modal/modals/SignedOut.tsx
+#: components/modal/modals/ImageEditorCore.tsx
+#: components/modal/modals/ImageEditorCore.tsx
 #: components/modal/modals/Error2.tsx
 #: components/modal/modals/CreateInvite.tsx
 #: components/auth/src/flows/FlowHome.tsx
@@ -4437,6 +4603,10 @@ msgstr "Oldest"
 #: components/ui/components/features/messaging/composition/MessageReplyPreview.tsx
 msgid "On"
 msgstr "On"
+
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "On the same side as the channels, the member list shares their column. Overrides Ultrawide layout's member list placement."
+msgstr "On the same side as the channels, the member list shares their column. Overrides Ultrawide layout's member list placement."
 
 #: components/modal/modals/DeleteServer.tsx
 #: components/modal/modals/DeleteRole.tsx
@@ -4465,6 +4635,10 @@ msgstr "Online"
 #: src/interface/navigation/servers/UserMenu.tsx
 msgid "Only mentions will notify you"
 msgstr "Only mentions will notify you"
+
+#: components/i18n/errors.ts
+msgid "Only the host (or a channel manager) can control playback."
+msgstr "Only the host (or a channel manager) can control playback."
 
 #: components/app/interface/channels/text/Message.tsx
 msgid "Only you can see this — it disappears when you reload."
@@ -4497,6 +4671,10 @@ msgstr "Open channel settings"
 msgid "Open file"
 msgstr "Open file"
 
+#: components/ui/components/features/voice/watch/JellyfinConnect.tsx
+msgid "Open Jellyfin on your phone or another device and enter this code:"
+msgstr "Open Jellyfin on your phone or another device and enter this code:"
+
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "Open Microphone"
 msgstr "Open Microphone"
@@ -4517,6 +4695,7 @@ msgstr "Open settings"
 msgid "Open Sloga more than once to use a second account. Takes effect next time you launch; the first window you open is always your main account."
 msgstr "Open Sloga more than once to use a second account. Takes effect next time you launch; the first window you open is always your main account."
 
+#: components/modal/modals/TimelockCompose.tsx
 #: components/modal/modals/ScheduleMessage.tsx
 msgid "Or pick a time"
 msgstr "Or pick a time"
@@ -4563,6 +4742,10 @@ msgstr "Overlay size"
 msgid "Overview"
 msgstr "Overview"
 
+#: components/modal/modals/DiscoveryQueue.tsx
+msgid "Owner"
+msgstr "Owner"
+
 #: components/app/interface/settings/server/bans/ListBans.tsx
 msgid "Pardon User"
 msgstr "Pardon User"
@@ -4575,6 +4758,11 @@ msgstr "Pass the controller"
 msgid "Passing the controller lets that person type and click on this computer for real — everything you can see, they can drive."
 msgstr "Passing the controller lets that person type and click on this computer for real — everything you can see, they can drive."
 
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "password"
+msgstr "password"
+
+#: components/ui/components/features/voice/watch/JellyfinConnect.tsx
 #: components/modal/modals/MFAFlow.tsx
 #: components/modal/modals/MFAFlow.tsx
 #: components/auth/src/flows/Form.tsx
@@ -4594,23 +4782,43 @@ msgstr "Password set!"
 msgid "Paste a Discord server template link and we'll rebuild that server's layout here."
 msgstr "Paste a Discord server template link and we'll rebuild that server's layout here."
 
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx
+msgid "Paste a YouTube link. Everyone in the call watches it in sync, each from YouTube directly — Sloga never touches the video."
+msgstr "Paste a YouTube link. Everyone in the call watches it in sync, each from YouTube directly — Sloga never touches the video."
+
 #: components/modal/modals/Changelog.tsx
 #: components/modal/modals/Changelog.tsx
 #: components/app/interface/settings/UserSettings.tsx
 msgid "Patch Notes"
 msgstr "Patch Notes"
 
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Pen"
+msgstr "Pen"
+
 #: src/interface/Friends.tsx
 msgid "Pending"
 msgstr "Pending"
+
+#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
+msgid "People can draw on your screen"
+msgstr "People can draw on your screen"
 
 #: components/app/interface/settings/ChannelSettings.tsx
 msgid "Permissions"
 msgstr "Permissions"
 
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "phone"
+msgstr "phone"
+
 #: components/modal/modals/ScreenSharePicker.tsx
 msgid "Pick a Screen to Share"
 msgstr "Pick a Screen to Share"
+
+#: components/modal/modals/TimelockCompose.tsx
+msgid "Pick a time between 1 minute and 5 years from now."
+msgstr "Pick a time between 1 minute and 5 years from now."
 
 #: components/modal/modals/ScheduleMessage.tsx
 msgid "Pick a time between 30 seconds and 30 days from now."
@@ -4629,6 +4837,14 @@ msgstr "Pick items from the list below."
 msgid "Pin message"
 msgstr "Pin message"
 
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Pixelate"
+msgstr "Pixelate"
+
+#: components/app/interface/settings/user/profile/GameLinksEditor.tsx
+msgid "Platform"
+msgstr "Platform"
+
 #: components/ui/components/features/profiles/ProfileBadges.tsx
 msgid "Platform Moderator"
 msgstr "Platform Moderator"
@@ -4643,8 +4859,20 @@ msgid "Play sound"
 msgstr "Play sound"
 
 #: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Play while you wait"
+msgstr "Play while you wait"
+
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
 msgid "Play while you wait?"
 msgstr "Play while you wait?"
+
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx
+msgid "Playback speed"
+msgstr "Playback speed"
+
+#: components/app/interface/settings/user/profile/GameLinksEditor.tsx
+msgid "Player ID or handle"
+msgstr "Player ID or handle"
 
 #. placeholder {0}: playing.name
 #. placeholder {0}: activity.name
@@ -4724,8 +4952,8 @@ msgid "Post the sheet to"
 msgstr "Post the sheet to"
 
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
-msgid "Powered by RNNoise"
-msgstr "Powered by RNNoise"
+#~ msgid "Powered by RNNoise"
+#~ msgstr "Powered by RNNoise"
 
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "Press any key..."
@@ -4754,6 +4982,14 @@ msgstr "Privacy & Safety"
 msgid "Privacy Policy"
 msgstr "Privacy Policy"
 
+#: components/modal/modals/ScreenShareSettings.tsx
+#~ msgid "Privacy shield — hide pop-up notifications (blurs the corner of full-screen shares when something appears there)"
+#~ msgstr "Privacy shield — hide pop-up notifications (blurs the corner of full-screen shares when something appears there)"
+
+#: components/modal/modals/ScreenShareSettings.tsx
+msgid "Privacy shield — hide pop-up notifications (pixelates the corner of full-screen shares when something appears there)"
+msgstr "Privacy shield — hide pop-up notifications (pixelates the corner of full-screen shares when something appears there)"
+
 #: components/markdown/plugins/anchors.tsx
 msgid "Private Channel"
 msgstr "Private Channel"
@@ -4767,13 +5003,26 @@ msgstr "Profile"
 msgid "Profile Bio"
 msgstr "Profile Bio"
 
+#: components/app/interface/settings/user/Privacy.tsx
+#: components/app/interface/settings/user/Privacy.tsx
+msgid "Profile visibility"
+msgstr "Profile visibility"
+
 #: components/modal/modals/ReportContent.tsx
 msgid "Promotes harm"
 msgstr "Promotes harm"
 
+#: components/app/interface/settings/user/profile/UserProfileEditor.tsx
+msgid "Pronouns"
+msgstr "Pronouns"
+
 #: components/i18n/errors.ts
 msgid "Provided email or password is wrong."
 msgstr "Provided email or password is wrong."
+
+#: src/interface/Discover.tsx
+msgid "Public communities on Sloga. Servers appear here after their owner requests a listing and it is approved."
+msgstr "Public communities on Sloga. Servers appear here after their owner requests a listing and it is approved."
 
 #: components/app/interface/settings/server/Overview.tsx
 msgid "Public discovery"
@@ -4949,8 +5198,8 @@ msgid "Recovery Code"
 msgstr "Recovery Code"
 
 #: components/app/interface/settings/user/Account.tsx
-msgid "Recovery Codes"
-msgstr "Recovery Codes"
+#~ msgid "Recovery Codes"
+#~ msgstr "Recovery Codes"
 
 #: components/modal/modals/ImportDiscord.tsx
 msgid "Recreating channels…"
@@ -4959,6 +5208,29 @@ msgstr "Recreating channels…"
 #: components/modal/modals/ImportDiscord.tsx
 msgid "Recreating roles and permissions…"
 msgstr "Recreating roles and permissions…"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Rectangle"
+msgstr "Rectangle"
+
+#: components/app/interface/settings/user/voice/InputSensitivity.tsx
+msgid "Red is below the level Sloga picked for your room and is not sent; speak normally and your voice should land in the green."
+msgstr "Red is below the level Sloga picked for your room and is not sent; speak normally and your voice should land in the green."
+
+#. placeholder {0}: voice.vadThreshold
+#: components/app/interface/settings/user/voice/InputSensitivity.tsx
+msgid "Red is below the threshold and is not sent; drag the handle so your voice lands in the green and room noise stays in the red. Threshold: {0}%"
+msgstr "Red is below the threshold and is not sent; drag the handle so your voice lands in the green and room noise stays in the red. Threshold: {0}%"
+
+#. placeholder {0}: enabledCount()
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Redact {0}"
+msgstr "Redact {0}"
+
+#: components/modal/modals/ImageEditorCore.tsx
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Redo"
+msgstr "Redo"
 
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
 msgid "Reduced"
@@ -4973,6 +5245,7 @@ msgid "Registered since <0/>"
 msgstr "Registered since <0/>"
 
 #: components/modal/modals/ReportQueue.tsx
+#: components/modal/modals/DiscoveryQueue.tsx
 msgid "Reject"
 msgstr "Reject"
 
@@ -4993,6 +5266,18 @@ msgstr "Relevance"
 msgid "Remember each player on this computer, so their next turn asks once instead of twice"
 msgstr "Remember each player on this computer, so their next turn asks once instead of twice"
 
+#: components/ui/components/features/voice/callCard/VoiceCallRosterPanel.tsx
+msgid "Remote control"
+msgstr "Remote control"
+
+#: components/app/interface/settings/UserSettings.tsx
+msgid "Remote Control"
+msgstr "Remote Control"
+
+#: components/app/interface/settings/user/RemoteControl.tsx
+msgid "Remote control isn't available on this device."
+msgstr "Remote control isn't available on this device."
+
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
 msgid "Remote control needs a whole-screen share."
 msgstr "Remote control needs a whole-screen share."
@@ -5001,6 +5286,7 @@ msgstr "Remote control needs a whole-screen share."
 msgid "Remote control needs a whole-screen share. You are sharing a single window, and their mouse and keyboard would reach everything else on that screen — including what you have not shared. Stop the share and share your whole screen instead."
 msgstr "Remote control needs a whole-screen share. You are sharing a single window, and their mouse and keyboard would reach everything else on that screen — including what you have not shared. Stop the share and share your whole screen instead."
 
+#: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
 #: components/modal/modals/RemoveMember.tsx
 #: components/app/interface/settings/user/voice/CameraOptions.tsx
 #: components/app/interface/settings/channel/Overview.tsx
@@ -5052,7 +5338,11 @@ msgstr "Remove reaction"
 msgid "Remove reserve"
 msgstr "Remove reserve"
 
-#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+#: components/app/interface/settings/channel/Overview.tsx
+msgid "Remove Spoiler Mark"
+msgstr "Remove Spoiler Mark"
+
+#: components/app/interface/settings/user/Encryption.tsx
 msgid "Remove the backup stored on the server. Your encrypted history on this device is unaffected."
 msgstr "Remove the backup stored on the server. Your encrypted history on this device is unaffected."
 
@@ -5139,6 +5429,11 @@ msgstr "Request public listing"
 msgid "Require tags"
 msgstr "Require tags"
 
+#. placeholder {0}: displayDimensions()
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Requires a 21:9 or wider display. This display is {0}."
+msgstr "Requires a 21:9 or wider display. This display is {0}."
+
 #: components/auth/src/flows/FlowResend.tsx
 msgid "Resend"
 msgstr "Resend"
@@ -5182,6 +5477,15 @@ msgstr "Reset"
 msgid "Reset {0}'s token?"
 msgstr "Reset {0}'s token?"
 
+#: components/modal/modals/ImageEditorCore.tsx
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Reset crop"
+msgstr "Reset crop"
+
+#: components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
+msgid "Reset encryption"
+msgstr "Reset encryption"
+
 #: components/auth/src/flows/FlowReset.tsx
 #: components/auth/src/flows/FlowLogin.tsx
 #: components/auth/src/flows/FlowConfirmReset.tsx
@@ -5196,13 +5500,13 @@ msgstr "Reset Recovery Codes"
 msgid "Reset Token"
 msgstr "Reset Token"
 
-#: components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
-msgid "Reset encryption"
-msgstr "Reset encryption"
-
 #: components/modal/modals/ReportQueue.tsx
 msgid "Resolve"
 msgstr "Resolve"
+
+#: components/ui/components/features/profiles/ProfileRespect.tsx
+msgid "Respect"
+msgstr "Respect"
 
 #: components/ui/components/features/profiles/ProfileBadges.tsx
 msgid "Responsibly disclosed security issues"
@@ -5227,6 +5531,7 @@ msgstr "Resume unencrypted"
 #: src/interface/ServerEvents.tsx
 #: components/modal/modals/E2EEDisable.tsx
 #: components/app/interface/settings/server/apps/AppsList.tsx
+#: components/app/interface/channels/text/TimelockMessage.tsx
 msgid "Retry"
 msgstr "Retry"
 
@@ -5237,6 +5542,10 @@ msgstr "Retry sending"
 #: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx
 msgid "Return to voice channel"
 msgstr "Return to voice channel"
+
+#: src/interface/channels/SpoilerGate.tsx
+msgid "Reveal Channel"
+msgstr "Reveal Channel"
 
 #: components/modal/modals/ReportContent.tsx
 msgid "Revenge or underage pornography"
@@ -5253,6 +5562,19 @@ msgstr "Review policy changes"
 #: components/modal/modals/ReportQueue.tsx
 msgid "Review report"
 msgstr "Review report"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Review what was found — tap a chip to keep or skip it. Add anything missed with the Black bar tool."
+msgstr "Review what was found — tap a chip to keep or skip it. Add anything missed with the Black bar tool."
+
+#: components/ui/components/features/profiles/ProfileRespect.tsx
+msgid "Rewrite your respect…"
+msgstr "Rewrite your respect…"
+
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Right"
+msgstr "Right"
 
 #: components/app/interface/settings/user/notifications/Sounds.tsx
 msgid "Ringtone Style"
@@ -5345,6 +5667,10 @@ msgstr "Saving…"
 msgid "Scams or fraud"
 msgstr "Scams or fraud"
 
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Scanning…"
+msgstr "Scanning…"
+
 #: src/interface/ServerEvents.tsx
 msgid "Scans a channel for old tagged event messages and turns them into real calendar events. Already-imported messages are skipped, so running this again is safe."
 msgstr "Scans a channel for old tagged event messages and turns them into real calendar events. Already-imported messages are skipped, so running this again is safe."
@@ -5378,9 +5704,34 @@ msgstr "Screen Share Volume"
 msgid "Screen sharing isn't supported on this device"
 msgstr "Screen sharing isn't supported on this device"
 
+#: components/modal/modals/TimelockCompose.tsx
+msgid "Seal & send"
+msgstr "Seal & send"
+
+#: components/modal/modals/TimelockCompose.tsx
+msgid "Sealed on your device using timelock encryption against the drand randomness beacon. Nobody — not the recipients, not the server, not even you — can open it before the chosen time. It unlocks for everyone at once."
+msgstr "Sealed on your device using timelock encryption against the drand randomness beacon. Nobody — not the recipients, not the server, not even you — can open it before the chosen time. It unlocks for everyone at once."
+
+#: components/app/interface/channels/text/TimelockMessage.tsx
+msgid "Sealed with timelock encryption — the key to open it will not exist anywhere until the drand beacon reaches the unlock round."
+msgstr "Sealed with timelock encryption — the key to open it will not exist anywhere until the drand beacon reaches the unlock round."
+
 #: src/interface/channels/ChannelHeader.tsx
 msgid "Search"
 msgstr "Search"
+
+#. placeholder {0}: s().name
+#: components/ui/components/features/voice/watch/JellyfinBrowser.tsx
+msgid "Search {0}"
+msgstr "Search {0}"
+
+#: src/interface/Discover.tsx
+msgid "Search communities…"
+msgstr "Search communities…"
+
+#: components/ui/components/features/voice/watch/JellyfinBrowser.tsx
+msgid "Search failed"
+msgstr "Search failed"
 
 #: components/modal/modals/ForwardMessage.tsx
 msgid "Search for a channel or conversation…"
@@ -5416,9 +5767,21 @@ msgstr "Search members or roles…"
 msgid "Search the selected raids' loot…"
 msgstr "Search the selected raids' loot…"
 
+#: components/ui/components/features/voice/watch/JellyfinBrowser.tsx
+msgid "Search: {term}"
+msgstr "Search: {term}"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "secret"
+msgstr "secret"
+
 #: components/modal/modals/E2EEIdentityChange.tsx
 msgid "Security identity changed"
 msgstr "Security identity changed"
+
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx
+msgid "Seek"
+msgstr "Seek"
 
 #: src/interface/ServerEvents.tsx
 msgid "Select a channel"
@@ -5510,10 +5873,9 @@ msgstr "Send unencrypted"
 msgid "Sending..."
 msgstr "Sending..."
 
-#. placeholder {0}: voice.vadThreshold
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
-msgid "Sensitivity threshold: {0}%"
-msgstr "Sensitivity threshold: {0}%"
+#~ msgid "Sensitivity threshold: {0}%"
+#~ msgstr "Sensitivity threshold: {0}%"
 
 #: components/ui/components/features/messaging/elements/Container.tsx
 #: components/ui/components/features/messaging/elements/Container.tsx
@@ -5534,9 +5896,18 @@ msgstr "Sent an attachment"
 msgid "Sent multiple attachments"
 msgstr "Sent multiple attachments"
 
+#. placeholder {0}: s().name
+#: components/ui/components/features/voice/watch/JellyfinConnect.tsx
+msgid "Sent only to {0}, never to Sloga."
+msgstr "Sent only to {0}, never to Sloga."
+
 #: components/app/interface/settings/user/voice/EntranceSoundOptions.tsx
 msgid "Server"
 msgstr "Server"
+
+#: components/ui/components/features/voice/watch/JellyfinConnect.tsx
+msgid "Server address"
+msgstr "Server address"
 
 #: components/modal/modals/ServerIdentity.tsx
 msgid "Server Avatar"
@@ -5566,6 +5937,18 @@ msgstr "Server Icon"
 msgid "Server Identities"
 msgstr "Server Identities"
 
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Server list and channels"
+msgstr "Server list and channels"
+
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Server list and channels: on the left. Press left or right arrow to move."
+msgstr "Server list and channels: on the left. Press left or right arrow to move."
+
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
+msgid "Server list and channels: on the right. Press left or right arrow to move."
+msgstr "Server list and channels: on the right. Press left or right arrow to move."
+
 #: components/modal/modals/CreateServer.tsx
 #: components/app/interface/settings/server/Overview.tsx
 msgid "Server Name"
@@ -5591,7 +5974,7 @@ msgstr "Set a password that users must enter before viewing this channel."
 msgid "Set channel password"
 msgstr "Set channel password"
 
-#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+#: components/app/interface/settings/user/Encryption.tsx
 msgid "Set up secure device keys to encrypt your calls. Web participants can't join encrypted calls, and server features that need the raw audio or video (recording, transcoding) are turned off in encrypted calls."
 msgstr "Set up secure device keys to encrypt your calls. Web participants can't join encrypted calls, and server features that need the raw audio or video (recording, transcoding) are turned off in encrypted calls."
 
@@ -5617,6 +6000,10 @@ msgstr "Setup one-time password authenticator"
 msgid "Setup recovery codes"
 msgstr "Setup recovery codes"
 
+#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
+msgid "Several people are drawing on your screen"
+msgstr "Several people are drawing on your screen"
+
 #: components/ui/components/features/messaging/composition/TypingIndicator.tsx
 msgid "Several people are typing…"
 msgstr "Several people are typing…"
@@ -5631,7 +6018,7 @@ msgstr "Share audio"
 msgid "Share camera or screen in voice call"
 msgstr "Share camera or screen in voice call"
 
-#: components/app/interface/settings/user/profile/EditProfile.tsx
+#: components/app/interface/settings/user/Privacy.tsx
 msgid "Share Game Activity"
 msgstr "Share Game Activity"
 
@@ -5659,7 +6046,7 @@ msgstr "Show cameras beside the video"
 msgid "Show corrections and suggestions as you type."
 msgstr "Show corrections and suggestions as you type."
 
-#: components/app/interface/settings/user/profile/EditProfile.tsx
+#: components/app/interface/settings/user/Privacy.tsx
 msgid "Show friends what game you are playing (desktop app only)."
 msgstr "Show friends what game you are playing (desktop app only)."
 
@@ -5674,6 +6061,10 @@ msgstr "Show live captions during voice and video calls, translated into your ch
 #: components/app/interface/settings/user/Language.tsx
 msgid "Show live captions during voice and video calls, translated into your chosen language. Your speech is transcribed on your device, and the text is sent to Google Translate; captions are disabled on end-to-end encrypted calls."
 msgstr "Show live captions during voice and video calls, translated into your chosen language. Your speech is transcribed on your device, and the text is sent to Google Translate; captions are disabled on end-to-end encrypted calls."
+
+#: components/ui/components/features/voice/callCard/VoiceCaptionsButton.tsx
+msgid "Show live captions, translated into your chosen language"
+msgstr "Show live captions, translated into your chosen language"
 
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
 msgid "Show message timestamps"
@@ -5703,9 +6094,21 @@ msgstr "Show who is talking on top of your game during a call. Works in borderle
 msgid "Shown on the sheet card"
 msgstr "Shown on the sheet card"
 
+#: components/ui/components/features/voice/watch/JellyfinConnect.tsx
+msgid "Sign in"
+msgstr "Sign in"
+
 #: components/auth/src/flows/FlowOAuthCallback.tsx
 msgid "Sign in failed"
 msgstr "Sign in failed"
+
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx
+msgid "Sign in to watch"
+msgstr "Sign in to watch"
+
+#: components/ui/components/features/voice/watch/JellyfinConnect.tsx
+msgid "Sign in with a password"
+msgstr "Sign in with a password"
 
 #: components/app/interface/settings/user/Connections.tsx
 msgid "Sign in with your account to link your channel."
@@ -5745,17 +6148,22 @@ msgstr "Skip one of the two system confirmations for this person next time"
 msgid "Slash commands are unavailable in encrypted conversations."
 msgstr "Slash commands are unavailable in encrypted conversations."
 
+#: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
 msgid "Sloga"
 msgstr "Sloga"
 
-#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+#: components/app/interface/settings/user/RemoteControl.tsx
 msgid "Sloga asks you once instead of twice before this person can use your mouse and keyboard. Select to undo."
 msgstr "Sloga asks you once instead of twice before this person can use your mouse and keyboard. Select to undo."
 
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
 msgid "Sloga cannot tell which screen you are sharing, so it will not hand over control. Stop the share and share your whole screen again."
 msgstr "Sloga cannot tell which screen you are sharing, so it will not hand over control. Stop the share and share your whole screen again."
+
+#: components/ui/components/features/voice/watch/JellyfinConnect.tsx
+msgid "Sloga connects your device straight to your server. It never sees or stores your Jellyfin password."
+msgstr "Sloga connects your device straight to your server. It never sees or stores your Jellyfin password."
 
 #: components/ui/components/features/profiles/ProfileBadges.tsx
 msgid "Sloga Developer"
@@ -5789,6 +6197,10 @@ msgstr "Sloga works best as an app"
 msgid "Slogaball minigame"
 msgstr "Slogaball minigame"
 
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Slogatron minigame"
+msgstr "Slogatron minigame"
+
 #: src/interface/channels/text/Composition.tsx
 msgid "Slowmode Immune"
 msgstr "Slowmode Immune"
@@ -5813,6 +6225,10 @@ msgstr "Some hard reserves are not in the selected raids' loot — remove them (
 msgid "Someone here is recording audio"
 msgstr "Someone here is recording audio"
 
+#: components/i18n/errors.ts
+msgid "Someone in this call is already watching together — stop that session first."
+msgstr "Someone in this call is already watching together — stop that session first."
+
 #: components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
 msgid "Someone in this call is not using encrypted calls. Your audio and video stay paused until you turn off encryption."
 msgstr "Someone in this call is not using encrypted calls. Your audio and video stay paused until you turn off encryption."
@@ -5834,6 +6250,10 @@ msgstr "Something cool about me..."
 msgid "Something is wrong with your request, {0}."
 msgstr "Something is wrong with your request, {0}."
 
+#: components/ui/components/features/voice/watch/JellyfinConnect.tsx
+msgid "Something went wrong"
+msgstr "Something went wrong"
+
 #: components/auth/src/flows/FlowOAuthCallback.tsx
 msgid "Something went wrong while signing you in with Google. Please try again."
 msgstr "Something went wrong while signing you in with Google. Please try again."
@@ -5841,10 +6261,6 @@ msgstr "Something went wrong while signing you in with Google. Please try again.
 #: components/i18n/errors.ts
 msgid "Something went wrong! {error}"
 msgstr "Something went wrong! {error}"
-
-#: components/app/interface/settings/server/Overview.tsx
-msgid "South America (São Paulo)"
-msgstr "South America (São Paulo)"
 
 #: components/app/interface/settings/user/voice/EntranceSoundOptions.tsx
 msgid "Sound"
@@ -5863,6 +6279,10 @@ msgstr "Soundboard"
 msgid "Sounds"
 msgstr "Sounds"
 
+#: components/app/interface/settings/server/Overview.tsx
+msgid "South America (São Paulo)"
+msgstr "South America (São Paulo)"
+
 #: components/modal/modals/ReportContent.tsx
 msgid "Spam or similar platform abuse"
 msgstr "Spam or similar platform abuse"
@@ -5879,6 +6299,14 @@ msgstr "Speak captions aloud"
 msgid "Spellchecker"
 msgstr "Spellchecker"
 
+#: components/app/interface/settings/channel/Overview.tsx
+msgid "Spoiler Channel"
+msgstr "Spoiler Channel"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "SSN"
+msgstr "SSN"
+
 #: src/interface/Home.tsx
 msgid "Start a Chat Room/Server"
 msgstr "Start a Chat Room/Server"
@@ -5886,6 +6314,11 @@ msgstr "Start a Chat Room/Server"
 #: src/interface/channels/ChannelHeader.tsx
 msgid "Start a video call"
 msgstr "Start a video call"
+
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
+msgid "Start and control synced video playback in a voice call"
+msgstr "Start and control synced video playback in a voice call"
 
 #: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx
 msgid "Start camera"
@@ -5950,6 +6383,14 @@ msgstr "Still reading your displays — try again in a moment."
 msgid "Stop"
 msgstr "Stop"
 
+#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
+msgid "Stop all drawing"
+msgstr "Stop all drawing"
+
+#: components/app/menus/UserContextMenu.tsx
+msgid "Stop all drawing on my screen"
+msgstr "Stop all drawing on my screen"
+
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
 msgid "Stop at any time with Ctrl+Shift+Alt+Q."
 msgstr "Stop at any time with Ctrl+Shift+Alt+Q."
@@ -5962,6 +6403,10 @@ msgstr "Stop being an Announcement Channel"
 msgid "Stop camera"
 msgstr "Stop camera"
 
+#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
+msgid "Stop drawing"
+msgstr "Stop drawing"
+
 #: components/ui/components/features/voice/callCard/VoiceRecordButton.tsx
 msgid "Stop recording"
 msgstr "Stop recording"
@@ -5973,6 +6418,15 @@ msgstr "Stop sharing"
 #: components/ui/components/features/voice/callCard/VoiceTranscribeButton.tsx
 msgid "Stop transcribing"
 msgstr "Stop transcribing"
+
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx
+msgid "Stop watching together"
+msgstr "Stop watching together"
+
+#: components/ui/components/features/voice/callCard/VoiceCallWhisperBanner.tsx
+#: components/app/menus/UserContextMenu.tsx
+msgid "Stop whispering"
+msgstr "Stop whispering"
 
 #: components/app/interface/settings/user/notifications/Sounds.tsx
 msgid "Stream End"
@@ -6015,6 +6469,11 @@ msgstr "Streaming on {0}"
 #: src/interface/channels/text/MemberSidebar.tsx
 msgid "Streaming: {0}"
 msgstr "Streaming: {0}"
+
+#. placeholder {0}: voice.audioNormalizationStrength
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Strength: {0}%"
+msgstr "Strength: {0}%"
 
 #: components/app/interface/settings/user/bots/ViewBot.tsx
 msgid "Submit to Discover"
@@ -6061,6 +6520,10 @@ msgstr "Switch to this voice channel"
 msgid "Sync appearance options, such as chosen emoji pack and message density."
 msgstr "Sync appearance options, such as chosen emoji pack and message density."
 
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx
+msgid "Sync stats"
+msgstr "Sync stats"
+
 #: components/app/interface/settings/user/Sync.tsx
 msgid "Sync your chosen theme, colors, and any custom CSS."
 msgstr "Sync your chosen theme, colors, and any custom CSS."
@@ -6098,6 +6561,14 @@ msgstr "Tags let members categorise posts. Moderated tags can only be applied by
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
 msgid "Take back control"
 msgstr "Take back control"
+
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx
+msgid "Tap to start"
+msgstr "Tap to start"
+
+#: components/modal/modals/AddFriend.tsx
+msgid "Tell them why you're adding them"
+msgstr "Tell them why you're adding them"
 
 #: components/modal/modals/ReportContent.tsx
 msgid "Tell us what's wrong with this message"
@@ -6153,17 +6624,25 @@ msgstr "That action had no effect."
 msgid "That bot is currently offline — try again once it reconnects."
 msgstr "That bot is currently offline — try again once it reconnects."
 
-#: components/ui/components/features/voice/watch/WatchOverlay.tsx
-msgid "That's a playlist link without a video. Open the first video of the playlist on YouTube and paste that link — the playlist rides along and advances for everyone."
-msgstr "That's a playlist link without a video. Open the first video of the playlist on YouTube and paste that link — the playlist rides along and advances for everyone."
-
 #: components/modal/modals/ImportDiscord.tsx
 msgid "That doesn't look like a Discord server template link."
 msgstr "That doesn't look like a Discord server template link."
 
+#: components/ui/components/features/voice/watch/JellyfinConnect.tsx
+msgid "That doesn't look like a server address."
+msgstr "That doesn't look like a server address."
+
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx
+msgid "That doesn't look like a YouTube link or video id."
+msgstr "That doesn't look like a YouTube link or video id."
+
 #: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
 msgid "That turn already ended. Offer control again to restart the rotation."
 msgstr "That turn already ended. Offer control again to restart the rotation."
+
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx
+msgid "That's a playlist link without a video. Open the first video of the playlist on YouTube and paste that link — the playlist rides along and advances for everyone."
+msgstr "That's a playlist link without a video. Open the first video of the playlist on YouTube and paste that link — the playlist rides along and advances for everyone."
 
 #: src/interface/channels/text/Composition.tsx
 #: components/app/interface/channels/text/MessageComponents.tsx
@@ -6177,6 +6656,10 @@ msgstr "The bot only reads stickers, and you can kick it as soon as they're in."
 #: src/interface/ServerEvents.tsx
 msgid "The calendar feature is not enabled on this server."
 msgstr "The calendar feature is not enabled on this server."
+
+#: src/interface/channels/text/Composition.tsx
+msgid "The edited image ({fileSize}) exceeds the maximum size limit of {maxSizeFormatted}. Crop it smaller, or close the editor to send the original."
+msgstr "The edited image ({fileSize}) exceeds the maximum size limit of {maxSizeFormatted}. Crop it smaller, or close the editor to send the original."
 
 #: components/modal/modals/E2EEDisable.tsx
 msgid "The encrypted message history stored on THIS device will be permanently deleted and cannot be recovered. You will confirm your identity, then confirm the deletion."
@@ -6194,6 +6677,10 @@ msgstr "The forward keeps a copy of the message as it is right now — later edi
 #: components/auth/src/flows/FlowOAuthCallback.tsx
 msgid "The Google sign-in was canceled."
 msgstr "The Google sign-in was canceled."
+
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx
+msgid "The host seems to have dropped — waiting for them to come back…"
+msgstr "The host seems to have dropped — waiting for them to come back…"
 
 #: components/modal/modals/ImportDiscord.tsx
 msgid "The import didn't finish."
@@ -6289,6 +6776,10 @@ msgstr "This channel is not available in your region while we review options on 
 msgid "This channel is password protected."
 msgstr "This channel is password protected."
 
+#: src/interface/channels/SpoilerGate.tsx
+msgid "This channel may contain spoilers."
+msgstr "This channel may contain spoilers."
+
 #: components/modal/modals/E2EEIdentityChange.tsx
 msgid "this contact"
 msgstr "this contact"
@@ -6305,7 +6796,7 @@ msgstr "This contact's security identity changed — review before sending."
 msgid "This content is not available in your region."
 msgstr "This content is not available in your region."
 
-#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+#: components/app/interface/settings/user/Encryption.tsx
 msgid "This device was logged out remotely, so it must be re-registered before it can send and receive encrypted messages again. Confirm your identity to finish — your contacts will see it come back with no security warning, because its keys are unchanged."
 msgstr "This device was logged out remotely, so it must be re-registered before it can send and receive encrypted messages again. Confirm your identity to finish — your contacts will see it come back with no security warning, because its keys are unchanged."
 
@@ -6322,6 +6813,18 @@ msgid "This feature is currently disabled."
 msgstr "This feature is currently disabled."
 
 #: components/i18n/errors.ts
+msgid "This file is empty."
+msgstr "This file is empty."
+
+#: components/i18n/errors.ts
+msgid "This file is too large (up to {maxMB} MB)."
+msgstr "This file is too large (up to {maxMB} MB)."
+
+#: components/i18n/errors.ts
+msgid "This file is too large."
+msgstr "This file is too large."
+
+#: components/i18n/errors.ts
 msgid "This file type is not allowed."
 msgstr "This file type is not allowed."
 
@@ -6333,6 +6836,10 @@ msgstr "This group is too large, you can have up to {0} users."
 #: components/i18n/errors.ts
 msgid "This has already been sent."
 msgstr "This has already been sent."
+
+#: components/ui/components/features/voice/watch/JellyfinConnect.tsx
+msgid "This is an http:// server on a page served over https. Use the Sloga desktop app for a LAN or http server, or put your Jellyfin behind https."
+msgstr "This is an http:// server on a page served over https. Use the Sloga desktop app for a LAN or http server, or put your Jellyfin behind https."
 
 #: components/ui/components/features/messaging/elements/ConversationStart.tsx
 msgid "This is the start of your conversation."
@@ -6358,6 +6865,14 @@ msgstr "This message is already pinned."
 msgid "This message is empty and has not been sent."
 msgstr "This message is empty and has not been sent."
 
+#: components/modal/modals/TimelockCompose.tsx
+msgid "This message is too long to timelock."
+msgstr "This message is too long to timelock."
+
+#: components/i18n/errors.ts
+msgid "This name is not allowed."
+msgstr "This name is not allowed."
+
 #: components/modal/modals/E2EEVerify.tsx
 msgid "This participant's device is not verified yet. Compare safety numbers in person to verify them."
 msgstr "This participant's device is not verified yet. Compare safety numbers in person to verify them."
@@ -6365,6 +6880,11 @@ msgstr "This participant's device is not verified yet. Compare safety numbers in
 #: components/i18n/errors.ts
 msgid "This password has previously appeared in security leaks, please use another password."
 msgstr "This password has previously appeared in security leaks, please use another password."
+
+#: components/ui/components/features/profiles/ProfileBio.tsx
+#: components/i18n/errors.ts
+msgid "This profile is private."
+msgstr "This profile is private."
 
 #: components/app/interface/settings/server/Overview.tsx
 msgid "This server is about..."
@@ -6381,6 +6901,11 @@ msgstr "This server is not publicly listed. Request a listing to appear in the p
 #: components/ui/components/features/voice/watch/JellyfinConnect.tsx
 msgid "This server's certificate can't be verified. Only trust it if this is your own server — a changed certificate can also mean someone is intercepting the connection. Trust applies to this device only; to undo it later, remove the server and add it again."
 msgstr "This server's certificate can't be verified. Only trust it if this is your own server — a changed certificate can also mean someone is intercepting the connection. Trust applies to this device only; to undo it later, remove the server and add it again."
+
+#. placeholder {0}: info().serverUrl
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx
+msgid "This session is playing from {0}. Sign in to that Jellyfin to watch along."
+msgstr "This session is playing from {0}. Sign in to that Jellyfin to watch along."
 
 #: src/interface/channels/text/TextChannel.tsx
 msgid "This thread is archived"
@@ -6421,6 +6946,23 @@ msgstr "Throw this transcript away"
 #: components/app/interface/settings/user/Language.tsx
 msgid "Time format"
 msgstr "Time format"
+
+#: src/interface/channels/text/Composition.tsx
+#: components/modal/modals/TimelockCompose.tsx
+msgid "Timelock message"
+msgstr "Timelock message"
+
+#: components/app/interface/channels/text/TimelockMessage.tsx
+msgid "Timelocked message"
+msgstr "Timelocked message"
+
+#: components/modal/modals/TimelockCompose.tsx
+#~ msgid "Timelocked messages are limited to {MAX_TIMELOCK_PLAINTEXT} characters."
+#~ msgstr "Timelocked messages are limited to {MAX_TIMELOCK_PLAINTEXT} characters."
+
+#: components/app/interface/channels/text/TimelockMessage.tsx
+msgid "Timelocked until"
+msgstr "Timelocked until"
 
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Timeout Members"
@@ -6483,10 +7025,6 @@ msgstr "Translate captions to"
 msgid "Translate messages"
 msgstr "Translate messages"
 
-#: components/ui/components/features/voice/watch/JellyfinConnect.tsx
-msgid "Trust this server's certificate"
-msgstr "Trust this server's certificate"
-
 #: components/app/interface/settings/user/Language.tsx
 msgid "Translate messages to"
 msgstr "Translate messages to"
@@ -6499,6 +7037,10 @@ msgstr "Translated from {0}"
 #: components/ui/components/features/messaging/composition/picker/GifPicker.tsx
 msgid "Trending GIFs"
 msgstr "Trending GIFs"
+
+#: components/ui/components/features/voice/watch/JellyfinConnect.tsx
+msgid "Trust this server's certificate"
+msgstr "Trust this server's certificate"
 
 #: components/modal/modals/ImportDiscord.tsx
 msgid "Try again"
@@ -6537,6 +7079,10 @@ msgstr "Turn off encryption for this conversation"
 msgid "Turn off Express Connect in Settings to pass the controller — with it on, a handoff would not show a verification code."
 msgstr "Turn off Express Connect in Settings to pass the controller — with it on, a handoff would not show a verification code."
 
+#: components/ui/components/features/voice/callCard/VoiceCaptionsButton.tsx
+msgid "Turn off live captions"
+msgstr "Turn off live captions"
+
 #: components/modal/modals/E2EEEnable.tsx
 msgid "Turn on"
 msgstr "Turn on"
@@ -6549,7 +7095,7 @@ msgstr "Turn on encrypted direct messages"
 msgid "Turn on encryption"
 msgstr "Turn on encryption"
 
-#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+#: components/app/interface/settings/user/Encryption.tsx
 msgid "Turn on end-to-end encrypted direct messages for this device."
 msgstr "Turn on end-to-end encrypted direct messages for this device."
 
@@ -6569,6 +7115,10 @@ msgstr "Turn Streamer Mode on while a streaming app (OBS, Streamlabs, XSplit, ..
 msgid "Two-Factor Recovery Codes"
 msgstr "Two-Factor Recovery Codes"
 
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Ultrawide layout"
+msgstr "Ultrawide layout"
+
 #: src/interface/channels/text/TextChannel.tsx
 msgid "Unarchive"
 msgstr "Unarchive"
@@ -6576,6 +7126,10 @@ msgstr "Unarchive"
 #: components/app/interface/settings/server/apps/AppsList.tsx
 msgid "Unavailable"
 msgstr "Unavailable"
+
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Unavailable while the shared audio mix is off. Turning the mix back on takes effect when you next join a call."
+msgstr "Unavailable while the shared audio mix is off. Turning the mix back on takes effect when you next join a call."
 
 #: components/app/menus/UserContextMenu.tsx
 msgid "Unblock user"
@@ -6592,13 +7146,30 @@ msgstr "Uncaught Stoat error: {0}"
 msgid "Undeafen"
 msgstr "Undeafen"
 
+#: components/modal/modals/ImageEditorCore.tsx
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "Undo"
+msgstr "Undo"
+
 #: components/markdown/plugins/anchors.tsx
 msgid "Unknown Server"
 msgstr "Unknown Server"
 
+#: components/ui/components/features/profiles/ProfileRespect.tsx
+msgid "Unknown user"
+msgstr "Unknown user"
+
 #: components/app/interface/channels/text/SoftResMessage.tsx
 msgid "Unlock"
 msgstr "Unlock"
+
+#: components/app/interface/channels/text/TimelockMessage.tsx
+msgid "Unlocking…"
+msgstr "Unlocking…"
+
+#: components/app/interface/channels/text/TimelockMessage.tsx
+msgid "Unlocks in"
+msgstr "Unlocks in"
 
 #: components/modal/modals/ChannelToggleMature.tsx
 msgid "Unmark as mature"
@@ -6647,13 +7218,13 @@ msgstr "Unsolicited advertising or spam"
 msgid "Until I turn it back on"
 msgstr "Until I turn it back on"
 
-#: components/app/interface/settings/server/Overview.tsx
-msgid "US East"
-msgstr "US East"
-
 #: src/interface/ServerEvents.tsx
 msgid "Upcoming"
 msgstr "Upcoming"
+
+#: components/ui/components/features/profiles/ProfileRespect.tsx
+msgid "Update"
+msgstr "Update"
 
 #: components/modal/modals/SoftResReserve.tsx
 msgid "Update reserve"
@@ -6664,6 +7235,7 @@ msgstr "Update reserve"
 msgid "Update to {0} and restart Sloga"
 msgstr "Update to {0} and restart Sloga"
 
+#: components/app/interface/settings/user/voice/CameraOptions.tsx
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Upload Files"
 msgstr "Upload Files"
@@ -6680,9 +7252,17 @@ msgstr "Upload Sticker"
 msgid "Uploading…"
 msgstr "Uploading…"
 
+#: components/app/interface/settings/server/Overview.tsx
+msgid "US East"
+msgstr "US East"
+
 #: components/modal/modals/JoinServer.tsx
 msgid "Use a code or invite link"
 msgstr "Use a code or invite link"
+
+#: components/ui/components/features/voice/watch/JellyfinConnect.tsx
+msgid "Use Quick Connect"
+msgstr "Use Quick Connect"
 
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Use Soundboard"
@@ -6735,13 +7315,14 @@ msgid "User profile snapshot"
 msgstr "User profile snapshot"
 
 #: components/app/interface/settings/UserSettings.tsx
-msgid "User Settings"
-msgstr "User Settings"
+#~ msgid "User Settings"
+#~ msgstr "User Settings"
 
 #: components/modal/modals/ReportContent.tsx
 msgid "User's profile has inappropriate content"
 msgstr "User's profile has inappropriate content"
 
+#: components/ui/components/features/voice/watch/JellyfinConnect.tsx
 #: components/modal/modals/Onboarding.tsx
 #: components/modal/modals/EditUsername.tsx
 #: components/modal/modals/CreateBot.tsx
@@ -6768,8 +7349,8 @@ msgid "Users will no longer be asked to confirm their age before joining this ch
 msgstr "Users will no longer be asked to confirm their age before joining this channel.<0/> Please ensure the content is appropriate for all ages."
 
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
-msgid "VAD Threshold"
-msgstr "VAD Threshold"
+#~ msgid "VAD Threshold"
+#~ msgstr "VAD Threshold"
 
 #: src/interface/navigation/channels/ServerSidebar.tsx
 #: components/modal/modals/E2EEVerify.tsx
@@ -6802,6 +7383,7 @@ msgstr "Verifying your account…"
 msgid "Version:"
 msgstr "Version:"
 
+#: components/app/interface/settings/UserSettings.tsx
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Video"
 msgstr "Video"
@@ -6855,17 +7437,17 @@ msgstr "Viewing older messages"
 msgid "Virtual background"
 msgstr "Virtual background"
 
-#: src/interface/navigation/channels/HomeSidebar.tsx
 #: src/interface/Friends.tsx
+#: src/interface/navigation/channels/HomeSidebar.tsx
 #: components/app/interface/settings/UserSettings.tsx
-#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 #: components/app/interface/settings/server/Overview.tsx
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Voice"
 msgstr "Voice"
 
 #: components/app/interface/settings/UserSettings.tsx
-msgid "Voice & Video"
-msgstr "Voice & Video"
+#~ msgid "Voice & Video"
+#~ msgstr "Voice & Video"
 
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "Voice Activity Detection"
@@ -6891,6 +7473,7 @@ msgstr "Voice region"
 msgid "Voice Settings"
 msgstr "Voice Settings"
 
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx
 #: components/app/menus/UserContextMenu.tsx
 msgid "Volume"
 msgstr "Volume"
@@ -6920,6 +7503,10 @@ msgstr "Waiting for them to accept…"
 msgid "Waiting for them to confirm on their machine"
 msgstr "Waiting for them to confirm on their machine"
 
+#: components/ui/components/features/voice/watch/JellyfinConnect.tsx
+msgid "Waiting for you to approve it in your Jellyfin app…"
+msgstr "Waiting for you to approve it in your Jellyfin app…"
+
 #: components/app/interface/settings/user/profile/UserProfileEditor.tsx
 msgid "Want to change username?"
 msgstr "Want to change username?"
@@ -6932,9 +7519,30 @@ msgstr "Want your Discord server's stickers too? Add our importer bot to it, the
 msgid "was going"
 msgstr "was going"
 
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx
+msgid "Watch"
+msgstr "Watch"
+
 #: components/ui/components/features/voice/callCard/RemoteControlOverlays.tsx
 msgid "Watch their screen to see whether it is landing. Their computer can silently ignore input on system prompts and on windows with higher privileges, and they can take control back at any time."
 msgstr "Watch their screen to see whether it is landing. Their computer can silently ignore input on system prompts and on windows with higher privileges, and they can take control back at any time."
+
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx
+msgid "Watch together"
+msgstr "Watch together"
+
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
+msgid "Watch Together"
+msgstr "Watch Together"
+
+#: components/ui/components/features/voice/callCard/VoiceWatchButton.tsx
+msgid "Watch together — paste a YouTube link, everyone in the call stays in sync"
+msgstr "Watch together — paste a YouTube link, everyone in the call stays in sync"
+
+#: components/ui/components/features/voice/VoiceStatefulUserIcons.tsx
+#: components/ui/components/features/voice/callCard/VoiceWatchButton.tsx
+msgid "Watching together"
+msgstr "Watching together"
 
 #: components/app/interface/settings/user/voice/OverlaySettings.tsx
 msgid "Wayland session detected — the overlay may not stay above games on this desktop. X11 sessions are fully supported."
@@ -6947,6 +7555,14 @@ msgstr "We are working hard on optimising our web app for mobile."
 #: components/auth/src/flows/FlowCheck.tsx
 msgid "We've sent you a verification email. Please allow up to 10 minutes for it to arrive."
 msgstr "We've sent you a verification email. Please allow up to 10 minutes for it to arrive."
+
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Web {n}"
+msgstr "Web {n}"
+
+#: components/ui/components/features/voice/minigame/MinigameChip.tsx
+msgid "Web cleared!"
+msgstr "Web cleared!"
 
 #: components/app/interface/channels/text/Message.tsx
 msgid "Webhook"
@@ -7005,9 +7621,22 @@ msgstr "Which screen are you sharing?"
 msgid "Which would you like to Start?"
 msgstr "Which would you like to Start?"
 
+#: components/app/menus/UserContextMenu.tsx
+msgid "Whisper"
+msgstr "Whisper"
+
+#. placeholder {0}: targetName()
+#: components/ui/components/features/voice/callCard/VoiceCallWhisperBanner.tsx
+msgid "Whispering to {0} — only they hear you"
+msgstr "Whispering to {0} — only they hear you"
+
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
 msgid "Who should get control?"
 msgstr "Who should get control?"
+
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Wide"
+msgstr "Wide"
 
 #: components/ui/components/features/voice/callCard/VoiceCallCardPreview.tsx
 msgid "Will be end-to-end encrypted"
@@ -7018,7 +7647,7 @@ msgstr "Will be end-to-end encrypted"
 msgid "With {0}"
 msgstr "With {0}"
 
-#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+#: components/app/interface/settings/user/Encryption.tsx
 msgid "Without a recovery code, your encrypted messages cannot be restored if you lose this device. Create one and store it somewhere safe."
 msgstr "Without a recovery code, your encrypted messages cannot be restored if you lose this device. Create one and store it somewhere safe."
 
@@ -7042,6 +7671,10 @@ msgstr "Write a message first, then schedule it"
 msgid "Write down what's said, on this device — everyone in the call will be told"
 msgstr "Write down what's said, on this device — everyone in the call will be told"
 
+#: components/ui/components/features/profiles/ProfileRespect.tsx
+msgid "Write something nice…"
+msgstr "Write something nice…"
+
 #: components/modal/modals/SignOut.tsx
 msgid "Yes"
 msgstr "Yes"
@@ -7049,6 +7682,10 @@ msgstr "Yes"
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
 msgid "Yes, that's the right screen"
 msgstr "Yes, that's the right screen"
+
+#: components/modal/modals/ImageEditorCore.tsx
+msgid "you"
+msgstr "you"
 
 #: components/modal/modals/ImportDiscord.tsx
 #: components/modal/modals/ImportDiscord.tsx
@@ -7171,7 +7808,7 @@ msgstr "You do not have permission to do this."
 msgid "You don't have permission to send messages in this channel."
 msgstr "You don't have permission to send messages in this channel."
 
-#: components/app/interface/settings/user/SecurityAndPrivacy.tsx
+#: components/app/interface/settings/user/Encryption.tsx
 msgid "You have a recovery code. Anyone with this code and access to your account can read your message history — Sloga cannot recover it for you. Choose \"Change recovery code\" to replace it."
 msgstr "You have a recovery code. Anyone with this code and access to your account can read your message history — Sloga cannot recover it for you. Choose \"Change recovery code\" to replace it."
 
@@ -7190,6 +7827,10 @@ msgstr "You have this user blocked."
 #: components/ui/components/features/voice/VoiceStatefulUserIcons.tsx
 msgid "You muted this user."
 msgstr "You muted this user."
+
+#: components/i18n/errors.ts
+msgid "You need to be in the call to do that."
+msgstr "You need to be in the call to do that."
 
 #: components/auth/src/flows/FlowHome.tsx
 msgid "You were logged out!"
@@ -7230,6 +7871,10 @@ msgstr "You're already part of this server."
 msgid "You're going"
 msgstr "You're going"
 
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx
+msgid "You're hosting"
+msgstr "You're hosting"
+
 #: components/i18n/errors.ts
 msgid "You're publishing too fast — up to {errMax} announcements can be published per hour."
 msgstr "You're publishing too fast — up to {errMax} announcements can be published per hour."
@@ -7267,6 +7912,10 @@ msgstr "Your account and all of your data (including your messages and friends l
 msgid "Your account has been verified!"
 msgstr "Your account has been verified!"
 
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx
+msgid "Your browser blocked autoplay — one tap and you're in sync."
+msgstr "Your browser blocked autoplay — one tap and you're in sync."
+
 #: components/ui/components/features/voice/callCard/VoiceCallAudioBlockedBanner.tsx
 msgid "Your browser is blocking this call's audio until you interact with the page."
 msgstr "Your browser is blocking this call's audio until you interact with the page."
@@ -7293,6 +7942,7 @@ msgstr "Your Discord import finished."
 msgid "Your discriminator change has been ratelimited, please try again later."
 msgstr "Your discriminator change has been ratelimited, please try again later."
 
+#: components/modal/modals/TimelockCompose.tsx
 #: components/modal/modals/ScheduleMessage.tsx
 msgid "Your draft is empty"
 msgstr "Your draft is empty"
@@ -7345,533 +7995,10 @@ msgstr "Your suspension has expired — try logging in again."
 msgid "Your user has already been created? Try logging in again or refreshing the app."
 msgstr "Your user has already been created? Try logging in again or refreshing the app."
 
-#: components/modal/modals/CreateChannel.tsx
-msgid "Category"
-msgstr "Category"
-
-#: components/modal/modals/CreateChannel.tsx
-msgid "No category"
-msgstr "No category"
-
-#: components/i18n/errors.ts
-msgid "This name is not allowed."
-msgstr "This name is not allowed."
-
-#: components/ui/components/features/voice/minigame/MinigameChip.tsx
-msgid "Play while you wait"
-msgstr "Play while you wait"
-
-#: components/ui/components/features/voice/minigame/MinigameChip.tsx
-msgid "Drop the ball, clear the pegs."
-msgstr "Drop the ball, clear the pegs."
-
-#: components/ui/components/features/voice/minigame/MinigameChip.tsx
-msgid "Hold the rim, clear the web."
-msgstr "Hold the rim, clear the web."
-
-#: components/ui/components/features/voice/minigame/MinigameChip.tsx
-msgid "Back to games"
-msgstr "Back to games"
-
-#: components/app/interface/settings/user/profile/UserProfileEditor.tsx
-msgid "Choose who can see your bio, banner, and connections. People you share a server or group with can always see your name and avatar."
-msgstr "Choose who can see your bio, banner, and connections. People you share a server or group with can always see your name and avatar."
-
-#: components/ui/components/features/voice/minigame/MinigameChip.tsx
-msgid "Slogatron minigame"
-msgstr "Slogatron minigame"
-
-#: components/ui/components/features/voice/minigame/MinigameChip.tsx
-msgid "Game over"
-msgstr "Game over"
-
-#: components/app/interface/settings/UserSettings.tsx
-msgid "Game Overlay"
-msgstr "Game Overlay"
-
-#: components/ui/components/features/voice/minigame/MinigameChip.tsx
-msgid "Web cleared!"
-msgstr "Web cleared!"
+#: components/ui/components/features/voice/watch/WatchOverlay.tsx
+msgid "YouTube"
+msgstr "YouTube"
 
 #: components/ui/components/features/voice/minigame/MinigameChip.tsx
 msgid "Zap"
 msgstr "Zap"
-
-#: components/ui/components/features/voice/minigame/MinigameChip.tsx
-msgid "Click to start"
-msgstr "Click to start"
-
-#: components/app/interface/settings/user/profile/UserProfileEditor.tsx
-msgid "Everyone"
-msgstr "Everyone"
-
-#: components/app/interface/settings/user/profile/UserProfileEditor.tsx
-msgid "Friends only"
-msgstr "Friends only"
-
-#: components/app/interface/settings/channel/Overview.tsx
-msgid "Mark as Spoiler"
-msgstr "Mark as Spoiler"
-
-#: components/app/interface/settings/channel/Overview.tsx
-msgid "Members must choose to reveal a spoiler channel before its contents are shown, without marking the channel as mature."
-msgstr "Members must choose to reveal a spoiler channel before its contents are shown, without marking the channel as mature."
-
-#: components/app/interface/settings/user/profile/UserProfileEditor.tsx
-msgid "Profile visibility"
-msgstr "Profile visibility"
-
-#: components/app/interface/settings/channel/Overview.tsx
-msgid "Remove Spoiler Mark"
-msgstr "Remove Spoiler Mark"
-
-#: src/interface/channels/SpoilerGate.tsx
-msgid "Reveal Channel"
-msgstr "Reveal Channel"
-
-#: components/app/interface/settings/channel/Overview.tsx
-msgid "Spoiler Channel"
-msgstr "Spoiler Channel"
-
-#: components/modal/modals/AddFriend.tsx
-msgid "Tell them why you're adding them"
-msgstr "Tell them why you're adding them"
-
-#: src/interface/channels/SpoilerGate.tsx
-msgid "This channel may contain spoilers."
-msgstr "This channel may contain spoilers."
-
-#: components/i18n/errors.ts
-msgid "This profile is private."
-msgstr "This profile is private."
-
-#: components/ui/components/features/voice/minigame/MinigameChip.tsx
-msgid "Web {n}"
-msgstr "Web {n}"
-
-#: components/ui/components/features/voice/callCard/VoiceCaptionsButton.tsx
-msgid "Captions aren't available on end-to-end encrypted calls"
-msgstr "Captions aren't available on end-to-end encrypted calls"
-
-#: components/app/interface/channels/text/TimelockMessage.tsx
-msgid "Couldn't unlock this message yet."
-msgstr "Couldn't unlock this message yet."
-
-#: components/modal/modals/TimelockCompose.tsx
-msgid "In 24 hours"
-msgstr "In 24 hours"
-
-#: components/modal/modals/TimelockCompose.tsx
-msgid "In 30 days"
-msgstr "In 30 days"
-
-#: components/modal/modals/TimelockCompose.tsx
-msgid "In a year"
-msgstr "In a year"
-
-#: components/modal/modals/TimelockCompose.tsx
-msgid "Pick a time between 1 minute and 5 years from now."
-msgstr "Pick a time between 1 minute and 5 years from now."
-
-#: components/modal/modals/TimelockCompose.tsx
-msgid "Seal & send"
-msgstr "Seal & send"
-
-#: components/modal/modals/TimelockCompose.tsx
-msgid "Sealed on your device using timelock encryption against the drand randomness beacon. Nobody — not the recipients, not the server, not even you — can open it before the chosen time. It unlocks for everyone at once."
-msgstr "Sealed on your device using timelock encryption against the drand randomness beacon. Nobody — not the recipients, not the server, not even you — can open it before the chosen time. It unlocks for everyone at once."
-
-#: components/app/interface/channels/text/TimelockMessage.tsx
-msgid "Sealed with timelock encryption — the key to open it will not exist anywhere until the drand beacon reaches the unlock round."
-msgstr "Sealed with timelock encryption — the key to open it will not exist anywhere until the drand beacon reaches the unlock round."
-
-#: components/ui/components/features/voice/callCard/VoiceCaptionsButton.tsx
-msgid "Show live captions, translated into your chosen language"
-msgstr "Show live captions, translated into your chosen language"
-
-#: src/interface/channels/text/Composition.tsx
-#: components/modal/modals/TimelockCompose.tsx
-msgid "Timelock message"
-msgstr "Timelock message"
-
-#: components/app/interface/channels/text/TimelockMessage.tsx
-msgid "Timelocked message"
-msgstr "Timelocked message"
-
-#: components/modal/modals/TimelockCompose.tsx
-msgid "Timelocked messages are limited to {MAX_TIMELOCK_PLAINTEXT} characters."
-msgstr "Timelocked messages are limited to {MAX_TIMELOCK_PLAINTEXT} characters."
-
-#: components/app/interface/channels/text/TimelockMessage.tsx
-msgid "Timelocked until"
-msgstr "Timelocked until"
-
-#: components/ui/components/features/voice/callCard/VoiceCaptionsButton.tsx
-msgid "Turn off live captions"
-msgstr "Turn off live captions"
-
-#: components/app/interface/channels/text/TimelockMessage.tsx
-msgid "Unlocking…"
-msgstr "Unlocking…"
-
-#: components/app/interface/channels/text/TimelockMessage.tsx
-msgid "Unlocks in"
-msgstr "Unlocks in"
-
-#. placeholder {0}: senderName()
-#: components/ui/components/features/voice/callCard/VoiceCallWhisperBanner.tsx
-msgid "{0} is whispering to you"
-msgstr "{0} is whispering to you"
-
-#: components/app/menus/UserContextMenu.tsx
-msgid "Stop whispering"
-msgstr "Stop whispering"
-
-#: components/app/menus/UserContextMenu.tsx
-msgid "Whisper"
-msgstr "Whisper"
-
-#. placeholder {0}: targetName()
-#: components/ui/components/features/voice/callCard/VoiceCallWhisperBanner.tsx
-msgid "Whispering to {0} — only they hear you"
-msgstr "Whispering to {0} — only they hear you"
-
-#: components/modal/modals/ScreenShareSettings.tsx
-msgid "Privacy shield — hide pop-up notifications (blurs the corner of full-screen shares when something appears there)"
-msgstr "Privacy shield — hide pop-up notifications (blurs the corner of full-screen shares when something appears there)"
-
-#: components/modal/modals/ScreenShareSettings.tsx
-msgid "Privacy shield — hide pop-up notifications (pixelates the corner of full-screen shares when something appears there)"
-msgstr "Privacy shield — hide pop-up notifications (pixelates the corner of full-screen shares when something appears there)"
-
-#: components/modal/modals/TimelockCompose.tsx
-msgid "This message is too long to timelock."
-msgstr "This message is too long to timelock."
-
-#. placeholder {0}: controller().username
-#. placeholder {1}: sharer().username
-#: components/ui/components/features/voice/callCard/VoiceCallRosterPanel.tsx
-msgid "{0} is controlling {1}'s screen"
-msgstr "{0} is controlling {1}'s screen"
-
-#. placeholder {0}: controllerUser().username
-#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
-msgid "Controlled by {0}"
-msgstr "Controlled by {0}"
-
-#: components/ui/components/features/voice/callCard/VoiceCallRosterPanel.tsx
-msgid "Remote control"
-msgstr "Remote control"
-
-#: components/app/interface/settings/UserSettings.tsx
-msgid "Remote Control"
-msgstr "Remote Control"
-
-#: components/app/interface/settings/user/RemoteControl.tsx
-msgid "Remote control isn't available on this device."
-msgstr "Remote control isn't available on this device."
-
-#: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
-msgid "Add to rotation"
-msgstr "Add to rotation"
-
-#: components/modal/modals/DiscoveryQueue.tsx
-msgid "Approve"
-msgstr "Approve"
-
-#: components/modal/modals/DiscoveryQueue.tsx
-msgid "Approve or reject servers asking to be publicly listed."
-msgstr "Approve or reject servers asking to be publicly listed."
-
-#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
-msgid "Ask for a turn"
-msgstr "Ask for a turn"
-
-#: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
-msgid "Asked for a turn"
-msgstr "Asked for a turn"
-
-#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
-msgid "Asked"
-msgstr "Asked"
-
-#. placeholder {0}: activeAnnotator().username
-#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
-msgid "{0} is drawing on your screen"
-msgstr "{0} is drawing on your screen"
-
-#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
-msgid "Draw"
-msgstr "Draw"
-
-#: components/app/menus/UserContextMenu.tsx
-msgid "Let them draw on my shared screen"
-msgstr "Let them draw on my shared screen"
-
-#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
-msgid "People can draw on your screen"
-msgstr "People can draw on your screen"
-
-#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
-msgid "Stop all drawing"
-msgstr "Stop all drawing"
-
-#: components/app/menus/UserContextMenu.tsx
-msgid "Stop all drawing on my screen"
-msgstr "Stop all drawing on my screen"
-
-#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
-msgid "Stop drawing"
-msgstr "Stop drawing"
-
-#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
-msgid "Several people are drawing on your screen"
-msgstr "Several people are drawing on your screen"
-
-#: components/modal/modals/ImageEditorCore.tsx
-msgid "Crop"
-msgstr "Crop"
-
-#: components/modal/modals/ImageEditorCore.tsx
-msgid "Pen"
-msgstr "Pen"
-
-#: components/modal/modals/ImageEditorCore.tsx
-msgid "Highlighter"
-msgstr "Highlighter"
-
-#: components/modal/modals/ImageEditorCore.tsx
-msgid "Rectangle"
-msgstr "Rectangle"
-
-#: components/app/interface/settings/user/voice/InputSensitivity.tsx
-msgid "Red is below the level Sloga picked for your room and is not sent; speak normally and your voice should land in the green."
-msgstr "Red is below the level Sloga picked for your room and is not sent; speak normally and your voice should land in the green."
-
-#. placeholder {0}: voice.vadThreshold
-#: components/app/interface/settings/user/voice/InputSensitivity.tsx
-msgid "Red is below the threshold and is not sent; drag the handle so your voice lands in the green and room noise stays in the red. Threshold: {0}%"
-msgstr "Red is below the threshold and is not sent; drag the handle so your voice lands in the green and room noise stays in the red. Threshold: {0}%"
-
-#: components/modal/modals/ImageEditorCore.tsx
-msgid "Ellipse"
-msgstr "Ellipse"
-
-#: components/modal/modals/ImageEditorCore.tsx
-msgid "Arrow"
-msgstr "Arrow"
-
-#: components/modal/modals/ImageEditorCore.tsx
-msgid "Black bar"
-msgstr "Black bar"
-
-#: components/modal/modals/ImageEditorCore.tsx
-msgid "Pixelate"
-msgstr "Pixelate"
-
-#: components/modal/modals/ImageEditorCore.tsx
-msgid "Undo"
-msgstr "Undo"
-
-#: components/modal/modals/ImageEditorCore.tsx
-msgid "Redo"
-msgstr "Redo"
-
-#: components/modal/modals/ImageEditorCore.tsx
-msgid "Reset crop"
-msgstr "Reset crop"
-
-#: components/modal/modals/ImageEditor.tsx
-msgid "Loading editor…"
-msgstr "Loading editor…"
-
-#: components/modal/modals/ImageEditorCore.tsx
-msgid "Auto-redact"
-msgstr "Auto-redact"
-
-#: src/interface/channels/text/Composition.tsx
-msgid "The edited image ({fileSize}) exceeds the maximum size limit of {maxSizeFormatted}. Crop it smaller, or close the editor to send the original."
-msgstr "The edited image ({fileSize}) exceeds the maximum size limit of {maxSizeFormatted}. Crop it smaller, or close the editor to send the original."
-
-#: components/modal/modals/ImageEditorCore.tsx
-msgid "Find and black out emails, phone numbers, card numbers, passwords and keys"
-msgstr "Find and black out emails, phone numbers, card numbers, passwords and keys"
-
-#: components/modal/modals/ImageEditorCore.tsx
-msgid "Scanning…"
-msgstr "Scanning…"
-
-#: components/modal/modals/ImageEditorCore.tsx
-msgid "Review what was found — tap a chip to keep or skip it. Add anything missed with the Black bar tool."
-msgstr "Review what was found — tap a chip to keep or skip it. Add anything missed with the Black bar tool."
-
-#: components/modal/modals/ImageEditorCore.tsx
-msgid "Redact {0}"
-msgstr "Redact {0}"
-
-#: components/modal/modals/ImageEditorCore.tsx
-msgid "Nothing sensitive was recognized. Text that is small, stylized, or not English can be missed — use the Black bar tool for anything you can see."
-msgstr "Nothing sensitive was recognized. Text that is small, stylized, or not English can be missed — use the Black bar tool for anything you can see."
-
-#: components/modal/modals/ImageEditorCore.tsx
-msgid "Auto-redact couldn't run on this image."
-msgstr "Auto-redact couldn't run on this image."
-
-#: components/modal/modals/ImageEditorCore.tsx
-msgid "email"
-msgstr "email"
-
-#: components/modal/modals/ImageEditorCore.tsx
-msgid "phone"
-msgstr "phone"
-
-#: components/modal/modals/ImageEditorCore.tsx
-msgid "card"
-msgstr "card"
-
-#: src/interface/Discover.tsx
-msgid "Couldn't load the directory. Try again in a moment."
-msgstr "Couldn't load the directory. Try again in a moment."
-
-#: src/interface/Discover.tsx
-msgid "Discover"
-msgstr "Discover"
-
-#: components/modal/modals/ImageEditorCore.tsx
-msgid "SSN"
-msgstr "SSN"
-
-#: components/modal/modals/ImageEditorCore.tsx
-msgid "secret"
-msgstr "secret"
-
-#: components/modal/modals/ImageEditorCore.tsx
-msgid "password"
-msgstr "password"
-
-#: components/modal/modals/ImageEditorCore.tsx
-msgid "you"
-msgstr "you"
-
-#: components/modal/modals/ImageEditorCore.tsx
-msgid "IP"
-msgstr "IP"
-
-#: components/modal/modals/DiscoveryQueue.tsx
-msgid "Listing requests"
-msgstr "Listing requests"
-
-#: src/interface/Discover.tsx
-msgid "Loading communities…"
-msgstr "Loading communities…"
-
-#: components/modal/modals/DiscoveryQueue.tsx
-msgid "Loading requests…"
-msgstr "Loading requests…"
-
-#: src/interface/Discover.tsx
-msgid "No communities are listed yet. Server owners can request a listing from Server Settings → Overview."
-msgstr "No communities are listed yet. Server owners can request a listing from Server Settings → Overview."
-
-#: src/interface/Discover.tsx
-msgid "No communities match your search."
-msgstr "No communities match your search."
-
-#: components/modal/modals/DiscoveryQueue.tsx
-msgid "No pending listing requests. All clear!"
-msgstr "No pending listing requests. All clear!"
-
-#: components/modal/modals/DiscoveryQueue.tsx
-msgid "Owner"
-msgstr "Owner"
-
-#: src/interface/Discover.tsx
-msgid "Public communities on Sloga. Servers appear here after their owner requests a listing and it is approved."
-msgstr "Public communities on Sloga. Servers appear here after their owner requests a listing and it is approved."
-
-#: src/interface/Discover.tsx
-msgid "Search communities…"
-msgstr "Search communities…"
-
-
-
-msgid "Add a Jellyfin server"
-msgstr "Add a Jellyfin server"
-
-msgid "Add another server"
-msgstr "Add another server"
-
-msgid "Choose a server"
-msgstr "Choose a server"
-
-msgid "Connected to {0}"
-msgstr "Connected to {0}"
-
-msgid "Couldn't load items"
-msgstr "Couldn't load items"
-
-msgid "Couldn't load libraries"
-msgstr "Couldn't load libraries"
-
-msgid "Forget this server"
-msgstr "Forget this server"
-
-msgid "Jellyfin"
-msgstr "Jellyfin"
-
-msgid "Jellyfin isn't available on Android yet — use the desktop app or web."
-msgstr "Jellyfin isn't available on Android yet — use the desktop app or web."
-
-msgid "Nothing here."
-msgstr "Nothing here."
-
-msgid "Open Jellyfin on your phone or another device and enter this code:"
-msgstr "Open Jellyfin on your phone or another device and enter this code:"
-
-msgid "Search failed"
-msgstr "Search failed"
-
-msgid "Search {0}"
-msgstr "Search {0}"
-
-msgid "Search: {term}"
-msgstr "Search: {term}"
-
-msgid "Sent only to {0}, never to Sloga."
-msgstr "Sent only to {0}, never to Sloga."
-
-msgid "Server address"
-msgstr "Server address"
-
-msgid "Sign in"
-msgstr "Sign in"
-
-msgid "Sign in to watch"
-msgstr "Sign in to watch"
-
-msgid "Sign in with a password"
-msgstr "Sign in with a password"
-
-msgid "Sloga connects your device straight to your server. It never sees or stores your Jellyfin password."
-msgstr "Sloga connects your device straight to your server. It never sees or stores your Jellyfin password."
-
-msgid "Something went wrong"
-msgstr "Something went wrong"
-
-msgid "That doesn't look like a server address."
-msgstr "That doesn't look like a server address."
-
-msgid "This is an http:// server on a page served over https. Use the Sloga desktop app for a LAN or http server, or put your Jellyfin behind https."
-msgstr "This is an http:// server on a page served over https. Use the Sloga desktop app for a LAN or http server, or put your Jellyfin behind https."
-
-msgid "This session is playing from {0}. Sign in to that Jellyfin to watch along."
-msgstr "This session is playing from {0}. Sign in to that Jellyfin to watch along."
-
-msgid "Use Quick Connect"
-msgstr "Use Quick Connect"
-
-msgid "Waiting for you to approve it in your Jellyfin app…"
-msgstr "Waiting for you to approve it in your Jellyfin app…"
-
-msgid "YouTube"
-msgstr "YouTube"
