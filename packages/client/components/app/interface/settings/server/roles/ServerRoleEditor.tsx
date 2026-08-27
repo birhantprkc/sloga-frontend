@@ -4,6 +4,7 @@ import MdDelete from "@material-design-icons/svg/outlined/delete.svg?component-s
 import MDPalette from "@material-design-icons/svg/outlined/palette.svg?component-solid";
 import { useClient } from "@revolt/client";
 import { CONFIGURATION } from "@revolt/common";
+import { useError } from "@revolt/i18n";
 import { useModals } from "@revolt/modal";
 import {
   Button,
@@ -16,7 +17,7 @@ import {
   Text,
 } from "@revolt/ui";
 import { createFormControl, createFormGroup } from "solid-forms";
-import { For, Show, createMemo, createSignal } from "solid-js";
+import { For, Match, Switch, createMemo, createSignal } from "solid-js";
 import { API, Server, ServerRole } from "stoat.js";
 import { styled } from "styled-system/jsx";
 import { useSettingsNavigation } from "../../Settings";
@@ -27,6 +28,7 @@ import { ChannelPermissionsEditor } from "../../channel/permissions/ChannelPermi
  */
 export function ServerRoleEditor(props: { context: Server; roleId: string }) {
   const { t } = useLingui();
+  const err = useError();
   const client = useClient();
   const { openModal } = useModals();
   const { navigate } = useSettingsNavigation();
@@ -212,9 +214,17 @@ export function ServerRoleEditor(props: { context: Server; roleId: string }) {
               <Form2.Submit group={editGroup} requireDirty>
                 <Trans>Save</Trans>
               </Form2.Submit>
-              <Show when={editGroup.isPending}>
-                <CircularProgress />
-              </Show>
+              {/* A refused save (e.g. a role icon autumn rejects) lands in
+                  the group's errors; without rendering them the Save button
+                  just appears to do nothing. */}
+              <Switch>
+                <Match when={editGroup.errors?.error}>
+                  {err(editGroup.errors!.error)}
+                </Match>
+                <Match when={editGroup.isPending}>
+                  <CircularProgress />
+                </Match>
+              </Switch>
             </Row>
           </Column>
         </Column>

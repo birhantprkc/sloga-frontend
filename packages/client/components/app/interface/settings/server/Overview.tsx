@@ -1,11 +1,12 @@
 import { createFormControl, createFormGroup } from "solid-forms";
-import { For, Show, createEffect, on } from "solid-js";
+import { For, Match, Show, Switch, createEffect, on } from "solid-js";
 
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import type { API } from "stoat.js";
 
 import { useClient } from "@revolt/client";
 import { CONFIGURATION } from "@revolt/common";
+import { useError } from "@revolt/i18n";
 import {
   CategoryButton,
   Checkbox,
@@ -30,6 +31,7 @@ const VOICE_REGION_AUTO = "auto";
  */
 export default function ServerOverview(props: ServerSettingsProps) {
   const { t } = useLingui();
+  const err = useError();
   const client = useClient();
   const { showError } = useModals();
 
@@ -412,9 +414,17 @@ export default function ServerOverview(props: ServerSettingsProps) {
             <Form2.Submit group={editGroup} requireDirty>
               <Trans>Save</Trans>
             </Form2.Submit>
-            <Show when={editGroup.isPending}>
-              <CircularProgress />
-            </Show>
+            {/* A refused save (e.g. an icon or banner autumn rejects) lands
+                in the group's errors; without rendering them the Save button
+                just appears to do nothing. */}
+            <Switch>
+              <Match when={editGroup.errors?.error}>
+                {err(editGroup.errors!.error)}
+              </Match>
+              <Match when={editGroup.isPending}>
+                <CircularProgress />
+              </Match>
+            </Switch>
           </Row>
         </Column>
       </form>

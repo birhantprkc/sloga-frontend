@@ -109,6 +109,18 @@ export function useError() {
           return t`Something is wrong with your request, ${err.error}.`;
         case "FeatureDisabled":
           return t`This feature is currently disabled.`;
+        case "FileTooLarge": {
+          // Autumn sends the cap in bytes; the authifier-style `location`
+          // field does not exist on its errors, so no fall-through to the
+          // generic `type + location` arm (which rendered "FileTooLarge
+          // undefined").
+          const maxMB = Math.floor(errMax / 1_000_000);
+          return maxMB > 0
+            ? t`This file is too large (up to ${maxMB} MB).`
+            : t`This file is too large.`;
+        }
+        case "FileTooSmall":
+          return t`This file is empty.`;
         case "FileTypeNotAllowed":
           return t`This file type is not allowed.`;
         case "GroupTooLarge":
@@ -116,7 +128,10 @@ export function useError() {
         case "ImageProcessingFailed":
           return t`Failed to process the image you provided.`;
         case "InternalError":
-          return t`An internal error occurred. (${err.location})`;
+          // Autumn errors carry no `location`; don't render "(undefined)".
+          return (err as { location?: string }).location
+            ? t`An internal error occurred. (${err.location})`
+            : t`An internal error occurred.`;
         case "InvalidCredentials":
           return t`Provided email or password is wrong.`;
         case "InvalidSession":
@@ -158,8 +173,6 @@ export function useError() {
           return t`Multi-factor authentication is already enabled for this account.`;
 
         // unreachable errors (in theory)
-        case "FileTooLarge":
-        case "FileTooSmall":
         case "InvalidFlagValue":
         case "InvalidOperation":
         case "InvalidProperty":
