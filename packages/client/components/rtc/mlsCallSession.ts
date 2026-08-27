@@ -538,6 +538,14 @@ export interface MlsMediaBinding {
    * an unwitnessed leg over-warns rather than borrowing its owner's trust.
    */
   encryptedLegs?(): string[];
+  /**
+   * Screen-leg identities with ZERO publications — the join→publish window.
+   * The roster policy grants these the admit-grace (owner present) instead of
+   * the rule-2(b) instant over-warn, because §0.4 turns that over-warn into a
+   * one-way stop of the just-connected leg. Inert by construction: such a leg
+   * sends nothing and its token cannot subscribe.
+   */
+  unpublishedLegs?(): string[];
   /** Surface the media-plane state for the 6.5 chip / callEncryptionError. */
   onEncryptionState?(state: MediaEncryptionState, error?: unknown): void;
   /**
@@ -2850,17 +2858,23 @@ export class MlsCallSession {
     if (this.#terminal()) return;
     this.#clearLeaveGrace(identity);
     this.#clearGhostTimer(identity);
-    // Open the admit-grace window (never for self, never for a screen leg —
-    // an unfolded leg must stay instantly loud and never admits anyway):
-    // until it expires, the reconcile below reports this identity as
-    // `pending`, not non-enrolled, so the in-flight staggered Add does not
-    // flip the call to `mixed`. Cleared on admit (reconcile sees it in the
-    // MLS roster), on leave, or here on expiry — which kicks a fresh
-    // reconcile so a joiner that never admitted goes loud without waiting
-    // for the tick. Window sizing: see `ADMIT_GRACE_BASE_MS`.
+    // Open the admit-grace window (never for self): until it expires, the
+    // reconcile below reports this identity as `pending`, not non-enrolled,
+    // so the in-flight staggered Add does not flip the call to `mixed`. Legs
+    // get a window too — the policy grants it only for the inert
+    // join→publish gap (owner present, zero publications), which is exactly
+    // when a reconcile racing the leg's first publication would otherwise
+    // stop the newborn share (§0.4). Cleared on leave and on expiry — expiry
+    // kicks a fresh reconcile so a joiner that never admitted goes loud
+    // without waiting for the tick. An entry whose identity has been
+    // admitted is INERT (the MLS-membership check runs first) and is left to
+    // lapse on its own: clearing it eagerly at admit re-opened a hole on
+    // stale-leaf rejoins, where the rejoiner IS momentarily in the roster,
+    // the eager clear dropped its window, and the stale-leaf removal then
+    // left it SFU-present/MLS-absent with no grace — instant mixed, leg
+    // stopped. Window sizing: see `ADMIT_GRACE_BASE_MS`.
     if (
       identity !== this.#media?.localIdentity() &&
-      !isScreenLeg(identity) &&
       !this.#admitGrace.has(identity)
     ) {
       const primaries =
@@ -2926,14 +2940,6 @@ export class MlsCallSession {
     }
     if (this.#state !== "active" || !this.#groupId) return null;
 
-    // An admitted joiner's grace window is spent: clear it BEFORE the diff so
-    // the window never outlives the admit (and never masks a later divergence
-    // for the same identity).
-    const mlsSet = new Set(mlsIdentities);
-    for (const identity of [...this.#admitGrace.keys()]) {
-      if (mlsSet.has(identity)) this.#clearAdmitGrace(identity);
-    }
-
     const localIdentity = media.localIdentity() ?? "";
     const result = reconcileRoster(
       media.sfuParticipants(),
@@ -2944,6 +2950,7 @@ export class MlsCallSession {
         // every publication declares NONE by design (§5.3).
         e2ee: this.#callMode.kind === "e2ee",
         encryptedLegs: media.encryptedLegs?.() ?? [],
+        unpublishedLegs: media.unpublishedLegs?.() ?? [],
       },
       [...this.#admitGrace.keys()],
     );

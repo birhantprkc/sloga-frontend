@@ -62,6 +62,18 @@ export interface RosterLegInputs {
    * owner.
    */
   encryptedLegs: readonly string[];
+  /**
+   * Leg identities with ZERO publications — the join→publish window. Such a
+   * leg sends nothing (no frames exist to be plaintext) and receives nothing
+   * (a leg's token is publish-only, `can_subscribe: false`), so within the
+   * caller's admit-grace it reads as `pending` instead of non-enrolled when
+   * its owner is present. Without this, the rule-2(b) over-warn in that
+   * window fires `mixed`, and §0.4 turns the over-warn into a one-way stop
+   * of the very leg that just connected — the share kills itself at birth
+   * whenever a reconcile lands between the leg's SFU connect and its first
+   * publication (measured live: ~1.6 s apart under emulator load).
+   */
+  unpublishedLegs?: readonly string[];
 }
 
 /**
@@ -102,9 +114,10 @@ export interface RosterLegInputs {
  *  - it only ever applies to identities the caller watched join; the initial
  *    SFU set at enable time gets no grace, so the hostile-DS T-15 backstop
  *    (`rosterConsistent` before enable/publish) is untouched;
- *  - a SCREEN LEG is never pending, whatever the caller passed: an unfolded
- *    leg is either the §5.4 orphan impostor or a plaintext-declaring
- *    publication (rule 2(b)) and both must stay instantly loud;
+ *  - a SCREEN LEG is pending ONLY in its join→publish window (owner present
+ *    AND zero publications — see `unpublishedLegs`, which is inert by
+ *    construction): the §5.4 orphan impostor and a leg with any actual
+ *    publication failing rule 2(b) both stay instantly loud;
  *  - `pending` is not "consistent" — callers gate enable/resume on BOTH lists
  *    being empty, and when the grace expires the identity falls through to
  *    `nonEnrolled` and the loud path fires exactly as before.
@@ -138,6 +151,7 @@ export function reconcileRoster(
   };
 
   const graced = new Set(pendingAdmits);
+  const unpublished = new Set(legs.unpublishedLegs ?? []);
   const nonEnrolled: string[] = [];
   const pending: string[] = [];
   const seen = new Set<string>();
@@ -147,9 +161,22 @@ export function reconcileRoster(
     // two rows for the same person.
     if (id === localIdentity || mls.has(id) || seen.has(id)) continue;
     seen.add(id);
-    // Admit-grace: a freshly-joined PRIMARY (never a leg — see above) is
-    // pending, not non-enrolled, until the caller's window expires.
-    if (!isScreenLeg(id) && graced.has(id)) pending.push(id);
+    // Admit-grace: a freshly-joined primary is pending, not non-enrolled,
+    // until the caller's window expires. An UNFOLDED leg gets the grace only
+    // in its inert join→publish window AND with its owner present — the §5.4
+    // orphan and any leg with an actual publication failing rule 2(b) stay
+    // instantly loud.
+    let inGrace = false;
+    if (graced.has(id)) {
+      if (!isScreenLeg(id)) {
+        inGrace = true;
+      } else {
+        const owner = stripLeg(id);
+        inGrace =
+          unpublished.has(id) && (rawSfu.has(owner) || owner === localIdentity);
+      }
+    }
+    if (inGrace) pending.push(id);
     else nonEnrolled.push(id);
   }
 

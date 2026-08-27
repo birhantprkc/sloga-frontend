@@ -195,10 +195,10 @@ test("grace on one joiner never masks a different non-enrolled participant", () 
   assert.deepEqual(result.pending, [BOB]);
 });
 
-test("🔴 the admit-grace never covers a screen leg", () => {
-  // An unfolded leg is either the §5.4 orphan impostor or a plaintext
-  // publication in an e2ee call (rule 2(b)); both must stay instantly loud
-  // even if the caller (wrongly) graced the leg identity.
+test("🔴 the admit-grace never covers an orphan or a published plaintext leg", () => {
+  // An unfolded leg with an actual publication is either the §5.4 orphan
+  // impostor or a plaintext publication in an e2ee call (rule 2(b)); both
+  // must stay instantly loud even if the caller graced the leg identity.
   const orphan = reconcileRoster(
     [SELF, ALICE_LEG],
     [SELF, ALICE],
@@ -218,6 +218,50 @@ test("🔴 the admit-grace never covers a screen leg", () => {
   );
   assert.deepEqual(plaintext.nonEnrolled, [ALICE_LEG]);
   assert.deepEqual(plaintext.pending, []);
+});
+
+test("a graced UNPUBLISHED leg with its owner present is pending, not loud", () => {
+  // The join→publish window: the leg is in the SFU but has zero publications
+  // — it sends nothing (no frames exist) and its token cannot subscribe, so
+  // there is nothing to fail closed against. Before this rule, a reconcile
+  // landing in that window read the leg non-enrolled (rule 2(b) over-warn),
+  // fired `mixed`, and §0.4 one-way stopped the leg that had just connected
+  // — the share killed itself at birth under load.
+  const result = reconcileRoster(
+    [SELF, ALICE, ALICE_LEG],
+    [SELF, ALICE],
+    SELF,
+    { e2ee: true, encryptedLegs: [], unpublishedLegs: [ALICE_LEG] },
+    [ALICE_LEG],
+  );
+  assert.deepEqual(result.nonEnrolled, []);
+  assert.deepEqual(result.pending, [ALICE_LEG]);
+});
+
+test("🔴 a graced unpublished leg is still loud when its owner is ABSENT", () => {
+  // The §5.4 orphan direction wins over the join→publish grace: a
+  // server-minted leg under a departed identity is reported immediately,
+  // published or not.
+  const result = reconcileRoster(
+    [SELF, ALICE_LEG],
+    [SELF, ALICE],
+    SELF,
+    { e2ee: true, encryptedLegs: [], unpublishedLegs: [ALICE_LEG] },
+    [ALICE_LEG],
+  );
+  assert.deepEqual(result.nonEnrolled, [ALICE_LEG]);
+  assert.deepEqual(result.pending, []);
+});
+
+test("an UNGRACED unpublished leg still over-warns (the grace is the caller's call)", () => {
+  const result = reconcileRoster(
+    [SELF, ALICE, ALICE_LEG],
+    [SELF, ALICE],
+    SELF,
+    { e2ee: true, encryptedLegs: [], unpublishedLegs: [ALICE_LEG] },
+  );
+  assert.deepEqual(result.nonEnrolled, [ALICE_LEG]);
+  assert.deepEqual(result.pending, []);
 });
 
 test("an admitted identity still in the grace set is neither pending nor non-enrolled", () => {

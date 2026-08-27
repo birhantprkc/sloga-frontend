@@ -2556,6 +2556,16 @@ class Voice {
         [...room.remoteParticipants.values()]
           .filter((p) => isScreenLeg(p.identity) && p.isEncrypted)
           .map((p) => p.identity),
+      // The join→publish window: a leg with no publications yet. The roster
+      // policy grants these the admit-grace instead of the rule-2(b) instant
+      // over-warn — under §0.4 that over-warn one-way stops the newborn leg
+      // whenever a reconcile lands between its connect and first publication.
+      unpublishedLegs: () =>
+        [...room.remoteParticipants.values()]
+          .filter(
+            (p) => isScreenLeg(p.identity) && p.trackPublications.size === 0,
+          )
+          .map((p) => p.identity),
       onEncryptionState: (state, error) => {
         // Latch a loud media-plane failure into the existing structured signal
         // (6.5 classifies RE-SECURING vs NOT-ENCRYPTED from callEncryption +
