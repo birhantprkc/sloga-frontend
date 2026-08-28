@@ -103,15 +103,41 @@ export function useNotifications() {
   };
 
   const enablePushSubscription = async () => {
-    settings.pushNotificationsState = "allowed";
+    // "allowed" only after the subscription actually registered — flipping it
+    // first left a session that looked subscribed but never was whenever the
+    // registration hung or the app was killed mid-flow.
     try {
       await setUpServiceWorkerSubscription(getClient());
+      settings.pushNotificationsState = "allowed";
     } catch (e) {
       console.error(e);
       snackbar.show({
         message: t`Failed to enable push notifications. Please try again later.`,
       });
       settings.pushNotificationsState = "default";
+    }
+  };
+
+  /**
+   * Re-register the native FCM subscription with the backend. Runs on every
+   * logged-in launch: a session's subscription can be lost with no signal to
+   * this device (the one-shot first-run flow failed or was interrupted, the
+   * backend dropped it, the token changed) and the first-run flow never
+   * retries — the session then silently misses every push, including
+   * incoming-call rings. /push/subscribe overwrites the session's
+   * subscription, so re-syncing is idempotent. No-op on web/desktop and when
+   * the user has disabled push.
+   */
+  const resyncPushSubscription = async (): Promise<boolean> => {
+    if (!PushTokenNative) return true;
+    if (settings.pushNotificationsState === "denied") return true;
+    try {
+      await setUpServiceWorkerSubscription(getClient());
+      settings.pushNotificationsState = "allowed";
+      return true;
+    } catch (e) {
+      console.error("Push subscription re-sync failed", e);
+      return false;
     }
   };
 
@@ -137,6 +163,7 @@ export function useNotifications() {
     toggleNotificationPermission,
     togglePushPermission,
     initNotifications,
+    resyncPushSubscription,
   };
 }
 

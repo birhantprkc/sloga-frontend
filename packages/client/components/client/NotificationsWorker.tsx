@@ -45,7 +45,7 @@ export function NotificationsWorker() {
   const params = useSmartParams();
   const sound = useSound();
 
-  const { initNotifications } = useNotifications();
+  const { initNotifications, resyncPushSubscription } = useNotifications();
 
   /**
    * Whether Streamer Mode is suppressing notification popups right now.
@@ -573,14 +573,28 @@ export function NotificationsWorker() {
     initNotifications();
   }
 
+  let resyncRetryTimer: number | undefined;
+
   onMount(() => {
     document.addEventListener("click", tryRequest);
     document.addEventListener("visibilitychange", onVisibilityChange);
+    // Native app: heal the FCM subscription on every logged-in launch — a
+    // session whose subscription was lost otherwise never rings again. One
+    // delayed retry covers the client/session not being ready yet at mount.
+    resyncPushSubscription().then((ok) => {
+      if (!ok) {
+        resyncRetryTimer = window.setTimeout(
+          () => resyncPushSubscription(),
+          15_000,
+        );
+      }
+    });
   });
 
   onCleanup(() => {
     document.removeEventListener("click", tryRequest);
     document.removeEventListener("visibilitychange", onVisibilityChange);
+    window.clearTimeout(resyncRetryTimer);
   });
 
   return null;
