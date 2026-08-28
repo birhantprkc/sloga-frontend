@@ -19,6 +19,7 @@ import {
 } from "solid-livekit-components";
 
 import {
+  type AudioCaptureOptions,
   type TrackPublishOptions,
   type VideoCaptureOptions,
   ConnectionState,
@@ -4164,7 +4165,20 @@ class Voice {
           true,
           {
             resolution: initialQuality.resolution,
-            audio: true,
+            // Keep the call itself out of "share system audio". System-audio
+            // loopback captures everything the machine plays — including the
+            // other participants' voices coming out of this client — so a
+            // plain `audio: true` share re-broadcast the call to everyone in
+            // it (self-echo, feedback with open mics). `restrictOwnAudio`
+            // (Chrome/Edge/WebView2 141+) filters audio produced by this
+            // document out of the capture; engines that predate it ignore
+            // the unknown constraint and behave as before. livekit passes
+            // this object verbatim into getDisplayMedia
+            // (screenCaptureToDisplayMediaStreamOptions), but its
+            // AudioCaptureOptions type lags the spec, hence the cast.
+            audio: {
+              restrictOwnAudio: true,
+            } as AudioCaptureOptions,
           },
           {
             // MUST be screenShareEncoding: livekit-client silently ignores

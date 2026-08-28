@@ -60,6 +60,7 @@ export function UserProfileModal(
         <Profile.Roles member={props.member} />
         <Profile.Status user={props.user} />
         <Profile.Connections user={props.user} />
+        <Profile.GameIds links={query.data?.links} />
         <Profile.Badges user={props.user} />
         <Profile.Joined user={props.user} member={props.member} />
         <Profile.Mutuals user={props.user} member={props.member} />
@@ -68,6 +69,7 @@ export function UserProfileModal(
           isPrivate={isProfilePrivateError(query.error)}
           full
         />
+        <Profile.Respect user={props.user} />
       </Grid>
     </Dialog>
   );

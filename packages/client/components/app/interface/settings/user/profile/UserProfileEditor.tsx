@@ -43,6 +43,7 @@ export function UserProfileEditor(props: Props) {
   /* eslint-disable solid/reactivity */
   const editGroup = createFormGroup({
     displayName: createFormControl(props.user.displayName),
+    pronouns: createFormControl(props.user.pronouns ?? ""),
     // username: createFormControl(props.user.username),
     avatar: createFormControl<string | File[] | null>(
       props.user.animatedAvatarURL,
@@ -91,6 +92,7 @@ export function UserProfileEditor(props: Props) {
 
   function onReset() {
     editGroup.controls.displayName.setValue(props.user.displayName);
+    editGroup.controls.pronouns.setValue(props.user.pronouns ?? "");
     editGroup.controls.avatar.setValue(props.user.animatedAvatarURL);
 
     if (profile.data) {
@@ -103,12 +105,22 @@ export function UserProfileEditor(props: Props) {
   }
 
   async function onSubmit() {
-    const changes: API.DataEditUser = {
+    // `pronouns` is additive; stoat-api 0.13.5 predates it
+    const changes: API.DataEditUser & { pronouns?: string } = {
       remove: [],
     };
 
     if (editGroup.controls.displayName.isDirty) {
       changes.display_name = editGroup.controls.displayName.value.trim();
+    }
+
+    if (editGroup.controls.pronouns.isDirty) {
+      const pronouns = editGroup.controls.pronouns.value.trim();
+      if (pronouns) {
+        changes.pronouns = pronouns;
+      } else {
+        changes.remove!.push("Pronouns" as never);
+      }
     }
 
     if (editGroup.controls.avatar.isDirty) {
@@ -188,6 +200,13 @@ export function UserProfileEditor(props: Props) {
           name="displayName"
           control={editGroup.controls.displayName}
           label={t`Display Name`}
+        />
+        <Form2.TextField
+          maxlength={24}
+          name="pronouns"
+          control={editGroup.controls.pronouns}
+          label={t`Pronouns`}
+          placeholder={t`e.g. they/them`}
         />
 
         <Show when={!props.user.bot}>

@@ -11,6 +11,7 @@ import MdGroups from "@material-design-icons/svg/outlined/groups.svg?component-s
 
 import { UserSummary } from "../account/index";
 
+import { GameLinksEditor } from "./GameLinksEditor";
 import { UserProfileEditor } from "./UserProfileEditor";
 
 /**
@@ -65,6 +66,8 @@ export function EditProfile() {
         </Text>
         <UserProfileEditor user={client().user!} />
       </Column>
+
+      <GameLinksEditor user={client().user!} links={profile.data?.links} />
     </Column>
   );
 }

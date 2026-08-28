@@ -8,7 +8,7 @@ import {
   Switch,
 } from "solid-js";
 
-import { Trans } from "@lingui-solid/solid/macro";
+import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import { Server } from "stoat.js";
 import { styled } from "styled-system/jsx";
 
@@ -61,6 +61,7 @@ const Interface = (props: { children: JSX.Element }) => {
 
   const state = useState();
   const client = useClient();
+  const { t } = useLingui();
   const { openModal } = useModals();
   const { isLoggedIn, lifecycle } = useClientLifecycle();
   const { pathname } = useLocation();
@@ -119,7 +120,12 @@ const Interface = (props: { children: JSX.Element }) => {
     <MessageCache client={client()}>
       <AppRoot ref={rootRef} class="app_root">
         <Titlebar />
-        <Show when={streamerModeActive(state.settings)}>
+        <Show
+          when={
+            streamerModeActive(state.settings) &&
+            (state.settings.getValue("streamer:show_banner") ?? true)
+          }
+        >
           <StreamerBanner
             onClick={() => openModal({ type: "settings", config: "user" })}
           >
@@ -128,6 +134,16 @@ const Interface = (props: { children: JSX.Element }) => {
               Streamer Mode is on — personal info, invites and notifications are
               hidden
             </Trans>
+            <BannerClose
+              aria-label={t`Hide banner`}
+              title={t`Hide banner`}
+              onClick={(event) => {
+                event.stopPropagation();
+                state.settings.setValue("streamer:show_banner", false);
+              }}
+            >
+              <Symbol size={16}>close</Symbol>
+            </BannerClose>
           </StreamerBanner>
         </Show>
         <Switch fallback={<CircularProgress />}>
@@ -220,6 +236,7 @@ const AppRoot = styled("div", {
  */
 const StreamerBanner = styled("div", {
   base: {
+    position: "relative",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
@@ -234,6 +251,34 @@ const StreamerBanner = styled("div", {
     fill: "var(--md-sys-color-on-error-container)",
     color: "var(--md-sys-color-on-error-container)",
     background: "var(--md-sys-color-error-container)",
+  },
+});
+
+/**
+ * Dismiss button pinned to the right edge of the streamer banner. Hides the
+ * banner (streamer:show_banner) without touching Streamer Mode itself; the
+ * settings page has the toggle to bring it back.
+ */
+const BannerClose = styled("button", {
+  base: {
+    position: "absolute",
+    right: "var(--gap-sm)",
+    top: "50%",
+    transform: "translateY(-50%)",
+
+    display: "flex",
+    alignItems: "center",
+    padding: "2px",
+    border: "none",
+    borderRadius: "var(--borderRadius-full)",
+    background: "transparent",
+    fill: "inherit",
+    color: "inherit",
+    cursor: "pointer",
+
+    _hover: {
+      background: "color-mix(in srgb, currentColor 15%, transparent)",
+    },
   },
 });
 

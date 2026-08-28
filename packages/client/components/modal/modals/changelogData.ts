@@ -8,6 +8,88 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // v0.54.0: the shell sweep — screen-share audio fixes + the v0.53.0 profile
+  // release reaching desktop/Linux/Android. Copy constraints, load-bearing:
+  // - Users are shown only the NEWEST entry automatically, so shell users
+  //   jumping from the v0.52.0 bundle would otherwise never see the profile
+  //   release at all — that is why it is restated here, not assumed read.
+  // - The echo fix is `restrictOwnAudio`, honored by Chromium/WebView2 141+.
+  //   It is best-effort per spec and has NOT had a live two-account leg yet —
+  //   describe the intent, never promise it is impossible to hear an echo.
+  // - Window shares still carry NO audio on Windows, and Linux has no
+  //   screen-share audio at all. Both are platform limits we cannot fix from
+  //   the client; the dialog now says so per-OS. Do not imply either is fixed.
+  // - Upload errors: we now SHOW the reason. We did not add HEIC support —
+  //   never imply iPhone photos will work.
+  // - EXCLUDED as dark or unproven: Android screen share (flag never lit),
+  //   remote-control couch co-op, server boosts, the public directory,
+  //   slash-command bot docs, PipeWire audio capture (not built).
+  {
+    id: "sloga-2026-08-27",
+    title: "Patch Notes",
+    published_at: "2026-08-27T21:00:00.000Z",
+    markdown_content: `## v0.54.0 — Screen share audio, and the profile update lands everywhere
+
+### 🔊 Screen sharing
+- **Sharing system audio no longer feeds the call back into your stream.** Sharing your whole screen with sound used to capture everything your machine was playing — including the voices of the people in the call with you — so everyone heard themselves echoed back. Your own call audio is now filtered out of the capture.
+- **When a share has no sound, we finally say why.** The old message just read "audio disabled by browser" no matter the reason. Now it tells you what actually happened: on Windows, that you shared a window or left the system-audio box unticked (and how to redo it); on macOS, that only tab audio can be captured; on Linux, that system audio capture isn't available there yet.
+- Sharing a single window still carries no audio on Windows, and Linux screen shares have no audio path at all — those are limits of the underlying browser engines, not settings you've missed. We're looking at what we can do natively on Linux.
+
+### 🖼️ Uploads that fail now tell you why
+- **A rejected avatar, banner, server icon or role icon used to fail silently.** The Save button appeared to do nothing and the old picture stayed. Now you get the actual reason — the file is too large, or that file type isn't supported.
+- If your photo came straight off a phone camera, it may be in a format we can't read yet. Re-save or export it as a JPG or PNG and it'll go through.
+
+### 💙 The profile update is now on every platform
+Everything from v0.53.0 — which landed on the web last week — arrives here for desktop, Linux and Android:
+- **Friends can write on your profile.** A short note, one per friend, theirs to rewrite. Plain text only, and your wall is yours to curate.
+- **Put your player IDs on your profile.** Steam, Epic, Battle.net, PlayStation, Xbox, Riot, Ubisoft, Rockstar, Activision, Nintendo, EA, GOG and GGG. One click copies a handle.
+- **Pronouns on your profile**, if you want them there.
+
+### 🌍 Translations
+- A large batch of interface text that had never been sent for translation is now in the catalogs, so far more of the app can appear in your language.
+`,
+  },
+  // v0.53.0: the profile update — respect wall + game IDs + pronouns. Copy
+  // constraints, load-bearing:
+  // - Do NOT quote these UI strings (they are this release's grep markers):
+  //   "Give respect", "Write something nice", "Player ID or handle".
+  //   Paraphrase — "give someone respect" lowercase in prose is fine.
+  // - One entry per friend per wall, edit-in-place — say it, it's the
+  //   anti-spam design. The owner can delete anything on their own wall.
+  // - Walls are plain text ON PURPOSE (no pings, no links) — safe to state.
+  // - Blocking someone removes your words from each other's walls — safe to
+  //   state. A plain unfriend does NOT (deliberate); don't promise it does.
+  // - The wall honors the friends-only profile visibility setting.
+  // - Game IDs are self-typed handles, NOT verified accounts — never imply
+  //   linking/verification. Click copies the handle.
+  // - Web-only at publish time: desktop/Linux/Android still carry the
+  //   v0.52.0 bundle — keep the "with their next update" close.
+  // - EXCLUDED as dark or unproven: Android screen share (flag never lit),
+  //   remote-control couch co-op, server boosts, the public directory,
+  //   slash-command bot docs.
+  {
+    id: "sloga-2026-08-26",
+    title: "Patch Notes",
+    published_at: "2026-08-26T04:30:00.000Z",
+    markdown_content: `## v0.53.0 — Your profile, with people in it
+
+### 💙 Respect
+- **Friends can now write on your profile.** Open someone's profile and leave them a short note — a compliment, an inside joke, a thank-you for carrying the raid. It shows up on their profile for anyone who can see it.
+- **One note per friend, and it's yours to rewrite.** Writing again edits what you said before, so a wall reads like a guestbook, not a comment feed.
+- **Your wall, your rules.** Remove anything from your own wall whenever you like. Blocking someone clears their words from your wall and yours from theirs, both at once.
+- **Plain text only, on purpose.** Nothing on a wall can ping you, embed anything, or link anywhere.
+- If your profile is set to friends-only, your wall is too.
+
+### 🎮 Game IDs
+- **Put your player IDs on your profile.** Steam, Epic, Battle.net, PlayStation, Xbox, Riot, Ubisoft, Rockstar, Activision, Nintendo, EA, GOG — and GGG for the Path of Exile crowd. Add them in Settings → Profile.
+- **One click copies the handle.** No more typing your friend code into chat for the fifth time — it's on your profile, and anyone who can see it can copy it straight into a friend search.
+- These are handles you type in yourself, shown as text on your profile — add the ones you want people to find you by.
+
+### 🏷️ Pronouns
+- **Profiles can now carry your pronouns.** Set them in Settings → Profile and they appear under your name wherever your profile shows.
+
+On the web now; the desktop and mobile apps pick these up with their next update.`,
+  },
   // v0.51.0: regional voice servers reach every platform + the per-server
   // voice region control. Copy constraints, load-bearing:
   // - The South American server is REAL and live (Sao Paulo). Routing to it
