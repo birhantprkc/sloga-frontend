@@ -76,6 +76,7 @@ import type {
 } from "@revolt/client";
 
 import { isScreenLeg } from "../ui/components/features/voice/participantIdentity";
+import { admitGraceWindow, billAdmitGrace } from "./mlsAdmitGracePolicy";
 import {
   type AdmitAbort,
   admitAbortIsBenign,
@@ -944,11 +945,36 @@ export class MlsCallSession {
   #leaveGrace = new Map<string, ReturnType<typeof setTimeout>>();
   /** Open admit-grace windows for freshly-joined SFU participants, keyed by
    *  identity (the join-direction mirror of `#leaveGrace`). `deadline` is the
-   *  absolute refresh ceiling (first arm + `ADMIT_GRACE_MAX_MS`). */
+   *  refresh ceiling for THIS window (arm time + whatever budget remained);
+   *  `armedAt` is what the closing window bills against `#admitGraceUsed`. */
   #admitGrace = new Map<
     string,
-    { timer: ReturnType<typeof setTimeout>; deadline: number }
+    {
+      timer: ReturnType<typeof setTimeout>;
+      deadline: number;
+      armedAt: number;
+    }
   >();
+  /**
+   * Admit-grace milliseconds already CONSUMED by each identity in this call —
+   * a decaying budget, capped at `ADMIT_GRACE_MAX_MS` for the call's life.
+   *
+   * 🔴 The ceiling used to be per-ARM, so it was reset by churn: a leave
+   * cleared the entry and the next join minted a brand-new 60 s window.
+   * A peer cycling every ~30 s (a flapping network does it by accident, a
+   * hostile SFU on purpose, since it controls the connect/disconnect events)
+   * could hold `pending` forever and the mix warning would never fire. It
+   * also suppressed re-upgrade, because `#evaluateEnable` early-returns while
+   * anything is pending.
+   *
+   * Billing TIME USED rather than stamping an absolute per-call deadline is
+   * what keeps a legitimate rejoin working: a participant that spent 3 s in
+   * grace an hour ago still has 57 s for a genuine later admit, while one
+   * that has burned the full budget gets no window at all and goes loud on
+   * sight — which is the correct answer for something that has already had a
+   * full minute to enroll and has not.
+   */
+  #admitGraceUsed = new Map<string, number>();
   /** Pending 30 s ghost-divergence removals, keyed by identity. */
   #ghostTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Last-computed non-enrolled identities (step 6 reads this synchronously). */
@@ -2887,23 +2913,37 @@ export class MlsCallSession {
       identity !== this.#media?.localIdentity() &&
       !this.#admitGrace.has(identity)
     ) {
-      const primaries =
-        this.#media
-          ?.sfuParticipants()
-          .filter((participant) => !isScreenLeg(participant)).length ?? 0;
-      const graceMs = Math.min(
-        ADMIT_GRACE_BASE_MS + primaries * ADMIT_STAGGER_MS,
-        ADMIT_GRACE_MAX_MS,
-      );
-      const timer = setTimeout(() => {
-        this.#timers.delete(timer);
-        this.#onAdmitGraceExpiry(identity);
-      }, graceMs);
-      this.#admitGrace.set(identity, {
-        timer,
-        deadline: Date.now() + ADMIT_GRACE_MAX_MS,
+      // Whatever this identity has NOT already spent in grace during this
+      // call. Exhausted ⇒ arm nothing: it falls straight through to
+      // non-enrolled and the loud path, which is also what makes a full
+      // LiveKit reconnect safe. `handleSignalRestarted` re-emits
+      // `ParticipantConnected` for EVERY remote (the events are buffered
+      // while state is `Reconnecting` and replayed on `Reconnected`), so this
+      // hook fires for participants that were already here and already loud;
+      // billing against a per-call budget means those replays cannot mint
+      // fresh windows and blank the mixed banner's names.
+      const window = admitGraceWindow({
+        usedMs: this.#admitGraceUsed.get(identity) ?? 0,
+        primaries:
+          this.#media
+            ?.sfuParticipants()
+            .filter((participant) => !isScreenLeg(participant)).length ?? 0,
+        baseMs: ADMIT_GRACE_BASE_MS,
+        staggerMs: ADMIT_STAGGER_MS,
+        maxMs: ADMIT_GRACE_MAX_MS,
       });
-      this.#timers.add(timer);
+      if (window) {
+        const timer = setTimeout(() => {
+          this.#timers.delete(timer);
+          this.#onAdmitGraceExpiry(identity);
+        }, window.graceMs);
+        this.#admitGrace.set(identity, {
+          timer,
+          deadline: Date.now() + window.budgetMs,
+          armedAt: Date.now(),
+        });
+        this.#timers.add(timer);
+      }
     }
     void this.reconcileNow();
   }
@@ -2960,6 +3000,9 @@ export class MlsCallSession {
         e2ee: this.#callMode.kind === "e2ee",
         encryptedLegs: media.encryptedLegs?.() ?? [],
         unpublishedLegs: media.unpublishedLegs?.() ?? [],
+        // A graced PRIMARY holds its grace only while silent; a joiner that
+        // is publishing is loud immediately, whatever its window says.
+        unpublishedParticipants: media.unpublishedParticipants?.() ?? [],
       },
       [...this.#admitGrace.keys()],
     );
@@ -3088,6 +3131,10 @@ export class MlsCallSession {
       this.#timers.delete(entry.timer);
     }
     this.#admitGrace.clear();
+    // The consumed-budget ledger is per CALL, and this runs when the call's
+    // roster machinery is torn down, so it goes too — a later call must not
+    // inherit a spent budget and refuse a legitimate joiner its window.
+    this.#admitGraceUsed.clear();
     for (const timer of this.#ghostTimers.values()) {
       clearTimeout(timer);
       this.#timers.delete(timer);
@@ -3110,8 +3157,27 @@ export class MlsCallSession {
     if (entry) {
       clearTimeout(entry.timer);
       this.#timers.delete(entry.timer);
+      this.#billAdmitGrace(identity, entry.armedAt);
       this.#admitGrace.delete(identity);
     }
+  }
+
+  /**
+   * Charge a closing window's elapsed time to the identity's per-call budget.
+   *
+   * Called from EVERY close — leave, expiry, and admit — because the leave
+   * path is the one churn exploits: without billing, a rejoin minted a fresh
+   * ceiling and the suppression never ended.
+   */
+  #billAdmitGrace(identity: string, armedAt: number): void {
+    this.#admitGraceUsed.set(
+      identity,
+      billAdmitGrace(
+        this.#admitGraceUsed.get(identity) ?? 0,
+        Date.now() - armedAt,
+        ADMIT_GRACE_MAX_MS,
+      ),
+    );
   }
 
   /**
@@ -3156,6 +3222,7 @@ export class MlsCallSession {
       this.#timers.add(timer);
       return;
     }
+    this.#billAdmitGrace(identity, entry.armedAt);
     this.#admitGrace.delete(identity);
     void this.reconcileNow();
   }

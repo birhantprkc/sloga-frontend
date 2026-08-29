@@ -74,6 +74,31 @@ export interface RosterLegInputs {
    * publication (measured live: ~1.6 s apart under emulator load).
    */
   unpublishedLegs?: readonly string[];
+  /**
+   * ALL identities (primaries included) with ZERO publications.
+   *
+   * What a graced PRIMARY must satisfy to keep its grace. The admit-grace
+   * exists for a joiner whose staggered Add is still in flight, and such a
+   * joiner is silent by construction — an E2EE-capable client's own
+   * `negotiating` gate publishes nothing until it is enrolled. A joiner that
+   * IS publishing is therefore not "still enrolling": it is a participant we
+   * cannot encrypt to, sending media, and it must take the loud path
+   * immediately.
+   *
+   * 🔴 Without this the grace was unconditional for primaries and the
+   * publication check ran only when the window EXPIRED, so a plaintext client
+   * (a web client, which is excluded from call E2EE by design) could join an
+   * encrypted call, unmute, and have the mixed banner and the publish pause
+   * suppressed for the whole 10–60 s window while its audio played. The media
+   * plane does not backstop this: livekit-client disables the cryptor for a
+   * publication declaring `encryption === NONE`, so no decrypt error is ever
+   * raised for plaintext.
+   *
+   * Server-attested, like `encryptedLegs` — a hostile SFU can withhold a
+   * participant's publications to keep it looking silent. The per-identity
+   * grace budget in the caller is what bounds that.
+   */
+  unpublishedParticipants?: readonly string[];
 }
 
 /**
@@ -152,6 +177,7 @@ export function reconcileRoster(
 
   const graced = new Set(pendingAdmits);
   const unpublished = new Set(legs.unpublishedLegs ?? []);
+  const silent = new Set(legs.unpublishedParticipants ?? []);
   const nonEnrolled: string[] = [];
   const pending: string[] = [];
   const seen = new Set<string>();
@@ -169,7 +195,13 @@ export function reconcileRoster(
     let inGrace = false;
     if (graced.has(id)) {
       if (!isScreenLeg(id)) {
-        inGrace = true;
+        // A graced PRIMARY keeps the grace only while it is publication-
+        // silent. A joiner still enrolling sends nothing (its own negotiating
+        // gate holds it); one that is already publishing is a participant we
+        // cannot encrypt to WITH MEDIA IN FLIGHT, which is the loud case the
+        // grace must never cover. Absent input ⇒ no grace: unknown publication
+        // state fails toward the warning, like every other guard here.
+        inGrace = silent.has(id);
       } else {
         const owner = stripLeg(id);
         inGrace =

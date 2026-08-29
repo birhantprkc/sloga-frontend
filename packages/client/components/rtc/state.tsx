@@ -2039,13 +2039,19 @@ class Voice {
       // publishing REMOTE participant must drop the chip from green
       // immediately, not on the next unrelated join/leave.
       this.#setCallParticipantsVersion((v) => v + 1);
-      // A screen leg declares its encryption only once it publishes, and until
-      // then it fails closed as non-enrolled (§5.3 rule 2(b) — see
-      // `encryptedLegs` in #buildMediaBinding). Reconcile on the publication
-      // itself so a legitimate phone share clears the mixed banner in that
-      // moment rather than waiting out the periodic tick.
-      if (isScreenLeg(participant.identity))
-        void this.#mlsSession?.reconcileNow();
+      // Reconcile on the publication itself, for BOTH kinds of participant —
+      // publishing is what changes the roster answer in each case, in
+      // opposite directions:
+      //  - a screen leg declares its encryption only once it publishes, and
+      //    until then fails closed as non-enrolled (§5.3 rule 2(b), see
+      //    `encryptedLegs`), so publishing is what CLEARS a legitimate
+      //    share's mixed banner;
+      //  - a graced PRIMARY holds its admit-grace only while it is
+      //    publication-silent, so publishing is what makes an un-enrolled
+      //    joiner go LOUD. Waiting for the periodic tick here would leave a
+      //    plaintext client's media playing under a suppressed warning for up
+      //    to a full tick beyond the moment it became detectable.
+      void this.#mlsSession?.reconcileNow();
       if (pub.source === Track.Source.ScreenShare) {
         pub.once("subscribed", (track) => {
           // Play the sound once playback starts, which might be quite a bit after subscription
