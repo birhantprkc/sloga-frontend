@@ -36,18 +36,32 @@ export interface StartAttemptWorld {
 }
 
 /**
+ * Was this attempt CANCELLED — did something else claim the leg?
+ *
+ * A stop hook, a competing tap, or leaving/switching the call. This is the
+ * subset of staleness that means "somebody asked for this share to end", and
+ * it is what decides whether a failure is worth REPORTING: a cancelled
+ * attempt's rejection is the expected consequence of the cancellation, so
+ * toasting it would show an error for a stop the user asked for.
+ */
+export function startAttemptCancelled(world: StartAttemptWorld): boolean {
+  return world.generation !== world.currentGeneration || world.roomChanged;
+}
+
+/**
  * Has the world moved out from under this start attempt?
  *
  * TRUE means abandon — and, once `connect()` has resolved, TEAR DOWN rather
  * than merely return: past that point the OS is capturing and the leg is
  * publishing, so "give up quietly" is how a share outlives its own call.
+ *
+ * A held publish gate makes an attempt stale WITHOUT making it cancelled:
+ * the leg must stop either way (§0.4), but nobody asked for this share to
+ * end, so a genuine failure racing a transient gate pulse still deserves its
+ * error message.
  */
 export function startAttemptStale(world: StartAttemptWorld): boolean {
-  return (
-    world.generation !== world.currentGeneration ||
-    world.roomChanged ||
-    world.publishGateSize > 0
-  );
+  return startAttemptCancelled(world) || world.publishGateSize > 0;
 }
 
 /** What `#syncLegKeyAfterConnect` must do once `connect()` resolves. */

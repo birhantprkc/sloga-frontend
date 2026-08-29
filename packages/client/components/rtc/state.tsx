@@ -115,6 +115,7 @@ import {
 import { ReactiveMap } from "@solid-primitives/map";
 import {
   keyActionAfterConnect,
+  startAttemptCancelled,
   startAttemptStale,
 } from "./androidLegStartPolicy";
 import {
@@ -4585,14 +4586,16 @@ class Voice {
       // A failure anywhere above can still leave native capturing (consent is
       // granted in phase 1, and `connect()` can throw after publishing), so
       // the error path tears down rather than trusting `active()`.
-      // Staleness is read BEFORE the stop below bumps the generation: a STALE
-      // attempt's failure is not news — a stop hook (or a cancelling tap)
-      // already ended it, native rejects the cancelled connect, and surfacing
-      // that rejection would toast an error for a stop the user (or the
-      // call's own teardown) asked for.
-      const wasStale = this.#androidLegStale(generation, room);
+      // Read BEFORE the stop below bumps the generation. CANCELLED, not
+      // merely stale: a stop hook or a cancelling tap already ended this
+      // attempt, native rejects the cancelled connect, and surfacing that
+      // rejection would toast an error for a stop that was asked for. A held
+      // publish gate deliberately does NOT count — it also aborts the
+      // attempt, but nobody asked for this share to end, so a genuine
+      // failure racing a transient re-secure pulse keeps its message.
+      const wasCancelled = this.#androidLegCancelled(generation, room);
       await this.#stopAndroidLeg();
-      if (!wasStale) this.onErr(this.#androidScreenShareError(error));
+      if (!wasCancelled) this.onErr(this.#androidScreenShareError(error));
     } finally {
       // Cleared only by the attempt that still owns the window. A stop bumps
       // the generation without claiming one, so keying on the token itself
@@ -4610,12 +4613,23 @@ class Voice {
    * room and gate are re-read because a start spans two user-paced dialogs.
    */
   #androidLegStale(generation: number, room: Room): boolean {
-    return startAttemptStale({
+    return startAttemptStale(this.#androidLegWorld(generation, room));
+  }
+
+  /** Did something CLAIM the leg (stop hook, competing tap, call change), as
+   * opposed to the attempt merely having to abandon? Only a cancellation
+   * silences the attempt's error. */
+  #androidLegCancelled(generation: number, room: Room): boolean {
+    return startAttemptCancelled(this.#androidLegWorld(generation, room));
+  }
+
+  #androidLegWorld(generation: number, room: Room) {
+    return {
       generation,
       currentGeneration: this.#androidLegGeneration,
       roomChanged: this.room() !== room,
       publishGateSize: this.#publishGate.size,
-    });
+    };
   }
 
   /**
@@ -4660,6 +4674,19 @@ class Voice {
 
   /** Map the route's refusals to copy (§3); pass anything else through. */
   #androidScreenShareError(error: unknown): unknown {
+    // A NATIVE-side cancellation that JS did not ask for — the leg's own room
+    // was torn down mid-connect (the 10 s token expiring, a server close, an
+    // E2EE sender fault). JS-side cancellations never reach here (they are
+    // filtered as `wasCancelled`), and the native `stopped` event cannot
+    // speak for this one either: the leg never reported started, so its
+    // announcement is suppressed. Without this the raw bridge string reached
+    // the toast.
+    const message = (error as { message?: string })?.message;
+    if (
+      typeof message === "string" &&
+      message.includes("connect_failed: cancelled")
+    )
+      return new Error("Your screen share couldn't start. Try sharing again.");
     const type = (error as { type?: string })?.type;
     switch (type) {
       case "FeatureDisabled":

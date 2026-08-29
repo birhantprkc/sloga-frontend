@@ -185,33 +185,47 @@ class ScreenSharePlugin : Plugin() {
         }
 
         scope.launch {
+            // Claim the attempt. Any tearDown (JS stop, room event, plugin
+            // destroy) bumps the counter and thereby cancels this connect at
+            // its next check; a competing connect supersedes it the same way.
+            val generation = ++connectGeneration
             try {
-                doConnect(call, url, token, quality, e2ee, intent)
-            } catch (t: ConnectCancelled) {
-                // A tearDown cancelled this attempt mid-flight — that
-                // tearDown already owns the cleanup (it disconnected the
-                // room this attempt created), so running another here would
-                // instead clobber whatever state a SUCCESSOR has since
-                // claimed. Just settle the call; the JS side treats a
-                // rejected connect on a stale attempt as an ordinary
-                // already-handled stop.
-                call.reject("connect_failed: cancelled")
+                doConnect(generation, call, url, token, quality, e2ee, intent)
             } catch (t: Throwable) {
-                // The consent survives a failed connect (probe (e)): the
-                // single-use getMediaProjection only happens at publish, so
-                // JS may retry connect() with a fresh token, no new dialog.
-                // tearDown clears the stored consent (right for an ACTIVE
-                // share ending), so restore it around the cleanup — unless
-                // the failure was the publish itself, which consumed it.
-                val consent = consentIntent
-                tearDown(reason = null)
-                consentIntent = consent
-                call.reject("connect_failed: ${t.message ?: t.javaClass.simpleName}")
+                // OWNERSHIP RULE, and the ONLY thing that decides cleanup
+                // here: a SUPERSEDED attempt owns nothing global. The
+                // tearDown that cancelled it already released the plugin's
+                // state, and anything now in `room`/`keyProvider`/
+                // `consentIntent` may belong to a SUCCESSOR the user started
+                // in the meantime — tearing that down would silently kill a
+                // live share (and with `reason = null`, without even telling
+                // JS). doConnect has already disposed the Room this attempt
+                // created, which is the one thing that IS its own; that is
+                // deliberately not left to the cancelling tearDown, because
+                // whether `disconnect()` aborts an in-flight `connect()` is
+                // not a documented lk-android guarantee.
+                if (generation != connectGeneration) {
+                    call.reject("connect_failed: cancelled")
+                } else {
+                    // Still the current attempt: this failure is ours to
+                    // clean up. The consent survives a failed connect (probe
+                    // (e)) — the single-use getMediaProjection only happens
+                    // at publish, so JS may retry connect() with a fresh
+                    // token and no new dialog. tearDown clears the stored
+                    // consent (right for an ACTIVE share ending), so restore
+                    // it around the cleanup — unless the failure was the
+                    // publish itself, which consumed it.
+                    val consent = consentIntent
+                    tearDown(reason = null)
+                    consentIntent = consent
+                    call.reject("connect_failed: ${t.message ?: t.javaClass.simpleName}")
+                }
             }
         }
     }
 
     private suspend fun doConnect(
+        generation: Int,
         call: PluginCall,
         url: String,
         token: String,
@@ -219,10 +233,6 @@ class ScreenSharePlugin : Plugin() {
         e2ee: JSObject?,
         intent: Intent,
     ) {
-        // Claim the attempt. Any tearDown (JS stop, room event, plugin
-        // destroy) bumps the counter and thereby cancels this connect at its
-        // next check; a competing connect supersedes it the same way.
-        val generation = ++connectGeneration
         val appContext = context.applicationContext
         val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         savedAudioMode = audioManager.mode
@@ -280,86 +290,116 @@ class ScreenSharePlugin : Plugin() {
             ),
         )
         this.room = room
-
-        eventsJob = scope.launch {
-            room.events.collect { event -> onRoomEvent(event) }
-        }
-
-        // Belt-and-braces on the token's canSubscribe=false (§4.3 step 2).
-        room.connect(url, token, ConnectOptions(autoSubscribe = false))
-        // First suspension behind us: a stop may have torn the room down
-        // while connect was in flight. Abandon before touching E2EE state or
-        // publishing — the throw lands in connect()'s catch, whose tearDown
-        // is a near-no-op after the stop's own already ran.
-        ensureConnectCurrent(generation)
-
-        val identity = room.localParticipant.identity?.value
-            ?: throw IllegalStateException("no local identity after connect")
-        legIdentity = identity
-
-        if (provider != null) {
-            // Witness, not assumption (§0.4): the manager only reports enabled
-            // once its setup() ran against this Room. Publishing without it
-            // would be libwebrtc's cryptor-not-ready PASSTHROUGH — plaintext.
-            val manager = room.e2eeManager
-            if (manager == null || !manager.enabled) {
-                throw IllegalStateException("e2ee manager not enabled")
+        // From here this attempt OWNS `room` until it either hands it over by
+        // resolving, or disposes it below. Nothing else can: a tearDown that
+        // cancels us nulls `this.room` and may hand the field to a successor,
+        // so the cancelling tearDown is NOT a reliable owner of this object.
+        try {
+            eventsJob = scope.launch {
+                room.events.collect { event -> onRoomEvent(event) }
             }
-            val keyB64 = e2ee!!.getString("keyB64")
-                ?: throw IllegalArgumentException("e2ee.keyB64 missing")
-            val keyIndex = e2ee.getInteger("keyIndex") ?: 0
-            currentKeyIndex = keyIndex
-            currentEpoch = e2ee.getInteger("epoch") ?: 0
-            // Raw 32-byte HKDF material at (identity, index) — the provider's
-            // getLatestKeyIndex() hands this index to every cryptor the
-            // manager creates from now on, which fixes the at-creation and
-            // at-reconnect index for free (probe (a)).
-            provider.setRawKey(identity, keyIndex, Base64.decode(keyB64, Base64.DEFAULT))
-        }
 
-        // The FGS runs with OUR notification (§4.3 step 1, option (a)): the
-        // SDK auto-starts its own ScreenCaptureService inside the track start,
-        // declared with foregroundServiceType="mediaProjection" via manifest
-        // merge, and only builds a default notification when none is passed —
-        // exactly one notification on API 34/35/36 (probe (e)).
-        val params = ScreenCaptureParams(
-            mediaProjectionPermissionResultData = intent,
-            notificationId = NOTIFICATION_ID,
-            notification = buildNotification(),
-            onStop = {
-                // System chip / notification Stop / OS revoke.
-                scope.launch { tearDown("system") }
-            },
-        )
-        // The consent is consumed by this publish (single-use by OS rule).
-        consentIntent = null
-        val published = room.localParticipant.setScreenShareEnabled(true, params)
-        // Second suspension: a stop that landed during the publish has
-        // already disconnected the room — the publication is moot, and
-        // announcing `started` for it would resurrect the share in JS.
-        ensureConnectCurrent(generation)
-        if (published != true) {
-            throw IllegalStateException("screen share publish refused")
-        }
+            // Belt-and-braces on the token's canSubscribe=false (§4.3 step 2).
+            room.connect(url, token, ConnectOptions(autoSubscribe = false))
+            // First suspension behind us: a stop may have torn the room down
+            // while connect was in flight. Abandon before touching E2EE state
+            // or publishing.
+            ensureConnectCurrent(generation)
 
-        if (provider != null) {
-            // Re-assert the send index on the live sender cryptor(s):
-            // getLatestKeyIndex covers creation, but verify rather than trust
-            // (§0-R.6) — a cryptor sitting at the wrong index encrypts under
-            // a key the wrong epoch's members hold.
-            assertSenderKeyIndex(currentKeyIndex)
-        }
+            val identity = room.localParticipant.identity?.value
+                ?: throw IllegalStateException("no local identity after connect")
+            legIdentity = identity
 
-        ensureConnectCurrent(generation)
-        notifyListeners("started", JSObject())
-        val ok = JSObject()
-        ok.put("ok", true)
-        call.resolve(ok)
+            if (provider != null) {
+                // Witness, not assumption (§0.4): the manager only reports
+                // enabled once its setup() ran against this Room. Publishing
+                // without it would be libwebrtc's cryptor-not-ready
+                // PASSTHROUGH — plaintext.
+                val manager = room.e2eeManager
+                if (manager == null || !manager.enabled) {
+                    throw IllegalStateException("e2ee manager not enabled")
+                }
+                val keyB64 = e2ee!!.getString("keyB64")
+                    ?: throw IllegalArgumentException("e2ee.keyB64 missing")
+                val keyIndex = e2ee.getInteger("keyIndex") ?: 0
+                currentKeyIndex = keyIndex
+                currentEpoch = e2ee.getInteger("epoch") ?: 0
+                // Raw 32-byte HKDF material at (identity, index) — the
+                // provider's getLatestKeyIndex() hands this index to every
+                // cryptor the manager creates from now on, which fixes the
+                // at-creation and at-reconnect index for free (probe (a)).
+                provider.setRawKey(identity, keyIndex, Base64.decode(keyB64, Base64.DEFAULT))
+            }
+
+            // The FGS runs with OUR notification (§4.3 step 1, option (a)):
+            // the SDK auto-starts its own ScreenCaptureService inside the
+            // track start, declared with
+            // foregroundServiceType="mediaProjection" via manifest merge, and
+            // only builds a default notification when none is passed —
+            // exactly one notification on API 34/35/36 (probe (e)).
+            val params = ScreenCaptureParams(
+                mediaProjectionPermissionResultData = intent,
+                notificationId = NOTIFICATION_ID,
+                notification = buildNotification(),
+                onStop = {
+                    // System chip / notification Stop / OS revoke.
+                    scope.launch { tearDown("system") }
+                },
+            )
+            // The consent is consumed by this publish (single-use by OS rule).
+            consentIntent = null
+            val published = room.localParticipant.setScreenShareEnabled(true, params)
+            // Second suspension: a stop that landed during the publish has
+            // already released the plugin's state — the publication is moot,
+            // and announcing `started` for it would resurrect the share in JS.
+            ensureConnectCurrent(generation)
+            if (published != true) {
+                throw IllegalStateException("screen share publish refused")
+            }
+
+            if (provider != null) {
+                // Re-assert the send index on the live sender cryptor(s):
+                // getLatestKeyIndex covers creation, but verify rather than
+                // trust (§0-R.6) — a cryptor sitting at the wrong index
+                // encrypts under a key the wrong epoch's members hold.
+                assertSenderKeyIndex(currentKeyIndex)
+            }
+
+            ensureConnectCurrent(generation)
+            notifyListeners("started", JSObject())
+            val ok = JSObject()
+            ok.put("ok", true)
+            call.resolve(ok)
+        } catch (t: Throwable) {
+            // Superseded ⇒ `this.room` is null or a SUCCESSOR's, so nothing
+            // else will ever disconnect the Room this attempt created. Do it
+            // here rather than assuming the cancelling tearDown's
+            // `disconnect()` aborted an in-flight `connect()` — lk-android
+            // documents no such guarantee, and if it does not hold, a
+            // connected leg would linger on the SFU (visible in every
+            // client's roster) for the life of the process. Disposing twice
+            // is harmless; not disposing at all is a ghost participant.
+            if (this.room !== room) discardRoom(room)
+            throw t
+        }
     }
 
-    /** Thrown by [ensureConnectCurrent]; its own catch arm in [connect] must
-     *  NOT tear down (the cancelling tearDown already did). */
+    /** Thrown by [ensureConnectCurrent]. Reaches [connect]'s catch, which
+     *  distinguishes superseded from current by the generation, not by the
+     *  exception type. */
     private class ConnectCancelled : IllegalStateException("cancelled")
+
+    /** Disconnect + release a Room this attempt created but no longer owns.
+     *  Never touches plugin-global state — that belongs to whoever holds
+     *  `this.room` now. */
+    private fun discardRoom(room: Room) {
+        try {
+            room.disconnect()
+        } catch (_: Throwable) {}
+        try {
+            room.release()
+        } catch (_: Throwable) {}
+    }
 
     private fun ensureConnectCurrent(generation: Int) {
         if (generation != connectGeneration) {
@@ -394,6 +434,16 @@ class ScreenSharePlugin : Plugin() {
             // RESOLVES as a no-op rather than rejecting — the newer key
             // already won, and a rejection would trip the caller's
             // fail-closed path into stopping a correctly-keyed leg.
+            //
+            // 🔴 Comparing epochs is only sound WITHIN one MLS group, and the
+            // JS side guarantees that: it refuses to push a key whose
+            // group_id differs from the one the leg connected under, so this
+            // counter never sees two groups' epochs. That in turn rests on
+            // group ids being unique per establish (OpenMLS mints a random
+            // id at creation) — if a re-established group could ever reuse an
+            // id AND restart its epochs, a fresh epoch-0 key would no-op here
+            // and the leg would keep encrypting under the superseded group's
+            // key, readable by whoever that re-establish removed.
             if (epoch < currentEpoch) {
                 call.resolve()
                 return@launch

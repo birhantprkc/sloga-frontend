@@ -18,6 +18,7 @@ import { Capacitor, registerPlugin } from "@capacitor/core";
 import { CONFIGURATION } from "@revolt/common";
 import type { AndroidScreenShareTierName } from "@revolt/state/stores/Voice";
 
+import type { LegSendKey } from "./androidLegStartPolicy";
 import {
   type AndroidScreenShareTier,
   ANDROID_SCREEN_SHARE_TIERS,
@@ -26,26 +27,27 @@ import {
 export { ANDROID_SCREEN_SHARE_TIERS };
 export type { AndroidScreenShareTier, AndroidScreenShareTierName };
 
-/** The key handed to the native sender — §5.2's `LocalScreenKey` as it
- * crosses the bridge. `epoch` rides along as the native fence: pushes race
- * (a rotation against the post-connect reconcile, two rotations back to
- * back), the bridge does not promise ordering, and without a fence the
- * OLDER push can land last and stick — the idempotence guard upstream then
- * blocks any retry. Native refuses to apply a key whose epoch is behind the
- * one it already holds. */
-export interface NativeFrameKey {
-  keyB64: string;
-  keyIndex: number;
-  epoch: number;
-}
+/** A leg send key with its group binding — the ONE canonical shape, defined
+ * in the policy leaf and re-exported here. Three structurally identical
+ * copies used to exist (this, `LegSendKey`, and `mlsCallKeys`'s
+ * `LocalScreenKey`); they agreed only by accident of structural typing, so a
+ * field added to one would have silently stopped fencing in the others. */
+export type LegE2EEKey = LegSendKey;
 
-/** A send key plus its group binding. `groupId` never crosses the bridge —
- * epochs are only comparable WITHIN a group (a re-established group restarts
- * them), so the leg refuses a key from any group other than the one it
- * connected under rather than letting the native epoch fence misjudge it. */
-export interface LegE2EEKey extends NativeFrameKey {
-  groupId: string;
-}
+/** The key as it crosses the bridge. DERIVED from [LegE2EEKey] by dropping
+ * `groupId`, which makes "the group binding stays JS-side" a structural fact
+ * rather than a comment: epochs are only comparable WITHIN a group (a
+ * re-established group restarts them), so the leg refuses a key from any
+ * group other than the one it connected under rather than letting the native
+ * epoch fence misjudge it.
+ *
+ * `epoch` DOES ride along, as that native fence: pushes race (a rotation
+ * against the post-connect reconcile, two rotations back to back), the
+ * bridge does not promise ordering, and without a fence the OLDER push can
+ * land last and stick — the idempotence guard upstream then blocks any
+ * retry. Native refuses to apply a key whose epoch is behind the one it
+ * already holds. */
+export type NativeFrameKey = Omit<LegE2EEKey, "groupId">;
 
 /** Ceiling on the OS consent dialog. The dialog is user-paced, so this is
  * generous — it exists for the pathological case (activity torn down, the
@@ -127,6 +129,10 @@ export class AndroidScreenLeg {
   /** The group the current share connected under — the JS half of the key
    * fence (see [LegE2EEKey]); undefined for a plaintext leg. */
   #e2eeGroupId: string | undefined;
+  /** Claimed by each [connect] and invalidated by every definitive stop, so
+   * a connect resolving after its share already ended cannot resurrect
+   * `#active`. */
+  #connectGeneration = 0;
   #listeners: { remove: () => Promise<void> }[] = [];
   /** Resolves once the plugin listeners are attached — awaited by [prepare]
    * so no share can start with its event stream unwired. */
@@ -151,6 +157,9 @@ export class AndroidScreenLeg {
       await p.addListener("stopped", (data) => {
         const wasActive = this.#active;
         this.#active = false;
+        // Definitively down: orphan any connect still in flight so its
+        // resolution cannot flip `#active` back on.
+        this.#connectGeneration++;
         // A stopped for a leg that never reported started (connect() threw
         // after partial setup) has nothing to announce.
         if (wasActive) this.onStopped?.(data.reason ?? "error");
@@ -200,6 +209,19 @@ export class AndroidScreenLeg {
     tier: AndroidScreenShareTier;
     e2ee?: LegE2EEKey;
   }): Promise<void> {
+    // Bind the group BEFORE the await, because `#active` does not wait for
+    // this call to resolve: native fires `started` a bridge hop earlier and
+    // the listener flips the flag there (deliberately — a stop hook must be
+    // able to see the leg the instant it is capturing). Binding after the
+    // await left a window where a rotation found `active()` true and
+    // `#e2eeGroupId` still undefined (or the PREVIOUS share's group), so the
+    // fence rejected a perfectly good key and fail-closed a healthy share —
+    // any join or leave during a share start would do it. Assigned
+    // unconditionally, so a plaintext share correctly rebinds to undefined;
+    // a failed connect leaves `#active` false, which makes a stale value
+    // unreadable.
+    this.#e2eeGroupId = options.e2ee?.groupId;
+    const generation = ++this.#connectGeneration;
     await plugin!.connect({
       url: options.url,
       token: options.token,
@@ -216,7 +238,13 @@ export class AndroidScreenLeg {
         epoch: options.e2ee.epoch,
       },
     });
-    this.#e2eeGroupId = options.e2ee?.groupId;
+    // A stop that fully completed while this resolution was in flight must
+    // not be undone by it: without the token the leg came back `active()`
+    // with nothing running, and the caller's stale check then announced a
+    // second stop (two end-of-share sounds). The caller tears down on that
+    // stale check regardless of this flag, so declining to set it cannot
+    // strand a live capture.
+    if (generation !== this.#connectGeneration) return;
     this.#active = true;
   }
 
@@ -274,6 +302,9 @@ export class AndroidScreenLeg {
       // its `stopped` event settles the state instead.
       return;
     }
+    // Definitively down (native resolved the stop): orphan any connect still
+    // in flight, as the `stopped` listener does.
+    this.#connectGeneration++;
     // The native `stopped` event and this resolution race; whichever runs
     // first flips `#active` and announces — the other finds it already
     // false and stays quiet, so the end-of-share sound plays exactly once

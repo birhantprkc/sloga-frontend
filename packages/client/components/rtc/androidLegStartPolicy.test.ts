@@ -15,6 +15,7 @@ import { test } from "node:test";
 import {
   type LegSendKey,
   keyActionAfterConnect,
+  startAttemptCancelled,
   startAttemptStale,
 } from "./androidLegStartPolicy.ts";
 
@@ -57,6 +58,27 @@ test("any publish-gate reason orphans the attempt", () => {
   // up into a call that is re-securing or mixed.
   assert.equal(startAttemptStale(world({ publishGateSize: 1 })), true);
   assert.equal(startAttemptStale(world({ publishGateSize: 3 })), true);
+});
+
+test("a stop hook or a leave CANCELS the attempt", () => {
+  // Cancellation = somebody claimed the leg, so the attempt's own failure is
+  // expected and must not be reported to the user.
+  assert.equal(startAttemptCancelled(world({ currentGeneration: 8 })), true);
+  assert.equal(startAttemptCancelled(world({ roomChanged: true })), true);
+});
+
+test("🔴 a held publish gate is NOT a cancellation", () => {
+  // The attempt still abandons (startAttemptStale is true), but nobody asked
+  // for this share to end. Treating the gate as a cancellation swallowed the
+  // error toast for a GENUINE failure — a route rejection landing while a
+  // re-secure pulse briefly held the gate left the user's explicit tap with
+  // no feedback at all.
+  assert.equal(startAttemptCancelled(world({ publishGateSize: 1 })), false);
+  assert.equal(startAttemptStale(world({ publishGateSize: 1 })), true);
+});
+
+test("an undisturbed attempt is not cancelled", () => {
+  assert.equal(startAttemptCancelled(world()), false);
 });
 
 test("each condition is independently sufficient", () => {
