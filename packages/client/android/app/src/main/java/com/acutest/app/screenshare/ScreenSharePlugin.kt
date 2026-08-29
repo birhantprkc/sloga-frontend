@@ -84,6 +84,13 @@ class ScreenSharePlugin : Plugin() {
     private var consentIntent: Intent? = null
 
     private var room: Room? = null
+    /** The Room the last [tearDown] disconnected AND released. Lets a connect
+     *  attempt that was cancelled mid-flight tell "the cancelling tearDown
+     *  already released my Room" from "a successor owns `room` now, and mine
+     *  is unreleased" — reaching the abandon path looks identical otherwise,
+     *  and guessing wrong means either a double native dispose or a ghost
+     *  participant left on the SFU. */
+    private var releasedRoom: Room? = null
     private var keyProvider: RawScreenKeyProvider? = null
     private var legIdentity: String? = null
     private var currentKeyIndex: Int = 0
@@ -294,10 +301,20 @@ class ScreenSharePlugin : Plugin() {
         // resolving, or disposes it below. Nothing else can: a tearDown that
         // cancels us nulls `this.room` and may hand the field to a successor,
         // so the cancelling tearDown is NOT a reliable owner of this object.
+        // The collector belongs to THIS Room, so it is cancelled wherever the
+        // Room is disposed — including the abandon path below. Leaving it
+        // running against a discarded Room means the `Disconnected` that
+        // discarding provokes reaches `onRoomEvent`, which resolves
+        // `this.room` — a SUCCESSOR's — and tears down a live share. Same
+        // ownership rule as the Room itself, so it is declared out here with
+        // the Room rather than inside the try.
+        var events: Job? = null
         try {
-            eventsJob = scope.launch {
+            eventsJob?.cancel()
+            events = scope.launch {
                 room.events.collect { event -> onRoomEvent(event) }
             }
+            eventsJob = events
 
             // Belt-and-braces on the token's canSubscribe=false (§4.3 step 2).
             room.connect(url, token, ConnectOptions(autoSubscribe = false))
@@ -362,7 +379,7 @@ class ScreenSharePlugin : Plugin() {
                 // getLatestKeyIndex covers creation, but verify rather than
                 // trust (§0-R.6) — a cryptor sitting at the wrong index
                 // encrypts under a key the wrong epoch's members hold.
-                assertSenderKeyIndex(currentKeyIndex)
+                assertSenderKeyIndex(room, currentKeyIndex)
             }
 
             ensureConnectCurrent(generation)
@@ -372,16 +389,57 @@ class ScreenSharePlugin : Plugin() {
             call.resolve(ok)
         } catch (t: Throwable) {
             // Superseded ⇒ `this.room` is null or a SUCCESSOR's, so nothing
-            // else will ever disconnect the Room this attempt created. Do it
-            // here rather than assuming the cancelling tearDown's
-            // `disconnect()` aborted an in-flight `connect()` — lk-android
-            // documents no such guarantee, and if it does not hold, a
-            // connected leg would linger on the SFU (visible in every
-            // client's roster) for the life of the process. Disposing twice
-            // is harmless; not disposing at all is a ghost participant.
-            if (this.room !== room) discardRoom(room)
+            // else will ever finish tearing down the Room this attempt
+            // created. Do it here rather than assuming the cancelling
+            // tearDown's `disconnect()` aborted an in-flight `connect()` —
+            // lk-android documents no such guarantee, and if it does not
+            // hold, a connected leg would linger on the SFU (visible in
+            // every client's roster) for the life of the process.
+            if (this.room !== room) {
+                // Cancel BEFORE discarding: the disconnect below would
+                // otherwise reach `onRoomEvent`, which reads `this.room` —
+                // a successor's by now — and tear down its live share.
+                events?.cancel()
+                if (events != null && eventsJob === events) eventsJob = null
+                // `releasedRoom` distinguishes the two cases that reaching
+                // here otherwise looks identical for: the COMMON one, where
+                // the cancelling tearDown already released this very Room
+                // (so releasing again would be a second native dispose), and
+                // the successor case, where nobody has. Only the release is
+                // conditional — the disconnect and the capture stop below
+                // are what scenario B still needs either way.
+                discardRoom(room, alreadyReleased = releasedRoom === room)
+            }
             throw t
         }
+    }
+
+    /**
+     * Stop a screen capture this attempt may have started, on the abandon
+     * path. NOT redundant with disconnecting the Room: a stop landing while
+     * `setScreenShareEnabled` is suspended leaves a screencast track that was
+     * never in `trackPublications` when the room was cleaned up, so the
+     * SDK's own cleanup never reaches it — and the MediaProjection plus its
+     * ScreenCaptureService then keep running, with the OS cast chip and our
+     * notification showing, while the app believes nothing is shared. The
+     * publication is moot in that window; the CAPTURE is not.
+     *
+     * 🔴 Best-effort and NOT yet witnessed: whether `setScreenShareEnabled`
+     * acquires the projection at all on a disconnected room is lk-android
+     * internals nobody here has observed. Owed: one device leg that ends the
+     * call from the other participant DURING the publish, then checks the
+     * shade and `adb shell dumpsys media_projection`.
+     */
+    private suspend fun stopCapture(room: Room) {
+        try {
+            room.localParticipant
+                .getTrackPublication(Track.Source.SCREEN_SHARE)
+                ?.track
+                ?.stop()
+        } catch (_: Throwable) {}
+        try {
+            room.localParticipant.setScreenShareEnabled(false)
+        } catch (_: Throwable) {}
     }
 
     /** Thrown by [ensureConnectCurrent]. Reaches [connect]'s catch, which
@@ -389,13 +447,16 @@ class ScreenSharePlugin : Plugin() {
      *  exception type. */
     private class ConnectCancelled : IllegalStateException("cancelled")
 
-    /** Disconnect + release a Room this attempt created but no longer owns.
-     *  Never touches plugin-global state — that belongs to whoever holds
-     *  `this.room` now. */
-    private fun discardRoom(room: Room) {
+    /** Tear down a Room this attempt created but no longer owns: stop any
+     *  capture it started, disconnect, and release unless a tearDown already
+     *  did. Never touches plugin-global state — that belongs to whoever
+     *  holds `this.room` now. */
+    private suspend fun discardRoom(room: Room, alreadyReleased: Boolean) {
+        stopCapture(room)
         try {
             room.disconnect()
         } catch (_: Throwable) {}
+        if (alreadyReleased) return
         try {
             room.release()
         } catch (_: Throwable) {}
@@ -423,7 +484,10 @@ class ScreenSharePlugin : Plugin() {
         scope.launch {
             val provider = keyProvider
             val identity = legIdentity
-            if (provider == null || identity == null || room == null) {
+            // Bound to the Room this push was VALIDATED against, so the
+            // cryptor assertion below cannot land on a later one.
+            val activeRoom = room
+            if (provider == null || identity == null || activeRoom == null) {
                 call.reject("not_connected")
                 return@launch
             }
@@ -452,7 +516,7 @@ class ScreenSharePlugin : Plugin() {
                 provider.setRawKey(identity, keyIndex, Base64.decode(keyB64, Base64.DEFAULT))
                 currentKeyIndex = keyIndex
                 currentEpoch = epoch
-                assertSenderKeyIndex(keyIndex)
+                assertSenderKeyIndex(activeRoom, keyIndex)
                 call.resolve()
             } catch (t: Throwable) {
                 call.reject("set_frame_key_failed: ${t.message ?: t.javaClass.simpleName}")
@@ -503,7 +567,7 @@ class ScreenSharePlugin : Plugin() {
                     scope.launch { tearDown("disconnected") }
                 } else if (keyProvider != null) {
                     try {
-                        assertSenderKeyIndex(currentKeyIndex)
+                        assertSenderKeyIndex(room, currentKeyIndex)
                     } catch (t: Throwable) {
                         scope.launch { tearDown("error") }
                     }
@@ -512,7 +576,7 @@ class ScreenSharePlugin : Plugin() {
             is RoomEvent.TrackPublished -> {
                 if (event.participant === room.localParticipant && keyProvider != null) {
                     try {
-                        assertSenderKeyIndex(currentKeyIndex)
+                        assertSenderKeyIndex(room, currentKeyIndex)
                     } catch (t: Throwable) {
                         scope.launch { tearDown("error") }
                     }
@@ -556,7 +620,7 @@ class ScreenSharePlugin : Plugin() {
      * after the switch: a cryptor still at the old index after this call is a
      * hole, not a hiccup — throw so callers fail closed.
      */
-    private fun senderCryptors(): Collection<FrameCryptor> {
+    private fun senderCryptors(room: Room?): Collection<FrameCryptor> {
         val manager = room?.e2eeManager ?: return emptyList()
         val field = manager.javaClass.getDeclaredField("frameCryptors")
         field.isAccessible = true
@@ -565,11 +629,16 @@ class ScreenSharePlugin : Plugin() {
         return map.values
     }
 
-    private fun assertSenderKeyIndex(index: Int) {
-        for (cryptor in senderCryptors()) {
+    /** Takes the OWNING Room explicitly rather than reading `this.room`: a
+     *  superseded attempt reading the field would drive `setKeyIndex` on a
+     *  SUCCESSOR's sender cryptors — a wrong-epoch send. Safe today only
+     *  because no suspension separates the callers' generation check from
+     *  the call; passing the Room makes it safe by construction instead. */
+    private fun assertSenderKeyIndex(room: Room?, index: Int) {
+        for (cryptor in senderCryptors(room)) {
             cryptor.setKeyIndex(index)
         }
-        for (cryptor in senderCryptors()) {
+        for (cryptor in senderCryptors(room)) {
             if (cryptor.keyIndex != index) {
                 throw IllegalStateException("sender cryptor refused key index switch")
             }
@@ -588,12 +657,22 @@ class ScreenSharePlugin : Plugin() {
         val room = this.room
         this.room = null
         legIdentity = null
+        // Stop the capture explicitly before the Room goes: a screencast
+        // track that never reached `trackPublications` is invisible to the
+        // SDK's own cleanup, and would keep the MediaProjection and its
+        // foreground service alive with nothing owning them (see
+        // [stopCapture]).
+        room?.let { stopCapture(it) }
         try {
             room?.disconnect()
         } catch (_: Throwable) {}
         try {
             room?.release()
         } catch (_: Throwable) {}
+        // Remember WHICH Room this released, so an attempt that was
+        // cancelled mid-connect can tell "already released" from "superseded
+        // by a successor" and not dispose the same native object twice.
+        releasedRoom = room
         // Drop the native keyring (§4.2 hygiene) — the provider outlives the
         // Room, so its rtcKeyProvider must be disposed explicitly.
         try {
@@ -619,6 +698,7 @@ class ScreenSharePlugin : Plugin() {
         savedAudioMode = null
         consentIntent = null
         currentEpoch = -1
+        currentKeyIndex = 0
         // Cleared HERE, not only on a successful connect. `stopping` exists to
         // make a teardown re-entrant-safe for its own duration; leaving it set
         // afterwards latched it for the rest of the process, so the next

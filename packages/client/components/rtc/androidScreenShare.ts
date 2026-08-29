@@ -56,6 +56,30 @@ export type NativeFrameKey = Omit<LegE2EEKey, "groupId">;
  * every later share tap into a cancel of a corpse. */
 const PREPARE_TIMEOUT_MS = 120_000;
 
+/** Ceiling on a native `stop()`. The Kotlin side settles in a `finally`, so
+ * a lost settlement is already remote — but `#stopPromise` clears only when
+ * the call settles, so without a bound every later hook AND the user's next
+ * tap would coalesce onto a dead promise: an unstoppable share. A timeout
+ * reads as "not stopped" (the leg stays `active()`), which is exactly the
+ * state that lets the next hook retry. */
+const STOP_TIMEOUT_MS = 15_000;
+
+/** Reject `work` if it has not settled within `ms`. The loser's late
+ * settlement is absorbed by the race rather than surfacing unhandled. */
+function withTimeout<T>(
+  work: Promise<T>,
+  ms: number,
+  message: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    work,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer)) as Promise<T>;
+}
+
 export type NativeStopReason = "user" | "system" | "disconnected" | "error";
 
 interface NativeScreenSharePlugin {
@@ -181,20 +205,11 @@ export class AndroidScreenLeg {
    * it, and consent is only consumed at publish, so nothing captures). */
   async prepare(): Promise<void> {
     await this.#ready;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await Promise.race([
-        plugin!.prepare(),
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () => reject(new Error("screen share consent timed out")),
-            PREPARE_TIMEOUT_MS,
-          );
-        }),
-      ]);
-    } finally {
-      clearTimeout(timer);
-    }
+    await withTimeout(
+      plugin!.prepare(),
+      PREPARE_TIMEOUT_MS,
+      "screen share consent timed out",
+    );
   }
 
   /**
@@ -294,14 +309,29 @@ export class AndroidScreenLeg {
   }
 
   async #doStop(): Promise<void> {
+    // Claimed here so a resolution that arrives long after its own `stopped`
+    // event cannot speak for whatever share is live BY THEN. The event is
+    // emitted before native resolves the call, so the ordinary path is:
+    // event clears `#active` and bumps, the user starts share 2, this
+    // resolution lands — and without the token it would stop share 2 (UI off
+    // + end-of-share sound) while share 2 is publishing happily.
+    const generation = this.#connectGeneration;
     try {
-      await plugin!.stop();
+      await withTimeout(
+        plugin!.stop(),
+        STOP_TIMEOUT_MS,
+        "screen share stop timed out",
+      );
     } catch {
       // NOT stopped: leave `#active` (and the UI) truthful so the next hook
       // retries. If native did tear down and only the resolution was lost,
       // its `stopped` event settles the state instead.
       return;
     }
+    // A later share already owns the leg (its `stopped` event ran, or a new
+    // connect claimed it) — this resolution is stale news, so announce
+    // nothing.
+    if (generation !== this.#connectGeneration) return;
     // Definitively down (native resolved the stop): orphan any connect still
     // in flight, as the `stopped` listener does.
     this.#connectGeneration++;
