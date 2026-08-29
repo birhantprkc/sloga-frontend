@@ -548,15 +548,26 @@ export interface MlsMediaBinding {
    */
   unpublishedLegs?(): string[];
   /**
-   * ALL remote SFU identities with ZERO publications. An expiring admit-grace
-   * window re-arms (up to the hard deadline) while its joiner is still here:
-   * an E2EE-capable joiner publishes nothing until enrolled (its own
-   * `negotiating` gate holds publishing), so publication-silence is the
-   * discriminator between a slow admit and an actual plaintext publisher —
-   * the latter publishes its mic within seconds and goes loud as fast as
-   * before.
+   * ALL remote SFU identities with ZERO publications. Used only by the
+   * admit-grace RE-ARM at expiry: a joiner that has put nothing on the wire
+   * has not yet cost anyone anything, so its window may extend to the hard
+   * deadline.
+   *
+   * 🔴 NOT a safe test for "still enrolling" — the publish gate pauses
+   * upstream rather than unpublishing, so an ordinary joiner has a
+   * publication within milliseconds of connecting. `plaintextPublishers` is
+   * the discriminator that decides the grace itself.
    */
   unpublishedParticipants?(): string[];
+  /**
+   * Remote identities with at least one publication declaring
+   * `encryption === NONE`. Disqualifies a graced primary from the
+   * admit-grace: a joiner mid-admit may legitimately be publishing, but one
+   * publishing PLAINTEXT into an encrypted call is the loud case and nothing
+   * on the media plane will report it (livekit disables the cryptor for a
+   * NONE publication, so no decrypt error ever fires).
+   */
+  plaintextPublishers?(): string[];
   /** Surface the media-plane state for the 6.5 chip / callEncryptionError. */
   onEncryptionState?(state: MediaEncryptionState, error?: unknown): void;
   /**
@@ -1254,6 +1265,11 @@ export class MlsCallSession {
     this.#unregisterSink = null;
 
     this.#stopReconcile(); // gate off the self-rescheduling reconcile loop
+    // The real end of the call, and the only correct place to forget how much
+    // admit-grace each identity has spent: the ledger must survive every
+    // group re-establish within a call, or a forced re-establish becomes a
+    // budget reset.
+    this.#admitGraceUsed.clear();
     this.#stopHeartbeat();
     this.#cancelReupgrade();
     for (const timer of this.#timers) clearTimeout(timer);
@@ -3000,9 +3016,10 @@ export class MlsCallSession {
         e2ee: this.#callMode.kind === "e2ee",
         encryptedLegs: media.encryptedLegs?.() ?? [],
         unpublishedLegs: media.unpublishedLegs?.() ?? [],
-        // A graced PRIMARY holds its grace only while silent; a joiner that
-        // is publishing is loud immediately, whatever its window says.
-        unpublishedParticipants: media.unpublishedParticipants?.() ?? [],
+        // A graced PRIMARY loses its window the moment it publishes
+        // PLAINTEXT. Publishing as such is normal mid-admit, so the
+        // declaration is the discriminator, not the publication count.
+        plaintextPublishers: media.plaintextPublishers?.() ?? [],
       },
       [...this.#admitGrace.keys()],
     );
@@ -3131,10 +3148,15 @@ export class MlsCallSession {
       this.#timers.delete(entry.timer);
     }
     this.#admitGrace.clear();
-    // The consumed-budget ledger is per CALL, and this runs when the call's
-    // roster machinery is torn down, so it goes too — a later call must not
-    // inherit a spent budget and refuse a legitimate joiner its window.
-    this.#admitGraceUsed.clear();
+    // 🔴 The consumed-budget ledger is deliberately NOT cleared here.
+    // `#stopReconcile` is not a call teardown: `#startReconcile` calls it as
+    // its first statement, `#resetRotationState` calls it, and `#toActive`
+    // reaches it on every transition — so clearing here made the budget
+    // per-GROUP-ESTABLISH, not per call. A hostile DS that forces a
+    // re-establish (removing us from the group is enough to drive
+    // `#rejoinFresh`) could then mint a fresh suppression window per identity
+    // per cycle, which is the churn hole this budget exists to close. It is
+    // cleared in `dispose()` instead, which is the real end of the call.
     for (const timer of this.#ghostTimers.values()) {
       clearTimeout(timer);
       this.#timers.delete(timer);

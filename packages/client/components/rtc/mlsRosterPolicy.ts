@@ -75,30 +75,35 @@ export interface RosterLegInputs {
    */
   unpublishedLegs?: readonly string[];
   /**
-   * ALL identities (primaries included) with ZERO publications.
+   * PRIMARY identities with at least one publication declaring
+   * `encryption === NONE` — i.e. actually sending plaintext.
    *
-   * What a graced PRIMARY must satisfy to keep its grace. The admit-grace
-   * exists for a joiner whose staggered Add is still in flight, and such a
-   * joiner is silent by construction — an E2EE-capable client's own
-   * `negotiating` gate publishes nothing until it is enrolled. A joiner that
-   * IS publishing is therefore not "still enrolling": it is a participant we
-   * cannot encrypt to, sending media, and it must take the loud path
-   * immediately.
+   * What disqualifies a graced primary. The admit-grace covers a joiner whose
+   * staggered Add is still in flight; it must not cover one that is already
+   * putting readable media on the wire, because nothing else will catch that:
+   * livekit-client DISABLES the cryptor for a publication declaring NONE, so
+   * a plaintext sender raises no decrypt error and the media plane stays
+   * silent. Before this, the grace was unconditional for primaries and the
+   * check ran only when the window EXPIRED, so a plaintext client (a web
+   * client — excluded from call E2EE by design) could join an encrypted call,
+   * unmute, and have the mixed banner and the publish pause suppressed for
+   * the whole 10-60 s while its audio played to the room.
    *
-   * 🔴 Without this the grace was unconditional for primaries and the
-   * publication check ran only when the window EXPIRED, so a plaintext client
-   * (a web client, which is excluded from call E2EE by design) could join an
-   * encrypted call, unmute, and have the mixed banner and the publish pause
-   * suppressed for the whole 10–60 s window while its audio played. The media
-   * plane does not backstop this: livekit-client disables the cryptor for a
-   * publication declaring `encryption === NONE`, so no decrypt error is ever
-   * raised for plaintext.
+   * 🔴 This is deliberately NOT "has no publications". A publication object
+   * existing does not mean media is flowing: the publish gate pauses UPSTREAM
+   * (`pauseUpstream` is `replaceTrack(null)`), it never unpublishes, and a
+   * client's mic publish is initiated in its `connected` handler — so a
+   * perfectly ordinary E2EE joiner has a publication within milliseconds,
+   * long before its Add commits. Keying on publication COUNT therefore
+   * disqualifies almost every legitimate joiner, which re-fires §0.4 and
+   * one-way stops an in-progress Android screen leg on essentially every
+   * mid-call join. An E2EE joiner's publications declare GCM even while
+   * upstream-paused; only a genuinely plaintext sender declares NONE.
    *
-   * Server-attested, like `encryptedLegs` — a hostile SFU can withhold a
-   * participant's publications to keep it looking silent. The per-identity
-   * grace budget in the caller is what bounds that.
+   * Server-attested, like `encryptedLegs` — a hostile SFU can misreport a
+   * publication's encryption. The per-identity grace budget bounds that.
    */
-  unpublishedParticipants?: readonly string[];
+  plaintextPublishers?: readonly string[];
 }
 
 /**
@@ -177,7 +182,7 @@ export function reconcileRoster(
 
   const graced = new Set(pendingAdmits);
   const unpublished = new Set(legs.unpublishedLegs ?? []);
-  const silent = new Set(legs.unpublishedParticipants ?? []);
+  const plaintextPublishers = new Set(legs.plaintextPublishers ?? []);
   const nonEnrolled: string[] = [];
   const pending: string[] = [];
   const seen = new Set<string>();
@@ -195,13 +200,22 @@ export function reconcileRoster(
     let inGrace = false;
     if (graced.has(id)) {
       if (!isScreenLeg(id)) {
-        // A graced PRIMARY keeps the grace only while it is publication-
-        // silent. A joiner still enrolling sends nothing (its own negotiating
-        // gate holds it); one that is already publishing is a participant we
-        // cannot encrypt to WITH MEDIA IN FLIGHT, which is the loud case the
-        // grace must never cover. Absent input ⇒ no grace: unknown publication
-        // state fails toward the warning, like every other guard here.
-        inGrace = silent.has(id);
+        // A graced PRIMARY keeps its window unless it is actually sending
+        // plaintext. Publishing is normal for a joiner mid-admit — the gate
+        // pauses upstream rather than unpublishing — so the disqualifier is
+        // the ENCRYPTION DECLARATION, not the existence of a publication.
+        if (!legs.e2ee) {
+          // Confirmed-plaintext call: every publication legitimately declares
+          // NONE, so the test would disqualify everyone and there is no
+          // downgrade to warn about anyway. Same reasoning as rule 2(b).
+          inGrace = true;
+        } else if (legs.plaintextPublishers === undefined) {
+          // Unwired caller ⇒ no grace. This function may only ever over-warn,
+          // so an absent input must cost the suppression, never grant it.
+          inGrace = false;
+        } else {
+          inGrace = !plaintextPublishers.has(id);
+        }
       } else {
         const owner = stripLeg(id);
         inGrace =

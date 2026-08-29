@@ -2034,7 +2034,7 @@ class Voice {
       if (kind === "videoinput") void this.reapplyCameraEffects();
     });
 
-    room.addListener("trackPublished", (pub, participant) => {
+    room.addListener("trackPublished", (pub, _participant) => {
       // Gate (b)'s quantification domain changed (R2-3): a trackless-then-
       // publishing REMOTE participant must drop the chip from green
       // immediately, not on the next unrelated join/leave.
@@ -2626,6 +2626,20 @@ class Voice {
       unpublishedParticipants: () =>
         [...room.remoteParticipants.values()]
           .filter((p) => p.trackPublications.size === 0)
+          .map((p) => p.identity),
+      // Remotes actually sending plaintext: at least one publication declares
+      // `encryption === NONE`. Disqualifies a graced primary from the
+      // admit-grace, and it is the ENCRYPTION declaration rather than the
+      // publication count for the reason spelled out on
+      // `RosterLegInputs.plaintextPublishers` — the publish gate pauses
+      // upstream instead of unpublishing, so a normal E2EE joiner has a
+      // publication almost immediately and counting them would strip the
+      // grace from nearly every legitimate join. `isEncrypted` is
+      // `size > 0 && every(encrypted)`, so this is "has published, and not
+      // all of it is encrypted".
+      plaintextPublishers: () =>
+        [...room.remoteParticipants.values()]
+          .filter((p) => p.trackPublications.size > 0 && !p.isEncrypted)
           .map((p) => p.identity),
       onEncryptionState: (state, error) => {
         // Latch a loud media-plane failure into the existing structured signal
