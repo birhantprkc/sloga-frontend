@@ -81,6 +81,10 @@ export interface LocalScreenKey {
   keyIndex: number;
   /** The MLS epoch this key belongs to — the fence a stale push is caught by. */
   epoch: number;
+  /** The MLS group the epoch counts under. Epochs are only comparable within
+   * one group, so consumers must treat a cross-group key as unrelatable —
+   * neither newer nor older — and fail closed rather than compare. */
+  groupId: string;
 }
 
 /**
@@ -282,6 +286,7 @@ export class MlsKeyProvider extends BaseKeyProvider {
       keyB64: entry.frame_key_b64,
       keyIndex: entry.key_index,
       epoch: entry.epoch,
+      groupId: frameKeys.group_id,
     };
     const previous = this.#lastLocalScreenKey;
     // Recorded BEFORE the push, and that is correct rather than optimistic:
@@ -295,6 +300,7 @@ export class MlsKeyProvider extends BaseKeyProvider {
     // re-keys the sender cryptor).
     if (
       previous &&
+      previous.groupId === key.groupId &&
       previous.epoch === key.epoch &&
       previous.keyIndex === key.keyIndex &&
       previous.keyB64 === key.keyB64

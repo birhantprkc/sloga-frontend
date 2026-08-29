@@ -13,10 +13,15 @@
  * the attempt has to keep checking whether it is still the current one.
  */
 
-/** A leg send key as it crosses the bridge — §5.2 minus the epoch. */
+/** A leg send key with its full provenance — §5.2's `LocalScreenKey`. */
 export interface LegSendKey {
   keyB64: string;
   keyIndex: number;
+  /** The MLS epoch the key belongs to — the native push fence. */
+  epoch: number;
+  /** The MLS group the key belongs to. Epochs are only comparable within one
+   * group, so a group change makes two keys UNRELATABLE, not merely stale. */
+  groupId: string;
 }
 
 export interface StartAttemptWorld {
@@ -45,9 +50,15 @@ export function startAttemptStale(world: StartAttemptWorld): boolean {
   );
 }
 
+/** What `#syncLegKeyAfterConnect` must do once `connect()` resolves. */
+export type PostConnectKeyAction =
+  | { kind: "none" }
+  | { kind: "push"; key: LegSendKey }
+  | { kind: "stop" };
+
 /**
- * The key the leg must be re-keyed to immediately after `connect()`, or
- * undefined when it is already on the right one.
+ * Reconcile the key the leg connected with against the provider's current
+ * record, immediately after `connect()` resolves.
  *
  * A rotation that lands while `connect()` is in flight reaches
  * `onLocalScreenKey` when the leg is not yet `active()`, and is dropped there.
@@ -58,22 +69,29 @@ export function startAttemptStale(world: StartAttemptWorld): boolean {
  * Compares the MATERIAL as well as the index: an index is only unique within
  * an epoch, so two epochs can legitimately reuse one and comparing indices
  * alone would silently skip a required rotation.
+ *
+ * A current key from a DIFFERENT group is a `stop`, not a push: the group was
+ * re-established while the leg connected, epochs across groups are
+ * uncomparable (so the native push fence cannot order the two keys), and a
+ * leg keyed under a superseded group has no place in the new one.
  */
-export function keyToPushAfterConnect(
+export function keyActionAfterConnect(
   connectedWith: LegSendKey | undefined,
   current: LegSendKey | undefined,
-): LegSendKey | undefined {
+): PostConnectKeyAction {
   // A plaintext leg has no send key and must not acquire one here: handing it
   // a key would be a silent, unannounced upgrade the rest of the call has not
   // agreed to.
-  if (!connectedWith) return undefined;
+  if (!connectedWith) return { kind: "none" };
   // No current key means the provider has nothing better to offer; the
   // rotation listener owns the fail-closed path if one arrives later.
-  if (!current) return undefined;
+  if (!current) return { kind: "none" };
+  if (current.groupId !== connectedWith.groupId) return { kind: "stop" };
   if (
+    current.epoch === connectedWith.epoch &&
     current.keyIndex === connectedWith.keyIndex &&
     current.keyB64 === connectedWith.keyB64
   )
-    return undefined;
-  return current;
+    return { kind: "none" };
+  return { kind: "push", key: current };
 }

@@ -26,12 +26,33 @@ import {
 export { ANDROID_SCREEN_SHARE_TIERS };
 export type { AndroidScreenShareTier, AndroidScreenShareTierName };
 
-/** The key handed to the native sender — §5.2's `LocalScreenKey`, minus the
- * epoch (the fence lives in the provider; native only needs key + index). */
+/** The key handed to the native sender — §5.2's `LocalScreenKey` as it
+ * crosses the bridge. `epoch` rides along as the native fence: pushes race
+ * (a rotation against the post-connect reconcile, two rotations back to
+ * back), the bridge does not promise ordering, and without a fence the
+ * OLDER push can land last and stick — the idempotence guard upstream then
+ * blocks any retry. Native refuses to apply a key whose epoch is behind the
+ * one it already holds. */
 export interface NativeFrameKey {
   keyB64: string;
   keyIndex: number;
+  epoch: number;
 }
+
+/** A send key plus its group binding. `groupId` never crosses the bridge —
+ * epochs are only comparable WITHIN a group (a re-established group restarts
+ * them), so the leg refuses a key from any group other than the one it
+ * connected under rather than letting the native epoch fence misjudge it. */
+export interface LegE2EEKey extends NativeFrameKey {
+  groupId: string;
+}
+
+/** Ceiling on the OS consent dialog. The dialog is user-paced, so this is
+ * generous — it exists for the pathological case (activity torn down, the
+ * Capacitor callback lost) where `prepare()` would otherwise never settle
+ * and the start attempt would hold `#androidLegStartingFor` forever, turning
+ * every later share tap into a cancel of a corpse. */
+const PREPARE_TIMEOUT_MS = 120_000;
 
 export type NativeStopReason = "user" | "system" | "disconnected" | "error";
 
@@ -98,7 +119,14 @@ if (plugin && CONFIGURATION.ENABLE_ANDROID_SCREEN_SHARE) {
  */
 export class AndroidScreenLeg {
   #active = false;
-  #stopping = false;
+  /** In-flight [stop], while one runs. Concurrent stops COALESCE onto it —
+   * a hook that fires during a teardown must wait for that teardown, not be
+   * discarded (a discarded stop resolves before native has released the
+   * MediaProjection, and its caller then believes the capture is over). */
+  #stopPromise: Promise<void> | undefined;
+  /** The group the current share connected under — the JS half of the key
+   * fence (see [LegE2EEKey]); undefined for a plaintext leg. */
+  #e2eeGroupId: string | undefined;
   #listeners: { remove: () => Promise<void> }[] = [];
   /** Resolves once the plugin listeners are attached — awaited by [prepare]
    * so no share can start with its event stream unwired. */
@@ -123,7 +151,6 @@ export class AndroidScreenLeg {
       await p.addListener("stopped", (data) => {
         const wasActive = this.#active;
         this.#active = false;
-        this.#stopping = false;
         // A stopped for a leg that never reported started (connect() threw
         // after partial setup) has nothing to announce.
         if (wasActive) this.onStopped?.(data.reason ?? "error");
@@ -138,10 +165,27 @@ export class AndroidScreenLeg {
     return this.#active;
   }
 
-  /** Phase 1: OS consent + FGS. User-paced — mint the token AFTER this. */
+  /** Phase 1: OS consent + FGS. User-paced — mint the token AFTER this.
+   * Bounded by [PREPARE_TIMEOUT_MS] so a lost native callback cannot strand
+   * the start attempt forever; a consent granted AFTER the timeout is stored
+   * natively but never connected (the next share's `prepare()` overwrites
+   * it, and consent is only consumed at publish, so nothing captures). */
   async prepare(): Promise<void> {
     await this.#ready;
-    await plugin!.prepare();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        plugin!.prepare(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("screen share consent timed out")),
+            PREPARE_TIMEOUT_MS,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**
@@ -154,7 +198,7 @@ export class AndroidScreenLeg {
     url: string;
     token: string;
     tier: AndroidScreenShareTier;
-    e2ee?: NativeFrameKey;
+    e2ee?: LegE2EEKey;
   }): Promise<void> {
     await plugin!.connect({
       url: options.url,
@@ -166,8 +210,13 @@ export class AndroidScreenLeg {
         degradation: options.tier.degradation,
       },
       audio: false,
-      e2ee: options.e2ee,
+      e2ee: options.e2ee && {
+        keyB64: options.e2ee.keyB64,
+        keyIndex: options.e2ee.keyIndex,
+        epoch: options.e2ee.epoch,
+      },
     });
+    this.#e2eeGroupId = options.e2ee?.groupId;
     this.#active = true;
   }
 
@@ -178,34 +227,60 @@ export class AndroidScreenLeg {
    * rejection here means the leg cannot be trusted on the new epoch: the
    * caller stops the leg (fail closed) and resolves the provider's push.
    */
-  async setFrameKey(key: NativeFrameKey): Promise<void> {
+  async setFrameKey(key: LegE2EEKey): Promise<void> {
     if (!this.#active) return;
-    await plugin!.setFrameKey(key);
+    // Group fence (JS half): the native epoch fence can only order pushes
+    // WITHIN one group. A key from any other group — a re-establish raced
+    // the leg — is uncomparable and unsafe; throw so the caller's
+    // fail-closed path stops the leg.
+    if (key.groupId !== this.#e2eeGroupId)
+      throw new Error("screen leg key is from a different group");
+    await plugin!.setFrameKey({
+      keyB64: key.keyB64,
+      keyIndex: key.keyIndex,
+      epoch: key.epoch,
+    });
   }
 
   /**
-   * Idempotent stop — every §7.4 hook lands here. The native side unpublishes,
-   * disconnects, releases the Room (dropping the native keyring) and stops the
-   * FGS; the `stopped` event closes the loop.
+   * Stop — every §7.4 hook lands here. The native side unpublishes,
+   * disconnects, releases the Room (dropping the native keyring) and stops
+   * the FGS; the `stopped` event closes the loop.
+   *
+   * Concurrent stops COALESCE: a second hook awaits the same in-flight
+   * native teardown rather than resolving early (or being dropped). A
+   * REJECTED bridge stop means the leg is NOT stopped — native may still
+   * hold the MediaProjection — so nothing is announced and `active()` stays
+   * true, which is what lets every later hook (and the user's next tap)
+   * retry rather than no-op for the rest of the process. The SFU timeout and
+   * voice-ingress's leg-left branch clear the SERVER state either way; only
+   * the local capture needs the retry.
    */
   async stop(): Promise<void> {
-    if (this.#stopping) return;
-    this.#stopping = true;
+    if (this.#stopPromise) return this.#stopPromise;
+    const attempt = this.#doStop().finally(() => {
+      this.#stopPromise = undefined;
+    });
+    this.#stopPromise = attempt;
+    return attempt;
+  }
+
+  async #doStop(): Promise<void> {
     try {
       await plugin!.stop();
     } catch {
-      // Native teardown is best-effort from JS: the SFU timeout and
-      // voice-ingress's leg-left branch clear the server state either way.
-    } finally {
-      this.#stopping = false;
-      // The native `stopped` event and this resolution race; whichever runs
-      // first flips `#active` and announces — the other finds it already
-      // false and stays quiet, so the end-of-share sound plays exactly once
-      // even if the bridge drops the event.
-      if (this.#active) {
-        this.#active = false;
-        this.onStopped?.("user");
-      }
+      // NOT stopped: leave `#active` (and the UI) truthful so the next hook
+      // retries. If native did tear down and only the resolution was lost,
+      // its `stopped` event settles the state instead.
+      return;
+    }
+    // The native `stopped` event and this resolution race; whichever runs
+    // first flips `#active` and announces — the other finds it already
+    // false and stays quiet, so the end-of-share sound plays exactly once
+    // even if the bridge drops the event.
+    if (this.#active) {
+      this.#active = false;
+      this.onStopped?.("user");
     }
   }
 

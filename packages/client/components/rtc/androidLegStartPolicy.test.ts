@@ -14,7 +14,7 @@ import { test } from "node:test";
 
 import {
   type LegSendKey,
-  keyToPushAfterConnect,
+  keyActionAfterConnect,
   startAttemptStale,
 } from "./androidLegStartPolicy.ts";
 
@@ -71,21 +71,30 @@ test("each condition is independently sufficient", () => {
   }
 });
 
-const key = (keyB64: string, keyIndex: number): LegSendKey => ({
+const key = (
+  keyB64: string,
+  keyIndex: number,
+  over: Partial<Pick<LegSendKey, "epoch" | "groupId">> = {},
+): LegSendKey => ({
   keyB64,
   keyIndex,
+  epoch: 4,
+  groupId: "group-1",
+  ...over,
 });
 
 test("no re-key when the epoch did not move during connect", () => {
-  assert.equal(keyToPushAfterConnect(key("AAA", 1), key("AAA", 1)), undefined);
+  assert.deepEqual(keyActionAfterConnect(key("AAA", 1), key("AAA", 1)), {
+    kind: "none",
+  });
 });
 
 test("a rotation during connect is pushed once the sender exists", () => {
   // The dropped-rotation case: `onLocalScreenKey` saw this while the leg was
   // still connecting and returned, so the attempt reconciles here instead.
   assert.deepEqual(
-    keyToPushAfterConnect(key("AAA", 1), key("BBB", 2)),
-    key("BBB", 2),
+    keyActionAfterConnect(key("AAA", 1), key("BBB", 2, { epoch: 5 })),
+    { kind: "push", key: key("BBB", 2, { epoch: 5 }) },
   );
 });
 
@@ -94,17 +103,44 @@ test("changed key MATERIAL at the same index still re-keys", () => {
   // Comparing indices alone would skip a required rotation and leave the leg
   // publishing under the key a removed member holds.
   assert.deepEqual(
-    keyToPushAfterConnect(key("AAA", 1), key("BBB", 1)),
-    key("BBB", 1),
+    keyActionAfterConnect(key("AAA", 1), key("BBB", 1, { epoch: 20 })),
+    { kind: "push", key: key("BBB", 1, { epoch: 20 }) },
+  );
+});
+
+test("an epoch move alone still re-keys", () => {
+  // Defense in depth alongside the material comparison: the epoch is the
+  // fence the native side orders pushes by, so it must travel even when the
+  // material/index pair happens to collide.
+  assert.deepEqual(
+    keyActionAfterConnect(key("AAA", 1), key("AAA", 1, { epoch: 5 })),
+    { kind: "push", key: key("AAA", 1, { epoch: 5 }) },
+  );
+});
+
+test("a key from a different group STOPS the leg instead of re-keying", () => {
+  // A group re-establish raced the connect. Epochs are only comparable
+  // within one group, so the native fence cannot order these two keys — the
+  // only safe answer is to stop the leg and let the user share again.
+  assert.deepEqual(
+    keyActionAfterConnect(
+      key("AAA", 1),
+      key("BBB", 2, { epoch: 0, groupId: "group-2" }),
+    ),
+    { kind: "stop" },
   );
 });
 
 test("a plaintext leg is never handed a key here", () => {
   // An unannounced upgrade would be a downgrade of a different kind: the rest
   // of the call has not agreed to it.
-  assert.equal(keyToPushAfterConnect(undefined, key("AAA", 1)), undefined);
+  assert.deepEqual(keyActionAfterConnect(undefined, key("AAA", 1)), {
+    kind: "none",
+  });
 });
 
 test("no current key means nothing to push", () => {
-  assert.equal(keyToPushAfterConnect(key("AAA", 1), undefined), undefined);
+  assert.deepEqual(keyActionAfterConnect(key("AAA", 1), undefined), {
+    kind: "none",
+  });
 });

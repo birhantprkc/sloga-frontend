@@ -93,6 +93,26 @@ class ScreenSharePlugin : Plugin() {
     private var stopping = false
 
     /**
+     * Cancellation for [doConnect] — the native mirror of the JS generation
+     * token, which stops at the bridge. Every [tearDown] bumps this; a connect
+     * attempt stamps it at entry and re-checks after each suspension point, so
+     * a stop that lands mid-`room.connect` cancels the attempt instead of
+     * letting it publish (and fire `started`) into a share that already ended.
+     * Main-dispatcher confined, like every other field here.
+     */
+    private var connectGeneration = 0
+
+    /**
+     * The MLS epoch of the key the sender currently encrypts under. Frame-key
+     * pushes race (a rotation against the post-connect reconcile), and the
+     * bridge does not promise ordering — without a fence the OLDER push could
+     * land last and stick. Epochs are only comparable within one group; the
+     * JS side guarantees a single group per share (it refuses cross-group
+     * pushes), so within a connect this is monotonic.
+     */
+    private var currentEpoch = -1
+
+    /**
      * The WebView call's audio mode, snapshotted before the leg's Room is
      * created. Probe (f) showed `NoAudioHandler` keeps AudioManager untouched
      * through create → connect → publish, but Room/audio TEARDOWN reset the
@@ -167,6 +187,15 @@ class ScreenSharePlugin : Plugin() {
         scope.launch {
             try {
                 doConnect(call, url, token, quality, e2ee, intent)
+            } catch (t: ConnectCancelled) {
+                // A tearDown cancelled this attempt mid-flight — that
+                // tearDown already owns the cleanup (it disconnected the
+                // room this attempt created), so running another here would
+                // instead clobber whatever state a SUCCESSOR has since
+                // claimed. Just settle the call; the JS side treats a
+                // rejected connect on a stale attempt as an ordinary
+                // already-handled stop.
+                call.reject("connect_failed: cancelled")
             } catch (t: Throwable) {
                 // The consent survives a failed connect (probe (e)): the
                 // single-use getMediaProjection only happens at publish, so
@@ -190,6 +219,10 @@ class ScreenSharePlugin : Plugin() {
         e2ee: JSObject?,
         intent: Intent,
     ) {
+        // Claim the attempt. Any tearDown (JS stop, room event, plugin
+        // destroy) bumps the counter and thereby cancels this connect at its
+        // next check; a competing connect supersedes it the same way.
+        val generation = ++connectGeneration
         val appContext = context.applicationContext
         val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         savedAudioMode = audioManager.mode
@@ -247,7 +280,6 @@ class ScreenSharePlugin : Plugin() {
             ),
         )
         this.room = room
-        stopping = false
 
         eventsJob = scope.launch {
             room.events.collect { event -> onRoomEvent(event) }
@@ -255,6 +287,11 @@ class ScreenSharePlugin : Plugin() {
 
         // Belt-and-braces on the token's canSubscribe=false (§4.3 step 2).
         room.connect(url, token, ConnectOptions(autoSubscribe = false))
+        // First suspension behind us: a stop may have torn the room down
+        // while connect was in flight. Abandon before touching E2EE state or
+        // publishing — the throw lands in connect()'s catch, whose tearDown
+        // is a near-no-op after the stop's own already ran.
+        ensureConnectCurrent(generation)
 
         val identity = room.localParticipant.identity?.value
             ?: throw IllegalStateException("no local identity after connect")
@@ -272,6 +309,7 @@ class ScreenSharePlugin : Plugin() {
                 ?: throw IllegalArgumentException("e2ee.keyB64 missing")
             val keyIndex = e2ee.getInteger("keyIndex") ?: 0
             currentKeyIndex = keyIndex
+            currentEpoch = e2ee.getInteger("epoch") ?: 0
             // Raw 32-byte HKDF material at (identity, index) — the provider's
             // getLatestKeyIndex() hands this index to every cryptor the
             // manager creates from now on, which fixes the at-creation and
@@ -296,6 +334,10 @@ class ScreenSharePlugin : Plugin() {
         // The consent is consumed by this publish (single-use by OS rule).
         consentIntent = null
         val published = room.localParticipant.setScreenShareEnabled(true, params)
+        // Second suspension: a stop that landed during the publish has
+        // already disconnected the room — the publication is moot, and
+        // announcing `started` for it would resurrect the share in JS.
+        ensureConnectCurrent(generation)
         if (published != true) {
             throw IllegalStateException("screen share publish refused")
         }
@@ -308,10 +350,21 @@ class ScreenSharePlugin : Plugin() {
             assertSenderKeyIndex(currentKeyIndex)
         }
 
+        ensureConnectCurrent(generation)
         notifyListeners("started", JSObject())
         val ok = JSObject()
         ok.put("ok", true)
         call.resolve(ok)
+    }
+
+    /** Thrown by [ensureConnectCurrent]; its own catch arm in [connect] must
+     *  NOT tear down (the cancelling tearDown already did). */
+    private class ConnectCancelled : IllegalStateException("cancelled")
+
+    private fun ensureConnectCurrent(generation: Int) {
+        if (generation != connectGeneration) {
+            throw ConnectCancelled()
+        }
     }
 
     /**
@@ -326,6 +379,7 @@ class ScreenSharePlugin : Plugin() {
     fun setFrameKey(call: PluginCall) {
         val keyB64 = call.getString("keyB64") ?: return call.reject("invalid_argument:keyB64")
         val keyIndex = call.getInt("keyIndex") ?: return call.reject("invalid_argument:keyIndex")
+        val epoch = call.getInt("epoch") ?: return call.reject("invalid_argument:epoch")
         scope.launch {
             val provider = keyProvider
             val identity = legIdentity
@@ -333,9 +387,21 @@ class ScreenSharePlugin : Plugin() {
                 call.reject("not_connected")
                 return@launch
             }
+            // The push fence: never step the sender BACKWARDS. Pushes race
+            // (a rotation against the post-connect reconcile) and the older
+            // one can arrive last; applying it would stick the sender on a
+            // superseded key past the JS idempotence guard. A superseded push
+            // RESOLVES as a no-op rather than rejecting — the newer key
+            // already won, and a rejection would trip the caller's
+            // fail-closed path into stopping a correctly-keyed leg.
+            if (epoch < currentEpoch) {
+                call.resolve()
+                return@launch
+            }
             try {
                 provider.setRawKey(identity, keyIndex, Base64.decode(keyB64, Base64.DEFAULT))
                 currentKeyIndex = keyIndex
+                currentEpoch = epoch
                 assertSenderKeyIndex(keyIndex)
                 call.resolve()
             } catch (t: Throwable) {
@@ -347,8 +413,17 @@ class ScreenSharePlugin : Plugin() {
     @PluginMethod
     fun stop(call: PluginCall) {
         scope.launch {
-            tearDown("user")
-            call.resolve()
+            // The PluginCall settles NO MATTER WHAT tearDown does: an
+            // unsettled promise here latches the JS side's in-flight stop
+            // forever, and every later stop hook then waits on a teardown
+            // that already died. tearDown itself guards each step, so a throw
+            // out of it is already the pathological case — never compound it
+            // by also losing the resolve.
+            try {
+                tearDown("user")
+            } finally {
+                call.resolve()
+            }
         }
     }
 
@@ -452,6 +527,10 @@ class ScreenSharePlugin : Plugin() {
     }
 
     private suspend fun tearDown(reason: String?) {
+        // Cancel any in-flight connect FIRST — even a re-entrant tearDown
+        // that returns at the guard below must orphan it (see
+        // [ensureConnectCurrent]); the bump is idempotent and harmless.
+        connectGeneration++
         if (stopping) return
         stopping = true
         eventsJob?.cancel()
@@ -474,18 +553,22 @@ class ScreenSharePlugin : Plugin() {
         // Probe (f) caveat: Room/audio teardown reset the GLOBAL audio mode
         // to NORMAL even under NoAudioHandler. Re-assert the WebView call's
         // mode if teardown moved it, so ending a share does not silently break
-        // the call's audio routing.
-        savedAudioMode?.let { saved ->
-            val audioManager =
-                context.applicationContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            if (audioManager.mode != saved) {
-                try {
+        // the call's audio routing. Guarded like every other step: a throw
+        // here (the service lookup as much as the mode write) must not abort
+        // the rest of the teardown — an aborted teardown leaves `stopping`
+        // latched and the stop() call unsettled on old callers.
+        try {
+            savedAudioMode?.let { saved ->
+                val audioManager = context.applicationContext
+                    .getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                if (audioManager.mode != saved) {
                     audioManager.mode = saved
-                } catch (_: Throwable) {}
+                }
             }
-        }
+        } catch (_: Throwable) {}
         savedAudioMode = null
         consentIntent = null
+        currentEpoch = -1
         // Cleared HERE, not only on a successful connect. `stopping` exists to
         // make a teardown re-entrant-safe for its own duration; leaving it set
         // afterwards latched it for the rest of the process, so the next
@@ -495,9 +578,15 @@ class ScreenSharePlugin : Plugin() {
         // share whose connect failed early could not be torn down at all.
         stopping = false
         if (reason != null) {
-            val data = JSObject()
-            data.put("reason", reason)
-            notifyListeners("stopped", data)
+            // Guarded for the same reason as every step above: the event is
+            // best-effort (the JS side settles its own state off the stop()
+            // resolution too), and a bridge throw here must not escape a
+            // teardown that has otherwise completed.
+            try {
+                val data = JSObject()
+                data.put("reason", reason)
+                notifyListeners("stopped", data)
+            } catch (_: Throwable) {}
         }
     }
 
