@@ -486,6 +486,14 @@ class ScreenSharePlugin : Plugin() {
         }
         savedAudioMode = null
         consentIntent = null
+        // Cleared HERE, not only on a successful connect. `stopping` exists to
+        // make a teardown re-entrant-safe for its own duration; leaving it set
+        // afterwards latched it for the rest of the process, so the next
+        // tearDown returned at the guard above and skipped everything — no
+        // disconnect, no keyProvider dispose, no audio-mode restore. That also
+        // silently defeated the JS stop funnel: a share stopped, then a second
+        // share whose connect failed early could not be torn down at all.
+        stopping = false
         if (reason != null) {
             val data = JSObject()
             data.put("reason", reason)

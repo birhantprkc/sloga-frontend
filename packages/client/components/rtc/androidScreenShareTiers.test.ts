@@ -48,10 +48,14 @@ test("every tier stays inside the ingress envelope on a worst-case panel", () =>
       area169 < INGRESS_MAX_AREA,
       `${tier.name}: 16:9 area ${area169} under ingress cap`,
     );
-    // Portrait capture publishes (short × long): aspect = short/long.
+    // Portrait capture publishes (short × long): aspect = short/long. Derived
+    // from THIS tier's dimensions — comparing the two module constants to each
+    // other was vacuous: it never referenced `tier`, so no table could fail it.
+    const shortSide = Math.round(tier.longSide * WORST_CASE_PANEL);
+    const aspect = shortSide / tier.longSide;
     assert.ok(
-      WORST_CASE_PANEL > INGRESS_MIN_ASPECT,
-      "the narrowest mainstream panel is inside the ingress aspect band",
+      aspect > INGRESS_MIN_ASPECT,
+      `${tier.name}: published aspect ${aspect} inside the ingress band`,
     );
   }
 });

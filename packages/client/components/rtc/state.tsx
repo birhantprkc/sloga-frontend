@@ -114,7 +114,12 @@ import {
 } from "@revolt/ui/components/features/voice/participantIdentity";
 import { ReactiveMap } from "@solid-primitives/map";
 import {
+  keyToPushAfterConnect,
+  startAttemptStale,
+} from "./androidLegStartPolicy";
+import {
   type AndroidScreenShareTier,
+  type NativeFrameKey,
   ANDROID_SCREEN_SHARE_TIERS,
   AndroidScreenLeg,
   createAndroidScreenLeg,
@@ -286,6 +291,15 @@ export const DISABLE_WEB_AUDIO_MIX_KEY = "slogaDisableWebAudioMix";
  * the attach churn without feeling laggy to a user who joined truly blocked.
  */
 const AUDIO_BLOCKED_HOLD_MS = 1_500;
+
+/**
+ * Refusal shown when the Android screen leg cannot start (screen-leg plan
+ * §7.2). One string for two checks — the cheap one before the dialogs and the
+ * binding one just before `connect()` — because to the user they are the same
+ * answer, and the second must not read as a different, scarier failure.
+ */
+const SHARE_UNAVAILABLE_NOW =
+  "You can't share your screen right now — the call is re-securing or paused. Try again in a moment.";
 
 type State =
   | "READY"
@@ -589,6 +603,29 @@ class Voice {
    * stop hook in §7.4 funnels through `#stopAndroidLeg`.
    */
   #androidLeg: AndroidScreenLeg | undefined;
+  /**
+   * Start-attempt token for the leg, bumped by every start AND every stop.
+   *
+   * The start path is a chain of awaits around two USER-PACED dialogs (tier
+   * sheet, OS consent), so seconds pass in which the call can end, be kicked,
+   * gate, re-secure or rotate its epoch — and until `connect()` resolves the
+   * leg is not `active()`, so every §7.4 stop hook would no-op against it and
+   * the share would come up into a world that no longer wants it. Comparing
+   * this token after each await is what makes the whole window cancellable.
+   */
+  #androidLegGeneration = 0;
+  /**
+   * The generation of the start attempt currently between `prepare()` and its
+   * own settlement, or undefined when none is. The companion to the token: it
+   * tells `#stopAndroidLeg` that a leg it cannot see yet may still be coming
+   * up — consent is granted and the foreground service is running — so native
+   * must be torn down even though `active()` is false.
+   *
+   * Keyed by generation rather than a bare boolean so that a STOP (which
+   * bumps the token without starting anything) still lets the owning attempt
+   * clear it, while a superseded attempt cannot clear its successor's.
+   */
+  #androidLegStartingFor: number | undefined;
   /** Primary-mic state captured when a whisper began, to restore on stop. */
   #whisperPriorMic = false;
   /**
@@ -1656,26 +1693,36 @@ class Voice {
         // listener OWNS its failure (see the provider docstring): a push
         // that cannot land stops the leg — fail closed, never continue on
         // the old key — and RESOLVES, so the rotation itself completes.
-        if (nativeScreenShareAvailable()) {
-          const provider = this.#mlsKeyProvider;
-          provider.onLocalScreenKey = async (key) => {
-            const leg = this.#androidLeg;
-            if (!leg?.active()) return;
-            try {
-              await leg.setFrameKey({
-                keyB64: key.keyB64,
-                keyIndex: key.keyIndex,
-              });
-            } catch {
-              await this.#stopAndroidLeg();
-              this.onErr(
-                new Error(
-                  "Your screen share stopped because it could no longer be encrypted.",
-                ),
-              );
-            }
-          };
-        }
+        // Wired unconditionally rather than behind
+        // `nativeScreenShareAvailable()`: that accessor is fed by an ASYNC
+        // Capacitor probe, so gating the wiring on it left every call joined
+        // before the probe landed (cold start into a call, accepting a call
+        // from a push notification) with no rotation listener at all, for the
+        // call's whole life — a share started later would then keep
+        // encrypting under a key a removed member still holds. The body is
+        // inert without a leg, so always wiring it costs nothing.
+        const provider = this.#mlsKeyProvider;
+        provider.onLocalScreenKey = async (key) => {
+          const leg = this.#androidLeg;
+          // A leg still CONNECTING has no sender to re-key yet. Returning
+          // loses nothing: the start path re-reads `lastLocalScreenKey()`
+          // once `connect()` resolves and pushes whatever landed here in
+          // between, so the leg cannot end up on a stale epoch.
+          if (!leg?.active()) return;
+          try {
+            await leg.setFrameKey({
+              keyB64: key.keyB64,
+              keyIndex: key.keyIndex,
+            });
+          } catch {
+            await this.#stopAndroidLeg();
+            this.onErr(
+              new Error(
+                "Your screen share stopped because it could no longer be encrypted.",
+              ),
+            );
+          }
+        };
         this.#e2eeWorker = new E2EEWorker();
       } catch (error) {
         this.#e2eeWorker?.terminate();
@@ -2644,7 +2691,7 @@ class Voice {
     // LocalTrackPublished. The gate cannot pause the leg: it is a separate
     // native participant the WebView's publication sweep never sees. The stop
     // is one-way, so name the reason that fired it.
-    if (this.#androidLeg?.active())
+    if (this.#androidLeg?.active() || this.#androidLegStartingFor !== undefined)
       console.warn(
         `[rtc] publish gate "${reason}" stopped the Android screen leg`,
       );
@@ -4385,26 +4432,20 @@ class Voice {
     if (!channel) throw "invalid state";
 
     const mode = this.callMode();
-    if (this.#publishGate.size > 0) {
-      this.onErr(
-        new Error(
-          "You can't share your screen right now — the call is re-securing or paused. Try again in a moment.",
-        ),
-      );
+    // Cheap up-front refusal so neither dialog is shown for a share that
+    // cannot start. Deliberately does NOT capture the send key: between here
+    // and `connect()` sit the tier sheet and the OS consent dialog, both
+    // user-paced, and a key read now would be a snapshot of an epoch that may
+    // be several rotations stale by the time the leg publishes. The binding
+    // read is the one below, immediately before `connect()`.
+    if (
+      this.#publishGate.size > 0 ||
+      (mode?.kind === "e2ee" &&
+        (this.#mlsSession?.state() !== "active" ||
+          !this.#mlsKeyProvider?.lastLocalScreenKey()))
+    ) {
+      this.onErr(new Error(SHARE_UNAVAILABLE_NOW));
       return;
-    }
-    let e2eeKey: { keyB64: string; keyIndex: number } | undefined;
-    if (mode?.kind === "e2ee") {
-      const key = this.#mlsKeyProvider?.lastLocalScreenKey();
-      if (this.#mlsSession?.state() !== "active" || !key) {
-        this.onErr(
-          new Error(
-            "You can't share your screen right now — the call is re-securing or paused. Try again in a moment.",
-          ),
-        );
-        return;
-      }
-      e2eeKey = { keyB64: key.keyB64, keyIndex: key.keyIndex };
     }
 
     // Tier sheet first: it is the cheap step, and cancelling it must not
@@ -4425,15 +4466,24 @@ class Voice {
     );
     if (!tier) return;
 
+    // Claim the attempt. Any stop hook, or a competing tap, bumps this and so
+    // orphans everything below.
+    const generation = ++this.#androidLegGeneration;
+    this.#androidLegStartingFor = generation;
+    let activeLeg: AndroidScreenLeg | undefined;
     try {
-      const activeLeg = this.#ensureAndroidLeg();
+      activeLeg = this.#ensureAndroidLeg();
       // Phase 1: consent + FGS. User-paced — can outlive any token TTL,
       // which is exactly why the token is minted AFTER it (§4.2).
       await activeLeg.prepare();
-
-      // The world can change while the consent dialog is up.
-      if (this.room() !== room) return;
-      if (this.#publishGate.size > 0) return;
+      // From here every exit must TEAR DOWN, never just return: `prepare()`
+      // has taken the OS consent and started the foreground service, so a bare
+      // return leaves the phone permitted to capture with nothing owning the
+      // teardown.
+      if (this.#androidLegStale(generation, room)) {
+        await this.#stopAndroidLeg();
+        return;
+      }
 
       // The device half of OUR OWN live identity — the route only mints a
       // leg for the device that IS the primary (§2.1 step 6), and refuses
@@ -4441,6 +4491,27 @@ class Voice {
       const identity = room.localParticipant.identity;
       const deviceId = identity.split(":")[1] || undefined;
       const auth = await channel.joinScreenLeg(deviceId);
+      if (this.#androidLegStale(generation, room)) {
+        await this.#stopAndroidLeg();
+        return;
+      }
+
+      // THE binding read of the send key (§5.2). Taken here, after both
+      // dialogs and the token mint, because `lastLocalScreenKey` is the
+      // provider's record of "what key should the leg be using now" and a
+      // rotation during the consent window has already advanced it. Publishing
+      // under the pre-dialog key would hand the share to whoever that
+      // rotation removed.
+      let e2eeKey: NativeFrameKey | undefined;
+      if (mode?.kind === "e2ee") {
+        const key = this.#mlsKeyProvider?.lastLocalScreenKey();
+        if (this.#mlsSession?.state() !== "active" || !key) {
+          await this.#stopAndroidLeg();
+          this.onErr(new Error(SHARE_UNAVAILABLE_NOW));
+          return;
+        }
+        e2eeKey = { keyB64: key.keyB64, keyIndex: key.keyIndex };
+      }
 
       await activeLeg.connect({
         url: auth.url,
@@ -4450,8 +4521,79 @@ class Voice {
       });
       // `started` fires the signal + sound (the phone never subscribes to
       // its own leg, so the viewer-side sound path never runs here).
+
+      // Past this line the leg is LIVE and capturing, so a world that moved
+      // while `connect()` was in flight must be answered by tearing down, not
+      // by returning — returning is what let a share outlive its own call.
+      if (this.#androidLegStale(generation, room)) {
+        await this.#stopAndroidLeg();
+        return;
+      }
+      await this.#syncLegKeyAfterConnect(activeLeg, e2eeKey);
     } catch (error) {
+      // A failure anywhere above can still leave native capturing (consent is
+      // granted in phase 1, and `connect()` can throw after publishing), so
+      // the error path tears down rather than trusting `active()`.
+      await this.#stopAndroidLeg();
       this.onErr(this.#androidScreenShareError(error));
+    } finally {
+      // Cleared only by the attempt that still owns the window. A stop bumps
+      // the generation without claiming one, so keying on the token itself
+      // would strand this flag set forever; keying on the OWNER lets this
+      // attempt clean up after a stop while still refusing to unmask a
+      // successor's start.
+      if (this.#androidLegStartingFor === generation)
+        this.#androidLegStartingFor = undefined;
+    }
+  }
+
+  /**
+   * Has the world moved since this start attempt claimed the leg? A stop hook
+   * (hang-up, kick, socket loss, pause gate) bumps the generation, and the
+   * room and gate are re-read because a start spans two user-paced dialogs.
+   */
+  #androidLegStale(generation: number, room: Room): boolean {
+    return startAttemptStale({
+      generation,
+      currentGeneration: this.#androidLegGeneration,
+      roomChanged: this.room() !== room,
+      publishGateSize: this.#publishGate.size,
+    });
+  }
+
+  /**
+   * Close the last gap in the start path: a rotation that landed between the
+   * key read above and `connect()` resolving was seen by `onLocalScreenKey`
+   * while the leg was not yet `active()`, so it was dropped. The provider's
+   * record is authoritative, so compare against it and push if it moved.
+   *
+   * 🔴 Residual, and it needs NATIVE work to close: the leg publishes the
+   * instant `connect()` resolves, so frames encrypted under the previous
+   * epoch's key can leave the phone for the length of one bridge round-trip.
+   * Shrinking that from "the length of an OS consent dialog" to "one round
+   * trip" is what this does; eliminating it needs the epoch carried across
+   * the bridge so native can refuse to publish under a superseded key.
+   */
+  async #syncLegKeyAfterConnect(
+    leg: AndroidScreenLeg,
+    connectedWith: NativeFrameKey | undefined,
+  ): Promise<void> {
+    const push = keyToPushAfterConnect(
+      connectedWith,
+      this.#mlsKeyProvider?.lastLocalScreenKey(),
+    );
+    if (!push) return;
+    try {
+      await leg.setFrameKey(push);
+    } catch {
+      // Fail closed, exactly as the rotation listener does: a leg that cannot
+      // take the current epoch's key must not keep publishing under the old.
+      await this.#stopAndroidLeg();
+      this.onErr(
+        new Error(
+          "Your screen share stopped because it could no longer be encrypted.",
+        ),
+      );
     }
   }
 
@@ -4527,8 +4669,19 @@ class Voice {
    * leg-left) clears state even if the bridge call is lost.
    */
   async #stopAndroidLeg(): Promise<void> {
+    // Bump FIRST, and unconditionally: this is what cancels a start attempt
+    // that is mid-`connect()` and therefore invisible to `active()`. Doing it
+    // before the early return matters — the hook that fires while nothing is
+    // running yet is exactly the one that must orphan the attempt.
+    this.#androidLegGeneration++;
     const leg = this.#androidLeg;
-    if (!leg?.active()) return;
+    if (!leg) return;
+    // `active()` alone was the bug: between `prepare()` and `connect()`
+    // resolving the OS is already capturing under a granted consent, so a
+    // hook that trusted `active()` left the share to come up into a call that
+    // had ended. `#androidLegStartingFor` covers exactly that window; native
+    // `stop()` is idempotent, so a redundant call is free.
+    if (!leg.active() && this.#androidLegStartingFor === undefined) return;
     await leg.stop();
     this.#setScreenshare(false);
   }
