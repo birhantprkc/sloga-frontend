@@ -688,7 +688,14 @@ class ScreenSharePlugin : Plugin() {
         // now, and mine is unreleased". Written first so it is already true
         // for any reader, which keeps it correct even if a suspension is
         // ever reintroduced above (it must not be — see the invariant).
-        releasedRoom = room
+        //
+        // Only ever OVERWRITTEN by a teardown that has a Room to claim: a
+        // later teardown finding `this.room` already null (a second §7.4
+        // hook firing inside one publish window — they no longer coalesce
+        // in JS once the previous stop resolved) would otherwise blank a
+        // still-live claim, and the attempt it belonged to would then
+        // release its Room a second time.
+        room?.let { releasedRoom = it }
         // Stop the capture before the Room goes: stopping the track is what
         // releases the MediaProjection and its foreground service, and a
         // Room disconnected without it can leave the OS cast chip up (see
