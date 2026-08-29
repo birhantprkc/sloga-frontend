@@ -76,7 +76,11 @@ import type {
 } from "@revolt/client";
 
 import { isScreenLeg } from "../ui/components/features/voice/participantIdentity";
-import { admitGraceWindow, billAdmitGrace } from "./mlsAdmitGracePolicy";
+import {
+  admitGraceWindow,
+  billAdmitGrace,
+  settleAdmitGrace,
+} from "./mlsAdmitGracePolicy";
 import {
   type AdmitAbort,
   admitAbortIsBenign,
@@ -957,13 +961,17 @@ export class MlsCallSession {
   /** Open admit-grace windows for freshly-joined SFU participants, keyed by
    *  identity (the join-direction mirror of `#leaveGrace`). `deadline` is the
    *  refresh ceiling for THIS window (arm time + whatever budget remained);
-   *  `armedAt` is what the closing window bills against `#admitGraceUsed`. */
+   *  `pendingSince` stamps when the identity was last observed REPORTED
+   *  pending (null while the window is inert — identity enrolled, folded, or
+   *  absent), and is what closing/settling bills against `#admitGraceUsed`:
+   *  only time the window actually suppressed a verdict costs budget (see
+   *  `settleAdmitGrace`). */
   #admitGrace = new Map<
     string,
     {
       timer: ReturnType<typeof setTimeout>;
       deadline: number;
-      armedAt: number;
+      pendingSince: number | null;
     }
   >();
   /**
@@ -994,6 +1002,10 @@ export class MlsCallSession {
   #reconcileTimer: ReturnType<typeof setTimeout> | null = null;
   /** Gate on the self-rescheduling reconcile loop (stops the finally re-arm). */
   #reconcileEnabled = false;
+  /** The reconcile currently running, if any (single-flight). */
+  #reconcileInFlight: Promise<RosterReconcileResult | null> | null = null;
+  /** The ONE follow-up run every caller arriving mid-flight shares. */
+  #reconcileNext: Promise<RosterReconcileResult | null> | null = null;
 
   // --- Enable + lifecycle (step 6) -------------------------------------------
   /** Whether LiveKit E2EE mode is currently ON (`setEncryptionEnabled(true)`). */
@@ -2956,7 +2968,11 @@ export class MlsCallSession {
         this.#admitGrace.set(identity, {
           timer,
           deadline: Date.now() + window.budgetMs,
-          armedAt: Date.now(),
+          // Assumed pending until the reconcile kicked below reports
+          // otherwise: conservative for the unknown gap (an enrolled
+          // rejoiner or a reconnect replay is settled inert one round trip
+          // later, costing milliseconds, not a window).
+          pendingSince: Date.now(),
         });
         this.#timers.add(timer);
       }
@@ -2991,6 +3007,36 @@ export class MlsCallSession {
    * Also the fresh input to the enable-gate precondition (`rosterConsistent`).
    */
   async reconcileNow(): Promise<RosterReconcileResult | null> {
+    // Single-flight with a coalesced trailing run. Every event source funnels
+    // here — `participantConnected` per joiner AND `trackPublished` per
+    // publication — so a join storm used to fan out N×M concurrent native
+    // `callState` round trips. A caller arriving while one runs shares ONE
+    // follow-up that starts only after the current run settles; because that
+    // follow-up reads its inputs no earlier than any of those callers'
+    // worlds, `rosterConsistent()`'s fresh-reconcile precondition is
+    // preserved — a caller never gets a result computed before its call.
+    if (this.#reconcileInFlight) {
+      this.#reconcileNext ??= this.#reconcileInFlight.then(
+        () => this.#reconcileFollowUp(),
+        () => this.#reconcileFollowUp(),
+      );
+      return this.#reconcileNext;
+    }
+    const run = this.#reconcileOnce();
+    this.#reconcileInFlight = run;
+    try {
+      return await run;
+    } finally {
+      if (this.#reconcileInFlight === run) this.#reconcileInFlight = null;
+    }
+  }
+
+  #reconcileFollowUp(): Promise<RosterReconcileResult | null> {
+    this.#reconcileNext = null;
+    return this.reconcileNow();
+  }
+
+  async #reconcileOnce(): Promise<RosterReconcileResult | null> {
     const media = this.#media;
     if (!media || this.#state !== "active" || !this.#groupId) return null;
 
@@ -3024,6 +3070,25 @@ export class MlsCallSession {
       [...this.#admitGrace.keys()],
     );
     this.#nonEnrolled = result.nonEnrolled;
+    // Settle every open admit-grace window against what this reconcile
+    // actually REPORTED: budget is charged only for stretches the window
+    // suppressed a would-be non-enrolled verdict (`result.pending`), never
+    // for time it sat inert over an enrolled/folded identity — an admitted
+    // member's lapsed window, or the windows a full-reconnect replay arms
+    // over the whole roster, cost nothing (see `settleAdmitGrace`).
+    {
+      const pendingSet = new Set(result.pending);
+      const now = Date.now();
+      for (const [identity, entry] of this.#admitGrace) {
+        const settled = settleAdmitGrace(
+          entry.pendingSince,
+          pendingSet.has(identity),
+          now,
+        );
+        if (settled.billMs > 0) this.#billAdmitGrace(identity, settled.billMs);
+        entry.pendingSince = settled.pendingSince;
+      }
+    }
     // Surface the VERIFIED MLS roster + divergent ghosts for the 6.5 panel.
     media.onRosterState?.(members, result.ghosts);
 
@@ -3143,9 +3208,13 @@ export class MlsCallSession {
       this.#timers.delete(timer);
     }
     this.#leaveGrace.clear();
-    for (const entry of this.#admitGrace.values()) {
+    for (const [identity, entry] of this.#admitGrace) {
       clearTimeout(entry.timer);
       this.#timers.delete(entry.timer);
+      // Windows closed by a teardown/re-establish still pay for any open
+      // pending stretch: a hostile DS cycling re-establishes must not turn
+      // window churn into unbilled suppression.
+      this.#closeAdmitGrace(identity, entry);
     }
     this.#admitGrace.clear();
     // 🔴 The consumed-budget ledger is deliberately NOT cleared here.
@@ -3179,41 +3248,40 @@ export class MlsCallSession {
     if (entry) {
       clearTimeout(entry.timer);
       this.#timers.delete(entry.timer);
-      this.#billAdmitGrace(identity, entry.armedAt);
+      this.#closeAdmitGrace(identity, entry);
       this.#admitGrace.delete(identity);
     }
   }
 
+  /** Settle a window as it closes: charge any still-open pending stretch. */
+  #closeAdmitGrace(
+    identity: string,
+    entry: { pendingSince: number | null },
+  ): void {
+    const settled = settleAdmitGrace(entry.pendingSince, false, Date.now());
+    if (settled.billMs > 0) this.#billAdmitGrace(identity, settled.billMs);
+    entry.pendingSince = null;
+  }
+
   /**
-   * Charge a closing window's elapsed time to the identity's per-call budget.
+   * Charge pending milliseconds to the identity's per-call budget.
    *
-   * Called from EVERY close — leave, expiry, and admit — because the leave
-   * path is the one churn exploits: without billing, a rejoin minted a fresh
-   * ceiling and the suppression never ended.
+   * Reached from every settle point — the reconcile that observes a pending
+   * stretch end, and every window close (leave, expiry, teardown) — because
+   * the leave path is the one churn exploits: without billing, a rejoin
+   * minted a fresh ceiling and the suppression never ended.
    */
-  #billAdmitGrace(identity: string, armedAt: number): void {
+  #billAdmitGrace(identity: string, elapsedMs: number): void {
     this.#admitGraceUsed.set(
       identity,
       billAdmitGrace(
         this.#admitGraceUsed.get(identity) ?? 0,
-        Date.now() - armedAt,
+        elapsedMs,
         ADMIT_GRACE_MAX_MS,
       ),
     );
   }
 
-  /**
-   * Extend a still-OPEN admit-grace window for a joiner that is observably
-   * still enrolling — a join request seen from it, or our own admit ladder
-   * driving an attempt for it. Admits legitimately outlast the initial window
-   * on slow devices (stagger + the joiner's 10 s re-broadcast cadence +
-   * admitter re-drives), and expiring mid-admit would re-fire the exact
-   * mixed→leg-stop this grace exists to prevent. Two bounds keep it honest:
-   * only an OPEN window refreshes (once expired, the declared mix stands
-   * until the admit itself completes and clears it — activity never
-   * un-declares loud), and never past the identity's hard `deadline`, so a
-   * joiner that spams join requests forever still goes loud.
-   */
   /**
    * An admit-grace window ran out. Before letting the joiner fall through to
    * non-enrolled (and the call to `mixed`), re-arm the window while the
@@ -3229,31 +3297,45 @@ export class MlsCallSession {
   #onAdmitGraceExpiry(identity: string): void {
     const entry = this.#admitGrace.get(identity);
     if (!entry) return; // cleared concurrently
-    const remaining = entry.deadline - Date.now();
-    const silent =
-      this.#media?.unpublishedParticipants?.().includes(identity) ?? false;
-    if (remaining > 0 && silent) {
-      const timer = setTimeout(
-        () => {
-          this.#timers.delete(timer);
-          this.#onAdmitGraceExpiry(identity);
-        },
-        Math.min(ADMIT_GRACE_BASE_MS, remaining),
-      );
-      entry.timer = timer;
-      this.#timers.add(timer);
-      return;
-    }
-    this.#billAdmitGrace(identity, entry.armedAt);
+    if (this.#rearmAdmitGrace(identity, entry)) return;
+    this.#closeAdmitGrace(identity, entry);
     this.#admitGrace.delete(identity);
     void this.reconcileNow();
   }
 
+  /**
+   * Extend a still-OPEN admit-grace window for a joiner that is observably
+   * still enrolling — a join request seen from it, or our own admit ladder
+   * driving an attempt for it. Admits legitimately outlast the initial window
+   * on slow devices (stagger + the joiner's 10 s re-broadcast cadence +
+   * admitter re-drives), and expiring mid-admit would re-fire the exact
+   * mixed→leg-stop this grace exists to prevent. The bounds are exactly the
+   * expiry re-arm's (`#rearmAdmitGrace`): only an OPEN window refreshes (once
+   * expired, the declared mix stands until the admit itself completes and
+   * clears it — activity never un-declares loud), only while the joiner is
+   * still publication-silent (activity from something already publishing must
+   * not out-extend what its own expiry would grant), and never past the
+   * identity's hard `deadline`, so a joiner that spams join requests forever
+   * still goes loud.
+   */
   #refreshAdmitGrace(identity: string): void {
     const entry = this.#admitGrace.get(identity);
     if (!entry) return;
+    this.#rearmAdmitGrace(identity, entry);
+  }
+
+  /**
+   * Re-arm one open window's timer if the deadline permits AND the identity
+   * is still publication-silent. Returns false when the window must lapse.
+   */
+  #rearmAdmitGrace(
+    identity: string,
+    entry: { timer: ReturnType<typeof setTimeout>; deadline: number },
+  ): boolean {
     const remaining = entry.deadline - Date.now();
-    if (remaining <= 0) return; // ceiling reached — let the open window lapse
+    const silent =
+      this.#media?.unpublishedParticipants?.().includes(identity) ?? false;
+    if (remaining <= 0 || !silent) return false;
     clearTimeout(entry.timer);
     this.#timers.delete(entry.timer);
     const timer = setTimeout(
@@ -3265,6 +3347,7 @@ export class MlsCallSession {
     );
     entry.timer = timer;
     this.#timers.add(timer);
+    return true;
   }
 
   #clearGhostTimer(identity: string): void {

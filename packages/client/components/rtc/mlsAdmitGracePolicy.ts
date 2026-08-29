@@ -90,3 +90,51 @@ export function billAdmitGrace(
 ): number {
   return Math.min(maxMs, usedMs + Math.max(0, elapsedMs));
 }
+
+/** The outcome of settling one open window against a roster observation. */
+export interface AdmitGraceSettle {
+  /** Pending milliseconds to charge to the identity's budget NOW. */
+  billMs: number;
+  /** The window's new pending-since stamp (null = currently inert). */
+  pendingSince: number | null;
+}
+
+/**
+ * Settle an OPEN window against the latest roster observation.
+ *
+ * The budget may only be charged for time the identity was actually REPORTED
+ * pending — i.e. time its window suppressed a would-be non-enrolled verdict.
+ * Charging an open window for its whole lifetime over-billed two legitimate
+ * shapes into budget exhaustion:
+ *
+ *  - an identity that ADMITTED promptly keeps its window open by design (the
+ *    eager-clear-at-admit hazard: a stale-leaf rejoin is momentarily in the
+ *    roster, and clearing then left it graceless when the stale leaf was
+ *    removed) — but the window is INERT from the admit on, and billing its
+ *    full open duration charged a member for time it suppressed nothing;
+ *  - a full LiveKit reconnect replays `ParticipantConnected` for every
+ *    already-enrolled remote, arming inert windows for all of them — billing
+ *    those at full duration meant a few network blips exhausted every
+ *    legitimate member's budget, and their next REAL admit went loud.
+ *
+ * So the window carries `pendingSince`: set while the identity is reported
+ * pending, null while inert. Each observation charges the stretch that just
+ * ENDED (reported-pending → not) and restarts the stamp when suppression
+ * resumes. Closing a window (leave, expiry, teardown) settles it as
+ * not-pending, charging any open stretch. The hostile-SFU bound is intact:
+ * an identity a hostile SFU keeps looking non-enrolled is continuously
+ * reported pending, so its stretches sum to the same ceiling as before.
+ */
+export function settleAdmitGrace(
+  pendingSince: number | null,
+  reportedPending: boolean,
+  nowMs: number,
+): AdmitGraceSettle {
+  if (reportedPending) {
+    return { billMs: 0, pendingSince: pendingSince ?? nowMs };
+  }
+  return {
+    billMs: pendingSince === null ? 0 : Math.max(0, nowMs - pendingSince),
+    pendingSince: null,
+  };
+}

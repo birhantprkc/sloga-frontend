@@ -17,7 +17,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { admitGraceWindow, billAdmitGrace } from "./mlsAdmitGracePolicy.ts";
+import {
+  admitGraceWindow,
+  billAdmitGrace,
+  settleAdmitGrace,
+} from "./mlsAdmitGracePolicy.ts";
 
 const BASE = 10_000;
 const STAGGER = 2_000;
@@ -91,4 +95,71 @@ test("billing accumulates, clamps at the ceiling, and never refunds", () => {
   // A backwards clock jump yields a negative elapsed; it must not hand budget
   // back and re-open a window that was already spent.
   assert.equal(billAdmitGrace(5_000, -9_000, MAX), 5_000);
+});
+
+// ---- settleAdmitGrace: bill only time actually REPORTED pending -----------
+
+test("a stretch that ends is billed exactly once, at its end", () => {
+  // Pending since t=1000, reconcile at t=4000 reports it no longer pending
+  // (it enrolled): 3 s charged, stamp cleared.
+  assert.deepEqual(settleAdmitGrace(1_000, false, 4_000), {
+    billMs: 3_000,
+    pendingSince: null,
+  });
+});
+
+test("an ongoing pending stretch bills nothing until it ends", () => {
+  // Still reported pending: the stamp is kept, and nothing is charged yet —
+  // the charge lands when the stretch closes (settle or window close).
+  assert.deepEqual(settleAdmitGrace(1_000, true, 4_000), {
+    billMs: 0,
+    pendingSince: 1_000,
+  });
+});
+
+test("🔴 an INERT window costs nothing", () => {
+  // The admitted-member shape: the window stays open by design (the
+  // eager-clear-at-admit stale-leaf hazard), but from the admit on it
+  // suppresses nothing — lapsing must not bill its open duration. Same for
+  // the reconnect-replay shape: windows armed over already-enrolled remotes
+  // settle inert and their lapse is free.
+  assert.deepEqual(settleAdmitGrace(null, false, 60_000), {
+    billMs: 0,
+    pendingSince: null,
+  });
+});
+
+test("suppression resuming restarts the stamp at the observation", () => {
+  // Enrolled → gone from the roster again (stale-leaf removal): the window
+  // begins paying again from now, not retroactively.
+  assert.deepEqual(settleAdmitGrace(null, true, 9_000), {
+    billMs: 0,
+    pendingSince: 9_000,
+  });
+});
+
+test("a backwards clock jump cannot refund via settle", () => {
+  assert.deepEqual(settleAdmitGrace(5_000, false, 2_000), {
+    billMs: 0,
+    pendingSince: null,
+  });
+});
+
+test("🔴 interleaved stretches sum to the same ceiling as one long one", () => {
+  // The hostile-SFU bound survives the inert-time carve-out: an identity the
+  // SFU keeps re-presenting as non-enrolled is continuously reported pending,
+  // so its stretches accumulate to the ceiling and the next window is null.
+  let used = 0;
+  let at = 0;
+  for (let i = 0; i < 4; i++) {
+    // 15 s reported pending...
+    const opened = settleAdmitGrace(null, true, at);
+    at += 15_000;
+    const closed = settleAdmitGrace(opened.pendingSince, false, at);
+    used = billAdmitGrace(used, closed.billMs, MAX);
+    // ...then an inert stretch, which must not extend the budget.
+    at += 30_000;
+  }
+  assert.equal(used, MAX);
+  assert.equal(win(used), null);
 });
