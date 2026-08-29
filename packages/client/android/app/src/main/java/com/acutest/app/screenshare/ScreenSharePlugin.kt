@@ -84,12 +84,13 @@ class ScreenSharePlugin : Plugin() {
     private var consentIntent: Intent? = null
 
     private var room: Room? = null
-    /** The Room the last [tearDown] disconnected AND released. Lets a connect
-     *  attempt that was cancelled mid-flight tell "the cancelling tearDown
-     *  already released my Room" from "a successor owns `room` now, and mine
-     *  is unreleased" — reaching the abandon path looks identical otherwise,
-     *  and guessing wrong means either a double native dispose or a ghost
-     *  participant left on the SFU. */
+    /** The Room the last [tearDown] CLAIMED responsibility for releasing —
+     *  set before it touches it, not after. Lets a connect attempt that was
+     *  cancelled mid-flight tell "a teardown owns my Room's release" from
+     *  "a successor owns `room` now, and mine is unreleased": reaching the
+     *  abandon path looks identical otherwise, and guessing wrong means
+     *  either a double native dispose or a ghost participant left on the
+     *  SFU. */
     private var releasedRoom: Room? = null
     private var keyProvider: RawScreenKeyProvider? = null
     private var legIdentity: String? = null
@@ -415,30 +416,35 @@ class ScreenSharePlugin : Plugin() {
     }
 
     /**
-     * Stop a screen capture this attempt may have started, on the abandon
-     * path. NOT redundant with disconnecting the Room: a stop landing while
-     * `setScreenShareEnabled` is suspended leaves a screencast track that was
-     * never in `trackPublications` when the room was cleaned up, so the
-     * SDK's own cleanup never reaches it — and the MediaProjection plus its
-     * ScreenCaptureService then keep running, with the OS cast chip and our
-     * notification showing, while the app believes nothing is shared. The
-     * publication is moot in that window; the CAPTURE is not.
+     * Stop a screen capture, before the Room that owns it goes away. NOT
+     * redundant with disconnecting: stopping the track is what releases the
+     * MediaProjection and lets the SDK's ScreenCaptureService go, so a Room
+     * torn down without it can leave the OS cast chip and our notification
+     * up while the app believes nothing is shared.
      *
-     * 🔴 Best-effort and NOT yet witnessed: whether `setScreenShareEnabled`
-     * acquires the projection at all on a disconnected room is lk-android
-     * internals nobody here has observed. Owed: one device leg that ends the
-     * call from the other participant DURING the publish, then checks the
-     * shade and `adb shell dumpsys media_projection`.
+     * 🔴 MUST STAY NON-SUSPENDING — see [tearDown]'s invariant. `Track.stop()`
+     * is `public void stop()` in livekit-android 2.28.0 (checked against the
+     * .aar, not assumed). The obvious-looking `setScreenShareEnabled(false)`
+     * is NOT usable here: it is `suspend`, and `LocalParticipant` serializes
+     * per-source publish/unpublish behind a mutex, so it would block for the
+     * whole of an in-flight publish — turning teardown into a suspending
+     * section and making every field it has not yet written readable as
+     * stale. It also buys nothing: it reaches the track through the same
+     * publication lookup this does.
+     *
+     * 🔴 Residual, needs HARDWARE: a track that never reached
+     * `trackPublications` (a stop landing mid-publish) is invisible to this
+     * lookup as much as to the SDK's own cleanup. Owed before the flag
+     * lights: one device leg that ends the call from the other participant
+     * DURING the publish, then checks the shade and
+     * `adb shell dumpsys media_projection`.
      */
-    private suspend fun stopCapture(room: Room) {
+    private fun stopCapture(room: Room) {
         try {
             room.localParticipant
                 .getTrackPublication(Track.Source.SCREEN_SHARE)
                 ?.track
                 ?.stop()
-        } catch (_: Throwable) {}
-        try {
-            room.localParticipant.setScreenShareEnabled(false)
         } catch (_: Throwable) {}
     }
 
@@ -451,7 +457,7 @@ class ScreenSharePlugin : Plugin() {
      *  capture it started, disconnect, and release unless a tearDown already
      *  did. Never touches plugin-global state — that belongs to whoever
      *  holds `this.room` now. */
-    private suspend fun discardRoom(room: Room, alreadyReleased: Boolean) {
+    private fun discardRoom(room: Room, alreadyReleased: Boolean) {
         stopCapture(room)
         try {
             room.disconnect()
@@ -645,7 +651,26 @@ class ScreenSharePlugin : Plugin() {
         }
     }
 
-    private suspend fun tearDown(reason: String?) {
+    /**
+     * 🔴 INVARIANT, and everything below depends on it: this function must
+     * contain NO SUSPENSION POINT. Every coroutine here is Main-confined, so
+     * a teardown without one runs atomically against `doConnect` — which is
+     * what makes the whole ownership scheme sound: no successor can claim
+     * `room` mid-teardown, no re-entrant teardown can pass `stopping` and
+     * settle a PluginCall early, and no attempt can read a field this has
+     * not yet written.
+     *
+     * It was briefly violated by calling the SUSPENDING
+     * `setScreenShareEnabled(false)` from [stopCapture], and the cost was
+     * immediate and deterministic rather than theoretical: `LocalParticipant`
+     * serializes per-source publish/unpublish behind a mutex, so a teardown
+     * during a publish blocked until that publish finished, and the abandon
+     * path then read `releasedRoom` before this had written it — releasing
+     * the same native Room twice, on exactly the stop-during-publish path
+     * [stopCapture] exists to serve. Anything called from here ([stopCapture],
+     * [discardRoom]) must stay non-suspending.
+     */
+    private fun tearDown(reason: String?) {
         // Cancel any in-flight connect FIRST — even a re-entrant tearDown
         // that returns at the guard below must orphan it (see
         // [ensureConnectCurrent]); the bump is idempotent and harmless.
@@ -657,10 +682,16 @@ class ScreenSharePlugin : Plugin() {
         val room = this.room
         this.room = null
         legIdentity = null
-        // Stop the capture explicitly before the Room goes: a screencast
-        // track that never reached `trackPublications` is invisible to the
-        // SDK's own cleanup, and would keep the MediaProjection and its
-        // foreground service alive with nothing owning them (see
+        // CLAIM the Room before touching it, not after releasing it: this
+        // flag is what an attempt cancelled mid-connect reads to tell
+        // "a teardown owns my Room's release" from "a successor owns `room`
+        // now, and mine is unreleased". Written first so it is already true
+        // for any reader, which keeps it correct even if a suspension is
+        // ever reintroduced above (it must not be — see the invariant).
+        releasedRoom = room
+        // Stop the capture before the Room goes: stopping the track is what
+        // releases the MediaProjection and its foreground service, and a
+        // Room disconnected without it can leave the OS cast chip up (see
         // [stopCapture]).
         room?.let { stopCapture(it) }
         try {
@@ -669,10 +700,6 @@ class ScreenSharePlugin : Plugin() {
         try {
             room?.release()
         } catch (_: Throwable) {}
-        // Remember WHICH Room this released, so an attempt that was
-        // cancelled mid-connect can tell "already released" from "superseded
-        // by a successor" and not dispose the same native object twice.
-        releasedRoom = room
         // Drop the native keyring (§4.2 hygiene) — the provider outlives the
         // Room, so its rtcKeyProvider must be disposed explicitly.
         try {
