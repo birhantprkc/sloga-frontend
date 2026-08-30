@@ -13,6 +13,30 @@ public class MainActivity extends BridgeActivity {
     private static java.lang.ref.WeakReference<MainActivity> INSTANCE;
 
     /**
+     * Whether the activity is resumed. Read by SlogaMessagingService to decide
+     * whether an incoming-call NOTIFICATION is needed at all: when the app is
+     * in front, the web layer shows its own Accept/Decline popup and a
+     * notification would give the user two separate things to decline.
+     */
+    private static volatile boolean FOREGROUND = false;
+
+    static boolean isForeground() {
+        return FOREGROUND;
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        FOREGROUND = true;
+    }
+
+    @Override
+    public void onPause() {
+        FOREGROUND = false;
+        super.onPause();
+    }
+
+    /**
      * Tell the web layer a ringing call was declined from the notification's
      * action button. Cancelling the notification stops the system ringtone,
      * but the in-app popup has no other way to learn the call is over. No-op

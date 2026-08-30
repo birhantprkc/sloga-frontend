@@ -184,6 +184,15 @@ public class SlogaMessagingService extends FirebaseMessagingService {
 
     /** Ringing notification with Answer / Decline actions */
     private void notifyIncomingCall(int notificationId, String channelId, String callerId) {
+        // ONE ringing UI at a time. With the app in front AND its web layer
+        // connected, that layer already shows an Accept/Decline popup, so a
+        // notification here is the duplicate the user has to dismiss twice.
+        // Both conditions are required — see isInAppCallUiActive().
+        if (MainActivity.isForeground() && PushTokenPlugin.isInAppCallUiActive()) {
+            Log.i(TAG, "Suppressing call notification; the in-app popup is showing it");
+            return;
+        }
+
         String path = channelId != null ? "/channel/" + channelId : null;
 
         // RING intent — drives the full-screen intent and tapping the notification

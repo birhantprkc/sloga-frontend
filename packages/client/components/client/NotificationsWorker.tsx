@@ -26,7 +26,13 @@ import {
 import { useState } from "@revolt/state";
 import { streamerModeHides } from "@revolt/state/streamer";
 
-import { useClient, useNotifications, useSound } from ".";
+import {
+  useClient,
+  useClientLifecycle,
+  useNotifications,
+  useSound,
+} from ".";
+import { State } from "./Controller";
 import { connectionUrl } from "./streamConnections";
 import {
   notificationPermissionGranted,
@@ -44,6 +50,28 @@ export function NotificationsWorker() {
   const voice = useVoice();
   const params = useSmartParams();
   const sound = useSound();
+  const { lifecycle } = useClientLifecycle();
+
+  // Tell the native layer whether this web layer can currently present the
+  // ringing popup, so SlogaMessagingService can suppress the DUPLICATE
+  // notification. Without this an incoming call shows an Android notification
+  // AND an in-app popup, each needing its own Decline (reported 2026-08-30).
+  //
+  // Reported on every connection-state change rather than once at mount: the
+  // popup rides the websocket VoiceChannelJoin event, so a disconnected client
+  // cannot show one and must NOT suppress the notification — that would turn a
+  // duplicate into a silently MISSED call.
+  createEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    const active = lifecycle.state() === State.Connected;
+    const plugin = registerPlugin<{
+      setInAppCallUiActive(options: { active: boolean }): Promise<void>;
+    }>("PushToken");
+    plugin.setInAppCallUiActive({ active }).catch(() => {});
+    onCleanup(() => {
+      plugin.setInAppCallUiActive({ active: false }).catch(() => {});
+    });
+  });
 
   const { initNotifications, resyncPushSubscription } = useNotifications();
 

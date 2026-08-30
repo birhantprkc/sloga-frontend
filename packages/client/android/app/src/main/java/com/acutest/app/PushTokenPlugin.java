@@ -28,6 +28,28 @@ public class PushTokenPlugin extends Plugin {
     private static boolean pendingRing;
     private static String pendingCallerId;
 
+    /**
+     * Whether the web layer is connected and will therefore present its own
+     * incoming-call popup. Set by the client on every connection-state change.
+     *
+     * This is the SECOND half of the notification-suppression guard, and it is
+     * load-bearing: the in-app popup is driven by the websocket join event, so
+     * a foregrounded app with a dead socket never shows one. Suppressing on
+     * "foreground" alone would turn that into a silently missed call.
+     */
+    private static volatile boolean inAppCallUiActive = false;
+
+    static boolean isInAppCallUiActive() {
+        return inAppCallUiActive;
+    }
+
+    /** Web layer reporting whether it can currently show the ringing popup. */
+    @PluginMethod
+    public void setInAppCallUiActive(PluginCall call) {
+        inAppCallUiActive = Boolean.TRUE.equals(call.getBoolean("active", Boolean.FALSE));
+        call.resolve();
+    }
+
     static void setPendingAction(String path, boolean answer, boolean ring, String callerId) {
         pendingPath = path;
         pendingAnswer = answer;
