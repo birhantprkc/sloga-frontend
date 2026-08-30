@@ -4334,6 +4334,10 @@ msgstr "New Event"
 msgid "New messages since {0}"
 msgstr "New messages since {0}"
 
+#: components/modal/modals/EditCategory.tsx
+msgid "New name"
+msgstr "New name"
+
 #: components/modal/modals/EditPassword.tsx
 #: components/auth/src/flows/Form.tsx
 msgid "New Password"
