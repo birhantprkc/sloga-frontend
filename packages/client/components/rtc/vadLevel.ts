@@ -10,6 +10,32 @@
 /** Analyser configuration every consumer must use for the numbers to agree. */
 export const VAD_FFT_SIZE = 512;
 
+/**
+ * Capture constraints for every VAD analysis stream (gate and meters alike).
+ *
+ * The browser's autoGainControl adapts PER STREAM over time: the gate's
+ * long-lived stream winds its gain up while the user sits quiet, so soft
+ * speech measures far louder there than on a freshly opened settings-meter
+ * stream — the two can never agree with AGC on, and the gate creeps more
+ * trigger-happy the longer a call runs. Noise suppression is off for the
+ * same reason: the level must be a stable property of the room, not of a
+ * per-stream filter state. Echo cancellation stays ON so other people's
+ * voices coming out of the speakers do not open the gate.
+ */
+export const VAD_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
+  autoGainControl: false,
+  noiseSuppression: false,
+  echoCancellation: true,
+};
+
+/**
+ * Consecutive frames the level must sit above the threshold before the gate
+ * opens (~50 ms at 60 fps): a single 16 ms transient poking over the line —
+ * a keyboard tap, a plosive — must not unmute the microphone while the
+ * meter visibly sits in the red.
+ */
+export const VAD_OPEN_FRAMES = 3;
+
 /** 0–100 loudness from an analyser's byte-frequency snapshot. */
 export function levelFromFrequencyData(buf: Uint8Array): number {
   let sum = 0;

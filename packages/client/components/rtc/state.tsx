@@ -180,7 +180,9 @@ import {
 import {
   createNoiseFloorTracker,
   levelFromFrequencyData,
+  VAD_AUDIO_CONSTRAINTS,
   VAD_FFT_SIZE,
+  VAD_OPEN_FRAMES,
 } from "./vadLevel";
 import { voiceNodeForChannel } from "./voiceNode";
 import { WatchDuck } from "./watchDuck";
@@ -5373,13 +5375,15 @@ class Voice {
       const preferred = this.#settings.preferredAudioInputDevice;
       const stream = await navigator.mediaDevices
         .getUserMedia({
-          audio: preferred ? { deviceId: { exact: preferred } } : true,
+          audio: preferred
+            ? { ...VAD_AUDIO_CONSTRAINTS, deviceId: { exact: preferred } }
+            : VAD_AUDIO_CONSTRAINTS,
           video: false,
         })
         .catch((error) => {
           if (!preferred) throw error;
           return navigator.mediaDevices.getUserMedia({
-            audio: true,
+            audio: VAD_AUDIO_CONSTRAINTS,
             video: false,
           });
         });
@@ -5406,6 +5410,10 @@ class Voice {
       // noise floor instead of the hand-set threshold. Same tracker the
       // settings meter runs, so what the meter shows is what the gate does.
       const auto = createNoiseFloorTracker();
+      // Consecutive frames above the threshold; the gate only OPENS after
+      // VAD_OPEN_FRAMES of sustained speech, but any single frame above it
+      // keeps an already-open gate open (resets the silence countdown).
+      let openStreak = 0;
 
       const tick = () => {
         analyser.getByteFrequencyData(buf);
@@ -5420,17 +5428,24 @@ class Voice {
           // aside would otherwise be spoken to the whole call.
           clearTimeout(this.#vadSilenceTimer);
           this.#vadSilenceTimer = undefined;
-          if (!room.localParticipant.isMicrophoneEnabled) {
+          openStreak++;
+          if (
+            openStreak >= VAD_OPEN_FRAMES &&
+            !room.localParticipant.isMicrophoneEnabled
+          ) {
             void this.#setMicEnabled(room, true).catch(() => {});
           }
-        } else if (
-          room.localParticipant.isMicrophoneEnabled &&
-          !this.#vadSilenceTimer
-        ) {
-          this.#vadSilenceTimer = setTimeout(() => {
-            room.localParticipant.setMicrophoneEnabled(false);
-            this.#vadSilenceTimer = undefined;
-          }, 600);
+        } else {
+          openStreak = 0;
+          if (
+            room.localParticipant.isMicrophoneEnabled &&
+            !this.#vadSilenceTimer
+          ) {
+            this.#vadSilenceTimer = setTimeout(() => {
+              room.localParticipant.setMicrophoneEnabled(false);
+              this.#vadSilenceTimer = undefined;
+            }, 600);
+          }
         }
 
         this.#vadFrame = requestAnimationFrame(tick);
