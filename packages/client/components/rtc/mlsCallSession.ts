@@ -101,6 +101,7 @@ import {
   spliceParkedAfterWelcome,
 } from "./mlsDrainPolicy";
 import { joinRequestAction } from "./mlsJoinRequestPolicy";
+import { negotiatingFailsafeAction } from "./mlsNegotiatingFailsafe";
 import {
   type RosterLegInputs,
   type RosterReconcileResult,
@@ -133,10 +134,8 @@ const MAX_REESTABLISH = 3;
  * state goes loud RE-SECURING — an E2EE-known call never auto-resumes plaintext.
  */
 const NEGOTIATING_FAILSAFE_MS = 5_000;
-/** Bounded fail-safe re-arms while the open-group probe is still PENDING
- *  (LOW-2) — beyond this the probe shares the DS's unreachability and the
- *  availability escape applies. */
-const MAX_FAILSAFE_REARMS = 2;
+// `MAX_FAILSAFE_REARMS` moved to `mlsNegotiatingFailsafe.ts` with the decision
+// it bounds, so the rule and its bound can be tested together.
 /**
  * Backoff before an admitter re-drives a join request whose attempt aborted
  * transiently. The joiner re-broadcasts only `MAX_JOINER_RETRIES` times over
@@ -1022,6 +1021,23 @@ export class MlsCallSession {
   #announcedBy: string | undefined;
   /** T0d fail-safe re-arms consumed while the open-group probe was pending. */
   #failsafeRearms = 0;
+  /**
+   * 🔴 Has the DS answered our create/join at all?
+   *
+   * The T0d fail-safe below is specified for ONE condition — "the session
+   * produces NO verdict within this window (DS unreachable)" — but it was
+   * implemented as a bare timer that only re-checked `negotiating`. Those are
+   * not the same thing: a 409 conflict IS a verdict, and the join it sends us
+   * to is bounded by `MAX_JOINER_RETRIES * JOINER_RETRY_MS` (30 s), six times
+   * this window. So on every conflicted join — i.e. every joiner, on every
+   * call where a group already exists — the fail-safe fired mid-join on a
+   * healthy session and latched loud RE-SECURING with the publish gate held.
+   *
+   * Reported from the field as "sometimes it works great and other times it is
+   * a troubleshooting", which is exactly the shape: the CREATOR never
+   * conflicts and never trips it; the JOINER always does.
+   */
+  #dsVerdictSeen = false;
   /** Serializes §3.4 mode transitions + their awaited media effects (F8). */
   #modeChain: Promise<void> = Promise.resolve();
   /** Self-rescheduling heartbeat tick + its enabled gate. */
@@ -1125,21 +1141,30 @@ export class MlsCallSession {
     const timer = setTimeout(() => {
       this.#timers.delete(timer);
       if (this.#terminal() || this.#callMode.kind !== "negotiating") return;
-      const probe = this.#deps.channelHasOpenGroup?.() ?? "none";
-      if (probe === "open") {
-        this.#toResecuring("negotiation timed out with an open E2EE group");
-        return;
+      switch (
+        negotiatingFailsafeAction({
+          dsVerdictSeen: this.#dsVerdictSeen,
+          probe: this.#deps.channelHasOpenGroup?.() ?? "none",
+          rearmsUsed: this.#failsafeRearms,
+        })
+      ) {
+        case "ignore":
+          return;
+        case "resecure":
+          this.#toResecuring("negotiation timed out with an open E2EE group");
+          return;
+        case "rearm":
+          this.#failsafeRearms++;
+          this.#armNegotiatingFailsafe();
+          return;
+        case "release":
+          // Completed no-group verdict (or the probe never resolved past the
+          // bounded re-arms — same-origin, so the DS is unreachable too) →
+          // availability escape: release the gate, keep negotiating in the
+          // background (a late verdict still applies).
+          void this.#media?.resumePublishing?.("negotiating");
+          return;
       }
-      if (probe === "pending" && this.#failsafeRearms < MAX_FAILSAFE_REARMS) {
-        this.#failsafeRearms++;
-        this.#armNegotiatingFailsafe();
-        return;
-      }
-      // Completed no-group verdict (or the probe never resolved past the
-      // bounded re-arms — same-origin, so the DS is unreachable too) →
-      // availability escape: release the gate, keep negotiating in the
-      // background (a late verdict still applies).
-      void this.#media?.resumePublishing?.("negotiating");
     }, NEGOTIATING_FAILSAFE_MS);
     this.#timers.add(timer);
   }
@@ -1388,6 +1413,12 @@ export class MlsCallSession {
     // clear it.
     this.#groupId = orphanId;
     const res = await this.#deps.bridge.mlsCreateGroup(created.payload);
+    // 🔴 A response — ANY response, 409 included — is the verdict the T0d
+    // fail-safe was written to wait for. Set it before routing, not per
+    // branch: the point is that the DS answered, not what it said. An
+    // unreachable DS throws instead and leaves this false, which is the case
+    // the fail-safe actually exists for.
+    this.#dsVerdictSeen = true;
     const decision = routeCreateOrJoin(res);
 
     switch (decision.action) {
