@@ -8,6 +8,53 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // v0.55.0: the call-audio sweep — the silent-peer fix, the outgoing ring,
+  // the encrypted-call roster contrast fix, and the version renumber. Copy
+  // constraints, load-bearing:
+  // - The silent-peer fix was proven live Windows<->Windows and
+  //   Windows<->Linux. Describe the SYMPTOM (you could not hear them, they
+  //   could hear you) — never claim every silent-call report is this bug.
+  //   Audio-device and mixer problems look identical to a user.
+  // - The outgoing ring stops on ANSWER or when the caller hangs up. It does
+  //   NOT stop on a decline — the callee's decline is local-only by design and
+  //   nothing reaches the caller, so the ring runs to its natural stop. Do not
+  //   write "stops when they decline"; it would be a false promise.
+  // - The fail-safe item is call reliability, worded plainly. Do not name MLS,
+  //   epochs or negotiation states — users cannot act on any of it.
+  // - The version line is here because desktop jumps 0.50.0 -> 0.55.0 while
+  //   Android's NAME drops 1.46.4 -> 0.55.0. Unexplained that reads as a
+  //   downgrade. Say it once, plainly, and move on.
+  // - EXCLUDED as dark or unproven, unchanged from v0.54.0: Android screen
+  //   share (flag never lit), remote-control couch co-op, server boosts, the
+  //   public directory, slash-command bot docs, Windows/Linux native
+  //   screen-share audio (built but flag-dark, no live legs).
+  {
+    id: "sloga-2026-08-31",
+    title: "Patch Notes",
+    published_at: "2026-08-31T21:00:00.000Z",
+    web_version: "0.55.0",
+    markdown_content: `## v0.55.0 — Call audio fixes
+
+### 🔇 The silent-peer fix
+- **Some people could join a call and simply never be heard.** They could hear everyone else perfectly, and everyone else saw them connected and talking — there was just no sound. It hit hardest between different apps, most often when someone on the Linux app talked to someone on Windows.
+- The cause was on the listening end, not the speaker's: incoming audio was arriving intact and then being discarded by the call encryption layer before it ever reached the speakers. It now recognizes an unencrypted caller correctly and lets their audio through.
+- If you have been the person nobody could hear, this is the update that fixes it. Both sides need it, so give it a moment for everyone in your group to update.
+
+### 📞 Outgoing calls ring again
+- **Starting a call used to be completely silent for the caller.** The person you were calling heard their ringtone, but you got nothing — no way to tell whether the call had actually gone out.
+- You now hear a ring while you wait. It stops the moment they answer, or when you hang up.
+- Prefer the quiet? It follows the outgoing ringtone switch in your notification sound settings, same as every other sound.
+
+### 🔒 Encrypted-call panel is readable again
+- The panel listing who is on an encrypted call had dark text on a dark background, so the title and the names were nearly invisible. They are properly contrasted now.
+
+### 🤝 Steadier call setup
+- A safety net meant for calls whose encryption genuinely fails to come together was firing on perfectly healthy calls as they connected. It now stays out of the way unless something has really gone wrong.
+
+### 🔢 One version number everywhere
+- Desktop, Linux, Android and the web each carried their own unrelated version number, none of which matched these patch notes. **They are all v0.55.0 from here on** — so the number in Settings is the number at the top of this page. Nothing was rolled back; the counters were merged into one.
+`,
+  },
   // v0.54.0: the shell sweep — screen-share audio fixes + the v0.53.0 profile
   // release reaching desktop/Linux/Android. Copy constraints, load-bearing:
   // - Users are shown only the NEWEST entry automatically, so shell users
