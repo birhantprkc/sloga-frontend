@@ -16,7 +16,12 @@ import userMovedSound from "../../scripts/assets_fallback/sounds/user_moved.ogg"
 /**
  * A controller class for making sure sounds are managed in one place and to prevent undesirable sound overlaps
  */
-type ToneNote = { freq: number; startTime: number; duration: number; type?: OscillatorType };
+type ToneNote = {
+  freq: number;
+  startTime: number;
+  duration: number;
+  type?: OscillatorType;
+};
 
 /**
  * 5 message sound presets (received + sent variants for each).
@@ -214,7 +219,11 @@ const RINGTONE_PRESETS: RingtonePreset[] = [
   },
 ];
 
-const DISCONNECT_PRESETS: { label: string; notes: ToneNote[]; volume?: number }[] = [
+const DISCONNECT_PRESETS: {
+  label: string;
+  notes: ToneNote[];
+  volume?: number;
+}[] = [
   {
     label: "Drop",
     notes: [
@@ -258,7 +267,7 @@ const DISCONNECT_PRESETS: { label: string; notes: ToneNote[]; volume?: number }[
   },
 ];
 
-export { MESSAGE_PRESETS, RINGTONE_PRESETS, DISCONNECT_PRESETS };
+export { DISCONNECT_PRESETS, MESSAGE_PRESETS, RINGTONE_PRESETS };
 
 export class SoundController {
   readonly soundState: Sounds;
@@ -368,7 +377,10 @@ export class SoundController {
    */
   #getPreset() {
     const variant = this.settingsState.getValue("sounds:message_variant") ?? 4;
-    const idx = Math.max(0, Math.min(MESSAGE_PRESETS.length - 1, (variant as number) - 1));
+    const idx = Math.max(
+      0,
+      Math.min(MESSAGE_PRESETS.length - 1, (variant as number) - 1),
+    );
     return MESSAGE_PRESETS[idx];
   }
 
@@ -376,8 +388,12 @@ export class SoundController {
    * Get the active disconnect preset (1-indexed, clamped to valid range)
    */
   #getDisconnectPreset() {
-    const variant = this.settingsState.getValue("sounds:disconnect_variant") ?? 1;
-    const idx = Math.max(0, Math.min(DISCONNECT_PRESETS.length - 1, (variant as number) - 1));
+    const variant =
+      this.settingsState.getValue("sounds:disconnect_variant") ?? 1;
+    const idx = Math.max(
+      0,
+      Math.min(DISCONNECT_PRESETS.length - 1, (variant as number) - 1),
+    );
     return DISCONNECT_PRESETS[idx];
   }
 
@@ -386,7 +402,10 @@ export class SoundController {
    */
   #getRingtonePreset() {
     const variant = this.settingsState.getValue("sounds:ringtone_variant") ?? 1;
-    const idx = Math.max(0, Math.min(RINGTONE_PRESETS.length - 1, (variant as number) - 1));
+    const idx = Math.max(
+      0,
+      Math.min(RINGTONE_PRESETS.length - 1, (variant as number) - 1),
+    );
     return RINGTONE_PRESETS[idx];
   }
 
@@ -395,7 +414,11 @@ export class SoundController {
    */
   stopRingtone() {
     if (this.#ringtoneGain) {
-      try { this.#ringtoneGain.disconnect(); } catch { /* ignore */ }
+      try {
+        this.#ringtoneGain.disconnect();
+      } catch {
+        /* ignore */
+      }
       this.#ringtoneGain = undefined;
     }
   }
@@ -421,8 +444,14 @@ export class SoundController {
           osc.connect(gain);
           gain.connect(master);
           osc.type = type ?? "sine";
-          osc.frequency.setValueAtTime(freq, ctx.currentTime + offset + startTime);
-          gain.gain.setValueAtTime(volume, ctx.currentTime + offset + startTime);
+          osc.frequency.setValueAtTime(
+            freq,
+            ctx.currentTime + offset + startTime,
+          );
+          gain.gain.setValueAtTime(
+            volume,
+            ctx.currentTime + offset + startTime,
+          );
           gain.gain.exponentialRampToValueAtTime(
             0.001,
             ctx.currentTime + offset + startTime + duration,

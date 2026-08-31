@@ -29,11 +29,11 @@ import { useState } from "@revolt/state";
 import { streamerModeHides } from "@revolt/state/streamer";
 
 import { useClient, useNotifications, useSound } from ".";
-import { connectionUrl } from "./streamConnections";
 import {
   notificationPermissionGranted,
   showNotification,
 } from "./nativeNotifications";
+import { connectionUrl } from "./streamConnections";
 
 /**
  * Process and display desktop notifications
@@ -298,7 +298,8 @@ export function NotificationsWorker() {
     if (channel.voiceParticipants.size !== 1) return;
 
     const callerUser = client().users.get(userId);
-    const callerName = callerUser?.displayName ?? callerUser?.username ?? "Someone";
+    const callerName =
+      callerUser?.displayName ?? callerUser?.username ?? "Someone";
     const channelName = channel.type === "Group" ? channel.name : callerName;
 
     // Android rings through the native call notification, which is the only
@@ -467,9 +468,12 @@ export function NotificationsWorker() {
       // Cold start: the client may still be connecting, so retry until the
       // channel is hydrated (~10s) before giving up.
       const withChannel = (fn: (channel: Channel) => void, attempt = 0) => {
-        const channel = channelId ? client().channels.get(channelId) : undefined;
+        const channel = channelId
+          ? client().channels.get(channelId)
+          : undefined;
         if (channel) fn(channel);
-        else if (attempt < 20) setTimeout(() => withChannel(fn, attempt + 1), 500);
+        else if (attempt < 20)
+          setTimeout(() => withChannel(fn, attempt + 1), 500);
       };
 
       if (answer) {
@@ -539,7 +543,9 @@ export function NotificationsWorker() {
       // Declines carry no path, so they must be handled before handleAction's
       // `if (!path) return`.
       if (e.declined === true) {
-        handleDeclined(typeof e.channelId === "string" ? e.channelId : undefined);
+        handleDeclined(
+          typeof e.channelId === "string" ? e.channelId : undefined,
+        );
         return;
       }
       if (typeof e.path === "string") {
