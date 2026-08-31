@@ -210,6 +210,11 @@ const Panel = styled("div", {
     padding: "var(--gap-md)",
     borderRadius: "var(--borderRadius-lg)",
     background: "var(--md-sys-color-surface-container-highest)",
+    // Text color must be pinned WITH the surface: this panel mounts inside
+    // the call card, where an ancestor sets `inverse-on-surface` for the
+    // on-video chrome — inherited here, that painted the title and usernames
+    // dark-on-dark (only the icons survived, they set explicit colors).
+    color: "var(--md-sys-color-on-surface)",
     border: "1px solid var(--md-sys-color-outline-variant)",
     boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
   },
