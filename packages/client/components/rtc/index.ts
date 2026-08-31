@@ -15,6 +15,13 @@ export {
 export type { IncomingCall } from "./incomingCall";
 
 export {
+  isRingableChannelType,
+  outgoingRingOnVoiceJoin,
+  outgoingRingOnVoiceLeave,
+} from "./outgoingRingPolicy";
+export type { OutgoingRingAction } from "./outgoingRingPolicy";
+
+export {
   REMOTE_CONTROL_CLAIM,
   REMOTE_CONTROL_EXPRESS_NOTE,
   REMOTE_CONTROL_TRUST_NOTE,

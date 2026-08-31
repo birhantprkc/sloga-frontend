@@ -20,6 +20,8 @@ import {
 import { useNavigate, useSmartParams } from "@revolt/routing";
 import {
   dismissIncomingCall,
+  outgoingRingOnVoiceJoin,
+  outgoingRingOnVoiceLeave,
   presentIncomingCall,
   useVoice,
 } from "@revolt/rtc";
@@ -262,9 +264,28 @@ export function NotificationsWorker() {
     // Only care about DM and Group channels (not server voice channels)
     if (channel.type !== "DirectMessage" && channel.type !== "Group") return;
 
-    // We answered (or started) the call — stop any ringing
+    // Outgoing leg: our own join OPENING the call means we are ringing peers
+    // — give the caller the audible feedback the callee already gets. Any
+    // other membership change we are part of stops the ring (answered, or we
+    // joined an ongoing call). Unlike the incoming leg below there is no
+    // native ringer for outgoing calls, so this is not gated on
+    // Capacitor.isNativePlatform(). Nobody-answers/decline needs no timer:
+    // the synthesized ringtone ends itself after 30 rings.
+    const ringAction = outgoingRingOnVoiceJoin({
+      channelType: channel.type,
+      joinerIsSelf: userId === us.id,
+      selfIsParticipant: channel.voiceParticipants.has(us.id),
+      participantCount: channel.voiceParticipants.size,
+    });
+    if (ringAction === "play") {
+      // false = the user disabled the outgoing ringtone; still enforce the
+      // old invariant that our own join silences any ring already playing
+      // (e.g. another channel's incoming ring we walked away from).
+      if (!sound.playSound("ringtoneOutgoing")) sound.stopRingtone();
+    } else if (ringAction === "stop") sound.stopRingtone();
+
+    // We answered (or started) the call — dismiss any ringing popup
     if (userId === us.id) {
-      sound.stopRingtone();
       dismissIncomingCall(channel.id);
       return;
     }
@@ -317,8 +338,18 @@ export function NotificationsWorker() {
   /**
    * Stop ringing when the caller gives up (leaves the call before we answer)
    */
-  function onVoiceChannelLeave(channel: Channel, _userId: string) {
+  function onVoiceChannelLeave(channel: Channel, userId: string) {
     if (channel.type !== "DirectMessage" && channel.type !== "Group") return;
+
+    // Outgoing leg: our own leave is the caller cancelling (or a server-side
+    // removal) — the local disconnect() also stops the ring, but that path
+    // never runs when the removal originates remotely.
+    const ringAction = outgoingRingOnVoiceLeave({
+      channelType: channel.type,
+      leaverIsSelf: userId === client().user!.id,
+    });
+    if (ringAction === "stop") sound.stopRingtone();
+
     if (channel.voiceParticipants.size === 0) {
       sound.stopRingtone();
       dismissIncomingCall(channel.id);

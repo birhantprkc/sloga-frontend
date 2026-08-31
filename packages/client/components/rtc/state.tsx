@@ -2437,6 +2437,11 @@ class Voice {
       // join still supersedes cleanly: connect()'s own leading disconnect()
       // is followed by its own bump.)
       this.#connectGen++;
+      // The caller hanging up before anyone answered must silence the
+      // outgoing ring NOW — the VoiceChannelLeave echo also stops it, but
+      // that round-trips the websocket (and never arrives if the socket is
+      // the thing that died). Idempotent no-op when nothing is ringing.
+      this.sound.stopRingtone();
       nativeCallServiceStop();
       // The Android screen leg dies with the call (§7.4): kick / autoLeave /
       // session terminal / a fresh connect() all land here. Fire-and-forget —

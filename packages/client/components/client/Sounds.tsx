@@ -5,8 +5,6 @@ import { Settings } from "@revolt/state/stores/Settings";
 import { streamerModeHides } from "@revolt/state/streamer";
 import deafenSound from "../../scripts/assets_fallback/sounds/deafen.ogg";
 import muteSound from "../../scripts/assets_fallback/sounds/mute.ogg";
-import ringtoneIncomingSound from "../../scripts/assets_fallback/sounds/ringtone_incoming.ogg";
-import ringtoneOutgoingSound from "../../scripts/assets_fallback/sounds/ringtone_outgoing.ogg";
 import streamEndSound from "../../scripts/assets_fallback/sounds/stream_end.ogg";
 import streamStartSound from "../../scripts/assets_fallback/sounds/stream_start.ogg";
 import streamViewerJoinSound from "../../scripts/assets_fallback/sounds/stream_viewer_join.ogg";
