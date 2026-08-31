@@ -17,6 +17,11 @@ import {
 } from "@revolt/ui/components/features/voice/participantIdentity";
 
 import { TrackNormalizer, ensureNormalizerWorklet } from "../audioNormalizer";
+import {
+  type RemotePublicationEncryption,
+  cryptorDisarmIdentities,
+  resolveCryptorControl,
+} from "../plaintextCryptorPolicy";
 import { useVoice } from "../state";
 import { identityUserId, whisperTarget } from "../whisperPermissions";
 
@@ -255,6 +260,118 @@ export function RoomAudioManager() {
     wiringDisposed = true;
     for (const sid of [...normalizers.keys()]) removeNormalizer(sid);
   });
+  // ------------------------------------------------------------------------
+
+  // ---- Plaintext cryptor disarm (rtc/plaintextCryptorPolicy.ts) ----------
+  //
+  // The Room is built E2EE-capable even on plaintext calls (see connect() in
+  // state.tsx), and livekit installs its decode transform on EVERY subscribed
+  // remote track while arming the per-participant cryptor from
+  // `trackInfo.encryption !== NONE` — a rule that misreads a missing field as
+  // "encrypted" and then silently destroys every frame from a plaintext
+  // publisher: packets arrive with zero loss, zero samples decode, the peer
+  // is inaudible (the 2026-08-30 silent-Linux-peer signature). Assert the
+  // state we know instead of trusting that comparison: force the cryptor OFF
+  // for every participant whose publications declare plaintext.
+  //
+  // Re-asserted on EVERY run on purpose: livekit re-arms from its own
+  // TrackPublished handler and its Connected sweep, and both fire alongside
+  // the track-list changes that re-run this effect — a disarm-once would
+  // quietly lose the next round.
+  let cryptorSurfaceWarned = false;
+  let cryptorManagerMissingWarned = false;
+  let cryptorControlThrewWarned = false;
+  let lastDisarmed = "";
+  let lastEncryptionEvidence = "";
+  const cryptorDisarmSweep = () => {
+    const room = voice.room();
+    if (!room) return;
+    const publications: RemotePublicationEncryption[] = [];
+    for (const ref of [...tracks(), ...videoTracks()]) {
+      if (isLocal(ref.participant)) continue;
+      publications.push({
+        participantIdentity: ref.participant.identity,
+        encryption: ref.publication.trackInfo?.encryption,
+      });
+    }
+    // Logged (on change) so a live leg can capture the ACTUAL arm-time
+    // encryption values — the one measurement that distinguishes "field was
+    // missing" from "the SFU stamped a non-zero type" if a peer is ever
+    // silent again despite this sweep.
+    const evidence = JSON.stringify(
+      publications.map((p) => [p.participantIdentity, p.encryption ?? null]),
+    );
+    if (evidence !== lastEncryptionEvidence) {
+      lastEncryptionEvidence = evidence;
+      console.info("[rtc] remote publication encryption", evidence);
+    }
+    const disarm = cryptorDisarmIdentities(publications);
+    if (disarm.length === 0) return;
+    const probe = resolveCryptorControl(room);
+    if (probe.kind === "no-manager") {
+      // A Room built without the `e2ee` option has no manager, no transform,
+      // and nothing to disarm — benign. But when connect() SNAPSHOTTED this
+      // call as E2EE-capable, the option was passed and a manager must
+      // exist: its absence means an SDK bump renamed the @internal field,
+      // and the arming transform is likely still installed with no way to
+      // reach it. That must be loud, not the benign branch.
+      if (voice.callE2EECapable() && !cryptorManagerMissingWarned) {
+        cryptorManagerMissingWarned = true;
+        console.warn(
+          "[rtc] Room was built E2EE-capable but no e2eeManager was found; cannot disarm the frame cryptor for plaintext publishers — their audio/video may not decode",
+        );
+      }
+      return;
+    }
+    if (probe.kind === "unsupported") {
+      // Same posture as the setWebAudioPlugins fail-safe below: the surface
+      // is @internal, an SDK bump may remove it — then plaintext peers may go
+      // silent again and we say so, rather than reaching in quietly.
+      if (!cryptorSurfaceWarned) {
+        cryptorSurfaceWarned = true;
+        console.warn(
+          "[rtc] livekit-client no longer exposes e2eeManager.setParticipantCryptorEnabled; cannot disarm the frame cryptor for plaintext publishers — their audio/video may not decode",
+        );
+      }
+      return;
+    }
+    for (const identity of disarm) {
+      try {
+        probe.control(false, identity);
+      } catch (error) {
+        // Unreachable today (the worker exists whenever the manager does),
+        // but a future SDK throw must not kill this effect — or the interval
+        // below — while leaving the rest of the sweep unasserted.
+        if (!cryptorControlThrewWarned) {
+          cryptorControlThrewWarned = true;
+          console.warn(
+            "[rtc] setParticipantCryptorEnabled threw; plaintext publishers may not decode",
+            error,
+          );
+        }
+      }
+    }
+    const summary = disarm.join(",");
+    if (summary !== lastDisarmed) {
+      lastDisarmed = summary;
+      console.info(
+        "[rtc] frame cryptor disarmed for plaintext publishers",
+        disarm,
+      );
+    }
+  };
+  createEffect(cryptorDisarmSweep);
+  // Safety net for EVENTLESS info updates: for an already-known publication,
+  // `RemoteParticipant.updateInfo` rewrites `trackInfo` via
+  // `publication.updateInfo(ti)` without emitting any room event
+  // (TrackPublished fires only for new sids) — so an encryption field that
+  // settles AFTER the arm would never re-run the effect in an otherwise
+  // quiet call, and the cryptor would stay armed for the call's whole life.
+  // A slow re-check costs pure reads plus at most one worker postMessage per
+  // disarmed identity; signal reads outside a computation are plain reads,
+  // so this tracks nothing.
+  const cryptorRecheck = setInterval(cryptorDisarmSweep, 5_000);
+  onCleanup(() => clearInterval(cryptorRecheck));
   // ------------------------------------------------------------------------
 
   createEffect(() => {
