@@ -1664,10 +1664,16 @@ class Voice {
     // `setE2EEEnabled()` THROWS if the `e2ee` option was omitted at
     // construction (the E2EEManager only attaches in the constructor), so
     // omitting it whenever a non-enrolled participant is present would make the
-    // §3.4 auto-re-upgrade impossible without a full reconnect. The option is
-    // INERT until `setE2EEEnabled(true)` (driven in 6.4/6.5); unsupported
-    // shells get no option and are treated as non-enrolled (loud downgrade
-    // path), never a silent plaintext Room.
+    // §3.4 auto-re-upgrade impossible without a full reconnect. Only the SEND
+    // path is inert until `setE2EEEnabled(true)` (driven in 6.4/6.5) — the
+    // RECEIVE path is armed from construction: livekit installs its decode
+    // transform on every subscribed remote track and arms the per-participant
+    // cryptor from `trackInfo.encryption !== NONE`, which misreads a missing
+    // field as "encrypted" and silently destroys a plaintext publisher's
+    // frames (the 2026-08-30 silent-Linux-peer bug). RoomAudioManager's
+    // plaintext disarm (rtc/plaintextCryptorPolicy.ts) asserts the correct
+    // state per publication. Unsupported shells get no option and are treated
+    // as non-enrolled (loud downgrade path), never a silent plaintext Room.
     //
     // Fail-safe (gate HIGH): a worker/provider that cannot construct — e.g.
     // the bundled `?worker` asset blocked by a `worker-src`-less CSP — must

@@ -17,6 +17,11 @@ import {
 } from "@revolt/ui/components/features/voice/participantIdentity";
 
 import { TrackNormalizer, ensureNormalizerWorklet } from "../audioNormalizer";
+import {
+  type RemotePublicationEncryption,
+  cryptorDisarmIdentities,
+  resolveCryptorControl,
+} from "../plaintextCryptorPolicy";
 import { useVoice } from "../state";
 import { identityUserId, whisperTarget } from "../whisperPermissions";
 
@@ -254,6 +259,65 @@ export function RoomAudioManager() {
   onCleanup(() => {
     wiringDisposed = true;
     for (const sid of [...normalizers.keys()]) removeNormalizer(sid);
+  });
+  // ------------------------------------------------------------------------
+
+  // ---- Plaintext cryptor disarm (rtc/plaintextCryptorPolicy.ts) ----------
+  //
+  // The Room is built E2EE-capable even on plaintext calls (see connect() in
+  // state.tsx), and livekit installs its decode transform on EVERY subscribed
+  // remote track while arming the per-participant cryptor from
+  // `trackInfo.encryption !== NONE` — a rule that misreads a missing field as
+  // "encrypted" and then silently destroys every frame from a plaintext
+  // publisher: packets arrive with zero loss, zero samples decode, the peer
+  // is inaudible (the 2026-08-30 silent-Linux-peer signature). Assert the
+  // state we know instead of trusting that comparison: force the cryptor OFF
+  // for every participant whose publications declare plaintext.
+  //
+  // Re-asserted on EVERY run on purpose: livekit re-arms from its own
+  // TrackPublished handler and its Connected sweep, and both fire alongside
+  // the track-list changes that re-run this effect — a disarm-once would
+  // quietly lose the next round.
+  let cryptorSurfaceWarned = false;
+  let lastDisarmed = "";
+  createEffect(() => {
+    const room = voice.room();
+    if (!room) return;
+    const publications: RemotePublicationEncryption[] = [];
+    for (const ref of [...tracks(), ...videoTracks()]) {
+      if (isLocal(ref.participant)) continue;
+      publications.push({
+        participantIdentity: ref.participant.identity,
+        encryption: ref.publication.trackInfo?.encryption,
+      });
+    }
+    const disarm = cryptorDisarmIdentities(publications);
+    if (disarm.length === 0) return;
+    const probe = resolveCryptorControl(room);
+    // A Room built without the `e2ee` option has no manager, no transform,
+    // and nothing to disarm.
+    if (probe.kind === "no-manager") return;
+    if (probe.kind === "unsupported") {
+      // Same posture as the setWebAudioPlugins fail-safe below: the surface
+      // is @internal, an SDK bump may remove it — then plaintext peers may go
+      // silent again and we say so, rather than reaching in quietly.
+      if (!cryptorSurfaceWarned) {
+        cryptorSurfaceWarned = true;
+        console.warn(
+          "[rtc] livekit-client no longer exposes e2eeManager.setParticipantCryptorEnabled; cannot disarm the frame cryptor for plaintext publishers — their audio/video may not decode",
+        );
+      }
+      return;
+    }
+    for (const identity of disarm) probe.control(false, identity);
+    const summary = disarm.join(",");
+    if (summary !== lastDisarmed) {
+      lastDisarmed = summary;
+      console.info(
+        "[rtc] frame cryptor disarmed for plaintext publishers",
+        disarm,
+      );
+    }
   });
   // ------------------------------------------------------------------------
 
