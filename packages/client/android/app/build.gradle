@@ -26,8 +26,12 @@ android {
         applicationId "gg.sloga.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 60
-        versionName "1.46.3"
+        // versionName tracks the PATCH NOTES version from v0.55.0 on (it used
+        // to run its own 1.x sequence, which matched nothing users could see).
+        // versionCode keeps counting up untouched — it is what ApkUpdateWorker
+        // and Play order releases by, and it must never go backwards.
+        versionCode 62
+        versionName "0.55.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
