@@ -30,9 +30,11 @@
 
 /**
  * `Encryption_Type.NONE` from @livekit/protocol, mirrored as a literal so this
- * module stays loadable under bare `node --test`. The test file pins it
- * against the real enum, so drift fails loudly there rather than silently
- * here.
+ * module stays loadable under bare `node --test` (pnpm's isolated layout
+ * keeps the transitive package unresolvable there, so the real enum CANNOT be
+ * imported for a drift pin). The literal is safe regardless: proto3 pins
+ * NONE = 0 on the wire forever — changing it would be a breaking protocol
+ * rewrite, not a version bump.
  */
 export const ENCRYPTION_TYPE_NONE = 0;
 
