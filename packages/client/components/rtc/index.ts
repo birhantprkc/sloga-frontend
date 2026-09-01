@@ -84,3 +84,8 @@ export type {
 } from "./cameraBackgrounds";
 
 export { nativeScreenShareAvailable } from "./androidScreenShare";
+
+export {
+  screenAudioAvailableSync,
+  screenAudioSupported,
+} from "./screenAudioNative";

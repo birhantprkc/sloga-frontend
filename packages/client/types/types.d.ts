@@ -16,6 +16,26 @@ declare global {
         invoke(command: string, args?: unknown): Promise<unknown>;
         on(name: string, callback: (payload: unknown) => void): () => void;
       };
+      /** Linux screen-share audio (main window only; absent on popout/
+       * overlay windows and on shells without the native module). */
+      screenAudio?: {
+        probe(refresh?: boolean): Promise<{
+          available: boolean;
+          pipewireVersion?: string;
+          reason?: string;
+        }>;
+        start(): Promise<{ deviceDescription: string; sessionId: number }>;
+        stop(sessionId?: number): Promise<boolean>;
+        listApps(): Promise<
+          {
+            id: number;
+            appName?: string;
+            nodeName?: string;
+            pid?: number;
+            binary?: string;
+          }[]
+        >;
+      };
     };
   }
 }

@@ -25,6 +25,7 @@ import {
   type VideoCaptureOptions,
   ConnectionState,
   isE2EESupported,
+  LocalAudioTrack,
   LocalVideoTrack,
   Room,
   RoomEvent,
@@ -225,6 +226,11 @@ import {
   type MlsSessionState,
   MlsCallSession,
 } from "./mlsCallSession";
+import {
+  captureScreenAudio,
+  screenAudioSupported,
+  stopScreenAudio,
+} from "./screenAudioNative";
 import { ScreenShieldProcessor } from "./screenShieldProcessor";
 import { SoundboardPlayback } from "./soundboardPlayback";
 import { WhisperController } from "./whisper";
@@ -620,6 +626,20 @@ class Voice {
   /** Live screenshare privacy-shield processor, when attached (the handle is
    * ours because livekit exposes no reliable current-processor getter). */
   #screenShield: ScreenShieldProcessor | undefined;
+  /**
+   * Staleness token for the Linux native screen-audio capture
+   * (screenshare-audio design §6, review F2): the capture path awaits IPC,
+   * enumerate, gUM and publish — windows the atomic Windows path does not
+   * have. Bumped by every share toggle and by `disconnect()`; an in-flight
+   * capture re-checks it after every await and tears itself down when
+   * stale, so a dangling ScreenShareAudio publication (with a live OS
+   * capture!) can never land in a call whose share is gone.
+   */
+  #screenAudioGen = 0;
+  /** Session token of the LIVE native screen-audio capture (set when its
+   * publication lands). Every stop path passes it so the shell can no-op
+   * a stale stop instead of tearing down a successor share's session. */
+  #screenAudioSessionId: number | undefined;
   /**
    * The native Android screen leg (screen-leg plan §7), when this shell can
    * publish one. Constructed lazily on first share and reused: the plugin
@@ -2509,6 +2529,13 @@ class Voice {
       // session terminal / a fresh connect() all land here. Fire-and-forget —
       // this method must stay synchronous, and the native stop is idempotent.
       void this.#stopAndroidLeg();
+      // Linux screen-share audio dies with the call too — this choke point
+      // is the guaranteed backstop (F1): handleDisconnect stops tracks
+      // programmatically, which never fires "ended", so without this a
+      // dropped call would leave the virtual PipeWire device live in the
+      // user's graph. Idempotent, no-op off the capable shell.
+      this.#screenAudioGen++;
+      void stopScreenAudio(this.#screenAudioSessionId);
 
       // Media E2EE teardown (§4.2 / §7.2): dispose the MLS session FIRST (its
       // best-effort self-`callRemove` wants the DS still reachable — before
@@ -4278,6 +4305,13 @@ class Voice {
     }
 
     if (this.screenshare()) {
+      // Doom any in-flight native audio capture first (F2), then tear the
+      // native session down — setScreenShareEnabled(false) auto-unpublishes
+      // the ScreenShareAudio publication and stops its track, but the
+      // virtual PipeWire device is the shell's and needs its own stop.
+      // No-op off the capable shell.
+      this.#screenAudioGen++;
+      void stopScreenAudio(this.#screenAudioSessionId);
       await room.localParticipant.setScreenShareEnabled(false);
 
       // The track's stop() already tore the processor down; just drop the
@@ -4288,6 +4322,10 @@ class Voice {
 
       this.sound.playSound("streamEnd");
     } else {
+      // Mint the native screen-audio staleness token for this attempt (F2)
+      // — a second toggle, cancel, or disconnect bumps it and dooms any
+      // capture still in flight below.
+      const generation = ++this.#screenAudioGen;
       const qualities = this.getEnabledScreenShareQualities();
       let screenPickerQualityName: ScreenShareQualityName | undefined;
       let screenPickerAudio: boolean | undefined;
@@ -4365,7 +4403,7 @@ class Voice {
           },
         );
 
-        const screenAudioTrack = room.localParticipant.getTrackPublication(
+        let screenAudioTrack = room.localParticipant.getTrackPublication(
           Track.Source.ScreenShareAudio,
         );
 
@@ -4424,6 +4462,40 @@ class Voice {
             }
           });
 
+          // Linux shell (screenshare-audio design §6): getDisplayMedia
+          // returned no audio track — capture the shell's virtual PipeWire
+          // source instead, when the flag + shell surface + probe allow it.
+          // When the ask-modal will open, capture BEFORE it opens and
+          // publish MUTED; the confirm callback unmutes (F8/E3). Failure
+          // degrades to a no-audio share, never a failed share. When the
+          // in-app picker ran (Windows/EL3), ITS audio answer governs, not
+          // the stored setting — the two can disagree in both directions.
+          const consentPending =
+            !screenPickerQualityName &&
+            this.#settings.screenShareQualityAsk &&
+            Object.keys(qualities).length > 1;
+          const wantsAudio =
+            consentPending ||
+            (screenPickerQualityName !== undefined
+              ? screenPickerAudio === true
+              : this.#settings.screenShareAudio);
+          if (
+            !screenAudioTrack &&
+            wantsAudio &&
+            (await screenAudioSupported(true))
+          ) {
+            // The capture path awaits seconds (IPC, enumerate, gUM) — do
+            // not let the just-published video stream to the call for that
+            // long before the user has answered the ask-modal: pause it
+            // now; the modal path pauses again idempotently below.
+            if (consentPending) localTrack.pauseUpstream();
+            screenAudioTrack = await this.#publishNativeScreenAudio(
+              room,
+              generation,
+              consentPending,
+            );
+          }
+
           const callback = async (
             qualityName: ScreenShareQualityName,
             audio: boolean,
@@ -4462,6 +4534,9 @@ class Voice {
                 .catch(() => undefined);
               if (!audio && screenAudioTrack?.track) {
                 room.localParticipant.unpublishTrack(screenAudioTrack.track);
+                // The native PipeWire session (Linux) dies with the untick;
+                // no-op on every other surface.
+                void stopScreenAudio(this.#screenAudioSessionId);
               }
               this.sound.playSound("streamStart");
             }
@@ -4478,6 +4553,12 @@ class Voice {
               screenAudioTrack?.pauseUpstream();
               this.openModal({
                 onCancel: async () => {
+                  // Cancel never passes the toggle's disable branch (F1):
+                  // doom any in-flight capture and stop the native audio
+                  // session here too. livekit's own teardown unpublishes
+                  // and stops the tracks.
+                  this.#screenAudioGen++;
+                  void stopScreenAudio(this.#screenAudioSessionId);
                   await room.localParticipant.setScreenShareEnabled(false);
                   this.#setScreenshare(
                     room.localParticipant.isScreenShareEnabled,
@@ -4496,6 +4577,18 @@ class Voice {
                 audio: !!screenAudioTrack,
                 callback: async (qualityName, audio) => {
                   callback(qualityName, audio);
+                  // Native screen audio was published MUTED while consent
+                  // was pending (F8/E3) — unmute now that the user said
+                  // yes, once the gate is empty and (on E2EE) the sender
+                  // transform is asserted. No-op for the Windows path,
+                  // whose track was never muted.
+                  if (audio && screenAudioTrack?.track?.isMuted) {
+                    void this.#unmuteScreenAudioWhenSafe(
+                      room,
+                      screenAudioTrack,
+                      generation,
+                    );
+                  }
                   // Publish-gate coexistence (R2-8): the quality modal's
                   // per-track resume must never override a held session gate
                   // (negotiating / mixed / enable-window) — a direct resume
@@ -4523,6 +4616,169 @@ class Voice {
         this.onErr(e);
       }
     }
+  }
+
+  /** True when an in-flight native screen-audio step must abandon (F2). */
+  #screenAudioStale(generation: number, room: Room) {
+    return (
+      generation !== this.#screenAudioGen ||
+      room !== this.room() ||
+      !room.localParticipant.isScreenShareEnabled
+    );
+  }
+
+  /**
+   * Capture the Linux shell's virtual PipeWire source and publish it as
+   * ScreenShareAudio (screenshare-audio design §6). Returns the publication
+   * or undefined — failure degrades to a no-audio share (no modal-sized
+   * error: audio is an enhancement and the video share already succeeded).
+   *
+   * Ordering rules (F2/F8/E2/E3): staleness re-checked after every await;
+   * the track goes up MUTED whenever consent is pending, the publish gate
+   * is held, or the call is E2EE — and is unmuted only through
+   * #unmuteScreenAudioWhenSafe. `req.muted` is stamped from the track state
+   * at publish, so no pre-consent/pre-transform frames ever escape.
+   */
+  async #publishNativeScreenAudio(
+    room: Room,
+    generation: number,
+    consentPending: boolean,
+  ) {
+    if (this.#screenAudioStale(generation, room)) return undefined;
+
+    const captured = await captureScreenAudio();
+    if (!captured) {
+      // The doc mandates a surfaced signal here (§4: "toast + share
+      // continues without audio") — a silent no-audio share suppresses the
+      // exact field evidence the fallback-(b) decision depends on.
+      this.onErr(
+        new Error("Screen audio could not start — sharing without sound."),
+      );
+      return undefined;
+    }
+    const { track: msTrack, sessionId } = captured;
+    const abandon = () => {
+      msTrack.stop();
+      // By THIS capture's token: if a fresh share superseded us, its
+      // session survives this stop untouched.
+      void stopScreenAudio(sessionId);
+      return undefined;
+    };
+    if (this.#screenAudioStale(generation, room)) return abandon();
+
+    // Mirrors createScreenTracks' own wrapping (userProvidedTrack=false) so
+    // the publication behaves exactly like a Windows screen-audio track in
+    // every downstream path — ask-modal checkbox, pause/resume, unpublish
+    // on untick/ended, and the reconnect republish that reuses the same
+    // MediaStreamTrack (F4).
+    //
+    // ALWAYS published muted: #unmuteScreenAudioWhenSafe is the single
+    // unmute doorway (consent, publish-gate and E2EE-transform checks live
+    // there), so no ordering of gate transitions around the publish await
+    // can leak first frames (E3's residue). The plaintext happy path pays
+    // one near-immediate unmute round-trip for that.
+    const audioTrack = new LocalAudioTrack(msTrack, undefined, false);
+    await audioTrack.mute();
+    if (this.#screenAudioStale(generation, room)) return abandon();
+
+    let publication;
+    try {
+      publication = await room.localParticipant.publishTrack(audioTrack, {
+        source: Track.Source.ScreenShareAudio,
+        // E2EE INVARIANT, not a bandwidth knob (§7/E5): empty DTX frames
+        // bypass frame encryption (zero-length passthrough in the worker)
+        // and would leak the share's silence/activity pattern in cleartext.
+        dtx: false,
+        red: false,
+      });
+    } catch (error) {
+      console.error("screen audio publish failed", error);
+      this.onErr(
+        new Error("Screen audio could not start — sharing without sound."),
+      );
+      return abandon();
+    }
+    if (this.#screenAudioStale(generation, room)) {
+      room.localParticipant.unpublishTrack(audioTrack);
+      return abandon();
+    }
+    this.#screenAudioSessionId = sessionId;
+    if (!consentPending) {
+      void this.#unmuteScreenAudioWhenSafe(room, publication, generation);
+    }
+    return publication;
+  }
+
+  /**
+   * Unmute the native screen-audio publication once it is safe: the publish
+   * gate must be empty (E3 — the gate owner's release sweep resumes paused
+   * upstreams but knows nothing of our mute), and on an E2EE call the
+   * sender must demonstrably carry the worker's encode transform first (E2
+   * — livekit stamps `lk_e2ee` on every sender it wired a cryptor onto; a
+   * publish whose transform silently failed to attach would otherwise ship
+   * PLAINTEXT frames on a declared-GCM publication, and the symptom on the
+   * far side is indistinguishable from benign silence). Absent transform =
+   * fail LOUD: drop the audio, keep the share.
+   */
+  /** The shared fail-LOUD exit for a screen-audio track that must not (or
+   * can never) play: unpublish, stop the native session, tell the user. */
+  #dropScreenAudio(room: Room, track: LocalAudioTrack, message: string) {
+    console.error(`screen audio dropped: ${message}`);
+    room.localParticipant.unpublishTrack(track);
+    void stopScreenAudio(this.#screenAudioSessionId);
+    this.onErr(new Error(message));
+  }
+
+  async #unmuteScreenAudioWhenSafe(
+    room: Room,
+    publication: { track?: { isMuted: boolean } },
+    generation: number,
+  ) {
+    const track = publication.track;
+    if (!(track instanceof LocalAudioTrack)) return;
+    // The gate normally empties in seconds; a wedge past the deadline
+    // takes the same LOUD exit as a missing transform — a permanently
+    // muted track with a live OS capture behind it is the silent-failure
+    // class E2 exists to kill, not a state to park in.
+    const deadline = Date.now() + 15_000;
+    while (this.#publishGate.size > 0) {
+      if (this.#screenAudioStale(generation, room)) return;
+      if (Date.now() > deadline) {
+        this.#dropScreenAudio(
+          room,
+          track,
+          "Screen audio was stopped because the call kept it paused too long.",
+        );
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    if (this.#screenAudioStale(generation, room)) return;
+    if (this.callMode()?.kind === "e2ee") {
+      // livekit stamps `lk_e2ee` on a sender AFTER attaching its encode
+      // transform — verified on livekit-client 2.15.13 (handleSender), NOT
+      // an API contract: re-verify this stamp's ordering on any livekit
+      // bump, same list as the F4 republishAllTracks exclusion.
+      let attached = false;
+      for (let i = 0; i < 10 && !attached; i++) {
+        const sender = track.sender;
+        if (sender && "lk_e2ee" in sender) {
+          attached = true;
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      }
+      if (this.#screenAudioStale(generation, room)) return;
+      if (!attached) {
+        this.#dropScreenAudio(
+          room,
+          track,
+          "Screen audio was stopped because it could not be encrypted.",
+        );
+        return;
+      }
+    }
+    await track.unmute();
   }
 
   /**

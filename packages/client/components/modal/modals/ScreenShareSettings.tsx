@@ -1,15 +1,15 @@
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import { createFormControl, createFormGroup } from "solid-forms";
 
-import { useVoice } from "@revolt/rtc";
+import { screenAudioAvailableSync, useVoice } from "@revolt/rtc";
 import { useState } from "@revolt/state";
 import { ScreenShareQualityName } from "@revolt/state/stores/Voice";
 import { Column, Dialog, DialogProps, Form2 } from "@revolt/ui";
 import { VideoTrack } from "solid-livekit-components";
 
 import { Match, Show, Switch } from "solid-js";
-import { ScreenShareQualityLabel } from "./ScreenShareQualityLabel";
 import { Modals } from "../types";
+import { ScreenShareQualityLabel } from "./ScreenShareQualityLabel";
 
 // Why the capture came back without audio differs by OS, and the old
 // one-liner ("Audio disabled by browser") read as breakage everywhere.
@@ -135,7 +135,14 @@ export function ScreenShareSettingsModal(
                   </Trans>
                 }
               >
-                <Match when={isLinux}>
+                {/* Capability-keyed, not UA-keyed (screenshare-audio design
+                    §5): a shell with the native PipeWire path must not claim
+                    Linux can't do this — it falls through to the generic
+                    copy until the slice-3 matrix lands (F7: the lighting
+                    release requires that matrix for exactly this reason).
+                    Web browsers on Linux, old shells and PulseAudio hosts
+                    keep the message. */}
+                <Match when={isLinux && !screenAudioAvailableSync()}>
                   <Trans>
                     System audio capture isn't supported on Linux yet.
                   </Trans>

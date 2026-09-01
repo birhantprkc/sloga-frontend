@@ -257,6 +257,29 @@ export default {
       (import.meta.env.VITE_CFG_ENABLE_ANDROID_SCREEN_SHARE as string) ?? ""
     ).toLowerCase() == "true",
   /**
+   * Linux screen-share audio — system audio for Entire Screen shares from
+   * the Linux desktop shell, captured through a native PipeWire virtual
+   * source that excludes Sloga's own playback (the echo-loop defense; see
+   * discord-features-plans/linux-pipewire-screenshare-audio.md).
+   *
+   * DEFAULT OFF. The code paths also gate on `slogaShell.screenAudio` and
+   * a runtime PipeWire probe, so this flag leaking into another surface is
+   * inert — but only Linux shell builds should ever set it, and lighting
+   * it is a Linux-only release decision that additionally requires the
+   * slice-3 copy matrix (a capable shell whose capture failed must not get
+   * the generic "pick a tab" retry copy).
+   *
+   * Read in `screenAudioSupported()` (rtc/screenAudioNative.ts), the single
+   * point the capture path and the settings-modal copy sit behind.
+   *
+   * Set `VITE_CFG_ENABLE_LINUX_SCREEN_AUDIO=true` for Linux shell builds
+   * that should have it.
+   */
+  ENABLE_LINUX_SCREEN_AUDIO:
+    (
+      (import.meta.env.VITE_CFG_ENABLE_LINUX_SCREEN_AUDIO as string) ?? ""
+    ).toLowerCase() == "true",
+  /**
    * Session ID to set during development.
    */
   DEVELOPMENT_SESSION_ID: import.meta.env.DEV
