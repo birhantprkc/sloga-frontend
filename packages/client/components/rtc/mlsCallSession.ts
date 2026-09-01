@@ -865,14 +865,19 @@ interface StagedCommit {
 }
 
 /**
- * Once-per-PAGE-lifetime token for the §4.1 startup fresh-rejoin wipe. State
- * surviving from before this page (a reload / crash) is exactly what the wipe
- * exists to clear; within a page the session manages its groups coherently,
- * and a second sweep could only destroy a legitimately-established group
- * mid-flight. Spent ONLY on a fully successful wipe (M6) — a failing wipe
- * degrades to the already-member ladder, which §4.3 then catches loudly.
+ * Once-per-page-lifetime-PER-CHANNEL tokens for the §4.1 startup
+ * fresh-rejoin wipe. State surviving from before this page (a reload /
+ * crash) is exactly what the wipe exists to clear; within a page the
+ * session manages its groups coherently, and a second sweep could only
+ * destroy a legitimately-established group mid-flight. Per CHANNEL (the
+ * implementation audit's refinement of the plan's page-lifetime token): the
+ * token protects groups THIS page's sessions established, and a session
+ * only ever manages its own channel's groups — a global token would let one
+ * channel's spent wipe strand another channel's crash remnants. Spent ONLY
+ * on a fully successful wipe (M6) — a failing wipe degrades to the
+ * already-member ladder, which §4.3 then catches loudly.
  */
-let startupWipeSpent = false;
+const startupWipedChannels = new Set<string>();
 
 export class MlsCallSession {
   #deps: MlsCallSessionDeps;
@@ -1293,10 +1298,14 @@ export class MlsCallSession {
       // 08-16 silent pass). Proof needs a THIS-generation Welcome/create.
       joinedThisGeneration:
         this.#joinedGeneration === this.#establishGeneration,
-      // F3: never alarm while an establish is actually running — the honest
-      // ladder can outlast the backstop deadline.
+      // F3: the wall-clock backstop never fires while an establish is
+      // actually running — but a caller-asserted give-up (`ladderExhausted`)
+      // is never deferred by it: `#joinPath` asserts exhaustion from INSIDE
+      // the establish, and deferring that latch to the 240 s deadline would
+      // re-create the parked-muted-behind-an-amber-chip state (§4.3/§4.4).
       establishInFlight: this.#establishInFlight,
-      ladderExhausted: ladderExhausted || Date.now() >= this.#enrolmentDeadline,
+      ladderExhausted,
+      deadlineLapsed: Date.now() >= this.#enrolmentDeadline,
       // A plain voice call (feature off) and a cap-refused joiner are BOTH
       // states where having no group is correct and already reported by their
       // own path — never raise a second, wrong alarm for them.
@@ -1599,7 +1608,7 @@ export class MlsCallSession {
    * broken store loudly. Never burns `MAX_REESTABLISH`.
    */
   async #startupWipe(orphanGroupId: string | null): Promise<void> {
-    if (startupWipeSpent) return;
+    if (startupWipedChannels.has(this.#deps.channelId)) return;
     let localGroupIds: string[];
     try {
       localGroupIds = await this.#deps.bridge.callLocalGroups(
@@ -1617,7 +1626,7 @@ export class MlsCallSession {
     const targets = startupWipeTargets({
       localGroupIds,
       orphanGroupId,
-      tokenSpent: startupWipeSpent,
+      tokenSpent: startupWipedChannels.has(this.#deps.channelId),
     });
     if (targets.length === 0) return;
     try {
@@ -1626,7 +1635,7 @@ export class MlsCallSession {
         // nothing but also tell nobody; this path must degrade loudly).
         await this.#deps.bridge.callLeaveCleanup(groupId);
       }
-      startupWipeSpent = true; // spent ONLY on full success
+      startupWipedChannels.add(this.#deps.channelId); // spent ONLY on full success
       console.warn(
         "[mls] startup fresh-rejoin: wiped surviving local call-group state",
         targets,

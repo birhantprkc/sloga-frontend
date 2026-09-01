@@ -4249,8 +4249,9 @@ export class E2EEBridge implements E2EEAdapter {
   /**
    * Merge OUR staged commit after an authoritative DS `Won`. `wonEpoch` MUST
    * come from that authoritative response — NEVER a guess (native re-checks
-   * `wonEpoch == staged`, but the trust rule is the caller's). Use
-   * `reconcilePendingCommit` on reconnect rather than calling this blind.
+   * `wonEpoch == staged`, but the trust rule is the caller's). A dangling
+   * staged commit after a crash/reload is discarded with the group by the
+   * rejoin plan's startup wipe — never merged blind.
    */
   callCommitWon(groupId: string, wonEpoch: number): Promise<MlsProcessOutcome> {
     return this.#invoke("e2ee_call_commit_won", { groupId, wonEpoch });

@@ -120,16 +120,18 @@ export type EnrolmentVerdict = "enrolled" | "pending" | "not_enrolled";
  * equals the live one. Roster presence without it falls through to the
  * ladder — and alarms at exhaustion.
  *
- * `ladderExhausted` is the session's own bounded give-up signal (join retries
- * spent, or the re-establish cap reached) OR the backstop deadline elapsing.
- * Until then an un-enrolled device is legitimately mid-negotiation.
+ * `ladderExhausted` is the session's own EXPLICIT give-up signal — join
+ * retries spent, or the re-establish cap reached. It is asserted by a caller
+ * that KNOWS waiting is over, so it latches regardless of anything else
+ * still nominally "in flight" (the §4.3 rule: the alarm fires on true
+ * give-up events, never merely on a wall clock — and, symmetrically, a true
+ * give-up is never deferred to one).
  *
- * `establishInFlight` suppresses the alarm while an establish is actually
- * running (F3): the honest worst-case ladder can outlast any fixed deadline,
- * and a loud NOT-ENCRYPTED on a call that then secures moments later trains
- * users to ignore the one warning that must never be ignored. The true
- * give-up callers pass `ladderExhausted` AFTER their establish returned, so
- * this never masks a real exhaustion.
+ * `deadlineLapsed` is the wall-clock BACKSTOP for a path that reaches no
+ * explicit give-up point. It alone is suppressed by `establishInFlight`
+ * (F3): the honest worst-case ladder can outlast any fixed deadline, and a
+ * loud NOT-ENCRYPTED on a call that then secures moments later trains users
+ * to ignore the one warning that must never be ignored.
  *
  * `terminal` covers the modes where not being in a group is CORRECT and must
  * never raise an alarm: a plain (feature-off) voice call, and a joiner the
@@ -140,10 +142,12 @@ export function enrolmentVerdict(opts: {
   joinedThisGeneration: boolean;
   establishInFlight: boolean;
   ladderExhausted: boolean;
+  deadlineLapsed: boolean;
   terminal: boolean;
 }): EnrolmentVerdict {
   if (opts.selfInRoster && opts.joinedThisGeneration) return "enrolled";
   if (opts.terminal) return "enrolled"; // not our alarm to raise
-  if (opts.establishInFlight) return "pending"; // F3: never alarm mid-establish
-  return opts.ladderExhausted ? "not_enrolled" : "pending";
+  if (opts.ladderExhausted) return "not_enrolled"; // explicit give-up — never deferred
+  if (opts.establishInFlight) return "pending"; // F3: the deadline never fires mid-establish
+  return opts.deadlineLapsed ? "not_enrolled" : "pending";
 }

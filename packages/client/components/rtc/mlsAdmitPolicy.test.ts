@@ -122,6 +122,7 @@ test("enrolment: roster presence + this-generation join is the only proof", () =
       joinedThisGeneration: true,
       establishInFlight: false,
       ladderExhausted: false,
+      deadlineLapsed: false,
       terminal: false,
     }),
     "enrolled",
@@ -133,6 +134,7 @@ test("enrolment: roster presence + this-generation join is the only proof", () =
       joinedThisGeneration: true,
       establishInFlight: false,
       ladderExhausted: true,
+      deadlineLapsed: true,
       terminal: false,
     }),
     "enrolled",
@@ -149,6 +151,7 @@ test("enrolment: roster presence WITHOUT a this-generation join ALARMS (F2)", ()
       joinedThisGeneration: false,
       establishInFlight: false,
       ladderExhausted: true,
+      deadlineLapsed: false,
       terminal: false,
     }),
     "not_enrolled",
@@ -159,6 +162,7 @@ test("enrolment: roster presence WITHOUT a this-generation join ALARMS (F2)", ()
       joinedThisGeneration: false,
       establishInFlight: false,
       ladderExhausted: false,
+      deadlineLapsed: false,
       terminal: false,
     }),
     "pending",
@@ -172,25 +176,59 @@ test("enrolment: un-enrolled mid-ladder is PENDING, never a false alarm", () => 
       joinedThisGeneration: false,
       establishInFlight: false,
       ladderExhausted: false,
+      deadlineLapsed: false,
       terminal: false,
     }),
     "pending",
   );
 });
 
-test("enrolment: no alarm while an establish is in flight (F3)", () => {
-  // The deadline can lapse mid-establish (the honest ladder can outlast any
-  // fixed backstop) — a loud alarm on a call that then secures trains users
-  // to ignore NOT-ENCRYPTED.
+test("enrolment: a caller-asserted give-up latches EVEN mid-establish (§4.3)", () => {
+  // The implementation-audit HIGH: #joinPath asserts exhaustion from INSIDE
+  // the establish (establishInFlight is still true there). Deferring that
+  // latch to the wall-clock backstop parks the user minutes behind an amber
+  // chip — the exact state this design eliminates. A true give-up event is
+  // never suppressed.
   assert.equal(
     enrolmentVerdict({
       selfInRoster: false,
       joinedThisGeneration: false,
       establishInFlight: true,
       ladderExhausted: true,
+      deadlineLapsed: false,
+      terminal: false,
+    }),
+    "not_enrolled",
+  );
+});
+
+test("enrolment: the wall-clock backstop is suppressed while establishing (F3)", () => {
+  // The deadline can lapse mid-establish (the honest ladder can outlast any
+  // fixed backstop) — a loud alarm on a call that then secures trains users
+  // to ignore NOT-ENCRYPTED. Only the DEADLINE is suppressed; see the
+  // caller-asserted test above for the give-up path.
+  assert.equal(
+    enrolmentVerdict({
+      selfInRoster: false,
+      joinedThisGeneration: false,
+      establishInFlight: true,
+      ladderExhausted: false,
+      deadlineLapsed: true,
       terminal: false,
     }),
     "pending",
+  );
+  // Once nothing is establishing, the lapsed deadline reports.
+  assert.equal(
+    enrolmentVerdict({
+      selfInRoster: false,
+      joinedThisGeneration: false,
+      establishInFlight: false,
+      ladderExhausted: false,
+      deadlineLapsed: true,
+      terminal: false,
+    }),
+    "not_enrolled",
   );
 });
 
@@ -203,6 +241,7 @@ test("enrolment: un-enrolled with the ladder spent is the SILENT-DOWNGRADE case"
       joinedThisGeneration: false,
       establishInFlight: false,
       ladderExhausted: true,
+      deadlineLapsed: false,
       terminal: false,
     }),
     "not_enrolled",
@@ -218,6 +257,7 @@ test("enrolment: terminal modes never raise a second alarm", () => {
       joinedThisGeneration: false,
       establishInFlight: false,
       ladderExhausted: true,
+      deadlineLapsed: true,
       terminal: true,
     }),
     "enrolled",
