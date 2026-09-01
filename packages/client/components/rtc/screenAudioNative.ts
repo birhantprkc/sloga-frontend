@@ -30,7 +30,18 @@ export type {
 } from "./screenAudioTargetPolicy";
 
 /** Last probe outcome, for synchronous UI (the settings-modal copy gate).
- * `undefined` until the first probe resolves. */
+ * `undefined` until the first probe resolves.
+ *
+ * 🔴 A plain `let`, not a signal: a UI branch reading it is NOT tracked and
+ * will not re-render when a probe lands. That is safe today only because of
+ * an invariant that lives in another file — `toggleScreenshare()` awaits
+ * `screenAudioSupported(true)` before it can open the settings modal, since
+ * `wantsAudio` is forced true whenever consent is pending and Linux never
+ * has a getDisplayMedia audio track. Make `wantsAudio` honor the stored
+ * setting with the ask-dialog on and that ordering is gone: the probe is
+ * skipped, this stays `undefined`, and a CAPABLE shell renders "System
+ * audio capture isn't supported on Linux yet." Move the modal onto a Solid
+ * signal before changing that. */
 let lastProbe: boolean | undefined;
 
 function shellSurface() {

@@ -163,13 +163,41 @@ export function ScreenShareSettingsModal(
                   </Trans>
                 }
               >
-                {/* Capability-keyed, not UA-keyed (screenshare-audio design
-                    §5): a shell with the native PipeWire path must not claim
-                    Linux can't do this — it falls through to the generic
-                    copy until the slice-3 matrix lands (F7: the lighting
-                    release requires that matrix for exactly this reason).
-                    Web browsers on Linux, old shells and PulseAudio hosts
-                    keep the message. */}
+                {/* Capability-keyed, never UA-keyed (screenshare-audio
+                    design §9), and capability ALONE here: a true probe
+                    already implies the Linux shell, while ANDing `isLinux`
+                    in would mean that the day `navigator.platform` stops
+                    saying "Linux" (Chromium keeps reducing that surface)
+                    neither Linux branch matches and the shell falls through
+                    to the generic fallback below — which tells the user to
+                    restart the share and pick a tab or a screen, the exact
+                    wrong instruction this matrix exists to delete.
+
+                    The states that actually reach this branch, traced
+                    through state.tsx rather than taken from §9's prose: the
+                    capture failed, or the shell answered `skip` because it
+                    cannot say what the share covers. "The user unticked" is
+                    NOT among them — this dialog only opens while consent is
+                    pending, which forces a capture attempt, and an unticked
+                    user gets the checkbox shown unticked instead.
+
+                    So this states an OUTCOME and names no control. The
+                    checkbox lives under the complementary `Show`, so it is
+                    never on screen beside this line; and on the `skip` path
+                    the shell could not have captured sound however the user
+                    answered. A capture failure separately raises its own
+                    error dialog (onErr) — slice 1's deliberate loud-failure
+                    signal — so this has to agree with that, not argue with
+                    it. */}
+                <Match when={screenAudioAvailableSync()}>
+                  <Trans>
+                    Sloga couldn't capture this computer's sound for this share.
+                  </Trans>
+                </Match>
+                {/* Web browsers on Linux, shells without the native path,
+                    PulseAudio-only hosts, and every build with the flag
+                    dark. Must not be removed globally: web Chrome on Linux
+                    still cannot capture system audio at all. */}
                 <Match when={isLinux && !screenAudioAvailableSync()}>
                   <Trans>
                     System audio capture isn't supported on Linux yet.

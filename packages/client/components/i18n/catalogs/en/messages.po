@@ -1262,6 +1262,7 @@ msgstr "Camera unavailable — check permissions and that no other app is using 
 #: components/modal/modals/ServerIdentity.tsx
 #: components/modal/modals/ScreenShareSettings.tsx
 #: components/modal/modals/ScreenSharePicker.tsx
+#: components/modal/modals/ScreenShareAudioSource.tsx
 #: components/modal/modals/ScheduleMessage.tsx
 #: components/modal/modals/ResetBotToken.tsx
 #: components/modal/modals/ReportContent.tsx
@@ -4667,6 +4668,10 @@ msgstr "One row per reserved item (ItemId, Name, Class, Note, Plus) — for spre
 msgid "Online"
 msgstr "Online"
 
+#: components/modal/modals/ScreenShareAudioSource.tsx
+msgid "Only apps that are playing sound right now are listed."
+msgstr "Only apps that are playing sound right now are listed."
+
 #: src/interface/navigation/servers/UserMenu.tsx
 msgid "Only mentions will notify you"
 msgstr "Only mentions will notify you"
@@ -6049,6 +6054,7 @@ msgstr "Several people are typing…"
 
 #: components/modal/modals/ScreenShareSettings.tsx
 #: components/modal/modals/ScreenSharePicker.tsx
+#: components/modal/modals/ScreenShareAudioSource.tsx
 msgid "Share audio"
 msgstr "Share audio"
 
@@ -6212,6 +6218,14 @@ msgstr "Sloga"
 msgid "Sloga asks you once instead of twice before this person can use your mouse and keyboard. Select to undo."
 msgstr "Sloga asks you once instead of twice before this person can use your mouse and keyboard. Select to undo."
 
+#: components/modal/modals/ScreenShareSettings.tsx
+msgid "Sloga can't tell which app's sound belongs to this share — you'll pick one next."
+msgstr "Sloga can't tell which app's sound belongs to this share — you'll pick one next."
+
+#: components/modal/modals/ScreenShareAudioSource.tsx
+msgid "Sloga can't tell which app's sound belongs to this share, so pick the one you want to send."
+msgstr "Sloga can't tell which app's sound belongs to this share, so pick the one you want to send."
+
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
 msgid "Sloga cannot tell which screen you are sharing, so it will not hand over control. Stop the share and share your whole screen again."
 msgstr "Sloga cannot tell which screen you are sharing, so it will not hand over control. Stop the share and share your whole screen again."
@@ -6219,6 +6233,10 @@ msgstr "Sloga cannot tell which screen you are sharing, so it will not hand over
 #: components/ui/components/features/voice/watch/JellyfinConnect.tsx
 msgid "Sloga connects your device straight to your server. It never sees or stores your Jellyfin password."
 msgstr "Sloga connects your device straight to your server. It never sees or stores your Jellyfin password."
+
+#: components/modal/modals/ScreenShareSettings.tsx
+msgid "Sloga couldn't capture this computer's sound for this share."
+msgstr "Sloga couldn't capture this computer's sound for this share."
 
 #: components/ui/components/features/profiles/ProfileBadges.tsx
 msgid "Sloga Developer"
@@ -7680,6 +7698,10 @@ msgstr "Where new calls in this server are hosted. Auto picks the closest node f
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Whether other users can edit these settings"
 msgstr "Whether other users can edit these settings"
+
+#: components/modal/modals/ScreenShareAudioSource.tsx
+msgid "Which app's audio?"
+msgstr "Which app's audio?"
 
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
 msgid "Which screen are you sharing?"
