@@ -511,6 +511,12 @@ class Voice {
    */
   #attenuation: Attenuation;
   /**
+   * Reactive: attenuation is suspended because this client is publishing
+   * system/tab audio (ducking would lower the shared stream itself). The
+   * settings UI discloses this next to the strength slider.
+   */
+  attenuationSuspended: Accessor<boolean>;
+  /**
    * Entrance sound lookup (server id → soundboard sound id), read from the
    * synced settings store by VoiceContext. Undefined = feature not wired.
    */
@@ -928,6 +934,7 @@ class Voice {
     this.sound = sound;
     this.#entranceSound = entranceSound;
     this.#attenuation = new Attenuation(voiceSettings);
+    this.attenuationSuspended = this.#attenuation.suspended;
     // Strength / who-counts changes land on an active duck immediately; the
     // reads are store getters, so this tracks exactly those three keys.
     createEffect(() => {

@@ -4827,6 +4827,10 @@ msgstr "Paste a YouTube link. Everyone in the call watches it in sync, each from
 msgid "Patch Notes"
 msgstr "Patch Notes"
 
+#: components/app/interface/settings/user/voice/AttenuationOptions.tsx
+msgid "Paused while you share your screen with audio — lowering other applications would also lower the audio your share is sending. It resumes when the share stops."
+msgstr "Paused while you share your screen with audio — lowering other applications would also lower the audio your share is sending. It resumes when the share stops."
+
 #: components/modal/modals/ImageEditorCore.tsx
 msgid "Pen"
 msgstr "Pen"

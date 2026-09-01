@@ -2,6 +2,7 @@ import { Show, createResource } from "solid-js";
 
 import { Trans } from "@lingui-solid/solid/macro";
 
+import { useVoice } from "@revolt/rtc";
 import { attenuationSupported } from "@revolt/rtc/attenuation";
 import { useState } from "@revolt/state";
 import { CategoryButton, Checkbox, Column, Slider, Text } from "@revolt/ui";
@@ -15,6 +16,7 @@ import { Symbol } from "@revolt/ui/components/utils/Symbol";
  */
 export function AttenuationOptions() {
   const { voice } = useState();
+  const voiceContext = useVoice();
   const [supported] = createResource(attenuationSupported);
 
   return (
@@ -35,6 +37,19 @@ export function AttenuationOptions() {
             icon={<Symbol>volume_down</Symbol>}
             description={
               <Column gap="sm">
+                {/* The share-audio suspension is otherwise invisible and has
+                    been read as "the slider is broken" more than once. */}
+                <Show when={voiceContext.attenuationSuspended()}>
+                  <Text class="label">
+                    <span style={{ color: "var(--md-sys-color-primary)" }}>
+                      <Trans>
+                        Paused while you share your screen with audio — lowering
+                        other applications would also lower the audio your share
+                        is sending. It resumes when the share stops.
+                      </Trans>
+                    </span>
+                  </Text>
+                </Show>
                 <Text class="label">
                   <Show
                     when={voice.attenuationStrength > 0}

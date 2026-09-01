@@ -5,6 +5,7 @@ import {
   RoomEvent,
   Track,
 } from "livekit-client";
+import { type Accessor, type Setter, createSignal } from "solid-js";
 
 import { tauriInvoke } from "@revolt/common";
 import type { Voice as VoiceSettings } from "@revolt/state/stores/Voice";
@@ -57,6 +58,13 @@ export class Attenuation {
   #remoteSpeaking = false;
   /** We are publishing system/tab audio — ducking would duck the stream. */
   #sharingAudio = false;
+  /**
+   * Reactive mirror of `#sharingAudio` for the settings UI. The suspension
+   * is otherwise invisible, and a slider that silently does nothing has been
+   * reported as broken more than once — the UI must be able to say why.
+   */
+  readonly suspended: Accessor<boolean>;
+  #setSuspended: Setter<boolean>;
   /** Strength (0–1) last sent to native; 0 = nothing ducked. */
   #applied = 0;
   #release: ReturnType<typeof setTimeout> | undefined;
@@ -72,6 +80,9 @@ export class Attenuation {
 
   constructor(settings: VoiceSettings) {
     this.#settings = settings;
+    const [suspended, setSuspended] = createSignal(false);
+    this.suspended = suspended;
+    this.#setSuspended = setSuspended;
   }
 
   /** Follow a room's active speakers. Detaches from any previous room. */
@@ -94,6 +105,7 @@ export class Attenuation {
     this.#localSpeaking = false;
     this.#remoteSpeaking = false;
     this.#sharingAudio = false;
+    this.#setSuspended(false);
     this.#cancelRelease();
     if (this.#applied > 0) this.#apply(0);
   }
@@ -113,6 +125,7 @@ export class Attenuation {
     const sharing = !!pub?.track;
     if (sharing === this.#sharingAudio) return;
     this.#sharingAudio = sharing;
+    this.#setSuspended(sharing);
     this.#evaluate();
   }
 
