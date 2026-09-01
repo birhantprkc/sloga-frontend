@@ -33,8 +33,32 @@ declare global {
             nodeName?: string;
             pid?: number;
             binary?: string;
+            /** Grouping key: streams sharing it are one application. */
+            identity: string;
           }[]
         >;
+        /** What the CURRENT share's audio should cover (slice 2). Never
+         * rejects and never answers "system" for a window it could not
+         * attribute — an unattributable window is always `ask`. `include`
+         * holds stable application identities, not node ids. */
+        resolveTarget?(): Promise<{
+          mode: "system" | "targets" | "ask";
+          include?: string[];
+          appLabel?: string;
+          reason?: string;
+        }>;
+        /** Restrict a live session to a chosen set of applications, by the
+         * `identity` keys `listApps` returns. Rejects on a stale session
+         * id, an unrecognized mode, or a session that did not apply the
+         * set; otherwise resolves the number of applications actually
+         * linked — ZERO is a valid resolution meaning the capture would be
+         * silent, and callers must treat it as a failure rather than
+         * publish an untargeted source. */
+        setTargets?(options: {
+          sessionId: number;
+          mode: "system" | "targets";
+          include: string[];
+        }): Promise<number>;
       };
     };
   }

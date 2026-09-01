@@ -227,7 +227,10 @@ import {
   MlsCallSession,
 } from "./mlsCallSession";
 import {
+  type ScreenAudioTargets,
   captureScreenAudio,
+  listScreenAudioApps,
+  resolveScreenAudioTarget,
   screenAudioSupported,
   stopScreenAudio,
 } from "./screenAudioNative";
@@ -640,6 +643,13 @@ class Voice {
    * publication lands). Every stop path passes it so the shell can no-op
    * a stale stop instead of tearing down a successor share's session. */
   #screenAudioSessionId: number | undefined;
+  /** Generation whose "which app?" chooser has already been raised. The
+   * ask-modal's confirm action has no in-flight lock, so a double-click
+   * would otherwise stack two choosers on one share, produce two picks,
+   * and publish twice — and only ONE ScreenShareAudio publication is
+   * reachable by teardown, leaving the other live for the rest of the
+   * call. One question per share attempt. */
+  #screenAudioChooserGen: number | undefined;
   /**
    * The native Android screen leg (screen-leg plan §7), when this shell can
    * publish one. Constructed lazily on first share and reused: the plugin
@@ -4430,12 +4440,15 @@ class Voice {
           // continues RAW — the user chose to share; silently blocking the
           // share would be the worse surprise. The gate's
           // TrackProcessorUpdate handler squares this with pause/resume.
+          const displaySurface = localTrack.videoTrack
+            ? (
+                localTrack.videoTrack.mediaStreamTrack.getSettings() as MediaTrackSettings & {
+                  displaySurface?: string;
+                }
+              ).displaySurface
+            : undefined;
           if (this.#settings.screenShareShield && localTrack.videoTrack) {
-            const surface = (
-              localTrack.videoTrack.mediaStreamTrack.getSettings() as MediaTrackSettings & {
-                displaySurface?: string;
-              }
-            ).displaySurface;
+            const surface = displaySurface;
             if (surface === "monitor" || surface === undefined) {
               try {
                 const shield = new ScreenShieldProcessor();
@@ -4479,6 +4492,12 @@ class Voice {
             (screenPickerQualityName !== undefined
               ? screenPickerAudio === true
               : this.#settings.screenShareAudio);
+          // Slice 2: set when the shell could not attribute a shared
+          // WINDOW to exactly one application, so the user has to say
+          // which app's sound to send. Nothing is captured on this path
+          // until they do — a silent wrong guess would broadcast an app
+          // they never chose (design §9's privacy rule).
+          let needsAudioChoice = false;
           if (
             !screenAudioTrack &&
             wantsAudio &&
@@ -4489,11 +4508,30 @@ class Voice {
             // long before the user has answered the ask-modal: pause it
             // now; the modal path pauses again idempotently below.
             if (consentPending) localTrack.pauseUpstream();
-            screenAudioTrack = await this.#publishNativeScreenAudio(
-              room,
-              generation,
-              consentPending,
-            );
+            // Bounded inside resolveScreenAudioTarget: the upstream is
+            // already paused here, so a shell call that never settled
+            // would strand viewers on a frozen tile with no way out.
+            const plan = await resolveScreenAudioTarget(displaySurface);
+            if (this.#screenAudioStale(generation, room)) return;
+            if (plan.mode === "ask") {
+              // Leg evidence (L9-L11): the reason distinguishes an opaque
+              // Wayland portal from a lying pid from a two-app tree, and
+              // all three look identical from the UI.
+              console.info(`screen audio needs a chooser: ${plan.reason}`);
+              needsAudioChoice = true;
+            } else if (plan.mode === "skip") {
+              // This shell cannot say what the share covers and cannot be
+              // narrowed either, so there is no safe capture and no
+              // question worth asking. Silent share, logged.
+              console.info(`screen audio skipped: ${plan.reason}`);
+            } else {
+              screenAudioTrack = await this.#publishNativeScreenAudio(
+                room,
+                generation,
+                consentPending,
+                plan,
+              );
+            }
           }
 
           const callback = async (
@@ -4575,6 +4613,7 @@ class Voice {
                   return { name: k, fullName: v.fullName };
                 }),
                 audio: !!screenAudioTrack,
+                audioChoice: needsAudioChoice,
                 callback: async (qualityName, audio) => {
                   callback(qualityName, audio);
                   // Native screen audio was published MUTED while consent
@@ -4602,6 +4641,17 @@ class Voice {
                       screenAudioTrack?.resumeUpstream();
                     }
                   }
+                  // Slice 2, LAST: the checkbox above was the consent to
+                  // send sound; the chooser asks which app. Deliberately
+                  // after this dialog has been answered and the video
+                  // share resumed, rather than stacked on top of it — one
+                  // question at a time, and the share is already settled
+                  // by the time the second one appears.
+                  if (audio && needsAudioChoice) {
+                    this.#chooseScreenAudioApp(room, generation).catch(
+                      (error) => this.onErr(error),
+                    );
+                  }
                 },
               });
             } else {
@@ -4611,6 +4661,19 @@ class Voice {
               );
             }
           }
+
+          // No ask-dialog will open (the picker answered, "don't ask me
+          // again", or a single quality tier), so there is nothing to hang
+          // the app question off — and this is the only route a
+          // don't-ask-again user can ever get window-share audio. Their
+          // stored "share audio" answer is already the consent to send
+          // sound; the chooser asks the one thing we genuinely cannot
+          // infer, and cancelling leaves the share silent.
+          if (needsAudioChoice && !consentPending) {
+            this.#chooseScreenAudioApp(room, generation).catch((error) =>
+              this.onErr(error),
+            );
+          }
         }
       } catch (e) {
         this.onErr(e);
@@ -4618,12 +4681,24 @@ class Voice {
     }
   }
 
-  /** True when an in-flight native screen-audio step must abandon (F2). */
+  /** True when an in-flight native screen-audio step must abandon (F2).
+   *
+   * Liveness is the Voice-owned `screenshare()` signal, NOT livekit's
+   * `isScreenShareEnabled` — that getter is just "does a ScreenShare
+   * publication exist right now", and `republishAllTracks` unpublishes
+   * and republishes every track, so it reads FALSE for hundreds of
+   * milliseconds on each E2EE enable-window re-secure and each reconnect.
+   * Keying on it made a poll landing in that window abandon the unmute
+   * doorway silently: the track stays muted for the rest of the call with
+   * a live OS capture behind it and nothing left that can unmute it,
+   * which is the exact silent-failure class the doorway exists to kill.
+   * `screenshare()` only changes when the share itself does (§6's F2 rule
+   * names it for this reason). */
   #screenAudioStale(generation: number, room: Room) {
     return (
       generation !== this.#screenAudioGen ||
       room !== this.room() ||
-      !room.localParticipant.isScreenShareEnabled
+      !this.screenshare()
     );
   }
 
@@ -4638,15 +4713,21 @@ class Voice {
    * is held, or the call is E2EE — and is unmuted only through
    * #unmuteScreenAudioWhenSafe. `req.muted` is stamped from the track state
    * at publish, so no pre-consent/pre-transform frames ever escape.
+   *
+   * `targets` (slice 2) narrows the capture to one application. It is
+   * applied inside `captureScreenAudio` before the device is captured, and
+   * a shell that cannot apply it fails the capture rather than publishing
+   * a system-wide one the user did not choose.
    */
   async #publishNativeScreenAudio(
     room: Room,
     generation: number,
     consentPending: boolean,
+    targets: ScreenAudioTargets,
   ) {
     if (this.#screenAudioStale(generation, room)) return undefined;
 
-    const captured = await captureScreenAudio();
+    const captured = await captureScreenAudio(targets);
     if (!captured) {
       // The doc mandates a surfaced signal here (§4: "toast + share
       // continues without audio") — a silent no-audio share suppresses the
@@ -4677,12 +4758,17 @@ class Voice {
     // there), so no ordering of gate transitions around the publish await
     // can leak first frames (E3's residue). The plaintext happy path pays
     // one near-immediate unmute round-trip for that.
-    const audioTrack = new LocalAudioTrack(msTrack, undefined, false);
-    await audioTrack.mute();
-    if (this.#screenAudioStale(generation, room)) return abandon();
-
+    let audioTrack;
     let publication;
     try {
+      // Inside the try with the publish: a mute() that rejects (torn-down
+      // track, a livekit internal) would otherwise escape before
+      // abandon() could run, leaving the native session and the gUM
+      // capture live with no publication and nothing surfaced.
+      audioTrack = new LocalAudioTrack(msTrack, undefined, false);
+      await audioTrack.mute();
+      if (this.#screenAudioStale(generation, room)) return abandon();
+
       publication = await room.localParticipant.publishTrack(audioTrack, {
         source: Track.Source.ScreenShareAudio,
         // E2EE INVARIANT, not a bandwidth knob (§7/E5): empty DTX frames
@@ -4707,6 +4793,68 @@ class Voice {
       void this.#unmuteScreenAudioWhenSafe(room, publication, generation);
     }
     return publication;
+  }
+
+  /**
+   * "Which app's audio?" — the explicit chooser for a Linux window share
+   * the shell could not attribute to exactly one application
+   * (screenshare-audio design §9). Reached only when the user has already
+   * asked for audio on this share; the question left is which app, and
+   * that one we refuse to guess.
+   *
+   * Nothing has been captured at this point and nothing is until a row is
+   * picked, so every way out that is not a pick — cancel, dismiss, a
+   * staleness abort, an empty roster — leaves the share silent with no
+   * native session behind it. That makes this dialog's fail-open direction
+   * the safe one, unlike the consent dialogs the repo warns about.
+   */
+  async #chooseScreenAudioApp(room: Room, generation: number) {
+    if (this.#screenAudioStale(generation, room)) return;
+    if (this.#screenAudioChooserGen === generation) return;
+    this.#screenAudioChooserGen = generation;
+    const apps = await listScreenAudioApps();
+    if (this.#screenAudioStale(generation, room)) return;
+    if (apps.length === 0) {
+      // Nothing is playing, so there is nothing we could have linked
+      // either way and no question worth putting on screen. Deliberately
+      // NOT surfaced: this is §9's benign "chooser shows an app that
+      // stops playing" state, it fires on every share of a quiet window,
+      // and `onErr` is a full error dialog on top of a live call.
+      console.info("screen audio chooser: no app is playing sound");
+      return;
+    }
+    this.openModal({
+      type: "screen_share_audio_source",
+      apps,
+      // Dismissing is a valid answer here (silent share); there is no
+      // capture or publication to tear down.
+      onCancel: () => {},
+      callback: (key) => {
+        if (!apps.some((app) => app.key === key)) return;
+        // The share can end while this dialog sits open — say so rather
+        // than letting the button read as broken. Nothing was captured,
+        // so there is nothing to tear down.
+        if (this.#screenAudioStale(generation, room)) {
+          this.onErr(
+            new Error("That share has already ended — nothing was shared."),
+          );
+          return;
+        }
+        // Straight back onto the one publish path — always-muted publish,
+        // single unmute doorway, same staleness token. The pick IS the
+        // consent, so consentPending is false. The target is the app's
+        // stable identity, resolved to live nodes at apply time, so a
+        // stream that died while the dialog was open cannot hand the
+        // capture whatever now owns its recycled node id.
+        // Explicit catch: this is a fire-and-forget call site with no
+        // enclosing try, so a throw here would surface as an unhandled
+        // rejection instead of telling the user the audio did not start.
+        this.#publishNativeScreenAudio(room, generation, false, {
+          mode: "targets",
+          include: [key],
+        }).catch((error) => this.onErr(error));
+      },
+    });
   }
 
   /**

@@ -14,6 +14,21 @@
  */
 import { CONFIGURATION } from "@revolt/common";
 
+import {
+  type ScreenAudioApp,
+  type ScreenAudioPlan,
+  type ScreenAudioTargets,
+  groupAppRoster,
+  planFromAnswer,
+  planWithoutTargeting,
+} from "./screenAudioTargetPolicy";
+
+export type {
+  ScreenAudioApp,
+  ScreenAudioPlan,
+  ScreenAudioTargets,
+} from "./screenAudioTargetPolicy";
+
 /** Last probe outcome, for synchronous UI (the settings-modal copy gate).
  * `undefined` until the first probe resolves. */
 let lastProbe: boolean | undefined;
@@ -94,13 +109,87 @@ export interface ScreenAudioCapture {
 }
 
 /**
+ * A shell round-trip must never be able to wedge a share. The video
+ * upstream is already paused by the time this runs, so an IPC call that
+ * never settles would leave viewers on a frozen tile with no way out but
+ * toggling the share off — the exact failure §5 gave `probe` a hard
+ * timeout to avoid.
+ */
+const RESOLVE_TIMEOUT_MS = 4000;
+
+function withDeadline<T>(
+  promise: Promise<T>,
+  ms: number,
+): Promise<T | undefined> {
+  return Promise.race([
+    promise,
+    new Promise<undefined>((resolve) =>
+      setTimeout(() => resolve(undefined), ms),
+    ),
+  ]);
+}
+
+/**
+ * Ask the shell what this share's audio should cover, and hand the answer
+ * to the policy (`screenAudioTargetPolicy.ts`) to decide what it means.
+ * Every decision lives there; this owns only the IPC and its deadline.
+ *
+ * `displaySurface` is the share's own `getSettings().displaySurface` — the
+ * one fact about this share the renderer knows without asking, and what
+ * the policy cross-checks the shell's answer against.
+ */
+export async function resolveScreenAudioTarget(
+  displaySurface?: string,
+): Promise<ScreenAudioPlan> {
+  const shell = shellSurface();
+  if (!shell?.resolveTarget || !shell.setTargets) {
+    return planWithoutTargeting(displaySurface);
+  }
+  try {
+    const answer = await withDeadline(
+      shell.resolveTarget(),
+      RESOLVE_TIMEOUT_MS,
+    );
+    return planFromAnswer(answer, displaySurface, "resolve_timeout");
+  } catch {
+    return planFromAnswer(undefined, displaySurface, "unknown_window");
+  }
+}
+
+/**
+ * The chooser's roster: one row per application. The shell has already
+ * dropped Sloga's own streams — offering them would build the echo loop
+ * the whole feature exists to prevent — and stamped each with a stable
+ * `identity`, which is what a pick sends back.
+ */
+export async function listScreenAudioApps(): Promise<ScreenAudioApp[]> {
+  const shell = shellSurface();
+  if (!shell) return [];
+  try {
+    return groupAppRoster(await shell.listApps());
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Start the native session and capture its device. Returns the track with
  * its session token, or null on any failure — the caller degrades to a
  * no-audio share (audio is an enhancement; the video share already
  * succeeded, §4). The internal error path stops exactly the session it
  * started (by token), never a successor's.
+ *
+ * `targets` narrows the capture to one application (slice 2). The native
+ * session starts in its system-wide default and is narrowed immediately
+ * after — between those two awaits other apps are linked into the virtual
+ * source, but NOTHING reads it: the device is only captured further down,
+ * after the narrowing has been applied and acknowledged. A shell that
+ * cannot apply it fails the whole capture rather than quietly publishing a
+ * system-wide one the user did not ask for.
  */
-export async function captureScreenAudio(): Promise<ScreenAudioCapture | null> {
+export async function captureScreenAudio(
+  targets: ScreenAudioTargets = { mode: "system" },
+): Promise<ScreenAudioCapture | null> {
   const shell = shellSurface();
   if (!shell) return null;
   let sessionId: number | undefined;
@@ -108,6 +197,29 @@ export async function captureScreenAudio(): Promise<ScreenAudioCapture | null> {
   try {
     const started = await shell.start();
     sessionId = started.sessionId;
+    if (targets.mode === "targets") {
+      if (!shell.setTargets) {
+        throw new Error("shell cannot restrict screen audio to one app");
+      }
+      // ASSERT, do not assume — the same rule the E2EE transform check
+      // follows, for the same reason: the failure is invisible from here.
+      // A rejection is not the only way this goes wrong; the shell also
+      // reports HOW MANY applications it actually linked, and zero means
+      // the capture would be silent while a resolved promise says it
+      // worked. Anything but a positive count fails the whole capture,
+      // because the alternative is publishing a still-system-wide source
+      // as if it were one app's audio.
+      const linked = await shell.setTargets({
+        sessionId,
+        mode: "targets",
+        include: targets.include,
+      });
+      if (typeof linked !== "number" || linked < 1) {
+        throw new Error(
+          `screen-audio targets did not apply (linked ${String(linked)})`,
+        );
+      }
+    }
     const deviceId = await findDeviceId(started.deviceDescription);
     if (!deviceId) {
       throw new Error(

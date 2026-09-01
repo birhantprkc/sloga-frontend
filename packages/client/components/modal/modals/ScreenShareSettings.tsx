@@ -7,7 +7,7 @@ import { ScreenShareQualityName } from "@revolt/state/stores/Voice";
 import { Column, Dialog, DialogProps, Form2 } from "@revolt/ui";
 import { VideoTrack } from "solid-livekit-components";
 
-import { Match, Show, Switch } from "solid-js";
+import { Match, Show, Switch, createMemo } from "solid-js";
 import { Modals } from "../types";
 import { ScreenShareQualityLabel } from "./ScreenShareQualityLabel";
 
@@ -26,13 +26,22 @@ export function ScreenShareSettingsModal(
   const voiceContext = useVoice();
   const { t } = useLingui();
 
+  // Audio is on the table either because a track already exists (every
+  // other platform, and a Linux share that auto-matched) or because the
+  // Linux shell can capture it as soon as the user says which app
+  // (screenshare-audio design §9 — the chooser opens after this dialog).
+  // Both answer the checkbox the same way; only the note below differs.
+  const audioOffered = createMemo(
+    () => props.audio || props.audioChoice === true,
+  );
+
   const group = createFormGroup({
     qualityName: createFormControl<ScreenShareQualityName>(
       voice.screenShareQuality || "low",
       { required: true },
     ),
-    audio: createFormControl(props.audio && voice.screenShareAudio, {
-      disabled: !props.audio,
+    audio: createFormControl(audioOffered() && voice.screenShareAudio, {
+      disabled: !audioOffered(),
     }),
     shield: createFormControl(voice.screenShareShield),
     dontAsk: createFormControl(false),
@@ -42,7 +51,14 @@ export function ScreenShareSettingsModal(
     if (group.controls.dontAsk.value) {
       voice.screenShareQuality = group.controls.qualityName.value;
       voice.screenShareQualityAsk = false;
-      voice.screenShareAudio = group.controls.audio.value;
+      // Only when audio was actually on offer. When the capture failed
+      // (or this platform has none) the checkbox is hidden and reads
+      // false, so persisting it would let one PipeWire hiccup turn screen
+      // audio off for good — and with the ask dialog now gone too, the
+      // user never sees the checkbox again to notice.
+      if (audioOffered()) {
+        voice.screenShareAudio = group.controls.audio.value;
+      }
     }
 
     // The shield persists unconditionally (unlike quality, it is a privacy
@@ -53,7 +69,7 @@ export function ScreenShareSettingsModal(
 
     props.callback(
       group.controls.qualityName.value,
-      group.controls.audio.value && props.audio,
+      group.controls.audio.value && audioOffered(),
     );
     props.onClose();
   }
@@ -110,10 +126,22 @@ export function ScreenShareSettingsModal(
               };
             })}
           />
-          <Show when={props.audio}>
+          <Show when={audioOffered()}>
             <Form2.Checkbox control={group.controls.audio}>
               <Trans>Share audio</Trans>
             </Form2.Checkbox>
+            {/* Reason-agnostic on purpose: the chooser is raised by an
+                opaque Wayland portal, an unreadable or lying window pid,
+                two applications in one process tree, and a resolution
+                that timed out. Naming one would be wrong for the rest. */}
+            <Show when={props.audioChoice}>
+              <small>
+                <Trans>
+                  Sloga can't tell which app's sound belongs to this share —
+                  you'll pick one next.
+                </Trans>
+              </small>
+            </Show>
           </Show>
           <Form2.Checkbox control={group.controls.shield}>
             <Trans>
@@ -124,7 +152,7 @@ export function ScreenShareSettingsModal(
           <Form2.Checkbox control={group.controls.dontAsk}>
             <Trans>Don't ask me again</Trans>
           </Form2.Checkbox>
-          <Show when={!props.audio}>
+          <Show when={!audioOffered()}>
             <small>
               <Switch
                 fallback={

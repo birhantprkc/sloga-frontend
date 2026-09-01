@@ -521,6 +521,14 @@ export type Modals =
       trackReference: TrackReference;
       qualities: { name: string; fullName: string }[];
       audio: boolean;
+      /**
+       * Linux window share whose owning app could not be determined
+       * (screenshare-audio design §9): audio IS available, but only once
+       * the user says which app. The "Share audio" checkbox stays offered
+       * — ticking it is the consent — and the chooser opens after this
+       * dialog is answered.
+       */
+      audioChoice?: boolean;
       callback: (qualityName: ScreenShareQualityName, audio: boolean) => void;
       onCancel: () => void;
     }
@@ -560,5 +568,17 @@ export type Modals =
       }[];
       initialTier: AndroidScreenShareTierName;
       callback: (tierName: AndroidScreenShareTierName) => void;
+      onCancel: () => void;
+    }
+  | {
+      /**
+       * "Which app's audio?" for a Linux window share whose owner the
+       * shell could not determine (screenshare-audio design §9). Nothing
+       * is captured until `callback` runs, so dismissing without choosing
+       * leaves the share silent.
+       */
+      type: "screen_share_audio_source";
+      apps: { key: string; name: string }[];
+      callback: (key: string) => void;
       onCancel: () => void;
     };
