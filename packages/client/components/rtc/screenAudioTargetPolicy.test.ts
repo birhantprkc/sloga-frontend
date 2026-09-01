@@ -28,10 +28,28 @@ test("a monitor share the shell calls system stays system", () => {
   });
 });
 
-test("an unknown surface cannot contradict the shell", () => {
-  // Nothing to cross-check against is not the same as a contradiction —
-  // this is slice 1's shipped path on any engine that omits the setting.
+test("an UNKNOWN surface does not get system, even when the shell says so", () => {
+  // The shell cannot be taken at its word here, because on Wayland it
+  // cannot tell either: the portal reports a window share as a screen
+  // source, so "system" is a guess. Abstaining costs a question;
+  // assenting broadcasts the whole machine on a one-window share.
   assert.deepEqual(planFromAnswer({ mode: "system" }, undefined), {
+    mode: "ask",
+    reason: "surface_unknown",
+  });
+});
+
+test("a monitor share is system whatever the shell managed to work out", () => {
+  // The renderer's own evidence outranks the shell's for this question,
+  // and it is what keeps slice 1's headline alive on Wayland, where the
+  // shell can never answer better than "ask".
+  assert.deepEqual(
+    planFromAnswer({ mode: "ask", reason: "wayland" }, "monitor"),
+    {
+      mode: "system",
+    },
+  );
+  assert.deepEqual(planFromAnswer(undefined, "monitor", "resolve_timeout"), {
     mode: "system",
   });
 });
@@ -71,11 +89,16 @@ test("targets with no include at all asks", () => {
 });
 
 test("an unrecognized mode asks, never system", () => {
-  assert.equal(planFromAnswer({ mode: "everything" }, "monitor").mode, "ask");
+  // Checked on a share we cannot vouch for, which is where the property
+  // bites: a confirmed monitor share is system-wide by definition and is
+  // resolved before the mode is ever read.
+  assert.equal(planFromAnswer({ mode: "everything" }, "window").mode, "ask");
+  assert.equal(planFromAnswer({ mode: "everything" }, undefined).mode, "ask");
 });
 
 test("an answer with no mode at all asks, never system", () => {
-  assert.equal(planFromAnswer({}, "monitor").mode, "ask");
+  assert.equal(planFromAnswer({}, "window").mode, "ask");
+  assert.equal(planFromAnswer({}, undefined).mode, "ask");
 });
 
 test("the shell's ask reason is carried through for the logs", () => {
@@ -91,20 +114,35 @@ test("the shell's ask reason is carried through for the logs", () => {
 });
 
 test("no answer at all asks, with the caller's reason", () => {
-  // A rejected or timed-out IPC call. Both must land here, never on a
-  // fallback that captures the whole machine.
-  assert.deepEqual(planFromAnswer(undefined, "monitor", "resolve_timeout"), {
+  // A rejected or timed-out IPC call on a share we cannot vouch for.
+  assert.deepEqual(planFromAnswer(undefined, "window", "resolve_timeout"), {
     mode: "ask",
     reason: "resolve_timeout",
   });
-  assert.deepEqual(planFromAnswer(undefined, "monitor", "unknown_window"), {
+  assert.deepEqual(planFromAnswer(undefined, undefined, "unknown_window"), {
     mode: "ask",
     reason: "unknown_window",
   });
 });
 
-test("no answer on a monitor share still does not fall back to system", () => {
-  assert.notEqual(planFromAnswer(undefined, "monitor").mode, "system");
+test("include entries that are not strings are dropped, and an empty result asks", () => {
+  // The include contract changed shape (node ids to identities) with no
+  // version marker, so a dist/shell skew must fail loudly here rather
+  // than send the shell something it reads differently.
+  assert.equal(
+    planFromAnswer(
+      { mode: "targets", include: [61, ""] as unknown as string[] },
+      "window",
+    ).mode,
+    "ask",
+  );
+  assert.deepEqual(
+    planFromAnswer(
+      { mode: "targets", include: ["", "bin:mpv"] as string[] },
+      "window",
+    ),
+    { mode: "targets", include: ["bin:mpv"] },
+  );
 });
 
 test("a shell that cannot target skips audio on a window share", () => {
@@ -152,15 +190,18 @@ test("two apps both calling themselves Chromium stay separate rows", () => {
   );
 });
 
-test("streams with no identity get per-stream keys, never a shared one", () => {
-  // An older shell omits `identity`. Falling back to a constant would
-  // merge every unnamed app into one row whose pick targets all of them.
+test("streams with no identity are dropped, not given a fabricated key", () => {
+  // The row key is also the target sent back on the wire. Inventing one
+  // from the node id would put a recycled per-stream value back into a
+  // field that is supposed to be stable — reopening the very boundary
+  // this design closed — and it would do so for the streams that are
+  // least attributable to begin with.
   assert.deepEqual(
     groupAppRoster([
       { id: 41, appName: "One" },
-      { id: 42, appName: "Two" },
+      { id: 42, identity: "bin:mpv", appName: "Two" },
     ]).map((app) => app.key),
-    ["id:41", "id:42"],
+    ["bin:mpv"],
   );
 });
 
@@ -173,6 +214,13 @@ test("a row falls back through binary and node name for its label", () => {
     ]).map((app) => app.name),
     ["mpv", "Music", "id:43"],
   );
+});
+
+test("a browser-tab share never reaches system", () => {
+  // "browser" is a tab, not the screen — the monitor short-circuit must
+  // not be a loose "anything truthy" check.
+  assert.equal(planFromAnswer({ mode: "system" }, "browser").mode, "ask");
+  assert.equal(planWithoutTargeting("browser").mode, "skip");
 });
 
 test("an empty or absent roster is an empty list", () => {

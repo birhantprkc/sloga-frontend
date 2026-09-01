@@ -90,25 +90,40 @@ export function planFromAnswer(
   displaySurface?: string,
   noAnswerReason = "unknown_window",
 ): ScreenAudioPlan {
-  if (!answer) return { mode: "ask", reason: noAnswerReason };
-
-  if (answer.mode === "targets" && answer.include?.length) {
-    return { mode: "targets", include: answer.include };
+  // Narrower than system-wide and explicitly resolved to one application:
+  // honor it. Entries are validated as non-empty strings because the
+  // include contract changed shape (node ids → identities) with no
+  // version marker, so a dist/shell skew should fail loudly here rather
+  // than send the shell something it will interpret differently.
+  if (answer?.mode === "targets") {
+    const include = (answer.include ?? []).filter(
+      (id) => typeof id === "string" && id.length > 0,
+    );
+    if (include.length) return { mode: "targets", include };
   }
 
+  // The renderer's own evidence outranks the shell's for this question: a
+  // monitor share IS the whole screen, so system-wide audio is precisely
+  // what it means, whatever the shell could or could not work out. This
+  // is also what keeps slice 1's headline working on Wayland, where the
+  // portal is opaque and the shell can never answer better than "ask".
+  if (displaySurface === "monitor") return { mode: "system" };
+
+  // Past here the share is a window, a tab, or something we cannot name.
+  if (!answer) return { mode: "ask", reason: noAnswerReason };
+
   if (answer.mode === "system") {
-    // Cross-check the shell's most consequential answer against something
-    // the renderer knows first-hand. `resolveTarget` reads ambient
-    // main-process state ("the source we last granted"), so a rapid
-    // stop→start, a second window, or any lag in that record could answer
-    // for the WRONG share — and the wrong answer in this direction turns
-    // a one-window share into a whole-desktop audio broadcast. The
-    // share's own displaySurface disagreeing is enough to fall back to
-    // asking. An unknown surface cannot contradict anything, so it does
-    // not.
-    return displaySurface === undefined || displaySurface === "monitor"
-      ? { mode: "system" }
-      : { mode: "ask", reason: "surface_mismatch" };
+    // The shell says everything — but we could not confirm this is a
+    // full-screen share, and on Wayland IT cannot confirm that either:
+    // the portal reports a window share as a screen source, so its
+    // "system" is a guess wearing a verdict's clothing. Trusting it here
+    // is exactly how a one-window share ends up broadcasting the whole
+    // machine, so an unknown surface abstains rather than assents.
+    return {
+      mode: "ask",
+      reason:
+        displaySurface === undefined ? "surface_unknown" : "surface_mismatch",
+    };
   }
 
   // Everything else — an explicit `ask`, `targets` narrowed to nothing, a
@@ -122,17 +137,23 @@ export function planFromAnswer(
  * Grouped on the shell's identity key, never on the display name: that
  * reads "Chromium" for every Chromium-derived app, so grouping on it
  * would merge unrelated applications into one row and therefore one
- * target set. A stream with no identity (an older shell) gets a
- * per-stream key rather than sharing a constant one, so two unnamed apps
- * never collapse into a single row either.
+ * target set.
+ *
+ * A stream with NO identity is dropped rather than given a fabricated
+ * one. The row key is also what gets sent back as the target, so
+ * inventing a key from the node id would put a recycled, per-stream
+ * value back on the wire as if it were stable — reopening the exact
+ * boundary this design closed — and it would do so for the streams that
+ * are least attributable in the first place. A shell that cannot name an
+ * application cannot be asked to target it.
  */
 export function groupAppRoster(
   streams: ShellAppStream[] | undefined,
 ): ScreenAudioApp[] {
   const apps = new Map<string, ScreenAudioApp>();
   for (const stream of streams ?? []) {
-    const key = stream.identity || `id:${stream.id}`;
-    if (apps.has(key)) continue;
+    const key = stream.identity;
+    if (!key || apps.has(key)) continue;
     apps.set(key, {
       key,
       name: stream.appName || stream.binary || stream.nodeName || key,
