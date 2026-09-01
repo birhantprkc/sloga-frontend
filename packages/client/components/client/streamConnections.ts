@@ -3,18 +3,18 @@ import type { Client } from "stoat.js";
 import { CONFIGURATION } from "@revolt/common";
 
 /**
- * Streaming-connection (linked Twitch / YouTube channel) API helpers.
+ * Streaming-connection (linked Twitch / YouTube / Kick channel) API helpers.
  *
  * All calls use plain fetch: these routes are newer than the generated
  * stoat-api schema, and the typed client drops bodies for unknown routes
  * (they arrive as `{}` and Rocket 422s) — same gotcha as completeOauth.
  */
 
-export type StreamPlatform = "twitch" | "youtube";
+export type StreamPlatform = "twitch" | "youtube" | "kick";
 
 /** A linked channel as returned by the API / present on User objects */
 export type UserConnection = {
-  platform: "Twitch" | "YouTube";
+  platform: "Twitch" | "YouTube" | "Kick";
   handle: string;
   display_name: string;
   live?: boolean;
@@ -26,6 +26,10 @@ export type UserConnection = {
 export function connectionUrl(connection: UserConnection): string {
   if (connection.platform === "Twitch") {
     return `https://twitch.tv/${connection.handle}`;
+  }
+
+  if (connection.platform === "Kick") {
+    return `https://kick.com/${connection.handle}`;
   }
 
   // YouTube: handle is "@custom" when the channel has one, otherwise the
@@ -41,17 +45,19 @@ export function connectionUrl(connection: UserConnection): string {
 export async function fetchStreamingFlags(): Promise<{
   twitch: boolean;
   youtube: boolean;
+  kick: boolean;
 }> {
   try {
     const response = await fetch(`${CONFIGURATION.DEFAULT_API_URL}/`);
-    if (!response.ok) return { twitch: false, youtube: false };
+    if (!response.ok) return { twitch: false, youtube: false, kick: false };
     const config = await response.json();
     return {
       twitch: !!config?.features?.oauth_twitch,
       youtube: !!config?.features?.oauth_youtube,
+      kick: !!config?.features?.oauth_kick,
     };
   } catch {
-    return { twitch: false, youtube: false };
+    return { twitch: false, youtube: false, kick: false };
   }
 }
 

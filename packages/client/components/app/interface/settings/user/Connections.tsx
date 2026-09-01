@@ -11,19 +11,13 @@ import {
   fetchStreamingFlags,
   unlinkStream,
 } from "@revolt/client/streamConnections";
-import {
-  Button,
-  CategoryButton,
-  Column,
-  Text,
-  useSnackbar,
-} from "@revolt/ui";
+import { Button, CategoryButton, Column, Text, useSnackbar } from "@revolt/ui";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
 /**
- * Connections settings page — link your Twitch / YouTube channel so it
- * shows on your profile and friends + server members can see when you're
- * live.
+ * Connections settings page — link your Twitch / YouTube / Kick channel
+ * so it shows on your profile and friends + server members can see when
+ * you're live.
  */
 export function ConnectionsSettings() {
   const client = useClient();
@@ -31,15 +25,18 @@ export function ConnectionsSettings() {
   const snackbar = useSnackbar();
 
   // Which platforms the server has linking enabled for
-  const [flags, { refetch: _refetchFlags }] = createResource(
-    fetchStreamingFlags,
-  );
+  const [flags, { refetch: _refetchFlags }] =
+    createResource(fetchStreamingFlags);
 
   const connections = () => client().user?.connections ?? [];
+  const platformNames: Record<StreamPlatform, UserConnection["platform"]> = {
+    twitch: "Twitch",
+    youtube: "YouTube",
+    kick: "Kick",
+  };
   const forPlatform = (platform: StreamPlatform) =>
     connections().find(
-      (connection) =>
-        connection.platform === (platform === "twitch" ? "Twitch" : "YouTube"),
+      (connection) => connection.platform === platformNames[platform],
     );
 
   async function connect(platform: StreamPlatform) {
@@ -96,10 +93,22 @@ export function ConnectionsSettings() {
         onConnect={() => connect("youtube")}
         onDisconnect={() => disconnect("youtube")}
       />
+      <PlatformCard
+        platform="kick"
+        label="Kick"
+        icon={<Symbol size={22}>live_tv</Symbol>}
+        enabled={flags()?.kick ?? false}
+        connection={forPlatform("kick")}
+        onConnect={() => connect("kick")}
+        onDisconnect={() => disconnect("kick")}
+      />
 
       <Show
         when={
-          flags.state === "ready" && !flags()?.twitch && !flags()?.youtube
+          flags.state === "ready" &&
+          !flags()?.twitch &&
+          !flags()?.youtube &&
+          !flags()?.kick
         }
       >
         <Text class="label">

@@ -11,8 +11,8 @@ import { Text, typography } from "../../design";
 import { ProfileCard } from "./ProfileCard";
 
 /**
- * Linked streaming channels (Twitch / YouTube) with a LIVE pill while
- * the channel is streaming.
+ * Linked streaming channels (Twitch / YouTube / Kick) with a LIVE pill
+ * while the channel is streaming.
  */
 export function ProfileConnections(props: { user: User }) {
   const connections = () => props.user.connections;
@@ -31,7 +31,7 @@ export function ProfileConnections(props: { user: User }) {
                 target="_blank"
                 rel="noreferrer"
               >
-                {connection.platform === "Twitch" ? "Twitch" : "YouTube"}
+                {connection.platform}
                 {" · "}
                 {connection.display_name}
               </ChannelLink>

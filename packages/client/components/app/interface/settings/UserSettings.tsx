@@ -145,7 +145,7 @@ const Config: SettingsConfiguration<{ server: Server }> = {
     const client = useClient();
 
     // Which streaming platforms this server can link. Connections is a dead
-    // page ("not enabled on this server yet") wherever both are off, so the
+    // page ("not enabled on this server yet") wherever all are off, so the
     // row hides there — unless the account already carries a link, which the
     // page can still show and unlink. Hidden while the flags load too, so a
     // server with linking off never flashes the row.
@@ -153,7 +153,9 @@ const Config: SettingsConfiguration<{ server: Server }> = {
     const connectionsUnavailable = () =>
       !client().user?.connections?.length &&
       (streamingFlags.state !== "ready" ||
-        (!streamingFlags()?.twitch && !streamingFlags()?.youtube));
+        (!streamingFlags()?.twitch &&
+          !streamingFlags()?.youtube &&
+          !streamingFlags()?.kick));
 
     return {
       context: null!,
