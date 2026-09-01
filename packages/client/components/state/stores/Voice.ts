@@ -185,6 +185,14 @@ export interface TypeVoice extends TypeVoiceOverlay {
   vadEnabled: boolean;
   vadThreshold: number;
   /**
+   * Marks `vadThreshold` as calibrated against the honest meter scale. Data
+   * saved before the VAD analysis stream dropped auto gain was calibrated
+   * against gain-inflated levels; hydrating such data rescales implausibly
+   * high thresholds once (see `clean`). Present-and-true means "never
+   * rescale again", so a deliberate high setting on the new scale sticks.
+   */
+  vadThresholdRescaled: boolean;
+  /**
    * Voice-activity threshold picked automatically from the ambient noise
    * floor instead of `vadThreshold`. Discord's "Automatically adjust input
    * sensitivity" default.
@@ -313,6 +321,9 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
       openMic: true,
       vadEnabled: false,
       vadThreshold: 20,
+      // True for fresh installs: the default threshold is already on the
+      // honest scale, so there is nothing to rescale.
+      vadThresholdRescaled: true,
       // OFF by default, deliberately. A stored settings blob from before this
       // key existed reads the default, so shipping `true` would silently
       // override a threshold an existing voice-activity user had tuned by
@@ -413,6 +424,19 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
 
     if (typeof input.vadThreshold === "number") {
       data.vadThreshold = Math.max(0, Math.min(100, input.vadThreshold));
+    }
+
+    // Rescale thresholds saved before the VAD analysis stream dropped auto
+    // gain: gain inflation made levels read roughly 1.7x higher, so a
+    // threshold tuned back then sits above anything the honest meter now
+    // reaches and the mic never unmutes. Only implausibly high values move
+    // (voice on the honest scale peaks well under 55, and automatic mode
+    // itself caps at 60); anything at or below 55 is a plausible deliberate
+    // choice on either scale and is left alone.
+    if (input.vadThresholdRescaled === true) {
+      data.vadThresholdRescaled = true;
+    } else if (data.vadThreshold > 55) {
+      data.vadThreshold = Math.round(data.vadThreshold * 0.6);
     }
 
     if (typeof input.vadAuto === "boolean") {

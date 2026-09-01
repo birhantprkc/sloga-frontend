@@ -29,7 +29,8 @@ android {
         // versionName tracks the PATCH NOTES version from v0.55.0 on (it used
         // to run its own 1.x sequence, which matched nothing users could see).
         // versionCode keeps counting up untouched — it is what ApkUpdateWorker
-        // and Play order releases by, and it must never go backwards.
+        // and Play order releases by, and it must never go backwards. vc61 was
+        // published from the branch merged here, so this release is vc62.
         versionCode 62
         versionName "0.55.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"

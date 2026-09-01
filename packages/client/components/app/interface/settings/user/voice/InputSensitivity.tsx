@@ -4,6 +4,7 @@ import { Trans } from "@lingui-solid/solid/macro";
 import { css } from "styled-system/css";
 
 import {
+  VAD_AUDIO_CONSTRAINTS,
   VAD_FFT_SIZE,
   createNoiseFloorTracker,
   levelFromFrequencyData,
@@ -40,13 +41,15 @@ export function InputSensitivity() {
       const preferred = voice.preferredAudioInputDevice;
       stream = await navigator.mediaDevices
         .getUserMedia({
-          audio: preferred ? { deviceId: { exact: preferred } } : true,
+          audio: preferred
+            ? { ...VAD_AUDIO_CONSTRAINTS, deviceId: { exact: preferred } }
+            : VAD_AUDIO_CONSTRAINTS,
           video: false,
         })
         .catch((error) => {
           if (!preferred) throw error;
           return navigator.mediaDevices.getUserMedia({
-            audio: true,
+            audio: VAD_AUDIO_CONSTRAINTS,
             video: false,
           });
         });
