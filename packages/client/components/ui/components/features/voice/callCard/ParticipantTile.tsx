@@ -577,22 +577,6 @@ export function ParticipantTile(props: TileProps) {
             onRefused={() => setDrawMode(false)}
           />
         </Show>
-        {/* Draw toggle, top-right on an allowed share (the AskTurnButton
-            family). Toggling OFF just unmounts the surface. */}
-        <Show when={canDraw()}>
-          <DrawToggleButton
-            data-active={drawMode() ? "" : undefined}
-            onClick={(e) => {
-              e.stopPropagation();
-              setDrawMode(!drawMode());
-            }}
-          >
-            <Symbol size={14}>stylus_note</Symbol>
-            <Show when={drawMode()} fallback={<Trans>Draw</Trans>}>
-              <Trans>Stop drawing</Trans>
-            </Show>
-          </DrawToggleButton>
-        </Show>
         {/* Sharer side (§2.4): who the server says is drawing on MY share,
             plus the ONE-ACTION revoke — the phishing backstop, deliberately
             a single always-there button rather than list management. Shown
@@ -644,25 +628,49 @@ export function ParticipantTile(props: TileProps) {
             </OverflowingText>
           </ControlledByBadge>
         </Show>
-        {/* "Ask for a turn" on someone else's screenshare. After `Overlay`
-            so it stacks above the hover gradient, with its own pointer
-            events. Once asked it becomes a non-interactive confirmation —
-            the streamer decides, and re-asking is rate-limited server-side
-            anyway. */}
-        <Show when={canAsk()}>
-          <AskTurnButton
-            data-asked={asked() ? "" : undefined}
-            disabled={asked()}
-            onClick={(e) => {
-              e.stopPropagation();
-              if (!asked()) void askForTurn();
-            }}
-          >
-            <Symbol size={14}>pan_tool</Symbol>
-            <Show when={asked()} fallback={<Trans>Ask for a turn</Trans>}>
-              <Trans>Asked</Trans>
+        {/* Viewer actions on someone else's share — Draw and "Ask for a
+            turn" — share ONE top-right stack. The tile's bottom edge is off
+            limits: when a focused share fills the card, the card's own
+            chrome (status bottom-left, actions bottom-center, theater and
+            fullscreen bottom-right) occupies the same pixels, and a
+            bottom-anchored chip lands exactly on the corner buttons. After
+            `Overlay` so the stack sits above the hover gradient; the
+            stack's zIndex clears the z8 draw surface so "Stop drawing"
+            stays clickable mid-draw. Once asked, the turn button becomes a
+            non-interactive confirmation — the streamer decides, and
+            re-asking is rate-limited server-side anyway. */}
+        <Show when={canDraw() || canAsk()}>
+          <TileCornerStack>
+            <Show when={canDraw()}>
+              <DrawToggleButton
+                data-active={drawMode() ? "" : undefined}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setDrawMode(!drawMode());
+                }}
+              >
+                <Symbol size={14}>stylus_note</Symbol>
+                <Show when={drawMode()} fallback={<Trans>Draw</Trans>}>
+                  <Trans>Stop drawing</Trans>
+                </Show>
+              </DrawToggleButton>
             </Show>
-          </AskTurnButton>
+            <Show when={canAsk()}>
+              <AskTurnButton
+                data-asked={asked() ? "" : undefined}
+                disabled={asked()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!asked()) void askForTurn();
+                }}
+              >
+                <Symbol size={14}>pan_tool</Symbol>
+                <Show when={asked()} fallback={<Trans>Ask for a turn</Trans>}>
+                  <Trans>Asked</Trans>
+                </Show>
+              </AskTurnButton>
+            </Show>
+          </TileCornerStack>
         </Show>
         <Show when={!isScreenShare()}>
           <ParticipantCaption identity={participant.identity} />
@@ -896,11 +904,6 @@ const ControlledByBadge = styled("div", {
 
 const AskTurnButton = styled("button", {
   base: {
-    gridArea: "1/1",
-    justifySelf: "end",
-    alignSelf: "end",
-    margin: "var(--gap-md)",
-
     display: "flex",
     alignItems: "center",
     gap: "4px",
@@ -922,7 +925,12 @@ const AskTurnButton = styled("button", {
   },
 });
 
-const DrawToggleButton = styled("button", {
+/**
+ * Top-right column holding the viewer's actions on a share (Draw, Ask for a
+ * turn). Positioning lives HERE, not on the buttons — see the usage comment
+ * for why the tile's bottom edge is off limits.
+ */
+const TileCornerStack = styled("div", {
   base: {
     gridArea: "1/1",
     justifySelf: "end",
@@ -931,6 +939,17 @@ const DrawToggleButton = styled("button", {
     // Above the z8 draw surface so "Stop drawing" stays clickable mid-draw.
     zIndex: 9,
 
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-end",
+    gap: "6px",
+    pointerEvents: "none",
+    "& > *": { pointerEvents: "auto" },
+  },
+});
+
+const DrawToggleButton = styled("button", {
+  base: {
     display: "flex",
     alignItems: "center",
     gap: "4px",
