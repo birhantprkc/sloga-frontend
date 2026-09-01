@@ -265,15 +265,29 @@ export const DICE_TOAST_MS = 3400;
 
 /**
  * Whether THIS platform's shell has an AUDITED media-E2EE path (EL1 audit
- * S7, hard exit criterion). FALSE whenever the Electron shell
- * (`slogaShell`) is present — for ANY platform it may ever claim, not
- * just Linux (a hypothetical mac shell must not claim media E2EE with
- * zero audit work) — even though insertable streams and the key-push
- * channel both probe TRUE there. Flipped per-platform only by EL4's own
- * audited slice. Windows Tauri / Android Capacitor are unaffected.
+ * S7, hard exit criterion; EL4 flip, mechanism A). TRUE with no Electron
+ * shell at all (Windows Tauri / Android Capacitor / web — unchanged), or
+ * when the shell's nonce-gated e2ee surface itself advertises the audited
+ * capability: `slogaShell.e2ee.mediaE2EE === true`, set only by the Linux
+ * shell's preload (platform-gated there, so a future mac build from the
+ * shared shell source cannot inherit it — I6). FALSE for any other
+ * `slogaShell` (older Linux shells, any unaudited shell) even though
+ * insertable streams and the key-push channel both probe TRUE there.
+ * Skew fails closed: a new dist over an old shell finds no flag and stays
+ * closed, an old dist over a new shell never consults it (I9
+ * defense-in-depth beyond the one-artifact rule). The real trust boundary
+ * is contextIsolation on Electron (a page cannot mint the preload flag);
+ * on web, fabricating the whole surface — flag included — requires
+ * page-script execution, which is already total renderer compromise, and
+ * the failure direction of a fabricated-but-dead bridge is a broken loud
+ * call, never a false "encrypted" claim (chips derive from the
+ * media-plane witness, I10).
  */
 export function platformMediaE2EESupported(): boolean {
-  return !("slogaShell" in window);
+  if (!("slogaShell" in window)) return true;
+  const shell = (window as { slogaShell?: { e2ee?: { mediaE2EE?: unknown } } })
+    .slogaShell;
+  return shell?.e2ee?.mediaE2EE === true;
 }
 
 /**
@@ -1778,10 +1792,11 @@ class Voice {
       isE2EESupported() &&
       nativeE2EEAvailable() &&
       !!bridge?.nativeKeyPushAvailable() &&
-      // Media E2EE is NOT audited on the Electron shell yet (EL1 audit S7,
-      // hard exit criterion): fail-closed there even though insertable
-      // streams + the key-push channel both probe TRUE — flipped
-      // per-platform only by EL4's own audited slice.
+      // Media E2EE arms on Electron only for an audited shell build that
+      // advertises the nonce-gated capability flag (EL4 mechanism A);
+      // every other slogaShell stays fail-closed even though insertable
+      // streams + the key-push channel both probe TRUE there (EL1 audit
+      // S7, hard exit criterion).
       platformMediaE2EESupported() &&
       // "Encrypt my calls" (§0.2 #9): with it OFF we negotiate plaintext —
       // no session, no E2EE Room — and appear non-enrolled to E2EE peers

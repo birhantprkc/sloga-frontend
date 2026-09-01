@@ -2,6 +2,7 @@ import { createResource } from "solid-js";
 
 import type { E2EEBridge } from "@revolt/client";
 import { useClient } from "@revolt/client";
+import { platformMediaE2EESupported } from "@revolt/rtc";
 import { useState } from "@revolt/state";
 
 /**
@@ -64,11 +65,17 @@ export function useCallPrejoinMode(
 
   const [resource] = createResource(source, async (input) => {
     const bridge = client()?.e2ee as E2EEBridge | undefined;
-    // WE would negotiate encryption only when the shell can push keys AND the
-    // device is enrolled AND "Encrypt my calls" is on (gate F4 — a toggle-OFF
-    // desktop must classify `self-plain` for an open group, not `e2ee-open`:
-    // it will join unencrypted and BE the downgrade cause, §0.2 #9).
+    // WE would negotiate encryption only when the platform's media-E2EE
+    // path is audited AND the shell can push keys AND the device is
+    // enrolled AND "Encrypt my calls" is on (gate F4 — a toggle-OFF
+    // desktop must classify `self-plain` for an open group, not
+    // `e2ee-open`: it will join unencrypted and BE the downgrade cause,
+    // §0.2 #9). The platform clause (EL4 §4.3) keeps the badge honest on
+    // shells where key push probes TRUE but media frames run plaintext —
+    // without it a non-flipped Electron shell shows `will-e2ee`/
+    // `e2ee-open` for calls it will actually join unencrypted.
     const wouldEncrypt =
+      platformMediaE2EESupported() &&
       !!bridge?.nativeKeyPushAvailable() &&
       !!bridge.status.get("state")?.published &&
       input.e2eeCallsEnabled;

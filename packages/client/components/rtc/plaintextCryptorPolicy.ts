@@ -17,8 +17,10 @@
  * decode path returns without enqueueing when no key exists at the frame's
  * claimed key index): packets arrive with zero loss, zero samples decode,
  * `concealedSamples` climbs, the peer is inaudible. Measured live 2026-08-30 —
- * a Windows desktop unable to hear a Linux/Electron peer, whose calls are
- * plaintext by design (`platformMediaE2EESupported()` is false there).
+ * a Windows desktop unable to hear a Linux/Electron peer, whose calls were
+ * plaintext by design at the time (pre-EL4, `platformMediaE2EESupported()`
+ * was unconditionally false under `slogaShell`; EL4 flips audited Linux
+ * builds, and non-flipped shells still publish plaintext).
  *
  * Rather than depending on WHICH of livekit's two guards misfires, the app
  * asserts the state it already knows: any remote participant whose

@@ -725,6 +725,12 @@ export type SlogaShellGlobal = {
   platform: string;
   /** Present ONLY when the native e2ee bridge is live (preload-gated) */
   e2ee?: {
+    /**
+     * EL4 capability flag: present and true only on an audited
+     * media-E2EE shell build (the Linux preload sets it, platform-gated).
+     * Consumed by `platformMediaE2EESupported()`.
+     */
+    mediaE2EE?: boolean;
     invoke(command: string, args?: unknown): Promise<unknown>;
     /** Allowlisted event subscription; returns an unsubscribe fn */
     on(name: string, callback: (payload: unknown) => void): () => void;
