@@ -103,6 +103,11 @@ import {
 import { joinRequestAction } from "./mlsJoinRequestPolicy";
 import { negotiatingFailsafeAction } from "./mlsNegotiatingFailsafe";
 import {
+  rejoinServeAction,
+  startupWipeTargets,
+  welcomeVerdict,
+} from "./mlsRejoinPolicy";
+import {
   type RosterLegInputs,
   type RosterReconcileResult,
   reconcileRoster,
@@ -148,13 +153,17 @@ const ADMIT_RETRY_MS = 5_000;
 const MAX_ADMIT_RETRIES = 6;
 /**
  * Backstop deadline for the joiner's "am I actually in the group?" assertion
- * (`#assertSelfEnrolled`). Generous on purpose: it must outlast the whole
- * bounded ladder — enrol + create/join + `MAX_JOINER_RETRIES` Welcome waits +
- * a re-establish — so that when it fires, waiting really has been exhausted
- * and the verdict is not a false alarm. The precise give-up points latch
- * sooner; this only catches a path that reaches neither.
+ * (`#assertSelfEnrolled`). Generous on purpose: it must PROVABLY outlast the
+ * whole bounded ladder (rejoin plan F3) — up to `1 + MAX_REESTABLISH` = 4
+ * establishes, each waiting `(MAX_JOINER_RETRIES + 1) × JOINER_RETRY_MS` =
+ * 40 s for a Welcome, plus stale-leaf-remove staggers and retry backoffs:
+ * ~160 s of honest work before real exhaustion. 240 s bounds that with slack;
+ * the precise give-up points latch sooner, this only catches a path that
+ * reaches neither — and it is additionally suppressed while an establish is
+ * actually in flight (`enrolmentVerdict`'s `establishInFlight`), so a slow
+ * but live ladder can never false-alarm.
  */
-const SELF_ENROLMENT_DEADLINE_MS = 90_000;
+const SELF_ENROLMENT_DEADLINE_MS = 240_000;
 /** Re-check interval for the self-enrolment assertion while still pending. */
 const SELF_ENROLMENT_RECHECK_MS = 10_000;
 
@@ -855,6 +864,16 @@ interface StagedCommit {
   kind: StagedCommitKind;
 }
 
+/**
+ * Once-per-PAGE-lifetime token for the §4.1 startup fresh-rejoin wipe. State
+ * surviving from before this page (a reload / crash) is exactly what the wipe
+ * exists to clear; within a page the session manages its groups coherently,
+ * and a second sweep could only destroy a legitimately-established group
+ * mid-flight. Spent ONLY on a fully successful wipe (M6) — a failing wipe
+ * degrades to the already-member ladder, which §4.3 then catches loudly.
+ */
+let startupWipeSpent = false;
+
 export class MlsCallSession {
   #deps: MlsCallSessionDeps;
 
@@ -928,12 +947,45 @@ export class MlsCallSession {
   // `null` = reserved-before-await (a rejoin serve holds its dedup key
   // across its verify/reconcile round-trips before the timer exists).
   #scheduledAdmits = new Map<string, ReturnType<typeof setTimeout> | null>();
-  /** Resolver for the joiner's Welcome wait; set only while waiting. */
-  #welcomeResolve: ((joined: boolean) => void) | undefined;
+  /**
+   * The joiner's pending Welcome wait, GENERATION-KEYED (§4.2): only the live
+   * establish generation's join loop may install one, and only a Welcome
+   * arriving while that generation is still live resolves it — a superseded
+   * loop's wait can never be cross-resolved by a newer establish's Welcome.
+   */
+  #welcomeWait:
+    | { generation: number; resolve: (joined: boolean) => void }
+    | undefined;
   /** At most one group-level transition (rejoin/successor/removed) in flight. */
   #groupActionPending = false;
   /** Bound on successive re-establishes (rejoin/successor). */
   #reestablishes = 0;
+  /**
+   * Monotonic establish generation (§4.2), bumped by EVERY `#establish` entry
+   * — `start()`'s, `#rejoinFresh`'s, `#poisonedSuccessor`'s. Scheduled group
+   * work and the Welcome wait capture it and abort when stale, so a
+   * superseded join loop broadcasts nothing and proves nothing.
+   */
+  #establishGeneration = 0;
+  /**
+   * The generation whose `welcome_joined` (or own create) proved this
+   * device's enrolment; -1 = never. Enrolment is proven per GENERATION (F2):
+   * roster presence surviving a reload must not read as proof, and a
+   * stale-generation Welcome must not re-prove it.
+   */
+  #joinedGeneration = -1;
+  /** Whether `#establish` is currently running (suppresses the F3 alarm). */
+  #establishInFlight = false;
+  /**
+   * When each identity (`user:device`) was last observed being ADDED to the
+   * MLS roster — our own admit reaching the DS, a racing admitter's win, or a
+   * reconcile watching it appear. Read by the §4.8 rejoin-serve staleness
+   * gate: a rejoin intent arriving within `REJOIN_SERVE_SUPPRESS_MS` of the
+   * add is a stale re-broadcast/replay and must not remove the fresh leaf.
+   */
+  #recentAdds = new Map<string, number>();
+  /** The previous reconcile's MLS roster (diffed to observe inbound Adds). */
+  #lastRosterIdentities = new Set<string>();
 
   /** Last server-reported KeyPackage count (drives low-water replenish). */
   #serverKeyPackages = 0;
@@ -1121,10 +1173,16 @@ export class MlsCallSession {
     try {
       await this.#ensureKeyPackages();
       if (this.#terminal()) return;
-      await this.#establish();
     } catch (error) {
       this.#onLoud(error);
+      return;
     }
+    // §4.1 M2: the startup establish runs INSIDE the group-action
+    // single-flight. The sink is already registered above, so a live-pushed
+    // envelope draining into surviving local state mid-establish could
+    // schedule `#onRemovedSelf` — single-flight (plus the §4.2 generation
+    // guard) keeps that from starting a second concurrent establish.
+    this.#scheduleGroupAction(() => this.#establish());
   }
 
   /**
@@ -1230,6 +1288,14 @@ export class MlsCallSession {
     const selfInRoster = await this.#selfInRoster();
     const verdict = enrolmentVerdict({
       selfInRoster,
+      // F2: roster presence alone is NOT proof — after a reload the surviving
+      // native store lists our leaf while the fresh page never joined (the
+      // 08-16 silent pass). Proof needs a THIS-generation Welcome/create.
+      joinedThisGeneration:
+        this.#joinedGeneration === this.#establishGeneration,
+      // F3: never alarm while an establish is actually running — the honest
+      // ladder can outlast the backstop deadline.
+      establishInFlight: this.#establishInFlight,
       ladderExhausted: ladderExhausted || Date.now() >= this.#enrolmentDeadline,
       // A plain voice call (feature off) and a cap-refused joiner are BOTH
       // states where having no group is correct and already reported by their
@@ -1312,8 +1378,8 @@ export class MlsCallSession {
     for (const timer of this.#scheduledAdmits.values())
       if (timer) clearTimeout(timer);
     this.#scheduledAdmits.clear();
-    this.#welcomeResolve?.(false);
-    this.#welcomeResolve = undefined;
+    this.#welcomeWait?.resolve(false);
+    this.#welcomeWait = undefined;
     this.#inbound = [];
 
     const groupId = this.#groupId;
@@ -1394,7 +1460,28 @@ export class MlsCallSession {
   /** Register (or, on a create-race, join) the call's MLS group. */
   async #establish(supersedes?: string): Promise<void> {
     if (this.#terminal()) return;
+    // §4.2: every establish entry point gets a fresh generation. Everything
+    // scheduled by THIS establish (the join loop, the Welcome wait) captures
+    // it and aborts when superseded, so a stale loop broadcasts nothing and
+    // never touches the live establish's shared state.
+    const generation = ++this.#establishGeneration;
+    this.#establishInFlight = true;
+    try {
+      await this.#establishWithGeneration(generation, supersedes);
+    } finally {
+      // Only the LIVE establish clears the flag — a superseded outer
+      // establish returning late must not un-suppress the F3 alarm while the
+      // inner (newer) one is still running.
+      if (generation === this.#establishGeneration) {
+        this.#establishInFlight = false;
+      }
+    }
+  }
 
+  async #establishWithGeneration(
+    generation: number,
+    supersedes?: string,
+  ): Promise<void> {
     // Native mints a local epoch-0 group + fires keys-changed(0). On a create
     // race (or a plaintext/feature-off verdict) we leave-clean this orphan.
     const created = await this.#deps.bridge.callCreate(
@@ -1403,6 +1490,11 @@ export class MlsCallSession {
       supersedes,
     );
     const orphanId = created.payload.group_id;
+    if (this.#terminal() || generation !== this.#establishGeneration) {
+      // Superseded during the mint — clean our orphan, touch nothing shared.
+      await this.#safeLeave(orphanId);
+      return;
+    }
     // Adopt the freshly-minted group id NOW, before the arbitration round-trip
     // (step 6): callCreate ALREADY fired keys-changed(0), and that event can
     // reach `onLocalKeysChanged` before `mlsCreateGroup` resolves — without
@@ -1419,10 +1511,23 @@ export class MlsCallSession {
     // unreachable DS throws instead and leaves this false, which is the case
     // the fail-safe actually exists for.
     this.#dsVerdictSeen = true;
+    if (this.#terminal() || generation !== this.#establishGeneration) {
+      await this.#safeLeave(orphanId);
+      return;
+    }
     const decision = routeCreateOrJoin(res);
 
     switch (decision.action) {
       case "created":
+        // §4.1/M9 (the solo case): the server held NO open group, but this
+        // channel's native store may still hold stale rows from before a
+        // reload — e.g. the group the server solo-closed while we were gone.
+        // Sweep them (never the orphan we just minted) so no surviving state
+        // can collide with this call's envelopes.
+        await this.#startupWipe(orphanId);
+        if (this.#terminal() || generation !== this.#establishGeneration)
+          return;
+        this.#joinedGeneration = generation; // our own create IS enrolment (F2)
         this.#toActive();
         // First-key install (race fix): `callCreate` already fired
         // keys-changed(0), but that event can reach `onLocalKeysChanged` BEFORE
@@ -1439,7 +1544,36 @@ export class MlsCallSession {
         await this.#safeLeave(orphanId);
         this.#groupId = null;
         this.#resetRotationState();
-        await this.#joinPath(decision.openGroupId, decision.dsChannelId);
+        // §4.1 F1: verify the T-15 channel binding BEFORE any destructive
+        // step. The wipe itself is keyed on the USER-intended channel (never
+        // the server-supplied group id), but a DS response that already fails
+        // the binding must abort the whole establish loudly here — the same
+        // check `callJoinIntent` re-runs as defense in depth.
+        if (decision.dsChannelId !== this.#deps.channelId) {
+          this.#onLoud(
+            new Error(
+              `MLS call join refused: the delivery service returned channel ` +
+                `${decision.dsChannelId} for group ${decision.openGroupId}, ` +
+                `but the channel being joined is ${this.#deps.channelId} ` +
+                `(group↔channel binding mismatch — T-15).`,
+            ),
+          );
+          return;
+        }
+        // §4.1 (core): wipe this channel's surviving local group state — the
+        // reload shape — so the join below runs against a fresh store: the
+        // roster read turns honest, no Welcome can collide with surviving
+        // state, and native's fresh-intent gate sees a clean row. MUST run
+        // before the first `callJoinIntent` writes the fresh local intent row
+        // the wipe would otherwise delete.
+        await this.#startupWipe(null);
+        if (this.#terminal() || generation !== this.#establishGeneration)
+          return;
+        await this.#joinPath(
+          decision.openGroupId,
+          decision.dsChannelId,
+          generation,
+        );
         return;
       case "plaintext":
         this.#groupId = null;
@@ -1454,7 +1588,63 @@ export class MlsCallSession {
     }
   }
 
-  async #joinPath(groupId: string, dsChannelId: string): Promise<void> {
+  /**
+   * The §4.1 startup fresh-rejoin wipe: leave-clean every surviving LOCAL
+   * group scoped to the intended channel. Existence is tested by existence
+   * (the dedicated `callLocalGroups` listing, F5) — never by readability,
+   * because the corrupt post-crash group is precisely the one that most needs
+   * the wipe. Failure is LOUD-logged and degrades safely (M6): the
+   * page-lifetime token is spent only on a fully successful wipe, the ladder
+   * proceeds as today, and §4.3's honest self-enrolment check catches a
+   * broken store loudly. Never burns `MAX_REESTABLISH`.
+   */
+  async #startupWipe(orphanGroupId: string | null): Promise<void> {
+    if (startupWipeSpent) return;
+    let localGroupIds: string[];
+    try {
+      localGroupIds = await this.#deps.bridge.callLocalGroups(
+        this.#deps.channelId,
+      );
+    } catch (error) {
+      // Older shells lack the probe op — degrade to today's ladder quietly
+      // (warn once per page via the console; nothing here is destructive).
+      console.warn(
+        "[mls] local-group probe unavailable — startup wipe skipped",
+        error,
+      );
+      return;
+    }
+    const targets = startupWipeTargets({
+      localGroupIds,
+      orphanGroupId,
+      tokenSpent: startupWipeSpent,
+    });
+    if (targets.length === 0) return;
+    try {
+      for (const groupId of targets) {
+        // Direct — NOT `#safeLeave` (M6: a swallowed wipe failure would spend
+        // nothing but also tell nobody; this path must degrade loudly).
+        await this.#deps.bridge.callLeaveCleanup(groupId);
+      }
+      startupWipeSpent = true; // spent ONLY on full success
+      console.warn(
+        "[mls] startup fresh-rejoin: wiped surviving local call-group state",
+        targets,
+      );
+    } catch (error) {
+      console.error(
+        "[mls] startup wipe FAILED — continuing on the already-member " +
+          "ladder; the self-enrolment assertion reports a broken store loudly",
+        error,
+      );
+    }
+  }
+
+  async #joinPath(
+    groupId: string,
+    dsChannelId: string,
+    generation: number,
+  ): Promise<void> {
     // Accept this group's inbound envelopes while we wait for the Welcome.
     this.#groupId = groupId;
 
@@ -1465,7 +1655,10 @@ export class MlsCallSession {
     await this.#reconcileRoster();
 
     for (let attempt = 0; attempt <= MAX_JOINER_RETRIES; attempt++) {
-      if (this.#terminal()) return;
+      // §4.2: a superseded join loop broadcasts NOTHING — every re-broadcast
+      // it made would re-trigger a peer's rejoin serve against the leaf the
+      // LIVE loop is re-adding (the §1.5 oscillation).
+      if (this.#terminal() || generation !== this.#establishGeneration) return;
 
       // The T-15 guard lives in callJoinIntent: it refuses (throws) unless the
       // DS-asserted channel equals the channel the user chose, and signs the
@@ -1512,13 +1705,14 @@ export class MlsCallSession {
           return;
         }
       } catch (error) {
-        // The broadcast can fail while we are STILL in the server-side roster
-        // (join_intent 400s an already-member device — a rejoin racing our own
-        // stale leaf's removal, or a re-broadcast landing after an admitter's
-        // Add already won) or on a transient network error. Neither is
-        // terminal, and the Welcome we need may already be in flight — so fall
-        // through to the wait instead of throwing. The bounded attempt loop
-        // (→ loud RE-SECURING below) is the backstop; never plaintext.
+        // A transient network error on the broadcast is not terminal, and the
+        // Welcome we need may already be in flight — fall through to the wait
+        // instead of throwing. (NOT because "the server 400s an already-member
+        // device": it never does — a same-device member intent fans out
+        // flagged `rejoin`; the only 400s are another device of the same
+        // user, slowmode, or a bad signature — `join_intent.rs`, pinned by
+        // the DS tests.) The bounded attempt loop (→ loud RE-SECURING below)
+        // is the backstop; never plaintext.
         console.warn(
           "[mls] join intent broadcast failed — awaiting Welcome",
           error,
@@ -1527,9 +1721,10 @@ export class MlsCallSession {
 
       // The admitter's winning Add fans a Welcome to us; the drain processes it
       // and resolves this wait via #onEpochAdvanced(welcome_joined).
-      const welcomed = await this.#waitForWelcome(JOINER_RETRY_MS);
+      const welcomed = await this.#waitForWelcome(JOINER_RETRY_MS, generation);
       if (welcomed) return;
     }
+    if (generation !== this.#establishGeneration) return; // superseded — not ours to report
 
     // Retries exhausted — loud RE-SECURING, never plaintext (§1.4). The
     // ladder is now definitively spent, so run the self-enrolment assertion
@@ -1539,21 +1734,33 @@ export class MlsCallSession {
     await this.#assertSelfEnrolled(true);
   }
 
-  #waitForWelcome(timeoutMs: number): Promise<boolean> {
+  #waitForWelcome(timeoutMs: number, generation: number): Promise<boolean> {
+    // §4.2: only the live generation's join loop may install a wait, and the
+    // installed wait carries its generation so a Welcome can never resolve a
+    // superseded loop (see `welcomeVerdict`).
+    if (generation !== this.#establishGeneration) {
+      return Promise.resolve(false);
+    }
+    // Release any superseded wait (false → its loop re-checks its generation
+    // and exits) rather than stranding its suspended frame forever.
+    this.#welcomeWait?.resolve(false);
     return new Promise<boolean>((resolve) => {
       const timer = setTimeout(() => {
         this.#timers.delete(timer);
-        if (this.#welcomeResolve) {
-          this.#welcomeResolve = undefined;
+        if (this.#welcomeWait?.generation === generation) {
+          this.#welcomeWait = undefined;
           resolve(false);
         }
       }, timeoutMs);
       this.#timers.add(timer);
-      this.#welcomeResolve = (joined) => {
-        clearTimeout(timer);
-        this.#timers.delete(timer);
-        this.#welcomeResolve = undefined;
-        resolve(joined);
+      this.#welcomeWait = {
+        generation,
+        resolve: (joined) => {
+          clearTimeout(timer);
+          this.#timers.delete(timer);
+          this.#welcomeWait = undefined;
+          resolve(joined);
+        },
       };
     });
   }
@@ -1823,6 +2030,29 @@ export class MlsCallSession {
       return;
     }
 
+    // §4.8 (prerequisite, F4): refuse to serve a rejoin intent for a leaf we
+    // watched being (re-)added moments ago — such an intent predates the Add
+    // that satisfied it (a stale re-broadcast or a replay), and serving it
+    // removes a freshly re-added LIVE member. Repeated, that manufactures
+    // the victim's re-establish exhaustion → the loud "Stay unencrypted"
+    // pressure this gate exists to close. A device that genuinely wiped
+    // again keeps re-broadcasting and is served past the window.
+    if (
+      rejoinServeAction({
+        addedAtMs:
+          this.#recentAdds.get(`${request.user_id}:${request.device_id}`) ??
+          null,
+        nowMs: Date.now(),
+      }) === "refuse_recent_add"
+    ) {
+      console.warn(
+        `[mls] refusing a rejoin serve for a freshly added leaf: ` +
+          `${request.user_id}:${request.device_id}`,
+      );
+      this.#scheduledAdmits.delete(key);
+      return;
+    }
+
     // Stale leaf still present? Another member's Remove may already have
     // won (idempotence — the roster check discriminates perfectly). Also
     // derive our leaf index for the same liveness stagger admits use.
@@ -1868,6 +2098,18 @@ export class MlsCallSession {
       request.group_id !== this.#groupId
     )
       return;
+    // §4.8 re-check at FIRE time (the stagger can outlast the schedule-time
+    // check): a re-add that landed during our delay makes this serve stale.
+    if (
+      rejoinServeAction({
+        addedAtMs:
+          this.#recentAdds.get(`${request.user_id}:${request.device_id}`) ??
+          null,
+        nowMs: Date.now(),
+      }) === "refuse_recent_add"
+    ) {
+      return;
+    }
     // Re-check under FRESH state at fire time: the lowest leaf usually wins
     // during our stagger delay, making this a clean no-op.
     try {
@@ -1922,7 +2164,10 @@ export class MlsCallSession {
             m.user_id === request.user_id && m.device_id === request.device_id,
         )
       ) {
-        // Already admitted — terminal and benign; clears the ledger.
+        // Already admitted — terminal and benign; clears the ledger. Also an
+        // observed Add (§4.8): a racing admitter's win put this leaf in the
+        // roster, so stale rejoin re-broadcasts for it must not be served.
+        this.#recentAdds.set(key, Date.now());
         return this.#abortAdmit(key, request, "already_member");
       }
       if (state.members.length >= MAX_E2EE_CALL_MEMBERS) {
@@ -1997,6 +2242,10 @@ export class MlsCallSession {
       "admit",
       (error) => this.#abortAdmit(key, request, "leaf_unverifiable", error),
     );
+    // §4.8: record the Add observation (ours, or on a Lost the racing winner's
+    // — either way the leaf is fresh) so a stale rejoin re-broadcast landing
+    // after it cannot re-remove the member it was already served by.
+    this.#recentAdds.set(key, Date.now());
   }
 
   // ---- Submit + arbitrate (the H1 / NEW-2 critical section) -----------------
@@ -2254,8 +2503,7 @@ export class MlsCallSession {
     // H1: if this commit lands on the epoch our OWN commit is staged for, clear
     // the pending commit BEFORE processing — else native's process_message
     // errors and POISONS the group on a benign lost race. Fast-path on #staged
-    // (kept in sync under this same lock); a reconnect dangling-pending is
-    // handled by reconcilePendingCommit on reconnect (step 6).
+    // (kept in sync under this same lock).
     if (
       this.#staged &&
       envelope.epoch === this.#staged.epoch &&
@@ -2285,6 +2533,22 @@ export class MlsCallSession {
         this.#retries.delete(envelope.id);
         this.#parkAttempts = 0; // progress resets the park bound
         this.#deps.bridge.ackEnvelopes([envelope.id]);
+        // §4.7: `EnvelopeDisposition.loud` finally gets its consumer — the
+        // policy sets `loudDropReason` when a loud-classified terminal drop
+        // just consumed a potentially load-bearing, UNREPEATABLE envelope
+        // (the incident's most plausible broken link was a Welcome destroyed
+        // exactly here, silently). Latch it visible: not recoverable, but
+        // never silent again.
+        if (action.loudDropReason !== undefined) {
+          console.error(
+            "[mls] loud terminal envelope drop",
+            action.loudDropReason,
+            envelope.content_type,
+          );
+          this.#latchLoud(
+            new Error(`MLS envelope destroyed: ${action.loudDropReason}`),
+          );
+        }
         if (disp.kind === "processed" && disp.outcome.kind !== "duplicate") {
           // A ctl-announce (6.5) carries no epoch — route it to the §3.4 mode
           // machine, NOT the rotation classifier (it never advances an epoch).
@@ -2559,6 +2823,7 @@ export class MlsCallSession {
       await this.#safeLeave(old);
     }
     this.#toResecuring(reason);
+    this.#dropModeToNegotiating();
 
     if (this.#reestablishes >= MAX_REESTABLISH) {
       this.#onLoud(new Error(`re-establish limit reached: ${reason}`));
@@ -2568,12 +2833,33 @@ export class MlsCallSession {
     await this.#establish();
   }
 
+  /**
+   * §4.4 / M3: a MID-CALL re-establish must drop the mode back to
+   * `negotiating` (via `#setMode`, which keeps the publish-gate reason in
+   * lockstep — re-securing publishes nothing). Without this, `#callMode`
+   * stays `"e2ee"` through the re-establish, and if the ladder then exhausts,
+   * `isTerminalLoud` (which requires `negotiating`) never lets the terminal
+   * banner render — the chip flips, publishing pauses, and the user is
+   * parked muted behind a chip with no "Stay unencrypted" escape: the exact
+   * state this design exists to eliminate. A locally-CONFIRMED plaintext
+   * interlude is exempt — the user authorized plaintext, and
+   * `#resetEnableState` deliberately keeps it publishing through a re-secure.
+   */
+  #dropModeToNegotiating(): void {
+    const confirmedInterlude =
+      this.#callMode.kind === "interlude" && this.#callMode.localConfirmed;
+    if (!confirmedInterlude && this.#callMode.kind !== "negotiating") {
+      this.#setMode({ kind: "negotiating" });
+    }
+  }
+
   async #poisonedSuccessor(): Promise<void> {
     // Channel-scoped atomic close+create: POST /mls/groups {supersedes: old}.
     const old = this.#groupId;
     this.#groupId = null;
     this.#resetGroupBuffers();
     this.#toResecuring("poisoned epoch — migrating to a successor group");
+    this.#dropModeToNegotiating(); // §4.4/M3 — same shape as #rejoinFresh
 
     if (this.#reestablishes >= MAX_REESTABLISH) {
       this.#onLoud(new Error("successor limit reached"));
@@ -2597,6 +2883,8 @@ export class MlsCallSession {
       if (timer) clearTimeout(timer);
     this.#scheduledAdmits.clear();
     this.#pendingAdmits.clear(); // requests are group-scoped
+    this.#recentAdds.clear(); // add observations are group-scoped (§4.8)
+    this.#lastRosterIdentities.clear();
     if (this.#admitRetryTimer) {
       clearTimeout(this.#admitRetryTimer);
       this.#timers.delete(this.#admitRetryTimer);
@@ -2631,10 +2919,29 @@ export class MlsCallSession {
 
   #onEpochAdvanced(outcome: MlsProcessOutcome): void {
     if (outcome.kind === "welcome_joined") {
+      // §4.2 / F2: only a Welcome for the LIVE establish's join target adopts
+      // the group and proves enrolment — a stale-generation Welcome (a
+      // superseded loop's admit landing late, the §1.5 oscillation) must not
+      // re-prove enrolment for a join this session has since abandoned, and
+      // must never cross-resolve a different generation's wait.
+      const verdict = welcomeVerdict({
+        welcomeGroupId: outcome.group_id,
+        liveGroupId: this.#groupId,
+        waitGeneration: this.#welcomeWait?.generation ?? null,
+        liveGeneration: this.#establishGeneration,
+      });
+      if (!verdict.adopt) {
+        console.warn(
+          "[mls] ignoring a Welcome for a superseded join",
+          outcome.group_id,
+        );
+        return;
+      }
       this.#groupId = outcome.group_id;
       this.#reestablishes = 0;
+      this.#joinedGeneration = this.#establishGeneration;
       this.#toActive();
-      this.#welcomeResolve?.(true);
+      if (verdict.resolveWait) this.#welcomeWait?.resolve(true);
     }
     // Record the inbound rotation kind for the rotation classifier, keyed by
     // epoch (Remove-driven iff the outcome carried removed devices —
@@ -3079,6 +3386,23 @@ export class MlsCallSession {
       return null; // transient — the next tick retries
     }
     if (this.#state !== "active" || !this.#groupId) return null;
+
+    // §4.8: identities newly PRESENT in the MLS roster since the previous
+    // reconcile were added by someone (any member's Add — outcomes don't
+    // carry `added`, the roster diff is how every member observes it). Stamp
+    // them so a stale rejoin re-broadcast can't remove a fresh leaf. The
+    // first reconcile of a group stamps everyone — over-suppression bounded
+    // by one `REJOIN_SERVE_SUPPRESS_MS` window, in the refuse-to-remove
+    // (fail-safe) direction.
+    {
+      const now = Date.now();
+      for (const identity of mlsIdentities) {
+        if (!this.#lastRosterIdentities.has(identity)) {
+          this.#recentAdds.set(identity, now);
+        }
+      }
+      this.#lastRosterIdentities = new Set(mlsIdentities);
+    }
 
     const localIdentity = media.localIdentity() ?? "";
     const result = reconcileRoster(

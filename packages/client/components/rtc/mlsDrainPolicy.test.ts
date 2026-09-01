@@ -22,10 +22,10 @@ const processed = (removed_self = false) => ({
   ack: true,
 });
 const park = (expected = 3, got = 5) => ({ kind: "park", expected, got, ack: false });
-const drop = (successorNeeded = false) => ({
+const drop = (successorNeeded = false, loud = true) => ({
   kind: "drop",
   reason: "x",
-  loud: true,
+  loud,
   successorNeeded,
   ack: true,
 });
@@ -58,7 +58,22 @@ test("park bounded → gap_refetch, then escalate_desync at the cap", () => {
 
 test("drop → successor when needed, else ack", () => {
   assert.deepEqual(A(drop(true), 0, 0, BOUNDS), { do: "successor" });
-  assert.deepEqual(A(drop(false), 0, 0, BOUNDS), { do: "ack" });
+  assert.deepEqual(A(drop(false, false), 0, 0, BOUNDS), { do: "ack" });
+});
+
+test("a LOUD terminal drop carries its reason to the latch (rejoin plan §4.7)", () => {
+  // The one unrepeatable envelope being destroyed must become VISIBLE —
+  // `EnvelopeDisposition.loud` had zero consumers and that silence is the
+  // 08-16 incident's most plausible broken link.
+  assert.deepEqual(A(drop(false, true), 0, 0, BOUNDS), {
+    do: "ack",
+    loudDropReason: "x",
+  });
+  // A quiet drop (e.g. post-wipe group_not_found) never latches.
+  assert.deepEqual(A(drop(false, false), 0, 0, BOUNDS), { do: "ack" });
+  // The poisoned/successor case recovers through its own action — a
+  // functioning successor migration must not latch loud.
+  assert.deepEqual(A(drop(true, true), 0, 0, BOUNDS), { do: "successor" });
 });
 
 test("needs_identity first time → fetch_identity(userId, deviceId)", () => {

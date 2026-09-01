@@ -14,7 +14,14 @@ export interface DrainBounds {
 
 /** What the mailbox drain does with one processed envelope. */
 export type DrainAction =
-  | { do: "ack" }
+  // `loudDropReason` (rejoin plan §4.7): set when a LOUD-classified terminal
+  // drop just consumed a potentially load-bearing, unrepeatable envelope —
+  // the drain must route it through `#latchLoud` so the destruction is
+  // visible (the 08-16 incident's most plausible broken link was a Welcome
+  // destroyed exactly here, with `EnvelopeDisposition.loud` having zero
+  // consumers). The poisoned case routes through its own successor recovery
+  // action instead, so a functioning successor migration never latches.
+  | { do: "ack"; loudDropReason?: string }
   | { do: "ack_removed_self" }
   | { do: "gap_refetch"; fromEpoch: number }
   | { do: "escalate_desync" }
@@ -59,7 +66,10 @@ export function drainAction(
         ? { do: "escalate_desync" }
         : { do: "gap_refetch", fromEpoch: disp.expected };
     case "drop":
-      return disp.successorNeeded ? { do: "successor" } : { do: "ack" };
+      if (disp.successorNeeded) return { do: "successor" };
+      return disp.loud
+        ? { do: "ack", loudDropReason: disp.reason }
+        : { do: "ack" };
     case "needs_identity":
       // PROGRESS-BOUNDED (audit HIGH-2 answer): a COMPLETED reconcile is
       // deterministic per server listing, so re-fetching the SAME user is

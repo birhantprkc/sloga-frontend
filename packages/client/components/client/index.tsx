@@ -40,7 +40,6 @@ export {
 } from "./e2ee";
 export type { BackupStatusView, E2EEAttachmentMeta, SafetyNumber } from "./e2ee";
 export type {
-  CallE2EEState,
   EnvelopeDisposition,
   MlsCallCreated,
   MlsCallState,

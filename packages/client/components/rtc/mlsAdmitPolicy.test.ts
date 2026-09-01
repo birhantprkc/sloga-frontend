@@ -115,10 +115,12 @@ test("only self-reporting refusals are benign", () => {
   }
 });
 
-test("enrolment: our own leaf in the verified roster is the only proof", () => {
+test("enrolment: roster presence + this-generation join is the only proof", () => {
   assert.equal(
     enrolmentVerdict({
       selfInRoster: true,
+      joinedThisGeneration: true,
+      establishInFlight: false,
       ladderExhausted: false,
       terminal: false,
     }),
@@ -128,6 +130,8 @@ test("enrolment: our own leaf in the verified roster is the only proof", () => {
   assert.equal(
     enrolmentVerdict({
       selfInRoster: true,
+      joinedThisGeneration: true,
+      establishInFlight: false,
       ladderExhausted: true,
       terminal: false,
     }),
@@ -135,11 +139,55 @@ test("enrolment: our own leaf in the verified roster is the only proof", () => {
   );
 });
 
+test("enrolment: roster presence WITHOUT a this-generation join ALARMS (F2)", () => {
+  // The reload silent pass: the surviving native store lists our leaf while
+  // the fresh page never joined — roster presence alone must not read as
+  // enrolled, and must alarm once the ladder is spent.
+  assert.equal(
+    enrolmentVerdict({
+      selfInRoster: true,
+      joinedThisGeneration: false,
+      establishInFlight: false,
+      ladderExhausted: true,
+      terminal: false,
+    }),
+    "not_enrolled",
+  );
+  assert.equal(
+    enrolmentVerdict({
+      selfInRoster: true,
+      joinedThisGeneration: false,
+      establishInFlight: false,
+      ladderExhausted: false,
+      terminal: false,
+    }),
+    "pending",
+  );
+});
+
 test("enrolment: un-enrolled mid-ladder is PENDING, never a false alarm", () => {
   assert.equal(
     enrolmentVerdict({
       selfInRoster: false,
+      joinedThisGeneration: false,
+      establishInFlight: false,
       ladderExhausted: false,
+      terminal: false,
+    }),
+    "pending",
+  );
+});
+
+test("enrolment: no alarm while an establish is in flight (F3)", () => {
+  // The deadline can lapse mid-establish (the honest ladder can outlast any
+  // fixed backstop) — a loud alarm on a call that then secures trains users
+  // to ignore NOT-ENCRYPTED.
+  assert.equal(
+    enrolmentVerdict({
+      selfInRoster: false,
+      joinedThisGeneration: false,
+      establishInFlight: true,
+      ladderExhausted: true,
       terminal: false,
     }),
     "pending",
@@ -152,6 +200,8 @@ test("enrolment: un-enrolled with the ladder spent is the SILENT-DOWNGRADE case"
   assert.equal(
     enrolmentVerdict({
       selfInRoster: false,
+      joinedThisGeneration: false,
+      establishInFlight: false,
       ladderExhausted: true,
       terminal: false,
     }),
@@ -165,6 +215,8 @@ test("enrolment: terminal modes never raise a second alarm", () => {
   assert.equal(
     enrolmentVerdict({
       selfInRoster: false,
+      joinedThisGeneration: false,
+      establishInFlight: false,
       ladderExhausted: true,
       terminal: true,
     }),

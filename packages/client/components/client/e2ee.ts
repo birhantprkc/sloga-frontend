@@ -510,16 +510,6 @@ export type MlsSinkEvent =
 /** The active call session's inbound MLS event sink. */
 export type MlsSessionSink = (event: MlsSinkEvent) => void;
 
-/** Reactive per-channel call E2EE state (minimal in 6.3; 6.4/6.5 extend). */
-export interface CallE2EEState {
-  group_id: string;
-  channel_id: string;
-  epoch: number;
-  /** `active` | `poisoned` */
-  lifecycle: string;
-  successorNeeded?: boolean;
-}
-
 /**
  * How a processed inbound envelope should be dispositioned by the mailbox
  * drain (carried 6.2 ack-and-drop item — the caller acts on `kind`).
@@ -4118,12 +4108,9 @@ export class E2EEBridge implements E2EEAdapter {
   // straight to `MlsKeyProvider`, memory-only, never persisted or logged.
   // ================================================================
 
-  /**
-   * Reactive per-channel call E2EE state (the `sendModes` pattern) — drives
-   * the call UI. Minimally populated in 6.3; the epoch-lifecycle / downgrade
-   * state machine that fully drives it is 6.4/6.5.
-   */
-  readonly callStates = new ReactiveMap<string, CallE2EEState>();
+  // (The old `callStates` ReactiveMap was deleted — rejoin plan §4.5: zero
+  // readers ever materialized; the call UI's reactive session-state signal
+  // lives in `state.tsx`, driven by the session's `onStateChange`.)
 
   /**
    * Active call session's inbound `Mls*` event sink (see `registerMlsSink`);
@@ -4274,44 +4261,27 @@ export class E2EEBridge implements E2EEAdapter {
     return this.#invoke("e2ee_call_commit_lost", { groupId });
   }
 
-  /** The epoch a currently-staged own commit would establish, if any. */
-  callPendingCommitEpoch(groupId: string): Promise<number | null> {
-    return this.#invoke("e2ee_call_pending_commit_epoch", { groupId });
-  }
-
-  /**
-   * Reconcile a dangling staged commit against the DS after a crash/reconnect
-   * (carried 6.2 reconnect-check item). Merges ONLY when the DS
-   * authoritatively reports our commit won exactly the staged epoch; any
-   * other state ⇒ we lost, so discard + rebase. Enforces
-   * "commit_won only on an authoritative Won" so a reconnect can never fork
-   * the group by merging a commit that actually lost.
-   */
-  async reconcilePendingCommit(params: {
-    groupId: string;
-    /** The epoch the DS says OUR device's commit won, or null if none. */
-    dsWonEpoch: number | null;
-  }): Promise<"won" | "lost" | "none"> {
-    const pending = await this.callPendingCommitEpoch(params.groupId);
-    if (pending === null) return "none";
-    // Merge iff the DS authoritatively reports OUR commit won exactly the
-    // staged epoch. If the DS has since advanced PAST it (heartbeats, or
-    // others building on our epoch), we STILL won — merge, and the caller
-    // gap-refetches forward from there. Gating on "DS current == pending" too
-    // (as an earlier draft did) would wrongly discard a genuinely-won commit
-    // whenever the group moved on. Native re-checks `wonEpoch == staged`, so a
-    // wrong value is refused, never forked.
-    if (params.dsWonEpoch === pending) {
-      await this.callCommitWon(params.groupId, pending);
-      return "won";
-    }
-    await this.callCommitLost(params.groupId);
-    return "lost";
-  }
+  // (`reconcilePendingCommit` / `callPendingCommitEpoch` were deleted —
+  // rejoin plan Q3: dead code with no valid call site. Post-wipe the staged
+  // commit lives in group-scoped state the wipe destroys, pre-wipe it
+  // salvages state about to be discarded, and its `dsWonEpoch` input has no
+  // source. The native `e2ee_call_pending_commit_epoch` op remains.)
 
   /** Wipe local MLS state for a call group. */
   callLeaveCleanup(groupId: string): Promise<void> {
     return this.#invoke("e2ee_call_leave_cleanup", { groupId });
+  }
+
+  /**
+   * The LOCAL group ids the native store holds for a channel — the rejoin
+   * plan's startup existence probe (§4.1/F5): existence tested by existence,
+   * never readability (`callState` throws on the corrupt post-crash group,
+   * which is exactly the one that most needs the wipe). Keyed on the
+   * USER-intended channel, so a hostile DS can never steer the destructive
+   * sweep this feeds (F1). Older shells lack the op — callers degrade.
+   */
+  callLocalGroups(channelId: string): Promise<string[]> {
+    return this.#invoke("e2ee_call_local_groups", { channelId });
   }
 
   /** Stage the epoch-heartbeat commit (HPKE-only self-update). */

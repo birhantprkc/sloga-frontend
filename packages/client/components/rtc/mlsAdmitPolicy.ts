@@ -112,14 +112,24 @@ export type EnrolmentVerdict = "enrolled" | "pending" | "not_enrolled";
 /**
  * Decide whether this device has PROVEN its own enrolment.
  *
- * `selfInRoster` is the only positive evidence that counts: our own
- * `(user_id, device_id)` present in a group's natively-VERIFIED roster. A
- * Welcome we think we processed, a session state of `active`, or an absence of
- * errors are all things the failure mode being fixed here produced anyway.
+ * `selfInRoster` alone is NOT proof (rejoin plan §4.3 / F2): after a reload
+ * the native store survives the webview, so our leaf sits in the roster while
+ * the new page holds no working session — the exact silent pass the 08-16
+ * incident rode. Proof is roster presence AND `joinedThisGeneration`: a
+ * `welcome_joined` (or our own create) whose captured establish generation
+ * equals the live one. Roster presence without it falls through to the
+ * ladder — and alarms at exhaustion.
  *
  * `ladderExhausted` is the session's own bounded give-up signal (join retries
  * spent, or the re-establish cap reached) OR the backstop deadline elapsing.
  * Until then an un-enrolled device is legitimately mid-negotiation.
+ *
+ * `establishInFlight` suppresses the alarm while an establish is actually
+ * running (F3): the honest worst-case ladder can outlast any fixed deadline,
+ * and a loud NOT-ENCRYPTED on a call that then secures moments later trains
+ * users to ignore the one warning that must never be ignored. The true
+ * give-up callers pass `ladderExhausted` AFTER their establish returned, so
+ * this never masks a real exhaustion.
  *
  * `terminal` covers the modes where not being in a group is CORRECT and must
  * never raise an alarm: a plain (feature-off) voice call, and a joiner the
@@ -127,10 +137,13 @@ export type EnrolmentVerdict = "enrolled" | "pending" | "not_enrolled";
  */
 export function enrolmentVerdict(opts: {
   selfInRoster: boolean;
+  joinedThisGeneration: boolean;
+  establishInFlight: boolean;
   ladderExhausted: boolean;
   terminal: boolean;
 }): EnrolmentVerdict {
-  if (opts.selfInRoster) return "enrolled";
+  if (opts.selfInRoster && opts.joinedThisGeneration) return "enrolled";
   if (opts.terminal) return "enrolled"; // not our alarm to raise
+  if (opts.establishInFlight) return "pending"; // F3: never alarm mid-establish
   return opts.ladderExhausted ? "not_enrolled" : "pending";
 }

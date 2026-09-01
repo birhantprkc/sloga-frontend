@@ -220,6 +220,7 @@ import {
 import {
   type MlsMediaBinding,
   type MlsRosterMember,
+  type MlsSessionState,
   MlsCallSession,
 } from "./mlsCallSession";
 import { ScreenShieldProcessor } from "./screenShieldProcessor";
@@ -711,6 +712,15 @@ class Voice {
   callMode: Accessor<CallMode | undefined>;
   #setCallMode: Setter<CallMode | undefined>;
   /**
+   * The MLS session's lifecycle state, REACTIVELY (rejoin plan §4.5): driven
+   * by the session's `onStateChange` so `callEncryptionChip` re-runs when the
+   * session re-secures/fails — a `session.state()` read alone re-renders
+   * nothing, which is how an amber "Re-securing…" chip could sit stale.
+   * Undefined when no session exists.
+   */
+  callSessionState: Accessor<MlsSessionState | undefined>;
+  #setCallSessionState: Setter<MlsSessionState | undefined>;
+  /**
    * Whether THIS call is E2EE-capable — the connect-time `e2eeCapable` snapshot
    * (isE2EESupported + native layer + key-push + "Encrypt my calls"). The
    * caption fail-closed gate reads it: on a capable call captions broadcast
@@ -1091,6 +1101,12 @@ class Voice {
     this.callMode = callMode;
     this.#setCallMode = setCallMode;
 
+    const [callSessionState, setCallSessionState] = createSignal<
+      MlsSessionState | undefined
+    >();
+    this.callSessionState = callSessionState;
+    this.#setCallSessionState = setCallSessionState;
+
     const [callE2EECapable, setCallE2EECapable] = createSignal(false);
     this.callE2EECapable = callE2EECapable;
     this.#setCallE2EECapable = setCallE2EECapable;
@@ -1161,6 +1177,30 @@ class Voice {
     this.#mfaFlow = modals.mfaFlow;
 
     this.getClient = useClient();
+
+    // Rejoin plan §4.6 (hardening ONLY — the crash shape has no unload event,
+    // so the §4.1 startup fresh-rejoin carries the real fix): a reload with a
+    // live call never ran `disconnect()`, leaving the SFU connection and the
+    // native call service to die by timeout while the peer heard silence.
+    // Best-effort `room.disconnect()` + `nativeCallServiceStop()`; NO MLS
+    // self-remove (the never-self-remove design stays — peers' leave-grace /
+    // the DS rejoin affordance clears our leaf).
+    if (typeof window !== "undefined") {
+      window.addEventListener("beforeunload", () => {
+        const room = this.room();
+        if (!room) return;
+        try {
+          room.disconnect();
+        } catch {
+          /* best-effort */
+        }
+        try {
+          nativeCallServiceStop();
+        } catch {
+          /* best-effort */
+        }
+      });
+    }
 
     /**
      * Mirror the instance's `remote_control` switch into the store.
@@ -2391,9 +2431,16 @@ class Voice {
           channelId: channel.id,
           requestMfaTicket: () => this.#requestMfaTicket(),
           channelHasOpenGroup: () => this.#openGroupProbe,
+          // Rejoin plan §4.5: the chip reads the session state REACTIVELY.
+          // Guarded by session identity so a disposed session's terminal
+          // "closed" can never clobber a newer call's signal.
+          onStateChange: (state) => {
+            if (this.#mlsSession === session) this.#setCallSessionState(state);
+          },
         });
         session.bindMedia(this.#buildMediaBinding(room, this.#mlsKeyProvider));
         this.#mlsSession = session;
+        this.#setCallSessionState(session.state());
         void session.start();
       } else if (e2eeCapable) {
         // Capable shell but identity/provider setup failed: release the gate
@@ -2463,6 +2510,7 @@ class Voice {
       // guard so a half-set-up call still tears down.
       this.#mlsSession?.dispose();
       this.#mlsSession = undefined;
+      this.#setCallSessionState(undefined); // no session ⇒ no state (§4.5)
       this.#unlistenCallKeys?.();
       this.#unlistenCallKeys = undefined;
       this.#e2eeWorker?.terminate();
@@ -5001,6 +5049,10 @@ class Voice {
     const room = this.room();
     const session = this.#mlsSession;
     const mode = this.callMode();
+    // Rejoin plan §4.5: the session state via its SIGNAL (driven by
+    // `onStateChange`), so a resecuring/failed flip re-runs this — a bare
+    // `session.state()` read is non-reactive and left the chip stale.
+    const sessionState = this.callSessionState() ?? session?.state();
     const publishing: string[] = [];
     if (room) {
       const localIdentity = room.localParticipant.identity;
@@ -5031,11 +5083,11 @@ class Voice {
     }
     return chipState({
       hasSession: !!session,
-      sessionState: session?.state(),
+      sessionState,
       mode,
       e2eeEnabled: mode?.kind === "e2ee",
       hasLocalKey: mode?.kind === "e2ee",
-      resecuring: session?.state() === "resecuring",
+      resecuring: sessionState === "resecuring",
       latchedError: this.callEncryptionError() !== undefined,
       publishingIdentities: publishing,
       observedEncrypted: observed,
