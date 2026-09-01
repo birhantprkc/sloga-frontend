@@ -21,6 +21,17 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //   write "stops when they decline"; it would be a false promise.
   // - The fail-safe item is call reliability, worded plainly. Do not name MLS,
   //   epochs or negotiation states — users cannot act on any of it.
+  // - The shell-sounds item: VERIFIED against Sounds.tsx, do not widen it. Only
+  //   the nine `new Audio(...)` cases were CSP-blocked — mute/unmute,
+  //   deafen/undeafen, streamStart/End, streamViewerJoin/Leave, userMoved.
+  //   ringtoneIncoming, ringtoneOutgoing, message, messageSent, userJoinVoice
+  //   and userLeaveVoice all go through `#playRingtone`/`#playTone` (Web Audio)
+  //   and were NEVER affected. The cherry-picked commit message says "no
+  //   ringtone in or out" — that part of it is wrong; do not copy it.
+  // - Thirteen of the fourteen bundled .ogg files are BYTE-IDENTICAL
+  //   (sha256 5135e1ab…), so un-blocking them makes those nine cases play the
+  //   same placeholder tone. Say so; announcing "your sounds are back" without
+  //   it would oversell a set of identical blips.
   // - The version line is here because desktop jumps 0.50.0 -> 0.55.0 while
   //   Android's NAME drops 1.46.4 -> 0.55.0. Unexplained that reads as a
   //   downgrade. Say it once, plainly, and move on.
@@ -44,6 +55,12 @@ export const CHANGELOGS: ChangelogResponse[] = [
 - **Starting a call used to be completely silent for the caller.** The person you were calling heard their ringtone, but you got nothing — no way to tell whether the call had actually gone out.
 - You now hear a ring while you wait. It stops the moment they answer, or when you hang up.
 - Prefer the quiet? It follows the outgoing ringtone switch in your notification sound settings, same as every other sound.
+
+### 🔈 Desktop and Linux: the interface sounds that never played
+- **Mute, deafen, stream start and stop, and being moved between channels made no sound at all in the desktop and Linux apps.** The app shell was rejecting the bundled sound files outright and saying nothing about it, which looked exactly like having those sounds switched off. Both apps allow them now.
+- Ringtones, message tones and the voice join and leave chimes were never affected — those are generated as you go rather than loaded from a file, which is why some sounds worked and others were simply absent.
+- Worth setting expectations: the bundled effects are still placeholders and currently all share one tone. Real ones are on the list.
+- The web app was never affected by this.
 
 ### 🔒 Encrypted-call panel is readable again
 - The panel listing who is on an encrypted call had dark text on a dark background, so the title and the names were nearly invisible. They are properly contrasted now.
