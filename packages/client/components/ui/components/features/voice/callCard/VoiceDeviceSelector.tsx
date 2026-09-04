@@ -5,6 +5,11 @@ import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import { styled } from "styled-system/jsx";
 
 import { CONFIGURATION } from "@revolt/common";
+import {
+  deviceListVerdict,
+  permissionNameFor,
+} from "@revolt/rtc/mediaAccessPolicy";
+import { createMediaPermissionState } from "@revolt/rtc/mediaPermission";
 import { useState } from "@revolt/state";
 import { IconButton } from "@revolt/ui/components/design";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
@@ -109,6 +114,15 @@ export function DeviceSection(props: { kind: MediaDeviceKind }) {
     return opts;
   });
 
+  // Why the list may be empty (see the settings page's SelectInput): a
+  // denied microphone used to leave a lone "Default" row with no explanation.
+  const permission = createMediaPermissionState(() =>
+    permissionNameFor(props.kind),
+  );
+  const verdict = createMemo(() =>
+    deviceListVerdict({ devices: media().devices(), permission: permission() }),
+  );
+
   function select(id: string) {
     // Never persist a placeholder device id.
     if (!id) return;
@@ -142,6 +156,65 @@ export function DeviceSection(props: { kind: MediaDeviceKind }) {
           </Show>
         </span>
       </SectionHeader>
+      <Show when={verdict() !== "ok"}>
+        <DeviceNotice data-denied={verdict() === "denied"}>
+          <Symbol>
+            {verdict() !== "denied"
+              ? "info"
+              : props.kind === "videoinput"
+                ? "videocam_off"
+                : "mic_off"}
+          </Symbol>
+          <Show
+            when={props.kind === "videoinput"}
+            fallback={
+              <Show
+                when={verdict() === "denied"}
+                fallback={
+                  <Show
+                    when={verdict() === "none"}
+                    fallback={
+                      <Show
+                        when={props.kind === "audiooutput"}
+                        fallback={
+                          <Trans>Allow the microphone to list devices</Trans>
+                        }
+                      >
+                        <Trans>
+                          Outputs are listed once the microphone is allowed
+                        </Trans>
+                      </Show>
+                    }
+                  >
+                    <Show
+                      when={props.kind === "audiooutput"}
+                      fallback={<Trans>No microphone found</Trans>}
+                    >
+                      <Trans>No audio output found</Trans>
+                    </Show>
+                  </Show>
+                }
+              >
+                <Trans>Microphone access is blocked</Trans>
+              </Show>
+            }
+          >
+            <Show
+              when={verdict() === "denied"}
+              fallback={
+                <Show
+                  when={verdict() === "none"}
+                  fallback={<Trans>Allow the camera to list devices</Trans>}
+                >
+                  <Trans>No camera found</Trans>
+                </Show>
+              }
+            >
+              <Trans>Camera access is blocked</Trans>
+            </Show>
+          </Show>
+        </DeviceNotice>
+      </Show>
       <For each={options()}>
         {(opt) => (
           <DeviceRow
@@ -160,6 +233,26 @@ export function DeviceSection(props: { kind: MediaDeviceKind }) {
     </Section>
   );
 }
+
+/**
+ * The reason an otherwise empty list is empty. Red only when access is
+ * actually blocked; a not-yet-granted list is merely informational.
+ */
+const DeviceNotice = styled("div", {
+  base: {
+    display: "flex",
+    alignItems: "center",
+    gap: "var(--gap-sm)",
+
+    padding: "var(--gap-sm)",
+    fontSize: "0.8rem",
+    color: "var(--md-sys-color-on-surface-variant)",
+
+    "&[data-denied=true]": {
+      color: "var(--md-sys-color-error)",
+    },
+  },
+});
 
 // NOTE: intentionally NOT position:relative. The call bar lives inside a
 // `VoiceCallControls` box with `overflow: hidden`; if the popover were anchored

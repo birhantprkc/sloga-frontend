@@ -103,6 +103,8 @@ function nativeCallServiceStop() {
   VoiceCallServiceNative?.stop().catch(() => {});
 }
 
+import { t } from "@lingui/core/macro";
+
 import {
   type E2EEBridge,
   nativeE2EEAvailable,
@@ -145,6 +147,7 @@ import { Attenuation } from "./attenuation";
 import { CaptureClaim } from "./captureClaim";
 import { entranceSoundFor } from "./entranceSound";
 import { watchLocalUserId } from "./localUserIdentity";
+import { isPermissionDeniedError } from "./mediaAccessPolicy";
 import { RemoteControl } from "./remoteControl";
 import {
   type RemoteControlQueue,
@@ -2090,7 +2093,7 @@ class Voice {
               }
             }
           })
-          .catch(() => {
+          .catch((error) => {
             // Capture failed even after the rescue (or permission denied) —
             // or a processor attach above threw post-publish. Reconcile the
             // mute button with the room's ACTUAL state rather than forcing
@@ -2098,8 +2101,14 @@ class Voice {
             // still own the call: when the rejection IS the hang-up (teardown
             // aborting the capture), writing the torn-down room's "off" here
             // would persist a mute preference the user never chose.
-            if (wantMic && gen === this.#connectGen)
+            if (wantMic && gen === this.#connectGen) {
               this.#settings.micOn = room.localParticipant.isMicrophoneEnabled;
+              // Blocked access is the one failure the user can act on, and
+              // the one that used to reach nobody: the call connected, muted,
+              // with nothing on screen (support report 2026-09-03).
+              if (isPermissionDeniedError(error))
+                this.#reportCaptureDenied("microphone");
+            }
           });
       if (isAfk) room.localParticipant.setCameraEnabled(false);
       for (const p of room.remoteParticipants.values()) {
@@ -3027,7 +3036,7 @@ class Voice {
         this.sound.playSound("undeafen");
       }
     } catch (e) {
-      this.onErr(e);
+      this.#captureFailed(e, "microphone");
     }
   }
 
@@ -3060,7 +3069,7 @@ class Voice {
         this.sound.playSound("mute");
       }
     } catch (e) {
-      this.onErr(e);
+      this.#captureFailed(e, "microphone");
     }
   }
 
@@ -3223,7 +3232,7 @@ class Voice {
 
       this.#setVideo(room.localParticipant.isCameraEnabled);
     } catch (e) {
-      this.onErr(e);
+      this.#captureFailed(e, "camera");
     }
   }
 
@@ -5969,6 +5978,35 @@ class Voice {
   private onErr(e: unknown) {
     if ((e as Error).name !== "NotAllowedError")
       this.openModal({ type: "error2", error: e });
+  }
+
+  /**
+   * Error path for a mic/camera capture: blocked access gets its own message,
+   * everything else goes to `onErr` as before. `onErr` drops every
+   * NotAllowedError because a cancelled screen-share picker rejects with that
+   * name — which also dropped a DENIED microphone on unmute, undeafen and
+   * camera-on, leaving the button flipping back with no explanation.
+   */
+  #captureFailed(error: unknown, kind: "microphone" | "camera") {
+    if (isPermissionDeniedError(error)) this.#reportCaptureDenied(kind);
+    else this.onErr(error);
+  }
+
+  /**
+   * Tell the user their microphone/camera is blocked and where to fix it. A
+   * plain Error (not the DOMException), so `onErr`'s NotAllowedError filter
+   * cannot swallow it; the modal is the same "surfaced signal" the rest of
+   * the call plumbing uses for a failure the user must know about.
+   */
+  #reportCaptureDenied(kind: "microphone" | "camera") {
+    this.openModal({
+      type: "error2",
+      error: new Error(
+        kind === "microphone"
+          ? t`Microphone access is blocked, so nobody in the call can hear you. Allow the microphone in your system or browser settings, then unmute or rejoin.`
+          : t`Camera access is blocked. Allow the camera in your system or browser settings, then try again.`,
+      ),
+    });
   }
 }
 
