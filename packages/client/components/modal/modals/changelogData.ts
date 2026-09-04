@@ -8,6 +8,61 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // v0.57.0: the voice shaper + the microphone-access sweep. Copy constraints,
+  // load-bearing:
+  // - The shaper is EQ/compression presets on the LOCAL mic only. It is not a
+  //   voice changer: no pitch shifting, no formant work, no AI. Never call it
+  //   a voice changer or imply it hides who you are.
+  // - Exactly one preset at a time, by construction (the mic has ONE
+  //   processor and the shaper is a stage inside it).
+  // - The mic-pipeline change is real for EVERYONE, not just preset users:
+  //   the enhanced noise filter and the input-gain slider used to be mutually
+  //   exclusive and only applied at join. Say so plainly.
+  // - The presets were designed on paper, not tuned by ear on a live call.
+  //   Promise nothing beyond each one-line description.
+  // - The rejoin-after-reload fix shipped to Windows + web on 09-01 with NO
+  //   entry (0.56.0 had none); Linux gets it HERE. Android's shell lacks the
+  //   native half and degrades to an explicit error, so the copy says
+  //   "Windows, Linux and the web" and nothing about Android.
+  // - Blocked microphone on Windows: one Deny on the first prompt used to be
+  //   remembered forever with no way back. Describe the symptom, never the
+  //   WebView2 internals.
+  // - EXCLUDED as dark or unproven: Linux media E2EE (flag branch unmerged),
+  //   Linux native screen-share audio, Android screen share, RC couch co-op,
+  //   server boosts, the public directory, slash-command bot docs, Kick.
+  {
+    id: "sloga-2026-09-04",
+    title: "Patch Notes",
+    published_at: "2026-09-04T03:00:00.000Z",
+    web_version: "0.57.0",
+    markdown_content: `## v0.57.0 — Voice shaper, and microphone fixes
+
+### 🎚️ Voice shaper
+- **Shape how your microphone sounds to everyone else.** Settings → Voice has a new Voice Shaper section with six presets: Off, Warm, Bright, Deep, Radio and Podcast. Warm rounds off a thin headset mic, Bright lifts a muffled one, Deep adds chest, Radio is the walkie-talkie sound, and Podcast evens out your level with a broadcast-style polish.
+- One preset at a time, and switching applies live while you are in a call, so you can try them on your friends.
+- This is tone shaping, not a voice changer. It does not alter your pitch or disguise your voice.
+
+### 🎙️ Noise suppression and input gain now work together
+- **The enhanced noise filter used to switch off your input-gain setting**, and both only took effect when you joined a call. They now run together, alongside the shaper, and every change applies immediately mid-call.
+
+### 🔇 When your microphone is blocked, the app says so
+- **On Windows, clicking Deny on the very first microphone prompt used to be remembered forever.** After that the microphone never worked again and no device even appeared in Settings. The desktop app now handles that prompt itself, so a denied microphone or camera can be allowed again.
+- Everywhere, an empty device list now explains why it is empty, and a blocked microphone is reported when you join a call instead of silently joining muted.
+
+### 🔁 Reloading mid-call no longer strands you
+- **Reloading the app, or having it crash, during an encrypted call used to leave you stuck at the securing step**, unable to be heard until everyone hung up. You now rejoin cleanly. Windows and the web got this at the start of the month; the Linux app gets it with this update.
+
+### 🗣️ Voice activity detection
+- Speaking softly no longer opens your microphone while the level meter shows you below the threshold. The meter and the gate now listen to the same signal, and the gate waits for a brief sustain before opening, so a single click or breath does not trigger it. Windows and the web have had this since v0.56.0; Linux and Android get it here.
+
+### 📺 Screen sharing
+- While you share your screen with system audio, the automatic lowering of other apps is paused, and the app now tells you so instead of leaving you to wonder why it stopped working.
+- The ask-for-a-turn control on a shared screen moved to the top-right corner of the tile, out from under the theater and fullscreen buttons.
+
+### 🔢 Version
+- Every platform moves to v0.57.0 together.
+`,
+  },
   // v0.55.0: the call-audio sweep — the silent-peer fix, the outgoing ring,
   // the encrypted-call roster contrast fix, and the version renumber. Copy
   // constraints, load-bearing:

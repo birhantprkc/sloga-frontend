@@ -31,8 +31,8 @@ android {
         // versionCode keeps counting up untouched — it is what ApkUpdateWorker
         // and Play order releases by, and it must never go backwards. vc61 was
         // published from the branch merged here, so this release is vc62.
-        versionCode 62
-        versionName "0.55.0"
+        versionCode 63
+        versionName "0.57.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
