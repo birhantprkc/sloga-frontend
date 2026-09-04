@@ -70,6 +70,7 @@ import {
   nativeE2EEAvailable,
   SoundController,
   useClient,
+  useClientLifecycle,
   useSound,
 } from "@revolt/client";
 import { CONFIGURATION } from "@revolt/common";
@@ -6032,6 +6033,15 @@ export function VoiceContext(props: { children: JSX.Element }) {
   const voice = new Voice(state.voice, modals, sound, (serverId) =>
     entranceSoundFor(state.settings, serverId),
   );
+
+  // Signing out must end the call, and nothing else does: logout replaces
+  // the stoat client, but the LiveKit room is owned HERE and outlived it —
+  // the user stayed in the call, floating card and all, on top of the login
+  // page, holding a session the server had just revoked. disconnect() is the
+  // one teardown choke point (native call service, screen legs, screen
+  // audio, MLS session, worker, room) and a no-op when idle.
+  const { lifecycle } = useClientLifecycle();
+  onCleanup(lifecycle.onSignOut(() => voice.disconnect()));
 
   return (
     <voiceContext.Provider value={voice}>
