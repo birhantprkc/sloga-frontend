@@ -739,6 +739,22 @@ msgstr "Allow others to add your bot to their servers from Discover"
 msgid "Allow reserving the same item twice"
 msgstr "Allow reserving the same item twice"
 
+#: components/app/interface/settings/user/voice/VoiceInputOptions.tsx
+msgid "Allow the camera in your system or browser settings, then reopen this page."
+msgstr "Allow the camera in your system or browser settings, then reopen this page."
+
+#: components/ui/components/features/voice/callCard/VoiceDeviceSelector.tsx
+msgid "Allow the camera to list devices"
+msgstr "Allow the camera to list devices"
+
+#: components/app/interface/settings/user/voice/VoiceInputOptions.tsx
+msgid "Allow the microphone in your system or browser settings, then reopen this page."
+msgstr "Allow the microphone in your system or browser settings, then reopen this page."
+
+#: components/ui/components/features/voice/callCard/VoiceDeviceSelector.tsx
+msgid "Allow the microphone to list devices"
+msgstr "Allow the microphone to list devices"
+
 #: components/i18n/errors.ts
 msgid "Already friends with this user."
 msgstr "Already friends with this user."
@@ -1221,6 +1237,15 @@ msgstr "Calls are end-to-end encrypted"
 msgid "Camera"
 msgstr "Camera"
 
+#: components/ui/components/features/voice/callCard/VoiceDeviceSelector.tsx
+#: components/app/interface/settings/user/voice/VoiceInputOptions.tsx
+msgid "Camera access is blocked"
+msgstr "Camera access is blocked"
+
+#: components/rtc/state.tsx
+msgid "Camera access is blocked. Allow the camera in your system or browser settings, then try again."
+msgstr "Camera access is blocked. Allow the camera in your system or browser settings, then try again."
+
 #: components/app/interface/settings/user/voice/CameraOptions.tsx
 msgid "Camera Brightness"
 msgstr "Camera Brightness"
@@ -1676,6 +1701,10 @@ msgstr "Confirm identity"
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Connect"
 msgstr "Connect"
+
+#: components/app/interface/settings/user/voice/VoiceInputOptions.tsx
+msgid "Connect a device and it will appear here."
+msgstr "Connect a device and it will appear here."
 
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
@@ -2272,6 +2301,14 @@ msgstr "Detect automatically"
 #: components/app/interface/settings/UserSettings.tsx
 msgid "Developer"
 msgstr "Developer"
+
+#: components/app/interface/settings/user/voice/VoiceInputOptions.tsx
+msgid "Devices appear here once you allow the camera."
+msgstr "Devices appear here once you allow the camera."
+
+#: components/app/interface/settings/user/voice/VoiceInputOptions.tsx
+msgid "Devices appear here once you allow the microphone."
+msgstr "Devices appear here once you allow the microphone."
 
 #: src/interface/channels/text/Composition.tsx
 msgid "Dice"
@@ -4131,6 +4168,15 @@ msgstr "Microphone"
 msgid "Microphone access denied."
 msgstr "Microphone access denied."
 
+#: components/ui/components/features/voice/callCard/VoiceDeviceSelector.tsx
+#: components/app/interface/settings/user/voice/VoiceInputOptions.tsx
+msgid "Microphone access is blocked"
+msgstr "Microphone access is blocked"
+
+#: components/rtc/state.tsx
+msgid "Microphone access is blocked, so nobody in the call can hear you. Allow the microphone in your system or browser settings, then unmute or rejoin."
+msgstr "Microphone access is blocked, so nobody in the call can hear you. Allow the microphone in your system or browser settings, then unmute or rejoin."
+
 #: components/app/interface/settings/user/voice/InputSensitivity.tsx
 msgid "Microphone access was denied, so the meter cannot run."
 msgstr "Microphone access was denied, so the meter cannot run."
@@ -4405,6 +4451,16 @@ msgstr "No archived posts"
 msgid "No archived threads"
 msgstr "No archived threads"
 
+#: components/ui/components/features/voice/callCard/VoiceDeviceSelector.tsx
+#: components/app/interface/settings/user/voice/VoiceInputOptions.tsx
+msgid "No audio output found"
+msgstr "No audio output found"
+
+#: components/ui/components/features/voice/callCard/VoiceDeviceSelector.tsx
+#: components/app/interface/settings/user/voice/VoiceInputOptions.tsx
+msgid "No camera found"
+msgstr "No camera found"
+
 #: components/modal/modals/CreateSoftRes.tsx
 msgid "No cap"
 msgstr "No cap"
@@ -4452,6 +4508,11 @@ msgstr "No items match."
 #: components/ui/components/features/voice/callCard/VoiceCallRosterPanel.tsx
 msgid "no media — divergent leaf"
 msgstr "no media — divergent leaf"
+
+#: components/ui/components/features/voice/callCard/VoiceDeviceSelector.tsx
+#: components/app/interface/settings/user/voice/VoiceInputOptions.tsx
+msgid "No microphone found"
+msgstr "No microphone found"
 
 #: components/modal/modals/ReportQueue.tsx
 msgid "No open reports. All clear!"
@@ -4766,8 +4827,16 @@ msgid "Outgoing Call Ringtone"
 msgstr "Outgoing Call Ringtone"
 
 #: components/app/interface/settings/user/voice/VoiceInputOptions.tsx
+msgid "Output devices are listed once the microphone is allowed."
+msgstr "Output devices are listed once the microphone is allowed."
+
+#: components/app/interface/settings/user/voice/VoiceInputOptions.tsx
 msgid "Output Volume"
 msgstr "Output Volume"
+
+#: components/ui/components/features/voice/callCard/VoiceDeviceSelector.tsx
+msgid "Outputs are listed once the microphone is allowed"
+msgstr "Outputs are listed once the microphone is allowed"
 
 #: components/app/interface/settings/user/voice/OverlaySettings.tsx
 msgid "Overlay opacity"
@@ -7580,6 +7649,14 @@ msgstr "Waiting for /{0} to respond…"
 #: components/modal/modals/ImportDiscord.tsx
 msgid "Waiting for a worker…"
 msgstr "Waiting for a worker…"
+
+#: components/app/interface/settings/user/voice/VoiceInputOptions.tsx
+msgid "Waiting for camera access"
+msgstr "Waiting for camera access"
+
+#: components/app/interface/settings/user/voice/VoiceInputOptions.tsx
+msgid "Waiting for microphone access"
+msgstr "Waiting for microphone access"
 
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
 msgid "Waiting for them to accept…"
