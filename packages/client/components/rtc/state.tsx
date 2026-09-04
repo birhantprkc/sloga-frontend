@@ -18,7 +18,6 @@ import {
   useTracks,
 } from "solid-livekit-components";
 
-import type { AudioProcessorOptions } from "livekit-client";
 import {
   type AudioCaptureOptions,
   type TrackPublishOptions,
@@ -40,52 +39,13 @@ import {
 // (slice 6.2b) and violate the no-CDN policy everywhere else.
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import E2EEWorker from "livekit-client/e2ee-worker?worker";
-import { DenoiseTrackProcessor } from "livekit-rnnoise-processor";
 import { Channel, Message } from "stoat.js";
 
-class GainTrackProcessor {
-  name = "gain-processor";
-  processedTrack: MediaStreamTrack | undefined;
-  #gainNode: GainNode | undefined;
-  #gainValue: number;
-
-  constructor(gain: number) {
-    this.#gainValue = gain;
-  }
-
-  /**
-   * `sourceNode` is NOT part of livekit's public `AudioProcessorOptions`
-   * (which is `{ track, audioContext }`), so requiring it made this class
-   * fail to satisfy `TrackProcessor` at all. Take it when it is offered and
-   * derive one from the track when it is not, which is correct under either
-   * SDK behavior rather than betting on an undeclared field.
-   */
-  async init(opts: AudioProcessorOptions & { sourceNode?: AudioNode }) {
-    this.#gainNode = opts.audioContext.createGain();
-    this.#gainNode.gain.value = this.#gainValue / 100;
-    const dest = opts.audioContext.createMediaStreamDestination();
-    const source =
-      opts.sourceNode ??
-      opts.audioContext.createMediaStreamSource(new MediaStream([opts.track]));
-    source.connect(this.#gainNode);
-    this.#gainNode.connect(dest);
-    this.processedTrack = dest.stream.getAudioTracks()[0];
-  }
-
-  /** Required by livekit's `TrackProcessor`, and NOT ceremonial: the SDK
-   * calls it when the source track restarts (a device switch, an unmute
-   * restart), and a processor without it throws mid-call. Tear the old graph
-   * down and rebuild it on the new source. */
-  async restart(opts: AudioProcessorOptions & { sourceNode?: AudioNode }) {
-    await this.destroy();
-    await this.init(opts);
-  }
-
-  async destroy() {
-    this.#gainNode?.disconnect();
-    this.#gainNode = undefined;
-    this.processedTrack = undefined;
-  }
+/** What the mic processor should be doing, read from settings. */
+interface MicPipelineWants {
+  denoise: boolean;
+  gainPercent: number;
+  tonePreset: VoiceTonePresetId;
 }
 
 /** Native Android foreground service keeping calls alive in the background */
@@ -185,7 +145,12 @@ import {
   VAD_FFT_SIZE,
   VAD_OPEN_FRAMES,
 } from "./vadLevel";
+import { VoiceAudioPipeline } from "./voiceAudioPipeline";
 import { voiceNodeForChannel } from "./voiceNode";
+import {
+  VOICE_TONE_PRESET_DEFAULT,
+  VoiceTonePresetId,
+} from "./voiceTonePresets";
 import { WatchDuck } from "./watchDuck";
 import { WatchTogether } from "./watchTogether";
 
@@ -503,6 +468,10 @@ class Voice {
    */
   #autoFocusedShares = new Set<string>();
   private disposeTrackRoot: (() => void) | undefined;
+  /** The single mic processor (denoise + voice shaper + gain). Attached
+   *  lazily by `#syncMicPipeline`; dropped on disconnect, where the room
+   *  stops the track and the SDK destroys the processor with it. */
+  #micPipeline: VoiceAudioPipeline | undefined;
   #pttKeydown: ((e: KeyboardEvent) => void) | undefined;
   #pttKeyup: ((e: KeyboardEvent) => void) | undefined;
   /** EL-PTT: key the desktop shell's global hook is armed to (undefined =
@@ -1988,6 +1957,15 @@ class Voice {
       // call and torn down with the track list on disconnect — the call card
       // unmounts whenever the user browses to another channel.
       this.#watchScreenShareFocus();
+      // Voice shaper, input gain and the noise filter apply LIVE: the mic
+      // runs one processor and every stage of it is tunable in place. The
+      // settings reads are tracked, the apply is not — nothing it writes
+      // may re-trigger it. Runs once at root creation too, which is a no-op
+      // until the mic track exists (the join path attaches it explicitly).
+      createEffect(() => {
+        const want = this.#micPipelineWants();
+        untrack(() => this.#syncMicPipeline(room, want));
+      });
       return dispose;
     });
 
@@ -2061,38 +2039,22 @@ class Voice {
           .then((track) => {
             if (wantMic) this.#settings.micOn = track != null;
             if (!isAfk && track?.audioTrack) {
-              const gain = this.#settings.microphoneGain ?? 100;
-              // Processor/E2EE ordering (§4.3) — DO NOT REORDER: denoise
-              // (this AudioWorklet) and camera effects are PRE-encode track
-              // processors on the raw media; LiveKit E2EE runs POST-encode on
-              // encoded frames (RTCRtpScriptTransform). The fixed pipeline is
+              // Processor/E2EE ordering (§4.3) — DO NOT REORDER: the mic
+              // pipeline (RNNoise AudioWorklet + voice shaper + gain) and
+              // camera effects are PRE-encode track processors on the raw
+              // media; LiveKit E2EE runs POST-encode on encoded frames
+              // (RTCRtpScriptTransform). The fixed pipeline is
               // processor → encoder → E2EE encrypt → SFU, so there is no slot
               // conflict and denoise + E2EE coexist (test T-10). Moving E2EE
               // ahead of the encoder, or a processor after it, would break
               // one or the other.
-              if (this.#settings.noiseSupression === "enhanced") {
-                track.audioTrack.setProcessor(
-                  new DenoiseTrackProcessor({
-                    // Self-hosted worklet assets (public/rnnoise/) — never the
-                    // package's jsdelivr default: external script origins are
-                    // blocked by the desktop shell CSP (slice 6.2b) and violate
-                    // the no-CDN policy everywhere else. Must be absolute: the
-                    // lib resolves it with base-less `new URL(...)`.
-                    workletCDNURL: new URL(
-                      CONFIGURATION.RNNOISE_WORKLET_CDN_URL ||
-                        `${import.meta.env.BASE_URL}rnnoise/`,
-                      window.location.origin,
-                    ).href,
-                  }),
-                );
-              } else if (gain !== 100) {
-                track.audioTrack.setProcessor(new GainTrackProcessor(gain));
-              }
+              this.#syncMicPipeline(room, this.#micPipelineWants());
             }
           })
           .catch(() => {
-            // Capture failed even after the rescue (or permission denied) —
-            // or a processor attach above threw post-publish. Reconcile the
+            // Capture failed even after the rescue (or permission denied) — a
+            // processor attach failure is absorbed in `#syncMicPipeline` and
+            // never lands here. Reconcile the
             // mute button with the room's ACTUAL state rather than forcing
             // "muted": a hot mic must never be shown as off. Only while we
             // still own the call: when the rejection IS the hang-up (teardown
@@ -2707,6 +2669,7 @@ class Voice {
 
       // Room disconnect stops tracks (destroying attached processors); drop the
       // controller's references and release any virtual-background image URL.
+      this.#micPipeline = undefined;
       this.#cameraEffects.reset();
       this.#setCameraBackgroundStatus("idle");
       this.#setCameraFaceFilterStatus("idle");
@@ -2903,6 +2866,53 @@ class Voice {
    * a fallback mic beats a mic that can never come back. Mutating `options`
    * is livekit's own rollback idiom (see Room.switchActiveDevice).
    */
+  #micPipelineWants(): MicPipelineWants {
+    return {
+      denoise: this.#settings.noiseSupression === "enhanced",
+      gainPercent: this.#settings.microphoneGain ?? 100,
+      tonePreset: this.#settings.voiceTonePreset,
+    };
+  }
+
+  /**
+   * Reconcile the mic processor with the settings. LiveKit gives a track
+   * ONE processor slot, so every mic stage lives in the same
+   * `VoiceAudioPipeline` and this is the only place that attaches one.
+   * All-default settings (browser/no noise filter, unity gain, shaper off)
+   * run the raw capture with no Web Audio hop at all; the pipeline is
+   * attached the first time any stage is wanted and then stays for the
+   * life of the track, tuned in place.
+   */
+  #syncMicPipeline(room: Room, want: MicPipelineWants) {
+    if (this.room() !== room) return;
+    const pipeline = this.#micPipeline;
+    if (pipeline) {
+      pipeline.setGain(want.gainPercent);
+      pipeline.setTonePreset(want.tonePreset).catch(() => undefined);
+      // Asset load can fail (offline at first enable): denoise stays off and
+      // audio keeps flowing — the same fallback as a join-time failure.
+      pipeline.setDenoiseEnabled(want.denoise).catch(() => undefined);
+      return;
+    }
+    if (
+      !want.denoise &&
+      want.gainPercent === 100 &&
+      want.tonePreset === VOICE_TONE_PRESET_DEFAULT
+    )
+      return;
+    const track = room.localParticipant.getTrackPublication(
+      Track.Source.Microphone,
+    )?.audioTrack;
+    if (!(track instanceof LocalAudioTrack)) return;
+    const created = new VoiceAudioPipeline(want);
+    this.#micPipeline = created;
+    track.setProcessor(created).catch(() => {
+      // Attach threw post-publish: the raw track keeps flowing. Forget the
+      // pipeline so the next settings change can try again.
+      if (this.#micPipeline === created) this.#micPipeline = undefined;
+    });
+  }
+
   async #setMicEnabled(room: Room, enabled: boolean) {
     try {
       return await room.localParticipant.setMicrophoneEnabled(enabled);

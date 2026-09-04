@@ -4,6 +4,11 @@ import {
   NORMALIZER_DEFAULT_STRENGTH,
   clampStrength,
 } from "../../rtc/audioNormalizer";
+import {
+  VOICE_TONE_PRESET_DEFAULT,
+  VoiceTonePresetId,
+  isVoiceTonePresetId,
+} from "../../rtc/voiceTonePresets";
 
 import { AbstractStore } from ".";
 import {
@@ -219,6 +224,9 @@ export interface TypeVoice extends TypeVoiceOverlay {
   androidScreenShareTier: AndroidScreenShareTierName;
 
   microphoneGain: number;
+  /** Voice shaper preset (rtc/voiceTonePresets.ts). Exactly one at a time:
+   *  the mic has a single processor and the shaper is one stage of it. */
+  voiceTonePreset: VoiceTonePresetId;
   cameraBrightness: number;
   cameraQuality: CameraQualityName;
   cameraMaxBitrateKbps: number;
@@ -341,6 +349,7 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
       screenShareShield: false,
       androidScreenShareTier: "default",
       microphoneGain: 100,
+      voiceTonePreset: VOICE_TONE_PRESET_DEFAULT,
       cameraBrightness: 100,
       cameraQuality: "auto",
       cameraMaxBitrateKbps: 0,
@@ -524,6 +533,12 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
 
     if (typeof input.microphoneGain === "number") {
       data.microphoneGain = Math.max(0, Math.min(200, input.microphoneGain));
+    }
+
+    // Closed set: anything outside the catalog (a removed preset, a hand-
+    // edited value) falls back to the default rather than persisting.
+    if (isVoiceTonePresetId(input.voiceTonePreset)) {
+      data.voiceTonePreset = input.voiceTonePreset;
     }
 
     if (typeof input.cameraBrightness === "number") {
@@ -844,6 +859,11 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
     this.set("microphoneGain", value);
   }
 
+  /** Set the voice shaper preset; unknown ids are ignored. */
+  set voiceTonePreset(value: VoiceTonePresetId) {
+    if (isVoiceTonePresetId(value)) this.set("voiceTonePreset", value);
+  }
+
   get cameraBrightness(): number {
     return this.get().cameraBrightness ?? 100;
   }
@@ -1104,6 +1124,11 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
 
   get microphoneGain(): number {
     return this.get().microphoneGain ?? 100;
+  }
+
+  /** Get the voice shaper preset */
+  get voiceTonePreset(): VoiceTonePresetId {
+    return this.get().voiceTonePreset ?? VOICE_TONE_PRESET_DEFAULT;
   }
 
   /**

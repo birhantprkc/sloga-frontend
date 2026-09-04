@@ -113,6 +113,85 @@ export function VoiceProcessingOptions() {
       </CategoryButton.Group>
 
       <Text class="title">
+        <Trans>Voice Shaper</Trans>
+      </Text>
+      <CategoryButton.Group>
+        {/* A radio-style select on purpose: the microphone runs ONE
+            processor, and the shaper is a single stage inside it, so exactly
+            one preset can be active. The list is the closed catalog in
+            rtc/voiceTonePresets.ts — add a preset there, not here. */}
+        <CategoryButton.Select
+          icon="blank"
+          title={<Trans>Select a voice shaper</Trans>}
+          options={{
+            off: {
+              title: <Trans>Off</Trans>,
+              description: <Trans>Your microphone as it is.</Trans>,
+              shortDesc: <Trans>Off</Trans>,
+            },
+            warm: {
+              title: <Trans>Warm</Trans>,
+              description: (
+                <Trans>
+                  Rounder low end, a touch less edge. Softens thin headset mics.
+                </Trans>
+              ),
+              shortDesc: <Trans>Warm</Trans>,
+            },
+            bright: {
+              title: <Trans>Bright</Trans>,
+              description: (
+                <Trans>
+                  Cuts rumble, lifts presence and air. Helps a muffled or boomy
+                  mic.
+                </Trans>
+              ),
+              shortDesc: <Trans>Bright</Trans>,
+            },
+            deep: {
+              title: <Trans>Deep</Trans>,
+              description: (
+                <Trans>Fuller chest tone with a rolled-off top.</Trans>
+              ),
+              shortDesc: <Trans>Deep</Trans>,
+            },
+            radio: {
+              title: <Trans>Radio</Trans>,
+              description: (
+                <Trans>
+                  Narrow and squashed, like a walkie-talkie or dispatch call.
+                </Trans>
+              ),
+              shortDesc: <Trans>Radio</Trans>,
+            },
+            podcast: {
+              title: <Trans>Podcast</Trans>,
+              description: (
+                <Trans>
+                  Broadcast polish: clears mud, adds presence, evens out your
+                  level.
+                </Trans>
+              ),
+              shortDesc: <Trans>Podcast</Trans>,
+            },
+          }}
+          value={voice.voiceTonePreset}
+          onUpdate={(preset) => (voice.voiceTonePreset = preset)}
+        />
+        <CategoryButton
+          icon="blank"
+          description={
+            <Trans>
+              One shaper at a time. It runs alongside noise suppression and
+              input gain, and switching applies live during a call.
+            </Trans>
+          }
+        >
+          <Trans>How it works</Trans>
+        </CategoryButton>
+      </CategoryButton.Group>
+
+      <Text class="title">
         <Trans>Incoming Voices</Trans>
       </Text>
       <CategoryButton.Group>

@@ -1154,6 +1154,11 @@ msgstr "Bottom left"
 msgid "Bottom right"
 msgstr "Bottom right"
 
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Bright"
+msgstr "Bright"
+
 #: components/app/interface/settings/user/voice/CameraOptions.tsx
 msgid "Brightness is unavailable on this camera while a background effect is active."
 msgstr "Brightness is unavailable on this camera while a background effect is active."
@@ -1163,6 +1168,10 @@ msgstr "Brightness is unavailable on this camera while a background effect is ac
 #: components/app/interface/settings/user/voice/CameraOptions.tsx
 msgid "Brightness: {0}%"
 msgstr "Brightness: {0}%"
+
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Broadcast polish: clears mud, adds presence, evens out your level."
+msgstr "Broadcast polish: clears mud, adds presence, evens out your level."
 
 #: components/app/interface/settings/user/Language.tsx
 msgid "Broadcasting your own captions isn't supported in this app or browser — you'll still see other people's captions."
@@ -2110,6 +2119,10 @@ msgstr "Custom window frame"
 msgid "Customization"
 msgstr "Customization"
 
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Cuts rumble, lifts presence and air. Helps a muffled or boomy mic."
+msgstr "Cuts rumble, lifts presence and air. Helps a muffled or boomy mic."
+
 #: src/interface/ServerEvents.tsx
 msgid "Daily"
 msgstr "Daily"
@@ -2151,6 +2164,11 @@ msgstr "Deafen Members"
 #: components/ui/components/features/voice/callCard/RemoteControlOverlays.tsx
 msgid "Decline"
 msgstr "Decline"
+
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Deep"
+msgstr "Deep"
 
 #: components/app/menus/shared/NotificationContextMenu.tsx
 msgid "Default"
@@ -3030,6 +3048,10 @@ msgstr "Fruit Salad"
 msgid "Full"
 msgstr "Full"
 
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Fuller chest tone with a rolled-off top."
+msgstr "Fuller chest tone with a rolled-off top."
+
 #. placeholder {0}: voice.microphoneGain
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "Gain: {0}%"
@@ -3266,6 +3288,10 @@ msgstr "Hosted by {name}"
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "How far a quiet voice may be raised. Loud voices are always tamed, at any strength."
 msgstr "How far a quiet voice may be raised. Loud voices are always tamed, at any strength."
+
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "How it works"
+msgstr "How it works"
 
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
 msgid "Hug the channel list"
@@ -4310,6 +4336,10 @@ msgstr "Names only"
 msgid "Narrow"
 msgstr "Narrow"
 
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Narrow and squashed, like a walkie-talkie or dispatch call."
+msgstr "Narrow and squashed, like a walkie-talkie or dispatch call."
+
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
 msgid "Neutral"
 msgstr "Neutral"
@@ -4660,6 +4690,10 @@ msgstr "One of the first 1000 users!"
 msgid "One row per reserved item (ItemId, Name, Class, Note, Plus) — for spreadsheets or any addon that accepts CSV."
 msgstr "One row per reserved item (ItemId, Name, Class, Note, Plus) — for spreadsheets or any addon that accepts CSV."
 
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "One shaper at a time. It runs alongside noise suppression and input gain, and switching applies live during a call."
+msgstr "One shaper at a time. It runs alongside noise suppression and input gain, and switching applies live during a call."
+
 #: src/interface/Friends.tsx
 #: src/interface/navigation/servers/UserMenu.tsx
 #: src/interface/navigation/channels/HomeSidebar.tsx
@@ -4971,6 +5005,11 @@ msgstr "Please select a method to authenticate your request."
 msgid "Please select a reason"
 msgstr "Please select a reason"
 
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Podcast"
+msgstr "Podcast"
+
 #: components/modal/modals/CreatePoll.tsx
 msgid "Poll duration"
 msgstr "Poll duration"
@@ -5100,6 +5139,11 @@ msgstr "Quality and bitrate changes apply the next time you turn on your camera.
 #: components/modal/modals/CreatePoll.tsx
 msgid "Question"
 msgstr "Question"
+
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Radio"
+msgstr "Radio"
 
 #: components/modal/modals/ReportContent.tsx
 msgid "Raid or spam attack"
@@ -5652,6 +5696,10 @@ msgstr "Roll dice"
 msgid "Round-trip time for your own microphone stream. Shows a dash while your mic is not transmitting."
 msgstr "Round-trip time for your own microphone stream. Shows a dash while your mic is not transmitting."
 
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Rounder low end, a touch less edge. Softens thin headset mics."
+msgstr "Rounder low end, a touch less edge. Softens thin headset mics."
+
 #: components/modal/modals/ImportDiscord.tsx
 msgid "Run again"
 msgstr "Run again"
@@ -5830,6 +5878,10 @@ msgstr "Seek"
 #: src/interface/ServerEvents.tsx
 msgid "Select a channel"
 msgstr "Select a channel"
+
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Select a voice shaper"
+msgstr "Select a voice shaper"
 
 #: components/app/interface/settings/user/voice/VoiceInputOptions.tsx
 msgid "Select audio input"
@@ -7559,6 +7611,10 @@ msgstr "Voice region"
 msgid "Voice Settings"
 msgstr "Voice Settings"
 
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Voice Shaper"
+msgstr "Voice Shaper"
+
 #: components/ui/components/features/voice/watch/WatchOverlay.tsx
 #: components/app/menus/UserContextMenu.tsx
 msgid "Volume"
@@ -7600,6 +7656,11 @@ msgstr "Want to change username?"
 #: components/modal/modals/ImportDiscord.tsx
 msgid "Want your Discord server's stickers too? Add our importer bot to it, then press Import stickers below."
 msgstr "Want your Discord server's stickers too? Add our importer bot to it, then press Import stickers below."
+
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Warm"
+msgstr "Warm"
 
 #: src/interface/ServerEvents.tsx
 msgid "was going"
@@ -8060,6 +8121,10 @@ msgstr "Your input is not being delivered yet. They have to answer a prompt from
 #: components/i18n/errors.ts
 msgid "Your message is too long, please remove some characters and try again."
 msgstr "Your message is too long, please remove some characters and try again."
+
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Your microphone as it is."
+msgstr "Your microphone as it is."
 
 #: components/ui/components/features/voice/callCard/RemoteControlOverlays.tsx
 msgid "Your mouse and keyboard will be sent to their computer while the session lasts. Nothing on your computer is shared."
