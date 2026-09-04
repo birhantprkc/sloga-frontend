@@ -6,6 +6,14 @@ import type {
 
 import { CONFIGURATION } from "@revolt/common";
 
+import {
+  VOICE_TONE_PRESET_DEFAULT,
+  VoiceTonePresetId,
+  connectChain,
+  createToneStage,
+  voiceTonePreset,
+} from "./voiceTonePresets";
+
 /**
  * Base URL the RNNoise worklet assets are served from. Self-hosted worklet
  * assets (public/rnnoise/) — never a CDN: external script origins are blocked
@@ -50,15 +58,21 @@ async function loadDenoiseAssets(ctx: AudioContext): Promise<ArrayBuffer> {
 
 /**
  * The one processor allowed in the mic track's single LiveKit processor slot:
- * capture → [DenoiserWorklet (RNNoise)] → GainNode → destination. Both stages
- * are live-tunable mid-call (`setDenoiseEnabled` / `setGain`) so settings
- * changes apply without republishing, and neither steals the slot from the
- * other (the old separate Denoise/Gain processors were mutually exclusive).
+ * capture → [DenoiserWorklet (RNNoise)] → [voice shaper] → GainNode →
+ * destination. Every stage is live-tunable mid-call (`setDenoiseEnabled` /
+ * `setTonePreset` / `setGain`) so settings changes apply without
+ * republishing, and none of them steals the slot from the others (the old
+ * separate Denoise/Gain processors were mutually exclusive, and a third
+ * processor for the shaper would have made it three ways exclusive).
  *
  * The worklet stage is created lazily on first enable and taken out of the
  * graph entirely when disabled (an unconnected worklet node isn't rendered),
  * so a gain-only pipeline pays no denoise latency. The vendored worklet
  * resamples context-rate ↔ 48 kHz internally (see public/rnnoise/PROVENANCE).
+ *
+ * The shaper stage is exactly one preset's node chain (`voiceTonePresets.ts`);
+ * `off` contributes no nodes at all. Switching presets tears the old chain
+ * out before the new one goes in, so two presets can never run at once.
  */
 export class VoiceAudioPipeline implements TrackProcessor<
   Track.Kind.Audio,
@@ -69,10 +83,12 @@ export class VoiceAudioPipeline implements TrackProcessor<
 
   #denoise: boolean;
   #gainPercent: number;
+  #tonePreset: VoiceTonePresetId;
 
   #ctx: AudioContext | undefined;
   #source: MediaStreamAudioSourceNode | undefined;
   #denoiseNode: AudioWorkletNode | undefined;
+  #toneNodes: AudioNode[] = [];
   #gainNode: GainNode | undefined;
   #dest: MediaStreamAudioDestinationNode | undefined;
 
@@ -80,9 +96,14 @@ export class VoiceAudioPipeline implements TrackProcessor<
    *  race our own mid-call toggles; interleaving them corrupts the graph. */
   #chain: Promise<void> = Promise.resolve();
 
-  constructor(opts: { denoise: boolean; gainPercent: number }) {
+  constructor(opts: {
+    denoise: boolean;
+    gainPercent: number;
+    tonePreset?: VoiceTonePresetId;
+  }) {
     this.#denoise = opts.denoise;
     this.#gainPercent = opts.gainPercent;
+    this.#tonePreset = opts.tonePreset ?? VOICE_TONE_PRESET_DEFAULT;
   }
 
   #enqueue<T>(op: () => Promise<T> | T): Promise<T> {
@@ -123,6 +144,21 @@ export class VoiceAudioPipeline implements TrackProcessor<
     });
   }
 
+  /**
+   * Live-switch the voice shaper. The previous preset's nodes are dropped
+   * from the graph before the new ones are built, so there is never more
+   * than one shaper in the chain. A no-op when the preset is unchanged.
+   */
+  setTonePreset(preset: VoiceTonePresetId): Promise<void> {
+    return this.#enqueue(() => {
+      if (preset === this.#tonePreset) return;
+      this.#tonePreset = preset;
+      if (!this.#ctx) return;
+      this.#rebuildToneStage();
+      this.#rewire();
+    });
+  }
+
   /** Live-update input gain (percent, 100 = unity), with a short ramp to
    *  avoid zipper noise while the settings slider drags. */
   setGain(gainPercent: number) {
@@ -140,6 +176,10 @@ export class VoiceAudioPipeline implements TrackProcessor<
     return this.#denoise && !!this.#denoiseNode;
   }
 
+  get tonePreset(): VoiceTonePresetId {
+    return this.#tonePreset;
+  }
+
   async #build(opts: AudioProcessorOptions) {
     if (!opts.audioContext || !opts.track) {
       throw new Error("audioContext and track are required");
@@ -154,6 +194,7 @@ export class VoiceAudioPipeline implements TrackProcessor<
     if (this.#denoise) {
       await this.#ensureDenoiseNode();
     }
+    this.#rebuildToneStage();
     this.#rewire();
     this.processedTrack = this.#dest.stream.getAudioTracks()[0];
   }
@@ -169,17 +210,27 @@ export class VoiceAudioPipeline implements TrackProcessor<
     });
   }
 
+  /** Drop the current shaper nodes and build the ones for `#tonePreset`.
+   *  Leaves them unconnected — `#rewire` threads the whole graph. */
+  #rebuildToneStage() {
+    for (const node of this.#toneNodes) node.disconnect();
+    this.#toneNodes = this.#ctx
+      ? createToneStage(this.#ctx, voiceTonePreset(this.#tonePreset))
+      : [];
+  }
+
   #rewire() {
     if (!this.#source || !this.#gainNode || !this.#dest) return;
     this.#source.disconnect();
     this.#denoiseNode?.disconnect();
+    for (const node of this.#toneNodes) node.disconnect();
     this.#gainNode.disconnect();
     let head: AudioNode = this.#source;
     if (this.#denoise && this.#denoiseNode) {
       head.connect(this.#denoiseNode);
       head = this.#denoiseNode;
     }
-    head.connect(this.#gainNode);
+    connectChain(head, this.#toneNodes, this.#gainNode);
     this.#gainNode.connect(this.#dest);
   }
 
@@ -190,9 +241,11 @@ export class VoiceAudioPipeline implements TrackProcessor<
     this.#denoiseNode?.port.close();
     this.#denoiseNode?.disconnect();
     this.#source?.disconnect();
+    for (const node of this.#toneNodes) node.disconnect();
     this.#gainNode?.disconnect();
     this.#denoiseNode = undefined;
     this.#source = undefined;
+    this.#toneNodes = [];
     this.#gainNode = undefined;
     this.#dest = undefined;
     this.processedTrack = undefined;
