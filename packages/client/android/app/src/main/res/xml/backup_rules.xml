@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Android < 12 auto-backup rules.
 
-     Three locations must NEVER ride device backups:
+     Four locations must NEVER ride device backups:
 
      1. `files/e2ee` — the native E2EE store. Its master key only unwraps via
         this install's Android Keystore entry (which does not survive
@@ -21,9 +21,15 @@
         SlogaMessagingService can re-subscribe when FCM rotates the token.
         A restored copy would hand another device a working login. Nothing
         is lost by excluding it: the web layer re-saves it on every
-        signed-in launch (resyncPushSubscription). -->
+        signed-in launch (resyncPushSubscription).
+
+     4. `shared_prefs/sloga_ipc.xml` — IntentNonce's per-install secret.
+        It gates the exported MainActivity, so it must stay unique to this
+        install; a fresh install simply mints a new one. -->
+
 <full-backup-content>
     <exclude domain="file" path="e2ee" />
     <exclude domain="root" path="app_webview" />
     <exclude domain="sharedpref" path="sloga_push.xml" />
+    <exclude domain="sharedpref" path="sloga_ipc.xml" />
 </full-backup-content>
