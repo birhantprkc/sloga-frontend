@@ -26,6 +26,11 @@ declare global {
         }>;
         start(): Promise<{ deviceDescription: string; sessionId: number }>;
         stop(sessionId?: number): Promise<boolean>;
+        /** Main's notice that a native session died under a live share;
+         * absent on older preloads. Returns the unsubscribe. */
+        onEnded?(
+          callback: (event: { sessionId: number; reason?: string }) => void,
+        ): () => void;
         listApps(): Promise<
           {
             id: number;

@@ -274,3 +274,29 @@ export async function stopScreenAudio(sessionId?: number): Promise<void> {
     // best-effort: a dead session is the goal state anyway
   }
 }
+
+/** Main's notice that the native session behind a capture died under it
+ * (its loop thread exited: a core error, or the daemon removed the virtual
+ * source). The renderer matches `sessionId` against its own capture before
+ * acting; a notice for a stopped or superseded session is ignored. */
+export interface ScreenAudioEnded {
+  sessionId: number;
+  reason?: string;
+}
+
+/**
+ * Subscribe to that notice. Returns the unsubscribe; a no-op on shells
+ * without the surface (older preloads), where the renderer's own device
+ * watchdog (screenAudioLiveness.ts) is the only guard.
+ */
+export function onScreenAudioEnded(
+  callback: (event: ScreenAudioEnded) => void,
+): () => void {
+  const shell = shellSurface();
+  if (!shell?.onEnded) return () => undefined;
+  try {
+    return shell.onEnded(callback);
+  } catch {
+    return () => undefined;
+  }
+}
