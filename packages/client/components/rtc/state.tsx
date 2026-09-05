@@ -195,9 +195,14 @@ import {
   MlsCallSession,
 } from "./mlsCallSession";
 import {
+  SCREEN_AUDIO_WATCH_MS,
+  screenAudioDeviceGone,
+} from "./screenAudioLiveness";
+import {
   type ScreenAudioTargets,
   captureScreenAudio,
   listScreenAudioApps,
+  onScreenAudioEnded,
   resolveScreenAudioTarget,
   screenAudioSupported,
   stopScreenAudio,
@@ -636,6 +641,9 @@ class Voice {
    * reachable by teardown, leaving the other live for the rest of the
    * call. One question per share attempt. */
   #screenAudioChooserGen: number | undefined;
+  /** Disarms the live capture's death guard (#armScreenAudioGuard), or
+   * undefined when none is armed. */
+  #screenAudioGuard: (() => void) | undefined;
   /**
    * The native Android screen leg (screen-leg plan §7), when this shell can
    * publish one. Constructed lazily on first share and reused: the plugin
@@ -2530,6 +2538,7 @@ class Voice {
       // programmatically, which never fires "ended", so without this a
       // dropped call would leave the virtual PipeWire device live in the
       // user's graph. Idempotent, no-op off the capable shell.
+      this.#disarmScreenAudioGuard();
       this.#screenAudioGen++;
       void stopScreenAudio(this.#screenAudioSessionId);
 
@@ -4354,6 +4363,7 @@ class Voice {
       // the ScreenShareAudio publication and stops its track, but the
       // virtual PipeWire device is the shell's and needs its own stop.
       // No-op off the capable shell.
+      this.#disarmScreenAudioGuard();
       this.#screenAudioGen++;
       void stopScreenAudio(this.#screenAudioSessionId);
       await room.localParticipant.setScreenShareEnabled(false);
@@ -4823,10 +4833,101 @@ class Voice {
       return abandon();
     }
     this.#screenAudioSessionId = sessionId;
+    this.#armScreenAudioGuard(room, generation, sessionId, audioTrack);
     if (!consentPending) {
       void this.#unmuteScreenAudioWhenSafe(room, publication, generation);
     }
     return publication;
+  }
+
+  /**
+   * Guard a live native capture against the failure nothing else reports:
+   * the native session dying under the share. Design §4 assumed a dead
+   * virtual source ends the gUM track and livekit unpublishes; under
+   * pipewire-pulse the record stream is instead MIGRATED to the default
+   * source — the microphone — and the ScreenShareAudio publication keeps
+   * sending it, untouched by the mic mute (field record 2026-09-04,
+   * PipeWire 1.0.5). Two independent tells, either of which ends the
+   * capture: the shell's liveness notice for THIS session, and the matched
+   * capture device dropping out of enumerateDevices. Both are scoped by the
+   * generation token, so a guard that outlives its share is inert, and the
+   * stop paths that end a share early disarm it explicitly.
+   */
+  #armScreenAudioGuard(
+    room: Room,
+    generation: number,
+    sessionId: number,
+    track: LocalAudioTrack,
+  ) {
+    this.#disarmScreenAudioGuard();
+    const label = track.mediaStreamTrack.label;
+    let fired = false;
+    const died = (reason: string) => {
+      if (fired) return;
+      fired = true;
+      this.#disarmScreenAudioGuard();
+      if (this.#screenAudioStale(generation, room)) return;
+      this.#screenAudioDied(room, sessionId, track, reason);
+    };
+    const unsubscribe = onScreenAudioEnded((event) => {
+      if (event.sessionId === sessionId) {
+        died(event.reason ?? "native session ended");
+      }
+    });
+    const timer = setInterval(() => {
+      if (this.#screenAudioStale(generation, room)) {
+        this.#disarmScreenAudioGuard();
+        return;
+      }
+      navigator.mediaDevices.enumerateDevices().then(
+        (devices) => {
+          if (!fired && screenAudioDeviceGone(devices, label)) {
+            died("capture device disappeared");
+          }
+        },
+        () => undefined,
+      );
+    }, SCREEN_AUDIO_WATCH_MS);
+    this.#screenAudioGuard = () => {
+      unsubscribe();
+      clearInterval(timer);
+    };
+  }
+
+  #disarmScreenAudioGuard() {
+    const disarm = this.#screenAudioGuard;
+    this.#screenAudioGuard = undefined;
+    disarm?.();
+  }
+
+  /**
+   * The native session is gone: end the capture NOW, before the migrated
+   * stream can carry the microphone. Bumping the generation dooms any
+   * in-flight unmute or chooser for this capture; `stopOnUnpublish` is
+   * forced so the gUM track is stopped whatever the room's default, with
+   * an explicit stop as the belt. The video share continues — audio is the
+   * enhancement — and the user is told why it went, the same way a failed
+   * start is reported.
+   */
+  #screenAudioDied(
+    room: Room,
+    sessionId: number,
+    track: LocalAudioTrack,
+    reason: string,
+  ) {
+    console.error(`screen audio session died: ${reason}`);
+    this.#screenAudioGen++;
+    void room.localParticipant.unpublishTrack(track, true);
+    track.mediaStreamTrack.stop();
+    void stopScreenAudio(sessionId);
+    if (this.#screenAudioSessionId === sessionId) {
+      this.#screenAudioSessionId = undefined;
+    }
+    this.onErr(
+      new Error(
+        `Screen audio stopped — sharing continues without sound (${reason}).`,
+      ),
+    );
   }
 
   /**
