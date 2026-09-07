@@ -110,7 +110,11 @@ import {
   spliceParkedAfterWelcome,
 } from "./mlsDrainPolicy";
 import { joinRequestAction } from "./mlsJoinRequestPolicy";
-import { negotiatingFailsafeAction } from "./mlsNegotiatingFailsafe";
+import {
+  type NegotiatingFailsafeInput,
+  negotiatingFailsafeAction,
+  negotiatingFailsafeReason,
+} from "./mlsNegotiatingFailsafe";
 import {
   rejoinServeAction,
   startupWipeTargets,
@@ -142,15 +146,18 @@ const RETRY_DELAY_MS = 500;
 /** Bound on successive rejoin/successor re-establishes before failing loud. */
 const MAX_REESTABLISH = 3;
 /**
- * Fail-safe (T0d, R2-6): if the session produces NO verdict within this window
- * (DS unreachable — no create/join response) AND the channel has no known open
- * MLS group, release the `negotiating` publish gate so a plain voice call is
- * never stuck muted. If an open group IS known, the gate stays asserted and the
- * state goes loud RE-SECURING — an E2EE-known call never auto-resumes plaintext.
+ * Fail-safe (T0d): if the session has NO Delivery-Service verdict within this
+ * window (no create/join response yet — slow, rate limited, or unreachable),
+ * hold the `negotiating` publish gate and go amber RE-SECURING so the delayed
+ * start is visible. The gate is NEVER released without a DS verdict: the R2-6
+ * availability escape that released it to plaintext when the channel had no
+ * known open group was withdrawn 2026-09-06 (user decision — its premise was
+ * not provable from the client, and the chip was wrong for as long as the DS
+ * took to answer). The hold is bounded by `SELF_ENROLMENT_DEADLINE_MS` (or
+ * the join ladder's terminal), after which the session goes LOUD. The rule
+ * itself lives in `mlsNegotiatingFailsafe.ts` so it can be tested.
  */
 const NEGOTIATING_FAILSAFE_MS = 5_000;
-// `MAX_FAILSAFE_REARMS` moved to `mlsNegotiatingFailsafe.ts` with the decision
-// it bounds, so the rule and its bound can be tested together.
 /**
  * Backoff before an admitter re-drives a join request whose attempt aborted
  * transiently. The joiner re-broadcasts only `MAX_JOINER_RETRIES` times over
@@ -171,7 +178,11 @@ const MAX_ADMIT_RETRIES = 6;
  * the precise give-up points latch sooner, this only catches a path that
  * reaches neither — and it is additionally suppressed while an establish is
  * actually in flight (`enrolmentVerdict`'s `establishInFlight`), so a slow
- * but live ladder can never false-alarm.
+ * but live ladder can never false-alarm. That suppression applies only once
+ * the DS has answered (`#dsVerdictSeen`): before the first verdict there is
+ * no ladder to protect, and the create's `fetch` carries no timeout of its
+ * own, so this deadline is what bounds the T0d hold on a create that never
+ * answers.
  */
 const SELF_ENROLMENT_DEADLINE_MS = 240_000;
 /** Re-check interval for the self-enrolment assertion while still pending. */
@@ -855,13 +866,10 @@ export interface MlsCallSessionDeps {
   requestMfaTicket?: () => Promise<string | undefined>;
   /**
    * The channel's open-group probe state (media-gate LOW-2). Read by the
-   * T0d fail-safe: `"open"` ⇒ hold the gate + loud RE-SECURING (an
-   * E2EE-known call never auto-resumes plaintext); `"pending"` ⇒ hold the
-   * gate and re-arm the fail-safe (bounded); `"none"` (a COMPLETED 404 /
-   * feature-off / probe error — the error arm is RATIFIED, R2-6: the probe
-   * and the DS share an origin) ⇒ the availability escape may release;
-   * `"ratelimited"` (a 429 — the DS answered, so R2-6's unreachability
-   * premise does not hold) ⇒ hold + loud, as for `"open"`.
+   * T0d fail-safe, which since 2026-09-06 holds the gate for EVERY value —
+   * the R2-6 availability escape that released it on `"none"` is withdrawn.
+   * The value only names the hold in the console
+   * (`negotiatingFailsafeReason`).
    */
   channelHasOpenGroup?: () => "open" | "none" | "pending" | "ratelimited";
 }
@@ -1094,8 +1102,6 @@ export class MlsCallSession {
   #callMode: CallMode = { kind: "negotiating" };
   /** For a remote announce (T4): the user who announced plaintext. */
   #announcedBy: string | undefined;
-  /** T0d fail-safe re-arms consumed while the open-group probe was pending. */
-  #failsafeRearms = 0;
   /**
    * 🔴 Has the DS answered our create/join at all?
    *
@@ -1119,8 +1125,10 @@ export class MlsCallSession {
    * fail-safe as `transportRatelimited`. The transport's wait (up to three
    * of ~10 s) otherwise leaves every other term quiet: `#ensureKeyPackages`
    * returns best-effort, the create has not answered, nothing is latched,
-   * and the probe may already read "none" — the release arm, i.e. plaintext
-   * to the SFU under no chip until the delayed create landed.
+   * and the probe may already read "none" — which, until 2026-09-06, was
+   * the release arm: plaintext to the SFU under no chip until the delayed
+   * create landed. The gate now holds regardless; this term names the wait
+   * in the RE-SECURING reason so the delayed start is attributable.
    */
   #dsRatelimited = false;
   /** Cuts every call-plane request and its 429 wait on `dispose()`. */
@@ -1226,59 +1234,46 @@ export class MlsCallSession {
   }
 
   /**
-   * T0d fail-safe (R2-6 + media-gate LOW-2, tri-state): if we are STILL
-   * negotiating after the window (DS unreachable — no create/join verdict):
-   *  - probe says "open"    ⇒ hold the gate + loud RE-SECURING (an E2EE-known
-   *    call never auto-resumes plaintext);
-   *  - probe says "pending" ⇒ hold the gate and RE-ARM (bounded — a hung
-   *    probe eventually errors to "none" via fetch's own failure);
-   *  - probe says "none" (a COMPLETED verdict, incl. the RATIFIED error arm)
-   *    ⇒ availability escape: release the gate, keep negotiating quietly;
-   *  - probe says "ratelimited" ⇒ the DS answered (429), so the escape's
-   *    unreachability premise is false: hold + loud, as for "open";
-   *  - the TRANSPORT was rate limited (`#dsRatelimited` — a 429 on the
-   *    KeyPackage publish or the create, now waiting the reset out) ⇒ the
-   *    same premise fails the same way: hold + loud. Before this term the
-   *    wait was invisible here, and with the probe's own budget spent the
-   *    release arm fired at 5 s — plaintext to the SFU under NO chip (state
-   *    still `starting`) for the 30-40 s until the create landed;
-   *  - a loud verdict is already LATCHED (`#latchLoud` — the establish threw
-   *    inside the window, or the enrolment assertion fired) ⇒ nothing left
-   *    to decide: that path holds the gate and owns the only escape. Before
-   *    this term, a create that failed at 2 s went `failed` with the mode
-   *    still `negotiating`, and this timer released the gate at 5 s under a
-   *    red chip whose banner had just promised publishing was paused.
+   * T0d fail-safe, fail-closed (user decision 2026-09-06): if we are STILL
+   * negotiating after the window with NO Delivery-Service verdict (no
+   * create/join response yet — slow, rate limited, or unreachable), hold the
+   * publish gate and go amber RE-SECURING so the delayed start is visible
+   * (`#toResecuring` → `onStateChange` → the chip, reactively). Whatever the
+   * open-group probe says: the R2-6 availability escape — "no verdict AND
+   * probe says no open group ⇒ DS unreachable ⇒ release the gate, keep
+   * negotiating quietly" — is WITHDRAWN. Its premise was never provable
+   * from here: a slow create, a transport waiting out a 429 and a probe
+   * whose own budget was spent all looked like unreachability at 5 s, and
+   * each released plaintext to the SFU under NO chip (a `starting` session
+   * renders as nothing) for as long as the DS took to answer.
+   *
+   * The hold ends one of two ways, neither of them here:
+   *  - the DS answers (`#dsVerdictSeen`): create/join routes as normal and
+   *    `#toActive`, the join ladder, or a loud failure takes over; or
+   *  - the bounded deadline expires: `#assertSelfEnrolled` fires at
+   *    `SELF_ENROLMENT_DEADLINE_MS` (not suppressed by an in-flight
+   *    establish before the first verdict), or the join ladder's terminal
+   *    asserts exhaustion, and the session goes LOUD through `#latchLoud` —
+   *    the NOT-ENCRYPTED chip + the Leave / Stay-unencrypted banner, where
+   *    "Stay" is the user's explicit consent to plaintext.
+   *
+   * "ignore" is the only other outcome: a verdict exists (the routed path
+   * carries its own bound and terminal), or a loud verdict is already
+   * LATCHED (that path holds the gate and owns the only escape). Nothing
+   * here ever calls `resumePublishing`.
    */
   #armNegotiatingFailsafe(): void {
     const timer = setTimeout(() => {
       this.#timers.delete(timer);
       if (this.#terminal() || this.#callMode.kind !== "negotiating") return;
-      switch (
-        negotiatingFailsafeAction({
-          dsVerdictSeen: this.#dsVerdictSeen,
-          probe: this.#deps.channelHasOpenGroup?.() ?? "none",
-          rearmsUsed: this.#failsafeRearms,
-          loudLatched: this.#loudLatched,
-          transportRatelimited: this.#dsRatelimited,
-        })
-      ) {
-        case "ignore":
-          return;
-        case "resecure":
-          this.#toResecuring("negotiation timed out with an open E2EE group");
-          return;
-        case "rearm":
-          this.#failsafeRearms++;
-          this.#armNegotiatingFailsafe();
-          return;
-        case "release":
-          // Completed no-group verdict (or the probe never resolved past the
-          // bounded re-arms — same-origin, so the DS is unreachable too) →
-          // availability escape: release the gate, keep negotiating in the
-          // background (a late verdict still applies).
-          void this.#media?.resumePublishing?.("negotiating");
-          return;
-      }
+      const input: NegotiatingFailsafeInput = {
+        dsVerdictSeen: this.#dsVerdictSeen,
+        probe: this.#deps.channelHasOpenGroup?.() ?? "none",
+        loudLatched: this.#loudLatched,
+        transportRatelimited: this.#dsRatelimited,
+      };
+      if (negotiatingFailsafeAction(input) === "ignore") return;
+      this.#toResecuring(negotiatingFailsafeReason(input));
     }, NEGOTIATING_FAILSAFE_MS);
     this.#timers.add(timer);
   }
@@ -1354,7 +1349,13 @@ export class MlsCallSession {
       // is never deferred by it: `#joinPath` asserts exhaustion from INSIDE
       // the establish, and deferring that latch to the 240 s deadline would
       // re-create the parked-muted-behind-an-amber-chip state (§4.3/§4.4).
-      establishInFlight: this.#establishInFlight,
+      // The suppression exists to protect a slow but LIVE ladder, and there
+      // is no ladder before the DS has answered create/join: a create that
+      // never answers (its `fetch` carries no timeout of its own) would
+      // otherwise keep the flag up for good and make the T0d hold — amber
+      // RE-SECURING with the gate held, since 2026-09-06 — unbounded. So
+      // before the first verdict the deadline runs.
+      establishInFlight: this.#establishInFlight && this.#dsVerdictSeen,
       ladderExhausted,
       deadlineLapsed: Date.now() >= this.#enrolmentDeadline,
       // A plain voice call (feature off) and a cap-refused joiner are BOTH
