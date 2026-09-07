@@ -169,7 +169,9 @@ import { WatchTogether } from "./watchTogether";
 import {
   fetchWithRatelimitPolicy,
   isRateLimited,
+  MLS_REQUEST_DEADLINE_MS,
   RATELIMIT_MAX_RETRIES,
+  requestDeadlineSignal,
 } from "../client/e2eeRatelimitPolicy";
 import { LiveAnnotations } from "./annotations/liveAnnotations";
 import {
@@ -209,6 +211,10 @@ import {
   type MlsSessionState,
   MlsCallSession,
 } from "./mlsCallSession";
+import {
+  canConfirmNoSessionPlaintext,
+  sessionSetupDecision,
+} from "./mlsSessionSetupPolicy";
 import {
   SCREEN_AUDIO_WATCH_MS,
   screenAudioDeviceGone,
@@ -1889,7 +1895,15 @@ class Voice {
       // "Encrypt my calls" (§0.2 #9): with it OFF we negotiate plaintext —
       // no session, no E2EE Room — and appear non-enrolled to E2EE peers
       // (their loud downgrade attributes it to us). LOCAL per-device toggle.
-      this.#settings.e2eeCallsEnabled;
+      this.#settings.e2eeCallsEnabled &&
+      // E2EE proven OFF on this device (the status snapshot has loaded and
+      // says so) is the same class as the toggle: no identity, no session,
+      // not an E2EE call — a plain voice call the peers attribute to us.
+      // Only a PROVEN off counts: an unloaded snapshot cannot be told from
+      // an enrolled device, so it stays capable and the session-setup
+      // decision below holds the gate loud rather than let plaintext out on
+      // a device that may be enrolled (R2-4, fail-closed).
+      bridge?.status.get("state")?.enabled !== false;
     if (e2eeCapable) {
       try {
         this.#mlsKeyProvider = new MlsKeyProvider();
@@ -2354,6 +2368,10 @@ class Voice {
       // can reject (native listener registration), and an owned rejection
       // outside the try escaped with no teardown — worker/provider held and
       // the UI stuck on CONNECTING until the next user action.
+      // Whether the native keys-changed listener registered — the one
+      // asynchronous setup step. An input to the session-setup decision
+      // below: `false` on a capable shell is a hold, never a release.
+      let keysListenerBound = false;
       if (e2eeCapable) {
         // Keys-changed loop (§3.5): native pushes `e2ee:call-keys-changed` on
         // every LOCAL epoch advance. Route it INTO the session (the SOLE
@@ -2362,17 +2380,57 @@ class Voice {
         // loud-state debounce — replacing 6.3's direct `provider.applyKeys`.
         // (`bridge` is non-null here — `e2eeCapable` required it.)
         if (bridge) {
-          const unlisten = await bridge.onCallKeysChanged((event) => {
+          // Bounded like every delivery-service wait (`MLS_REQUEST_DEADLINE_MS`;
+          // R2-4 fail-closed): a registration that never settled used to hang
+          // connect() on CONNECTING for good — nothing had published, so the
+          // gate was fine, but the user was stuck. At the deadline the attempt
+          // carries on WITHOUT the listener and the session-setup decision
+          // below holds the gate loud, so the failure resolves to the Leave /
+          // Stay banner. A registration that settles late is unlistened on
+          // arrival — no session will ever be built for it. A native REFUSAL
+          // lands on the same hold (it used to tear the call down).
+          const deadline = requestDeadlineSignal(
+            MLS_REQUEST_DEADLINE_MS,
+            new Error(
+              "E2EE call setup timed out: the native key-change listener did not register",
+            ),
+          );
+          const registration = bridge.onCallKeysChanged((event) => {
             void this.#mlsSession?.onLocalKeysChanged(
               event.group_id,
               event.epoch,
             );
           });
+          let unlisten: (() => void) | undefined;
+          try {
+            unlisten = await Promise.race([
+              registration,
+              new Promise<never>((_, reject) => {
+                deadline.signal.addEventListener(
+                  "abort",
+                  () => reject(deadline.signal.reason),
+                  { once: true },
+                );
+              }),
+            ]);
+            keysListenerBound = true;
+          } catch (error) {
+            console.error(
+              "[rtc] E2EE keys-changed listener did not register; the publish gate holds",
+              error,
+            );
+            void registration.then(
+              (late) => late(),
+              () => undefined,
+            );
+          } finally {
+            deadline.release();
+          }
           // A newer connect() may have superseded us across the await — drop
           // this listener immediately rather than orphaning it, and never clobber
           // the newer invocation's shared state (gate HIGH).
           if (gen !== this.#connectGen) {
-            unlisten();
+            unlisten?.();
             // Strip THIS room's listeners before abandoning it (FE-9c): its
             // async `disconnected` event would otherwise fire `#setState(
             // "DISCONNECTED")` + `nativeCallServiceStop()` and clobber the newer
@@ -2614,9 +2672,17 @@ class Voice {
       // later connect() disposes this session via disconnect(). `start()` is
       // fire-and-forget — with `media_e2ee_enabled` off it enrols, gets
       // FeatureDisabled, and settles into "plaintext" (a normal voice call).
+      const setup = sessionSetupDecision({
+        e2eeCapable,
+        bridge: !!bridge,
+        keyProvider: this.#mlsKeyProvider !== undefined,
+        userId: !!selfUserId,
+        deviceId: !!e2eeDeviceId,
+        identityOk: e2eeIdentityOk,
+        keysListenerBound,
+      });
       if (
-        e2eeCapable &&
-        e2eeIdentityOk &&
+        setup.action === "session" &&
         bridge &&
         this.#mlsKeyProvider &&
         selfUserId &&
@@ -2641,9 +2707,24 @@ class Voice {
         this.#setCallSessionState(session.state());
         void session.start();
       } else if (e2eeCapable) {
-        // Capable shell but identity/provider setup failed: release the gate
-        // (no session will manage it) so the plain call is not stuck muted.
-        this.#publishGate.delete("negotiating");
+        // Capable shell, no session — R2-4, withdrawn 2026-09-06 under the
+        // T0d rule: the gate is never released without a DS verdict, and
+        // with no session no verdict can ever come. `negotiating` stays where
+        // the R2-5 assertion put it; the structured error latches so the
+        // existing loud state renders — the NOT-ENCRYPTED chip, and the
+        // Leave / Stay banner through `isTerminalLoud` (no mode + latched) —
+        // and the banner's "Stay unencrypted" is the only release
+        // (`#confirmNoSessionPlaintext`). `prev ??` keeps the identity-
+        // mismatch error latched above; the decision's reason names every
+        // other arm. Re-sweep so a track published across the awaits above
+        // is paused under the held gate. (`setup` is `hold_loud` here by
+        // construction — the fallback text only satisfies the type.)
+        const reason =
+          setup.action === "hold_loud"
+            ? setup.reason
+            : "This call could not be encrypted: the call session could not be set up";
+        console.error("[rtc] holding the publish gate:", reason);
+        this.#setCallEncryptionError((prev) => prev ?? new Error(reason));
         if (this.room() === room) void this.#applyPublishGate(room);
       }
     } catch (error) {
@@ -5985,7 +6066,10 @@ class Voice {
    */
   async confirmCallPlaintext(): Promise<void> {
     const session = this.#mlsSession;
-    if (!session) return;
+    if (!session) {
+      await this.#confirmNoSessionPlaintext();
+      return;
+    }
     const client = this.getClient();
     const names: Record<string, string> = {};
     for (const identity of this.callNonEnrolled()) {
@@ -5994,6 +6078,37 @@ class Voice {
       if (user?.username) names[userId] = user.username;
     }
     await session.confirmPlaintext(names);
+  }
+
+  /**
+   * "Stay unencrypted" for a call that has NO session: the R2-4 hold — an
+   * E2EE-capable shell whose session could not be constructed (see
+   * `sessionSetupDecision`). The session's `confirmPlaintext` cannot serve
+   * it: its native roster dialog computes from a group, and no group exists.
+   * The banner press is the explicit consent (`canConfirmNoSessionPlaintext`
+   * says why that gives up nothing the dialog protects). Same order as a
+   * `local_confirm`: the mode flips to a confirmed interlude BEFORE the
+   * resume, so no frame leaves while the banner still promises a pause, and
+   * the chip stays NOT-ENCRYPTED (the latched error keeps it red). No
+   * `set_e2ee(false)`: the Room's send path was never enabled — that is the
+   * session's `enabled` step — so every publication is plaintext-declared
+   * already.
+   */
+  async #confirmNoSessionPlaintext(): Promise<void> {
+    const room = this.room();
+    if (
+      !room ||
+      !canConfirmNoSessionPlaintext({
+        hasSession: this.#mlsSession !== undefined,
+        e2eeCapable: this.callE2EECapable(),
+        latchedError: this.callEncryptionError() !== undefined,
+        gateHeld: this.#publishGate.has("negotiating"),
+      })
+    ) {
+      return;
+    }
+    this.#setCallMode({ kind: "interlude", localConfirmed: true });
+    await this.#resumeGate(room, "negotiating");
   }
 
   /** Toggle the call roster / verification panel (chip click, slice 6.5). */

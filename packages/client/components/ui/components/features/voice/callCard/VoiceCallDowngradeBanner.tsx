@@ -21,6 +21,12 @@ import { participantUserId } from "../participantIdentity";
  * "Turn off encryption" → the session's native confirm dialog (T3/T5); an
  * announce (T4) never resumes on its own.
  *
+ * Copy and gate agree by construction: every state that renders "your audio
+ * and video stay paused" holds the `negotiating` / `mixed` reason (the
+ * session until its verdict or loud fallback; a call with no session through
+ * the R2-4 setup hold in state.tsx), and a confirmed interlude gets its own
+ * copy so the promise is withdrawn the moment publishing resumes.
+ *
  * First paint is debounced by `MIX_BANNER_DEBOUNCE_MS` (judgment call 5) so a
  * cap-refused joiner's brief in/out never flashes the banner — the fail-closed
  * publish pause is immediate and undebounced regardless.
@@ -125,41 +131,54 @@ export function VoiceCallDowngradeBanner() {
             when={ownerMismatch()}
             fallback={
               <Show
-                when={voice.callTerminalLoud()}
+                when={localConfirmed()}
                 fallback={
                   <Show
-                    when={
-                      mode()?.kind === "interlude" && voice.callAnnouncedBy()
-                    }
+                    when={voice.callTerminalLoud()}
                     fallback={
                       <Show
-                        when={names().length}
+                        when={
+                          mode()?.kind === "interlude" &&
+                          voice.callAnnouncedBy()
+                        }
                         fallback={
-                          <Trans>
-                            Someone in this call is not using encrypted calls.
-                            Your audio and video stay paused until you turn off
-                            encryption.
-                          </Trans>
+                          <Show
+                            when={names().length}
+                            fallback={
+                              <Trans>
+                                Someone in this call is not using encrypted
+                                calls. Your audio and video stay paused until
+                                you turn off encryption.
+                              </Trans>
+                            }
+                          >
+                            <Trans>
+                              {names().join(", ")} is not using encrypted calls.
+                              Your audio and video stay paused until you turn
+                              off encryption.
+                            </Trans>
+                          </Show>
                         }
                       >
                         <Trans>
-                          {names().join(", ")} is not using encrypted calls.
-                          Your audio and video stay paused until you turn off
-                          encryption.
+                          A participant turned off encryption for this call.
+                          Resume to be heard — the server will be able to read
+                          this call.
                         </Trans>
                       </Show>
                     }
                   >
                     <Trans>
-                      A participant turned off encryption for this call. Resume
-                      to be heard — the server will be able to read this call.
+                      This call could not be secured. Your audio and video stay
+                      paused — leave, or continue without encryption.
                     </Trans>
                   </Show>
                 }
               >
                 <Trans>
-                  This call could not be secured. Your audio and video stay
-                  paused — leave, or continue without encryption.
+                  You turned off encryption for this call. Your audio and video
+                  are being sent unencrypted — the server will be able to read
+                  this call.
                 </Trans>
               </Show>
             }
