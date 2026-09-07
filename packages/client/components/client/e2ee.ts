@@ -41,12 +41,12 @@ import type {
 } from "stoat.js";
 
 import {
-  E2EERateLimitError,
-  RATELIMIT_DEFAULT_DELAY_MS,
-  RATELIMIT_JITTER_MS,
-  RATELIMIT_MAX_RETRIES,
-  ratelimitRetryDelayMs,
-  retryAfterMs,
+  type CallRosterOutcome,
+  type RatelimitTransportOptions,
+  CALL_PLANE_RATELIMIT_RETRIES,
+  fetchWithRatelimitPolicy,
+  isMlsPath,
+  settleCallRosterReconcile,
 } from "./e2eeRatelimitPolicy";
 import { classifyEnvelopeError } from "./mlsEnvelopeClassify";
 import { IS_OVERLAY_WINDOW, IS_POPOUT_WINDOW } from "./popout";
@@ -517,6 +517,19 @@ export type MlsSinkEvent =
 
 /** The active call session's inbound MLS event sink. */
 export type MlsSessionSink = (event: MlsSinkEvent) => void;
+
+/**
+ * What a call session binds beside its sink (`registerMlsSink`): its
+ * disposal signal, which cuts every call-plane request and 429 wait the
+ * moment the call ends, and a notifier the bridge fires on the FIRST 429 of
+ * any `/mls/` request. The session's negotiating fail-safe reads what it
+ * latches from that at 5 s — when the reset the transport is waiting for
+ * may still be 10 s away, and every other term it consults is quiet.
+ */
+export interface MlsCallTransport {
+  signal?: AbortSignal;
+  onRatelimited?: () => void;
+}
 
 /**
  * How a processed inbound envelope should be dispositioned by the mailbox
@@ -1215,18 +1228,24 @@ export class E2EEBridge implements E2EEAdapter {
     path: string,
     body?: unknown,
     headers?: Record<string, string>,
+    transport?: RatelimitTransportOptions,
   ): Promise<T> {
     const [authHeader, authValue] = this.#client.authenticationHeader;
 
-    const response = await this.#fetchRatelimited(method, path, {
+    const response = await this.#fetchRatelimited(
       method,
-      headers: {
-        [authHeader]: authValue,
-        ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
-        ...headers,
+      path,
+      {
+        method,
+        headers: {
+          [authHeader]: authValue,
+          ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+          ...headers,
+        },
+        body: body !== undefined ? JSON.stringify(body) : undefined,
       },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    });
+      transport,
+    );
 
     if (!response.ok) {
       throw new Error(`E2EE API ${method} ${path} failed: ${response.status}`);
@@ -1251,47 +1270,33 @@ export class E2EEBridge implements E2EEAdapter {
    * that was never going to land in the next 5 s, a housekeeping pass
    * skipped until the next connect.
    *
-   * The body of a 429 (`{retry_after}` in ms) is consumed here; the caller
-   * only ever sees a non-429 response or the typed error. `init.body` is a
-   * string, so re-sending it is safe.
+   * The loop itself is `fetchWithRatelimitPolicy` (pure, tested under
+   * `node --test`); this is the binding: the body of a 429 is consumed
+   * there, the caller only ever sees a non-429 response, the typed error, or
+   * the abort it asked for. `init.body` is a string, so re-sending is safe.
+   * `transport` carries the per-request budget and abort signal; the FIRST
+   * 429 of any delivery-service request is reported to the active call
+   * session (`MlsCallTransport.onRatelimited`), whose negotiating fail-safe
+   * reads that latch at 5 s.
    */
-  async #fetchRatelimited(
+  #fetchRatelimited(
     method: string,
     path: string,
     init: RequestInit,
+    transport?: RatelimitTransportOptions,
   ): Promise<Response> {
     const url = `${this.#client.options.baseURL}${path}`;
-    for (let retry = 0; ; retry++) {
-      const response = await fetch(url, init);
-      if (response.status !== 429) return response;
-
-      const body = (await response.json().catch(() => null)) as {
-        retry_after?: unknown;
-      } | null;
-      const hint = retryAfterMs({
-        bodyRetryAfter: body?.retry_after,
-        resetAfterHeader: response.headers.get("X-RateLimit-Reset-After"),
-        retryAfterHeader: response.headers.get("Retry-After"),
-      });
-      const delay = ratelimitRetryDelayMs(
-        retry + 1,
-        hint,
-        Math.random() * RATELIMIT_JITTER_MS,
-      );
-      if (delay === null) {
-        throw new E2EERateLimitError(
-          method,
-          path,
-          hint ?? RATELIMIT_DEFAULT_DELAY_MS,
-          retry + 1,
-        );
-      }
-      console.warn(
-        `[e2ee] ${method} ${path} rate limited; retrying in ` +
-          `${Math.round(delay)} ms (${retry + 1}/${RATELIMIT_MAX_RETRIES})`,
-      );
-      await new Promise<void>((resolve) => setTimeout(resolve, delay));
-    }
+    return fetchWithRatelimitPolicy(
+      () => fetch(url, { ...init, signal: transport?.signal }),
+      method,
+      path,
+      {
+        ...transport,
+        onRatelimited: (_method, ratelimitedPath) => {
+          if (isMlsPath(ratelimitedPath)) this.#mlsCall?.onRatelimited?.();
+        },
+      },
+    );
   }
 
   async refreshStatus(): Promise<NativeStatus> {
@@ -1752,6 +1757,7 @@ export class E2EEBridge implements E2EEAdapter {
    */
   async #reconcileDevices(
     userId: string,
+    transport?: RatelimitTransportOptions,
   ): Promise<{ new_devices: string[]; listing: unknown[] } | null> {
     await this.#ensureBootStatus();
     if (!this.status.get("state")?.enabled) return null;
@@ -1759,6 +1765,9 @@ export class E2EEBridge implements E2EEAdapter {
     const devices = await this.#api<unknown[]>(
       "GET",
       `/e2ee/devices/${userId}`,
+      undefined,
+      undefined,
+      transport,
     );
     const report = await this.#invoke<{
       revoked: string[];
@@ -1861,57 +1870,70 @@ export class E2EEBridge implements E2EEAdapter {
     }
 
     const selfUserId = this.#client.user?.id;
-    const unfetched: { userId: string; error: unknown }[] = [];
-    const pinnedUsers = await Promise.all(
-      [...byUser].map(async ([userId, deviceIds]) => {
-        let report: { new_devices: string[]; listing: unknown[] } | null;
-        try {
-          report = await this.#reconcileDevices(userId);
-        } catch (error) {
-          // No listing, so no pin: the device stays unverified (fail
-          // closed) and the caller is told, below.
-          unfetched.push({ userId, error });
-          return null;
-        }
+    // Call-plane transport: ONE retry, not the DM plane's three — the admit
+    // re-drive and the reconcile tick are the outer ladder, and the active
+    // session's disposal signal cuts the wait on hang-up.
+    const transport: RatelimitTransportOptions = {
+      signal: this.#mlsCall?.signal,
+      maxRetries: CALL_PLANE_RATELIMIT_RETRIES,
+    };
+    const outcomes = await Promise.all(
+      [...byUser].map(
+        async ([userId, deviceIds]): Promise<CallRosterOutcome> => {
+          let report: { new_devices: string[]; listing: unknown[] } | null;
+          try {
+            report = await this.#reconcileDevices(userId, transport);
+          } catch (error) {
+            // No listing, so no pin: the device stays unverified (fail
+            // closed) and the caller is told, below.
+            return { kind: "unfetched", userId, error };
+          }
 
-        // Own devices are pinned only from a self bundle — own-device
-        // fan-out reaches every active pin of ours, so a listing pin
-        // here would silently widen the audience for every DM we send.
-        // (Native refuses this too; both guards are deliberate.)
-        if (!report || !selfUserId || userId === selfUserId) return null;
+          // Own devices are pinned only from a self bundle — own-device
+          // fan-out reaches every active pin of ours, so a listing pin
+          // here would silently widen the audience for every DM we send.
+          // (Native refuses this too; both guards are deliberate.)
+          if (!report || !selfUserId || userId === selfUserId) {
+            return { kind: "settled", userId };
+          }
 
-        const targets = [...deviceIds];
-        if (!targets.length) return null;
+          const targets = [...deviceIds];
+          if (!targets.length) return { kind: "settled", userId };
 
-        try {
-          const pinned = await this.#invoke<string[]>(
-            "e2ee_pin_call_identities",
-            {
-              selfUserId,
-              userId,
-              targets,
-              devices: report.listing,
-            },
-          );
-          return pinned.length ? userId : null;
-        } catch {
-          /* unverifiable stays unverified — fail closed; a verdict, not a
-             transport failure, so nothing to retry */
-          return null;
-        }
-      }),
+          try {
+            const pinned = await this.#invoke<string[]>(
+              "e2ee_pin_call_identities",
+              {
+                selfUserId,
+                userId,
+                targets,
+                devices: report.listing,
+              },
+            );
+            return { kind: pinned.length ? "pinned" : "settled", userId };
+          } catch {
+            /* unverifiable stays unverified — fail closed; a verdict, not a
+               transport failure, so nothing to retry */
+            return { kind: "settled", userId };
+          }
+        },
+      ),
     );
 
-    if (unfetched.length) {
+    // Pins first, then the throw (`settleCallRosterReconcile`): every
+    // listing that arrived is pinned by now, so the caller that retries in
+    // the next window never re-earns them.
+    const settled = settleCallRosterReconcile(outcomes);
+    if (settled.kind === "unfetched") {
+      // The count, never the user ids: this line lands in every shell's log.
       console.warn(
-        "[e2ee] call roster reconcile: listing unavailable for",
-        unfetched.map((entry) => entry.userId),
-        unfetched[0].error,
+        `[e2ee] call roster reconcile: ${settled.unfetchedCount} of ` +
+          `${outcomes.length} listing(s) unavailable`,
+        settled.error,
       );
-      throw unfetched[0].error;
+      throw settled.error;
     }
-
-    return pinnedUsers.filter((id): id is string => id !== null);
+    return settled.pinnedUsers;
   }
 
   /**
@@ -4219,20 +4241,35 @@ export class E2EEBridge implements E2EEAdapter {
    * null between calls. At most one call is active at a time.
    */
   #mlsSink: MlsSessionSink | null = null;
+  /**
+   * The active call session's transport binding (`MlsCallTransport`),
+   * registered with its sink and cleared with it: the disposal signal every
+   * call-plane request rides, and the first-429 notifier.
+   */
+  #mlsCall: MlsCallTransport | null = null;
 
   /**
    * Register the active call session's inbound sink for `Mls*` events
-   * (`MlsJoinRequested` / `MlsCommit` / `MlsWelcome`). Returns an unregister
-   * fn (idempotent — only clears if still the current sink). While none is
-   * registered the events are dropped and their envelopes stay queued +
-   * unacked server-side, so a later call re-drains them: never ack what no
-   * call consumes. The session — NOT this bridge — acks after durable
-   * processing (§3.3).
+   * (`MlsJoinRequested` / `MlsCommit` / `MlsWelcome`), and its transport
+   * binding — the disposal signal that cuts every call-plane request on
+   * hang-up, and the first-429 notifier its fail-safe latches from. Returns
+   * an unregister fn (idempotent — only clears if still the current sink).
+   * While none is registered the events are dropped and their envelopes
+   * stay queued + unacked server-side, so a later call re-drains them:
+   * never ack what no call consumes. The session — NOT this bridge — acks
+   * after durable processing (§3.3).
    */
-  registerMlsSink(sink: MlsSessionSink): () => void {
+  registerMlsSink(
+    sink: MlsSessionSink,
+    transport: MlsCallTransport = {},
+  ): () => void {
     this.#mlsSink = sink;
+    this.#mlsCall = transport;
     return () => {
-      if (this.#mlsSink === sink) this.#mlsSink = null;
+      if (this.#mlsSink === sink) {
+        this.#mlsSink = null;
+        this.#mlsCall = null;
+      }
     };
   }
 
@@ -4550,22 +4587,34 @@ export class E2EEBridge implements E2EEAdapter {
       notFoundOutcome?: boolean;
       callFullOutcome?: boolean;
       headers?: Record<string, string>;
+      /** Per-route budget / signal; the active call's signal is the default. */
+      transport?: RatelimitTransportOptions;
     },
   ): Promise<MlsHttpResult<T>> {
     const [authHeader, authValue] = this.#client.authenticationHeader;
 
     // A 429 is waited out (bounded) inside `#fetchRatelimited`; past the
     // bound it throws `E2EERateLimitError`, which the session treats like
-    // any other thrown transport failure — loud, never plaintext.
-    const response = await this.#fetchRatelimited(method, path, {
+    // any other thrown transport failure — loud, never plaintext. Every
+    // /mls/ request belongs to the active call, so its disposal signal cuts
+    // the wait (and the request) the moment the call ends.
+    const response = await this.#fetchRatelimited(
       method,
-      headers: {
-        [authHeader]: authValue,
-        ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
-        ...(opts?.headers ?? {}),
+      path,
+      {
+        method,
+        headers: {
+          [authHeader]: authValue,
+          ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+          ...(opts?.headers ?? {}),
+        },
+        body: body !== undefined ? JSON.stringify(body) : undefined,
       },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    });
+      {
+        ...opts?.transport,
+        signal: opts?.transport?.signal ?? this.#mlsCall?.signal,
+      },
+    );
 
     if (response.ok) {
       const parsed =
@@ -4656,7 +4705,10 @@ export class E2EEBridge implements E2EEAdapter {
   mlsClaimKeyPackage(
     body: MlsClaimKeyPackagesBody,
   ): Promise<MlsHttpResult<ResponseClaimMlsKeyPackages>> {
-    return this.#apiMls("POST", "/mls/key_packages/claim", body);
+    // Admit path: ONE retry — the session's 5 s re-drive is the outer ladder.
+    return this.#apiMls("POST", "/mls/key_packages/claim", body, {
+      transport: { maxRetries: CALL_PLANE_RATELIMIT_RETRIES },
+    });
   }
 
   /**

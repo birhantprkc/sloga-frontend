@@ -70,6 +70,29 @@ export interface NegotiatingFailsafeInput {
    * for the fail-safe to decide.
    */
   loudLatched: boolean;
+  /**
+   * The delivery service answered a 429 to SOME `/mls/` request of this
+   * bring-up — the KeyPackage publish, or the create itself — and the
+   * transport is waiting the reset out (up to three waits of ~10 s).
+   *
+   * 🔴 Without this term that wait is invisible here. `#ensureKeyPackages`
+   * is best-effort and returns; the create has not answered, so
+   * `dsVerdictSeen` is false; nothing is latched; and the probe, its own
+   * budget spent, may already read "none". Those four together ARE the
+   * release arm: at 5 s the gate opened and the SFU got plaintext under NO
+   * chip (the session state was still `starting`, which the chip renders
+   * as nothing) for the 30-40 s until the delayed create landed. A 429 is
+   * not unreachability — the DS answered, and the budget it refused from is
+   * this session's own — so the availability escape's premise fails here
+   * exactly as it does for a rate-limited probe: hold + loud.
+   *
+   * Deliberately NOT folded into `dsVerdictSeen`: that reads "ignore" — a
+   * silent hold under a "none" chip, the user parked muted with nothing on
+   * screen saying why. "resecure" flips the session state, which reaches
+   * the chip reactively through `onStateChange`, so it goes amber for as
+   * long as the wait runs.
+   */
+  transportRatelimited: boolean;
 }
 
 /**
@@ -84,14 +107,16 @@ export interface NegotiatingFailsafeInput {
  * Strictly more conservative than the behaviour it replaces, in the only
  * direction that matters: it never RELEASES the publish gate in a case where
  * the old code held it, and it never resumes plaintext on an E2EE-known call.
- * It only declines to raise an alarm — or, for `ratelimited`, raises the one
- * the old code mistook for a completed no-group verdict.
+ * It only declines to raise an alarm — or, for a rate-limited probe or
+ * transport, raises the one the old code mistook for a completed no-group
+ * verdict.
  */
 export function negotiatingFailsafeAction(
   input: NegotiatingFailsafeInput,
 ): NegotiatingFailsafeAction {
   if (input.loudLatched) return "ignore";
   if (input.dsVerdictSeen) return "ignore";
+  if (input.transportRatelimited) return "resecure";
   if (input.probe === "open" || input.probe === "ratelimited") {
     return "resecure";
   }

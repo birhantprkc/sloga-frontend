@@ -167,8 +167,9 @@ import { WatchDuck } from "./watchDuck";
 import { WatchTogether } from "./watchTogether";
 
 import {
-  ratelimitRetryDelayMs,
-  retryAfterMs,
+  fetchWithRatelimitPolicy,
+  isRateLimited,
+  RATELIMIT_MAX_RETRIES,
 } from "../client/e2eeRatelimitPolicy";
 import { LiveAnnotations } from "./annotations/liveAnnotations";
 import {
@@ -2535,42 +2536,45 @@ class Voice {
         const apiClient = this.getClient();
         if (apiClient) {
           const [authHeader, authValue] = apiClient.authenticationHeader;
-          const url = `${apiClient.options.baseURL}/mls/channels/${channel.id}/open_group`;
+          const path = `/mls/channels/${channel.id}/open_group`;
+          const url = `${apiClient.options.baseURL}${path}`;
           const probe = async (): Promise<"open" | "none" | "ratelimited"> => {
-            for (let retry = 0; ; retry++) {
-              const response = await fetch(url, {
-                headers: { [authHeader]: authValue },
-                signal: AbortSignal.timeout(OPEN_GROUP_PROBE_TIMEOUT_MS),
-              });
-              if (response.status !== 429) {
-                return response.ok ? "open" : "none";
-              }
-              // A 429 is neither a verdict about the group nor the
-              // unreachability the "none" arm is ratified for: the DS
-              // answered, from this session's own MLS bucket, which only
-              // an E2EE call's bring-up spends. Tell the fail-safe NOW —
-              // it reads this at 5 s and the reset may be 10 s away — so
-              // it holds the gate instead of releasing on a "completed"
-              // no-group verdict, then keep asking (bounded) for the real
-              // answer.
-              if (gen === this.#connectGen) {
-                this.#openGroupProbe = "ratelimited";
-              }
-              const body = (await response.json().catch(() => null)) as {
-                retry_after?: unknown;
-              } | null;
-              const delay = ratelimitRetryDelayMs(
-                retry + 1,
-                retryAfterMs({
-                  bodyRetryAfter: body?.retry_after,
-                  resetAfterHeader: response.headers.get(
-                    "X-RateLimit-Reset-After",
-                  ),
-                  retryAfterHeader: response.headers.get("Retry-After"),
-                }),
+            try {
+              const response = await fetchWithRatelimitPolicy(
+                () =>
+                  fetch(url, {
+                    headers: { [authHeader]: authValue },
+                    signal: AbortSignal.timeout(OPEN_GROUP_PROBE_TIMEOUT_MS),
+                  }),
+                "GET",
+                path,
+                {
+                  // One wait more than the transport's own bound: the last
+                  // retry lands after the server's LAST reset hint, so a
+                  // bring-up burst that spent the whole window still gets
+                  // a real verdict for the chip's open-group attribution
+                  // (the no-session branches) instead of the fail-open
+                  // default it kept when the probe gave up with the rest.
+                  maxRetries: RATELIMIT_MAX_RETRIES + 1,
+                  onRatelimited: () => {
+                    // A 429 is neither a verdict about the group nor the
+                    // unreachability the "none" arm is ratified for: the
+                    // DS answered, from this session's own MLS bucket,
+                    // which only an E2EE call's bring-up spends. Tell the
+                    // fail-safe NOW — it reads this at 5 s and the reset
+                    // may be 10 s away — so it holds the gate instead of
+                    // releasing on a "completed" no-group verdict, while
+                    // the policy keeps asking (bounded) for the real one.
+                    if (gen === this.#connectGen) {
+                      this.#openGroupProbe = "ratelimited";
+                    }
+                  },
+                },
               );
-              if (delay === null) return "ratelimited";
-              await new Promise<void>((resolve) => setTimeout(resolve, delay));
+              return response.ok ? "open" : "none";
+            } catch (error) {
+              if (isRateLimited(error)) return "ratelimited";
+              throw error;
             }
           };
           void probe()

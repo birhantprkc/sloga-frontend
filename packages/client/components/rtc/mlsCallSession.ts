@@ -75,6 +75,7 @@ import type {
   ResponseSubmitMlsCommit,
 } from "@revolt/client";
 
+import { isRateLimited } from "../client/e2eeRatelimitPolicy";
 import { isScreenLeg } from "../ui/components/features/voice/participantIdentity";
 import {
   type LocalPublicationEncryption,
@@ -1112,6 +1113,18 @@ export class MlsCallSession {
    * conflicts and never trips it; the JOINER always does.
    */
   #dsVerdictSeen = false;
+  /**
+   * The DS answered a 429 to some `/mls/` request of this bring-up — latched
+   * from the bridge's first-429 notifier (`registerMlsSink`), read by the
+   * fail-safe as `transportRatelimited`. The transport's wait (up to three
+   * of ~10 s) otherwise leaves every other term quiet: `#ensureKeyPackages`
+   * returns best-effort, the create has not answered, nothing is latched,
+   * and the probe may already read "none" — the release arm, i.e. plaintext
+   * to the SFU under no chip until the delayed create landed.
+   */
+  #dsRatelimited = false;
+  /** Cuts every call-plane request and its 429 wait on `dispose()`. */
+  #abort = new AbortController();
   /** Serializes §3.4 mode transitions + their awaited media effects (F8). */
   #modeChain: Promise<void> = Promise.resolve();
   /** Self-rescheduling heartbeat tick + its enabled gate. */
@@ -1189,7 +1202,12 @@ export class MlsCallSession {
    */
   async start(): Promise<void> {
     if (this.#state !== "starting") return;
-    this.#unregisterSink = this.#deps.bridge.registerMlsSink(this.#onSink);
+    this.#unregisterSink = this.#deps.bridge.registerMlsSink(this.#onSink, {
+      signal: this.#abort.signal,
+      onRatelimited: () => {
+        this.#dsRatelimited = true;
+      },
+    });
     this.#armNegotiatingFailsafe();
     this.#armEnrolmentAssertion();
     try {
@@ -1218,6 +1236,12 @@ export class MlsCallSession {
    *    ⇒ availability escape: release the gate, keep negotiating quietly;
    *  - probe says "ratelimited" ⇒ the DS answered (429), so the escape's
    *    unreachability premise is false: hold + loud, as for "open";
+   *  - the TRANSPORT was rate limited (`#dsRatelimited` — a 429 on the
+   *    KeyPackage publish or the create, now waiting the reset out) ⇒ the
+   *    same premise fails the same way: hold + loud. Before this term the
+   *    wait was invisible here, and with the probe's own budget spent the
+   *    release arm fired at 5 s — plaintext to the SFU under NO chip (state
+   *    still `starting`) for the 30-40 s until the create landed;
    *  - a loud verdict is already LATCHED (`#latchLoud` — the establish threw
    *    inside the window, or the enrolment assertion fired) ⇒ nothing left
    *    to decide: that path holds the gate and owns the only escape. Before
@@ -1235,6 +1259,7 @@ export class MlsCallSession {
           probe: this.#deps.channelHasOpenGroup?.() ?? "none",
           rearmsUsed: this.#failsafeRearms,
           loudLatched: this.#loudLatched,
+          transportRatelimited: this.#dsRatelimited,
         })
       ) {
         case "ignore":
@@ -1399,6 +1424,9 @@ export class MlsCallSession {
     this.#setState("closed"); // set first so every guard short-circuits
     this.#unregisterSink?.();
     this.#unregisterSink = null;
+    // Cut every in-flight call-plane request and 429 wait: a retry ladder
+    // must not outlive the call it was started for.
+    this.#abort.abort();
 
     this.#stopReconcile(); // gate off the self-rescheduling reconcile loop
     // The real end of the call, and the only correct place to forget how much
@@ -1483,6 +1511,12 @@ export class MlsCallSession {
         );
       }
     } catch (error) {
+      if (this.#terminal()) return; // disposed mid-wait: the abort is ours
+      // A 429 past the transport's bounded retries is NOT best-effort: the
+      // DS is up and refusing us, and staying quiet here left the session
+      // with no verdict, no latch and a "none" chip while the create behind
+      // it waited too. Rethrow, so `start()` fails it LOUD (`#onLoud`).
+      if (isRateLimited(error)) throw error;
       console.error(
         "[mls] KeyPackage publish failed (enrol best-effort)",
         error,
@@ -1981,6 +2015,9 @@ export class MlsCallSession {
     error?: unknown,
   ): void {
     this.#scheduledAdmits.delete(key);
+    // A claim or listing cut by `dispose()` lands here as a thrown request;
+    // the call is over, so there is nothing to ledger or re-drive.
+    if (this.#state === "closed") return;
 
     if (!admitAbortIsRetryable(abort)) {
       this.#pendingAdmits.delete(key);
@@ -3278,6 +3315,11 @@ export class MlsCallSession {
 
   #latchLoud(error: unknown): void {
     if (this.#loudLatched) return;
+    // A disposed session reports nothing: the abort `dispose()` just fired
+    // surfaces as a thrown request, and `disconnect()` has already cleared
+    // the encryption-error signal this would otherwise re-latch into the
+    // NEXT call's chip.
+    if (this.#state === "closed") return;
     this.#loudLatched = true;
     this.#clearResecureTimer();
     this.#media?.onEncryptionState?.("loud", error);
@@ -4492,6 +4534,7 @@ export class MlsCallSession {
   }
 
   #onLoud(error: unknown): void {
+    if (this.#state === "closed") return; // disposed: the abort is ours
     console.error("[mls] loud failure", error);
     this.#lastError = error;
     this.#setState("failed");

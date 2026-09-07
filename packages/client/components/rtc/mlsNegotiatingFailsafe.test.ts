@@ -3,8 +3,9 @@
 //   node --test components/rtc/mlsNegotiatingFailsafe.test.ts
 // Focus: the fail-safe fires ONLY for the condition it is specified for (no
 // verdict from the DS), the three pre-existing arms are unchanged, and the
-// two terms added since — a latched loud verdict, a rate-limited probe — can
-// only ever turn a release into a hold, never the reverse.
+// terms added since — a latched loud verdict, a rate-limited probe, a
+// rate-limited transport — can only ever turn a release into a hold, never
+// the reverse.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -18,10 +19,17 @@ const PROBES = ["open", "pending", "none", "ratelimited"] as const;
 
 /** The pre-latch, pre-rate-limit shape every original case was written in. */
 function quiet(
-  input: Omit<NegotiatingFailsafeInput, "loudLatched">,
+  input: Omit<NegotiatingFailsafeInput, "loudLatched" | "transportRatelimited">,
 ): NegotiatingFailsafeInput {
-  return { ...input, loudLatched: false };
+  return { ...input, loudLatched: false, transportRatelimited: false };
 }
+
+/** The terms added on top of the quiet shape, alone and together. */
+const ADDED_TERMS: Partial<NegotiatingFailsafeInput>[] = [
+  { loudLatched: true },
+  { transportRatelimited: true },
+  { loudLatched: true, transportRatelimited: true },
+];
 
 // 🔴 THE REGRESSION. A 409 conflict is a verdict — the DS answered, fast — and
 // the join it routes to is bounded by MAX_JOINER_RETRIES * JOINER_RETRY_MS
@@ -102,18 +110,23 @@ test("no verdict + no open group releases the gate (availability escape)", () =>
 test("the verdict term never converts a hold into a release", () => {
   for (const probe of PROBES) {
     for (const rearmsUsed of [0, MAX_FAILSAFE_REARMS]) {
-      const without = negotiatingFailsafeAction(
-        quiet({ dsVerdictSeen: false, probe, rearmsUsed }),
-      );
-      const with_ = negotiatingFailsafeAction(
-        quiet({ dsVerdictSeen: true, probe, rearmsUsed }),
-      );
-      if (without === "resecure" || without === "rearm") {
-        assert.notEqual(
-          with_,
-          "release",
-          `probe ${probe}/${rearmsUsed}: a held gate must not become a release`,
-        );
+      for (const transportRatelimited of [false, true]) {
+        const without = negotiatingFailsafeAction({
+          ...quiet({ dsVerdictSeen: false, probe, rearmsUsed }),
+          transportRatelimited,
+        });
+        const with_ = negotiatingFailsafeAction({
+          ...quiet({ dsVerdictSeen: true, probe, rearmsUsed }),
+          transportRatelimited,
+        });
+        if (without === "resecure" || without === "rearm") {
+          assert.notEqual(
+            with_,
+            "release",
+            `probe ${probe}/${rearmsUsed}/transport ${transportRatelimited}: ` +
+              "a held gate must not become a release",
+          );
+        }
       }
     }
   }
@@ -129,16 +142,20 @@ test("a latched loud verdict disarms the fail-safe for every input", () => {
   for (const probe of PROBES) {
     for (const dsVerdictSeen of [false, true]) {
       for (const rearmsUsed of [0, MAX_FAILSAFE_REARMS]) {
-        assert.equal(
-          negotiatingFailsafeAction({
-            dsVerdictSeen,
-            probe,
-            rearmsUsed,
-            loudLatched: true,
-          }),
-          "ignore",
-          `probe ${probe}/verdict ${dsVerdictSeen}/${rearmsUsed}`,
-        );
+        for (const transportRatelimited of [false, true]) {
+          assert.equal(
+            negotiatingFailsafeAction({
+              dsVerdictSeen,
+              probe,
+              rearmsUsed,
+              loudLatched: true,
+              transportRatelimited,
+            }),
+            "ignore",
+            `probe ${probe}/verdict ${dsVerdictSeen}/${rearmsUsed}/` +
+              `transport ${transportRatelimited}`,
+          );
+        }
       }
     }
   }
@@ -160,23 +177,90 @@ test("a rate-limited probe holds the gate loud, exactly like an open group", () 
   }
 });
 
-// The same monotonicity for the new terms: relative to the quiet shape they
-// may turn a release into a hold, never a hold into a release.
-test("neither new term ever converts a hold into a release", () => {
+// 🔴 THE 2026-09-06 RELEASE. The KeyPackage publish (or the create itself)
+// sat in the transport's 429 wait: `#ensureKeyPackages` is best-effort and
+// had returned, the create had not answered (no verdict), nothing was
+// latched, and the probe — its own budget spent — read "none". At 5 s that
+// is the release arm: plaintext to the SFU under NO chip (a `starting`
+// session renders as nothing) for the 30-40 s until the create landed.
+test("a rate-limited transport holds the gate loud with no verdict and no group", () => {
+  assert.equal(
+    negotiatingFailsafeAction({
+      dsVerdictSeen: false,
+      probe: "none",
+      rearmsUsed: 0,
+      loudLatched: false,
+      transportRatelimited: true,
+    }),
+    "resecure",
+  );
+  // Whatever the probe happened to say, and however many re-arms are spent:
+  // the DS answered, so the availability escape's premise is false.
+  for (const probe of PROBES) {
+    for (const rearmsUsed of [0, MAX_FAILSAFE_REARMS]) {
+      assert.equal(
+        negotiatingFailsafeAction({
+          dsVerdictSeen: false,
+          probe,
+          rearmsUsed,
+          loudLatched: false,
+          transportRatelimited: true,
+        }),
+        "resecure",
+        `probe ${probe}/${rearmsUsed}`,
+      );
+    }
+  }
+});
+
+// The transport term is a HOLD, not a verdict: folding it into
+// `dsVerdictSeen` would read "ignore" — a silent hold under a "none" chip.
+// And once the DS does answer, the wait is over and the term steps aside.
+test("a rate-limited transport is never ignored until the DS answers", () => {
+  assert.notEqual(
+    negotiatingFailsafeAction({
+      dsVerdictSeen: false,
+      probe: "none",
+      rearmsUsed: 0,
+      loudLatched: false,
+      transportRatelimited: true,
+    }),
+    "ignore",
+  );
+  assert.equal(
+    negotiatingFailsafeAction({
+      dsVerdictSeen: true,
+      probe: "none",
+      rearmsUsed: 0,
+      loudLatched: false,
+      transportRatelimited: true,
+    }),
+    "ignore",
+  );
+});
+
+// The same monotonicity for every added term, alone and together: relative
+// to the quiet shape they may turn a release into a hold, never a hold into
+// a release.
+test("no added term ever converts a hold into a release", () => {
   for (const probe of PROBES) {
     for (const dsVerdictSeen of [false, true]) {
       for (const rearmsUsed of [0, MAX_FAILSAFE_REARMS]) {
         const base = negotiatingFailsafeAction(
           quiet({ dsVerdictSeen, probe, rearmsUsed }),
         );
-        const latched = negotiatingFailsafeAction({
-          dsVerdictSeen,
-          probe,
-          rearmsUsed,
-          loudLatched: true,
-        });
-        if (base !== "release") {
-          assert.notEqual(latched, "release", `${probe}/${rearmsUsed}`);
+        for (const added of ADDED_TERMS) {
+          const withTerm = negotiatingFailsafeAction({
+            ...quiet({ dsVerdictSeen, probe, rearmsUsed }),
+            ...added,
+          });
+          if (base !== "release") {
+            assert.notEqual(
+              withTerm,
+              "release",
+              `${probe}/${dsVerdictSeen}/${rearmsUsed}/${JSON.stringify(added)}`,
+            );
+          }
         }
       }
     }

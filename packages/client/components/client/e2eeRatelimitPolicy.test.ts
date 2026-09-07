@@ -4,13 +4,21 @@
 // (pure functions, so the browser condition is not load-bearing here — it is
 // kept so one invocation can cover the reactive suites beside it.)
 // Focus: the server's reset hint is honored in the right order and unit, the
-// wait is bounded above and below, and the bound on retries is real — after
-// it the transport throws a TYPED error a caller can tell from "unreachable".
+// wait is bounded above and below, the bound on retries is real — after it
+// the transport throws a TYPED error a caller can tell from "unreachable" —
+// and the loop that applies all of that behaves: it hands back the first
+// non-429, reports the first 429 exactly once, stops on abort, and the
+// roster reconcile built on it pins every arrival before it throws.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  type CallRosterOutcome,
+  abortableSleep,
+  CALL_PLANE_RATELIMIT_RETRIES,
   E2EERateLimitError,
+  fetchWithRatelimitPolicy,
+  isMlsPath,
   isRateLimited,
   RATELIMIT_DEFAULT_DELAY_MS,
   RATELIMIT_JITTER_MS,
@@ -19,6 +27,7 @@ import {
   RATELIMIT_SLACK_MS,
   ratelimitRetryDelayMs,
   retryAfterMs,
+  settleCallRosterReconcile,
 } from "./e2eeRatelimitPolicy.ts";
 
 test("the /ratelimit body wins, and it is already in milliseconds", () => {
@@ -133,4 +142,279 @@ test("the exhausted-retries error is typed and carries the reset hint", () => {
   // are written for that case and must not fire for this one.
   assert.equal(isRateLimited(new Error("E2EE API GET /x failed: 502")), false);
   assert.equal(isRateLimited(null), false);
+});
+
+test("the retry bound is a parameter: the call-plane budget is one retry", () => {
+  assert.equal(CALL_PLANE_RATELIMIT_RETRIES, 1);
+  assert.notEqual(
+    ratelimitRetryDelayMs(1, 100, 0, CALL_PLANE_RATELIMIT_RETRIES),
+    null,
+  );
+  assert.equal(
+    ratelimitRetryDelayMs(2, 100, 0, CALL_PLANE_RATELIMIT_RETRIES),
+    null,
+  );
+  // A zero budget: no wait at all, the first 429 is the verdict.
+  assert.equal(ratelimitRetryDelayMs(1, 100, 0, 0), null);
+});
+
+// ---- The transport loop, with fetch and sleep injected --------------------
+
+function ratelimited(retryAfter = 100): Response {
+  return new Response(JSON.stringify({ retry_after: retryAfter }), {
+    status: 429,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function ok(): Response {
+  return new Response("{}", { status: 200 });
+}
+
+/** A fetch answering `script` in order, then the last entry forever. */
+function scripted(script: (() => Response)[]) {
+  const trace: string[] = [];
+  let calls = 0;
+  return {
+    trace,
+    calls: () => calls,
+    fetch: async () => {
+      const next = script[Math.min(calls, script.length - 1)];
+      calls++;
+      trace.push(`fetch ${calls}`);
+      return next();
+    },
+    effects: {
+      sleep: async (ms: number) => {
+        trace.push(`sleep ${ms}`);
+      },
+      jitter: () => 0,
+      log: () => {},
+    },
+  };
+}
+
+test("three 429s in a row end in the typed error after the bounded attempts", async () => {
+  const s = scripted([() => ratelimited(300)]);
+  await assert.rejects(
+    fetchWithRatelimitPolicy(
+      s.fetch,
+      "GET",
+      "/e2ee/devices/01ABC",
+      {},
+      s.effects,
+    ),
+    (error: unknown) =>
+      isRateLimited(error) &&
+      error.attempts === RATELIMIT_MAX_RETRIES + 1 &&
+      error.retryAfterMs === 300 &&
+      error.path === "/e2ee/devices/01ABC",
+  );
+  // One initial request, then exactly the bounded retries — each preceded by
+  // the server's reset plus slack — and nothing after the bound.
+  assert.equal(s.calls(), RATELIMIT_MAX_RETRIES + 1);
+  const wait = 300 + RATELIMIT_SLACK_MS;
+  assert.deepEqual(s.trace, [
+    "fetch 1",
+    `sleep ${wait}`,
+    "fetch 2",
+    `sleep ${wait}`,
+    "fetch 3",
+    `sleep ${wait}`,
+    "fetch 4",
+  ]);
+});
+
+test("a 429 then a 200 hands the caller the 200, after the server's wait", async () => {
+  const s = scripted([() => ratelimited(1200), ok]);
+  const response = await fetchWithRatelimitPolicy(
+    s.fetch,
+    "GET",
+    "/e2ee/devices/01ABC",
+    {},
+    s.effects,
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(s.trace, [
+    "fetch 1",
+    `sleep ${1200 + RATELIMIT_SLACK_MS}`,
+    "fetch 2",
+  ]);
+});
+
+test("the first 429 fires the notifier exactly once, before any wait", async () => {
+  const s = scripted([() => ratelimited(100)]);
+  const fired: string[] = [];
+  await assert.rejects(
+    fetchWithRatelimitPolicy(
+      s.fetch,
+      "PUT",
+      "/mls/key_packages",
+      {
+        onRatelimited: (method, path) => {
+          fired.push(`${method} ${path}`);
+          s.trace.push("notified");
+        },
+      },
+      s.effects,
+    ),
+    isRateLimited,
+  );
+  assert.deepEqual(fired, ["PUT /mls/key_packages"]);
+  // Before the first sleep — the fail-safe reads the latch at 5 s and the
+  // wait it would otherwise miss can be 10 s long.
+  assert.equal(s.trace.indexOf("notified"), 1);
+  assert.equal(s.trace.filter((step) => step === "notified").length, 1);
+});
+
+test("a 200 on the first try never fires the notifier", async () => {
+  const s = scripted([ok]);
+  let fired = 0;
+  await fetchWithRatelimitPolicy(
+    s.fetch,
+    "POST",
+    "/mls/groups",
+    { onRatelimited: () => fired++ },
+    s.effects,
+  );
+  assert.equal(fired, 0);
+  assert.deepEqual(s.trace, ["fetch 1"]);
+});
+
+test("only delivery-service paths count as MLS transport", () => {
+  assert.equal(isMlsPath("/mls/key_packages"), true);
+  assert.equal(isMlsPath("/mls/groups/01GRP/commits"), true);
+  assert.equal(isMlsPath("/e2ee/devices/01ABC"), false);
+  assert.equal(isMlsPath("/mls"), false);
+});
+
+test("the call-plane budget stops after one retry", async () => {
+  const s = scripted([() => ratelimited(100)]);
+  await assert.rejects(
+    fetchWithRatelimitPolicy(
+      s.fetch,
+      "POST",
+      "/mls/key_packages/claim",
+      { maxRetries: CALL_PLANE_RATELIMIT_RETRIES },
+      s.effects,
+    ),
+    (error: unknown) => isRateLimited(error) && error.attempts === 2,
+  );
+  assert.equal(s.calls(), 2);
+  // And a zero budget throws on the first 429 without sleeping at all.
+  const z = scripted([() => ratelimited(100)]);
+  await assert.rejects(
+    fetchWithRatelimitPolicy(
+      z.fetch,
+      "GET",
+      "/x",
+      { maxRetries: 0 },
+      z.effects,
+    ),
+    (error: unknown) => isRateLimited(error) && error.attempts === 1,
+  );
+  assert.deepEqual(z.trace, ["fetch 1"]);
+});
+
+test("an abort during the wait stops the retries with the abort reason", async () => {
+  const controller = new AbortController();
+  const s = scripted([() => ratelimited(100)]);
+  const hungUp = new Error("hung up");
+  await assert.rejects(
+    fetchWithRatelimitPolicy(
+      s.fetch,
+      "GET",
+      "/e2ee/devices/01ABC",
+      { signal: controller.signal },
+      {
+        ...s.effects,
+        // The real sleep, so the abort has to cut through a pending timer.
+        sleep: (ms, signal) => {
+          s.trace.push(`sleep ${ms}`);
+          queueMicrotask(() => controller.abort(hungUp));
+          return abortableSleep(ms, signal);
+        },
+      },
+    ),
+    (error: unknown) => error === hungUp,
+  );
+  assert.equal(s.calls(), 1);
+});
+
+test("an already-aborted signal never sends the request", async () => {
+  const controller = new AbortController();
+  const reason = new Error("call is over");
+  controller.abort(reason);
+  const s = scripted([ok]);
+  await assert.rejects(
+    fetchWithRatelimitPolicy(
+      s.fetch,
+      "GET",
+      "/x",
+      { signal: controller.signal },
+      s.effects,
+    ),
+    (error: unknown) => error === reason,
+  );
+  assert.equal(s.calls(), 0);
+});
+
+test("abortableSleep resolves on time and rejects on abort", async () => {
+  await abortableSleep(1);
+  const controller = new AbortController();
+  const pending = abortableSleep(60_000, controller.signal);
+  controller.abort(new Error("cut"));
+  await assert.rejects(pending, /cut/);
+});
+
+// ---- The call-roster reconcile's settlement -------------------------------
+
+test("every listing that arrived is settled before anything throws", () => {
+  const settled = settleCallRosterReconcile([
+    { kind: "pinned", userId: "A" },
+    { kind: "settled", userId: "B" },
+    { kind: "pinned", userId: "C" },
+  ]);
+  assert.deepEqual(settled, { kind: "ok", pinnedUsers: ["A", "C"] });
+});
+
+test("one missing listing throws AFTER the arrivals are pinned", () => {
+  const cause = new E2EERateLimitError("GET", "/e2ee/devices/B", 2500, 2);
+  const settled = settleCallRosterReconcile([
+    { kind: "pinned", userId: "A" },
+    { kind: "unfetched", userId: "B", error: cause },
+    { kind: "pinned", userId: "C" },
+  ]);
+  assert.equal(settled.kind, "unfetched");
+  if (settled.kind !== "unfetched") return;
+  // The pins on either side of the failure stand — the retry in the next
+  // window only has to fetch what was missing.
+  assert.deepEqual(settled.pinnedUsers, ["A", "C"]);
+  assert.equal(settled.unfetchedCount, 1);
+  // The cause stays TYPED, so the admitter can tell "ask again in a window"
+  // from "no listing, ever".
+  assert.equal(settled.error, cause);
+  assert.equal(isRateLimited(settled.error), true);
+});
+
+test("several missing listings report the count and the first cause", () => {
+  const first = new Error("offline");
+  const outcomes: CallRosterOutcome[] = [
+    { kind: "unfetched", userId: "A", error: first },
+    { kind: "settled", userId: "B" },
+    { kind: "unfetched", userId: "C", error: new Error("later") },
+  ];
+  const settled = settleCallRosterReconcile(outcomes);
+  assert.equal(settled.kind, "unfetched");
+  if (settled.kind !== "unfetched") return;
+  assert.equal(settled.unfetchedCount, 2);
+  assert.equal(settled.error, first);
+  assert.deepEqual(settled.pinnedUsers, []);
+});
+
+test("an empty roster settles clean", () => {
+  assert.deepEqual(settleCallRosterReconcile([]), {
+    kind: "ok",
+    pinnedUsers: [],
+  });
 });
