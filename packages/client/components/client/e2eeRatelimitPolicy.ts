@@ -20,7 +20,10 @@
  * So the transport waits that out — bounded — before any caller sees a
  * failure, and when the bound is spent it throws a TYPED error so a caller
  * can tell "rate limited" (the server is reachable and answering) from
- * "unreachable" (the availability escapes are written for that case only).
+ * "unreachable". The one failure a 429 policy cannot bound — a server that
+ * accepts the connection and never answers — is bounded beside it by the
+ * per-request deadline ([`MLS_REQUEST_DEADLINE_MS`]), which cuts the whole
+ * request, 429 waits included, with its own typed error.
  */
 
 /** Retries after the first 429 before the transport gives up. */
@@ -59,6 +62,35 @@ export const RATELIMIT_SLACK_MS = 250;
 export const RATELIMIT_JITTER_MS = 250;
 
 /**
+ * Per-request deadline for every call-plane request — each `/mls/` route and
+ * the roster listing fetch the join path pins from — measured from the first
+ * attempt to the final answer, 429 waits INCLUDED.
+ *
+ * Why it exists: a server that accepts the connection and never answers is
+ * the one failure the 429 policy cannot bound. `fetch` carries no timeout of
+ * its own, so a hung `POST /mls/groups` used to leave the session with no
+ * verdict for as long as the socket stayed open — an unbounded RE-SECURING
+ * hold with the publish gate held (T0d, 2026-09-06). Cutting the request
+ * turns that into a thrown error, which every caller already routes: the
+ * group-action catch and `#ensureKeyPackages` go loud, the join loop counts
+ * it as one failed broadcast of its bounded ladder.
+ *
+ * The math: the deadline must clear the WORST legitimate wait, which is the
+ * full retry ladder — [`RATELIMIT_MAX_RETRIES`] waits, each clamped to
+ * [`RATELIMIT_MAX_DELAY_MS`] (slack and jitter are inside the clamp) —
+ * 3 × 10 s = 30 s of sleeping, plus the four round-trips around them
+ * (~33 s with a slow server). 45 s leaves ~12 s for those round-trips, so a
+ * request that is merely rate limited always gets its last retry in before
+ * the deadline, and a request that is genuinely hung is cut within a minute.
+ *
+ * The cut is NOT a rate limit: the loop throws the deadline's reason without
+ * retrying (the ladders above it retry), and the error is typed
+ * ([`E2EERequestTimeoutError`]) so a log can tell "never answered" from
+ * "429 past the bound" from "unreachable".
+ */
+export const MLS_REQUEST_DEADLINE_MS = 45_000;
+
+/**
  * Thrown by the transport when a request is still 429 after
  * [`RATELIMIT_MAX_RETRIES`]. `retryAfterMs` is the server's LAST reset hint
  * (or the default when it named none), so a caller that ledgers its own
@@ -94,6 +126,80 @@ export class E2EERateLimitError extends Error {
 /** Whether `error` is the transport's exhausted-retries 429. */
 export function isRateLimited(error: unknown): error is E2EERateLimitError {
   return error instanceof E2EERateLimitError;
+}
+
+/**
+ * Thrown (as the abort reason) when a request is still unanswered at its
+ * [`RatelimitTransportOptions.deadlineMs`] — the server accepted the
+ * connection and never answered, or kept us waiting out 429s past the
+ * deadline. Never retried by the transport; the ladders above it decide.
+ */
+export class E2EERequestTimeoutError extends Error {
+  readonly method: string;
+  readonly path: string;
+  readonly deadlineMs: number;
+
+  constructor(method: string, path: string, deadlineMs: number) {
+    super(
+      `E2EE API ${method} ${path} failed: no answer within ${deadlineMs} ms`,
+    );
+    this.name = "E2EERequestTimeoutError";
+    this.method = method;
+    this.path = path;
+    this.deadlineMs = deadlineMs;
+  }
+}
+
+/** Whether `error` is the transport's per-request deadline. */
+export function isRequestTimeout(
+  error: unknown,
+): error is E2EERequestTimeoutError {
+  return error instanceof E2EERequestTimeoutError;
+}
+
+/** A composed deadline signal and the hook that disarms it. */
+export interface RequestDeadline {
+  /** Aborts on `base` (with its reason) or at the deadline (with `reason`). */
+  signal: AbortSignal;
+  /** Disarm the timer + detach from `base` once the request has settled. */
+  release: () => void;
+}
+
+/**
+ * Compose a per-request deadline with a caller's own abort signal: the
+ * result aborts when EITHER does, carrying that side's reason — the base's
+ * (a hang-up: "the abort is ours", quiet) or `reason` (the deadline: loud).
+ *
+ * Hand-rolled rather than `AbortSignal.any` + `AbortSignal.timeout` so the
+ * reason is OUR typed error (`AbortSignal.timeout` aborts with a generic
+ * `TimeoutError` `DOMException`), so `release` can disarm the timer the
+ * moment the request settles instead of leaving one live per request, and
+ * so the shells that predate `AbortSignal.any` (Safari < 17.4 on the macOS
+ * port) get the same behavior. Pure, so `node --test` covers it.
+ */
+export function requestDeadlineSignal(
+  deadlineMs: number,
+  reason: unknown,
+  base?: AbortSignal,
+): RequestDeadline {
+  const controller = new AbortController();
+  if (base?.aborted) {
+    controller.abort(base.reason);
+    return { signal: controller.signal, release: () => {} };
+  }
+  const onBaseAbort = () => controller.abort(base?.reason);
+  base?.addEventListener("abort", onBaseAbort, { once: true });
+  const timer = setTimeout(() => {
+    base?.removeEventListener("abort", onBaseAbort);
+    controller.abort(reason);
+  }, deadlineMs);
+  return {
+    signal: controller.signal,
+    release: () => {
+      clearTimeout(timer);
+      base?.removeEventListener("abort", onBaseAbort);
+    },
+  };
 }
 
 /** The reset hints a 429 response can carry. */
@@ -169,6 +275,14 @@ export interface RatelimitTransportOptions {
    */
   signal?: AbortSignal;
   /**
+   * Per-request deadline in milliseconds, measured over the WHOLE request —
+   * every attempt and every 429 wait. Composed with `signal` (either aborts
+   * the request); at the deadline the request rejects with a typed
+   * [`E2EERequestTimeoutError`] and is NOT retried. Call-plane callers pass
+   * [`MLS_REQUEST_DEADLINE_MS`]; omitted = no deadline (the DM plane today).
+   */
+  deadlineMs?: number;
+  /**
    * Called ONCE per request, on the FIRST 429 and before any wait. The
    * negotiating fail-safe reads what this latches at 5 s, and the reset the
    * transport is about to wait for may be 10 s away.
@@ -215,13 +329,17 @@ export function abortableSleep(
  * by `maxRetries` — and only then fail, with a TYPED [`E2EERateLimitError`]
  * a caller can tell from "unreachable". The body of a 429 (`{retry_after}`
  * in ms) is consumed here; the caller only ever sees a non-429 response, the
- * typed error, or its own abort reason.
+ * typed error, its own abort reason, or — with `deadlineMs` set — the typed
+ * [`E2EERequestTimeoutError`] when the whole request (attempts AND waits)
+ * outlives the deadline. A deadline cut is never retried here.
  *
- * `fetchFn` is invoked once per attempt, so a caller whose body is a string
- * re-sends it safely; a streaming body must not go through this.
+ * `fetchFn` is invoked once per attempt with the signal the attempt must
+ * ride (the caller's, composed with the deadline when one is set), so a
+ * caller whose body is a string re-sends it safely; a streaming body must
+ * not go through this.
  */
 export async function fetchWithRatelimitPolicy(
-  fetchFn: () => Promise<Response>,
+  fetchFn: (signal?: AbortSignal) => Promise<Response>,
   method: string,
   path: string,
   options: RatelimitTransportOptions = {},
@@ -231,34 +349,52 @@ export async function fetchWithRatelimitPolicy(
   const sleep = effects.sleep ?? abortableSleep;
   const jitter = effects.jitter ?? (() => Math.random() * RATELIMIT_JITTER_MS);
   const log = effects.log ?? ((message: string) => console.warn(message));
-  for (let retry = 0; ; retry++) {
-    if (options.signal?.aborted) throw options.signal.reason;
-    const response = await fetchFn();
-    if (response.status !== 429) return response;
-    if (retry === 0) options.onRatelimited?.(method, path);
+  const deadline =
+    options.deadlineMs === undefined
+      ? null
+      : requestDeadlineSignal(
+          options.deadlineMs,
+          new E2EERequestTimeoutError(method, path, options.deadlineMs),
+          options.signal,
+        );
+  const signal = deadline?.signal ?? options.signal;
+  try {
+    for (let retry = 0; ; retry++) {
+      if (signal?.aborted) throw signal.reason;
+      const response = await fetchFn(signal);
+      if (response.status !== 429) return response;
+      if (retry === 0) options.onRatelimited?.(method, path);
 
-    const body = (await response.json().catch(() => null)) as {
-      retry_after?: unknown;
-    } | null;
-    const hint = retryAfterMs({
-      bodyRetryAfter: body?.retry_after,
-      resetAfterHeader: response.headers.get("X-RateLimit-Reset-After"),
-      retryAfterHeader: response.headers.get("Retry-After"),
-    });
-    const delay = ratelimitRetryDelayMs(retry + 1, hint, jitter(), maxRetries);
-    if (delay === null) {
-      throw new E2EERateLimitError(
-        method,
-        path,
-        hint ?? RATELIMIT_DEFAULT_DELAY_MS,
+      const body = (await response.json().catch(() => null)) as {
+        retry_after?: unknown;
+      } | null;
+      const hint = retryAfterMs({
+        bodyRetryAfter: body?.retry_after,
+        resetAfterHeader: response.headers.get("X-RateLimit-Reset-After"),
+        retryAfterHeader: response.headers.get("Retry-After"),
+      });
+      const delay = ratelimitRetryDelayMs(
         retry + 1,
+        hint,
+        jitter(),
+        maxRetries,
       );
+      if (delay === null) {
+        throw new E2EERateLimitError(
+          method,
+          path,
+          hint ?? RATELIMIT_DEFAULT_DELAY_MS,
+          retry + 1,
+        );
+      }
+      log(
+        `[e2ee] ${method} ${path} rate limited; retrying in ` +
+          `${Math.round(delay)} ms (${retry + 1}/${maxRetries})`,
+      );
+      await sleep(delay, signal);
     }
-    log(
-      `[e2ee] ${method} ${path} rate limited; retrying in ` +
-        `${Math.round(delay)} ms (${retry + 1}/${maxRetries})`,
-    );
-    await sleep(delay, options.signal);
+  } finally {
+    deadline?.release();
   }
 }
 

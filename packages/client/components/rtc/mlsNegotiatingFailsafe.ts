@@ -20,9 +20,12 @@
  * The rule is now fail-closed: the publish gate is NEVER released without a
  * DS verdict. With no verdict at the tick, hold the gate and go amber
  * RE-SECURING — whatever the probe says — until either the DS answers
- * (create/join lands and the normal path takes over) or the bounded deadline
- * (`SELF_ENROLMENT_DEADLINE_MS`, or the join ladder's terminal) expires and
- * the session goes LOUD through the existing `#latchLoud` ladder: the
+ * (create/join lands and the normal path takes over) or the bounded ladder
+ * ends — the transport's per-request deadline (`MLS_REQUEST_DEADLINE_MS`,
+ * 45 s, 429 waits included) cuts a create the DS never answers, the join
+ * loop's bounded broadcasts and `MAX_REESTABLISH` cap the rest, and the
+ * 240 s `SELF_ENROLMENT_DEADLINE_MS` backstops a path that reaches neither —
+ * and the session goes LOUD through the existing `#latchLoud` ladder: the
  * NOT-ENCRYPTED chip and the Leave / Stay-unencrypted banner, where "Stay" is
  * the user's explicit consent to plaintext. A slow `POST /mls/groups` is now
  * a visibly delayed start, never unlabeled plaintext.

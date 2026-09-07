@@ -153,9 +153,14 @@ const MAX_REESTABLISH = 3;
  * availability escape that released it to plaintext when the channel had no
  * known open group was withdrawn 2026-09-06 (user decision — its premise was
  * not provable from the client, and the chip was wrong for as long as the DS
- * took to answer). The hold is bounded by `SELF_ENROLMENT_DEADLINE_MS` (or
- * the join ladder's terminal), after which the session goes LOUD. The rule
- * itself lives in `mlsNegotiatingFailsafe.ts` so it can be tested.
+ * took to answer). The hold is bounded by the transport's per-request
+ * deadline (`MLS_REQUEST_DEADLINE_MS`, 45 s, 429 waits included — a create
+ * the DS never answers throws into the group-action catch → `#onLoud`) plus
+ * the existing loud ladder (the join loop's bounded broadcasts and Welcome
+ * waits, `MAX_REESTABLISH`), after which the session goes LOUD; the 240 s
+ * `SELF_ENROLMENT_DEADLINE_MS` is only the backstop for a path that reaches
+ * neither. The rule itself lives in `mlsNegotiatingFailsafe.ts` so it can be
+ * tested.
  */
 const NEGOTIATING_FAILSAFE_MS = 5_000;
 /**
@@ -178,11 +183,20 @@ const MAX_ADMIT_RETRIES = 6;
  * the precise give-up points latch sooner, this only catches a path that
  * reaches neither — and it is additionally suppressed while an establish is
  * actually in flight (`enrolmentVerdict`'s `establishInFlight`), so a slow
- * but live ladder can never false-alarm. That suppression applies only once
- * the DS has answered (`#dsVerdictSeen`): before the first verdict there is
- * no ladder to protect, and the create's `fetch` carries no timeout of its
- * own, so this deadline is what bounds the T0d hold on a create that never
- * answers.
+ * but live ladder can never false-alarm.
+ *
+ * That suppression is safe because an in-flight establish is itself bounded,
+ * request by request: every delivery-service wait (and the join path's
+ * roster listing) rides the transport's per-request deadline
+ * (`MLS_REQUEST_DEADLINE_MS`, 45 s, 429 waits included), every Welcome wait
+ * is a timer, and every loop has a cap. So the real bound on a hung start
+ * is the deadline plus the ladder — a create the DS never answers throws at
+ * 45 s into the group-action catch → `#onLoud`; a joiner whose intents are
+ * never answered spends `(MAX_JOINER_RETRIES + 1) × (45 s + JOINER_RETRY_MS)`
+ * ≈ 220 s per establish (+ 45 s for the listing pin), up to `1 +
+ * MAX_REESTABLISH` establishes, then asserts exhaustion loud — and this
+ * deadline never has to fire for any of that. It is NOT what bounds the T0d
+ * hold; the request deadline is.
  */
 const SELF_ENROLMENT_DEADLINE_MS = 240_000;
 /** Re-check interval for the self-enrolment assertion while still pending. */
@@ -1250,11 +1264,14 @@ export class MlsCallSession {
    * The hold ends one of two ways, neither of them here:
    *  - the DS answers (`#dsVerdictSeen`): create/join routes as normal and
    *    `#toActive`, the join ladder, or a loud failure takes over; or
-   *  - the bounded deadline expires: `#assertSelfEnrolled` fires at
-   *    `SELF_ENROLMENT_DEADLINE_MS` (not suppressed by an in-flight
-   *    establish before the first verdict), or the join ladder's terminal
-   *    asserts exhaustion, and the session goes LOUD through `#latchLoud` —
-   *    the NOT-ENCRYPTED chip + the Leave / Stay-unencrypted banner, where
+   *  - the bounded ladder ends: the create the DS never answers is cut by
+   *    the transport's per-request deadline (`MLS_REQUEST_DEADLINE_MS`,
+   *    45 s, 429 waits included) and throws into the group-action catch →
+   *    `#onLoud`; a joiner's unanswered intents count against its bounded
+   *    broadcasts and the join ladder's terminal asserts exhaustion; the
+   *    240 s `SELF_ENROLMENT_DEADLINE_MS` backstop catches a path that
+   *    reaches neither. Each goes LOUD through `#latchLoud` — the
+   *    NOT-ENCRYPTED chip + the Leave / Stay-unencrypted banner, where
    *    "Stay" is the user's explicit consent to plaintext.
    *
    * "ignore" is the only other outcome: a verdict exists (the routed path
@@ -1349,13 +1366,15 @@ export class MlsCallSession {
       // is never deferred by it: `#joinPath` asserts exhaustion from INSIDE
       // the establish, and deferring that latch to the 240 s deadline would
       // re-create the parked-muted-behind-an-amber-chip state (§4.3/§4.4).
-      // The suppression exists to protect a slow but LIVE ladder, and there
-      // is no ladder before the DS has answered create/join: a create that
-      // never answers (its `fetch` carries no timeout of its own) would
-      // otherwise keep the flag up for good and make the T0d hold — amber
-      // RE-SECURING with the gate held, since 2026-09-06 — unbounded. So
-      // before the first verdict the deadline runs.
-      establishInFlight: this.#establishInFlight && this.#dsVerdictSeen,
+      // The suppression is safe because a live establish is bounded on its
+      // own: every delivery-service request it awaits rides the transport's
+      // per-request deadline (`MLS_REQUEST_DEADLINE_MS`), so a create or
+      // intent the DS never answers throws — into the group-action catch
+      // (loud) or the join loop's bounded broadcasts — instead of keeping
+      // this flag up for good. (Between 2026-09-06 and that deadline the
+      // flag was narrowed to `&& #dsVerdictSeen` to bound a hung first
+      // create; the deadline bounds it at the transport, where it belongs.)
+      establishInFlight: this.#establishInFlight,
       ladderExhausted,
       deadlineLapsed: Date.now() >= this.#enrolmentDeadline,
       // A plain voice call (feature off) and a cap-refused joiner are BOTH

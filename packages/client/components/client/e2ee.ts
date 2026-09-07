@@ -46,6 +46,7 @@ import {
   CALL_PLANE_RATELIMIT_RETRIES,
   fetchWithRatelimitPolicy,
   isMlsPath,
+  MLS_REQUEST_DEADLINE_MS,
   settleCallRosterReconcile,
 } from "./e2eeRatelimitPolicy";
 import { classifyEnvelopeError } from "./mlsEnvelopeClassify";
@@ -524,7 +525,9 @@ export type MlsSessionSink = (event: MlsSinkEvent) => void;
  * moment the call ends, and a notifier the bridge fires on the FIRST 429 of
  * any `/mls/` request. The session's negotiating fail-safe reads what it
  * latches from that at 5 s — when the reset the transport is waiting for
- * may still be 10 s away, and every other term it consults is quiet.
+ * may still be 10 s away, and every other term it consults is quiet. Every
+ * call-plane request additionally rides the per-request deadline
+ * (`MLS_REQUEST_DEADLINE_MS`), composed with this signal by the transport.
  */
 export interface MlsCallTransport {
   signal?: AbortSignal;
@@ -1274,10 +1277,13 @@ export class E2EEBridge implements E2EEAdapter {
    * `node --test`); this is the binding: the body of a 429 is consumed
    * there, the caller only ever sees a non-429 response, the typed error, or
    * the abort it asked for. `init.body` is a string, so re-sending is safe.
-   * `transport` carries the per-request budget and abort signal; the FIRST
-   * 429 of any delivery-service request is reported to the active call
-   * session (`MlsCallTransport.onRatelimited`), whose negotiating fail-safe
-   * reads that latch at 5 s.
+   * `transport` carries the per-request budget, abort signal and deadline;
+   * the policy hands each attempt the signal it must ride (the caller's,
+   * composed with the deadline). The FIRST 429 of any delivery-service
+   * request is reported to the active call session
+   * (`MlsCallTransport.onRatelimited`), whose negotiating fail-safe reads
+   * that latch at 5 s — CHAINED after the caller's own `onRatelimited`, never
+   * in place of it.
    */
   #fetchRatelimited(
     method: string,
@@ -1287,12 +1293,13 @@ export class E2EEBridge implements E2EEAdapter {
   ): Promise<Response> {
     const url = `${this.#client.options.baseURL}${path}`;
     return fetchWithRatelimitPolicy(
-      () => fetch(url, { ...init, signal: transport?.signal }),
+      (signal) => fetch(url, { ...init, signal }),
       method,
       path,
       {
         ...transport,
-        onRatelimited: (_method, ratelimitedPath) => {
+        onRatelimited: (ratelimitedMethod, ratelimitedPath) => {
+          transport?.onRatelimited?.(ratelimitedMethod, ratelimitedPath);
           if (isMlsPath(ratelimitedPath)) this.#mlsCall?.onRatelimited?.();
         },
       },
@@ -1872,10 +1879,15 @@ export class E2EEBridge implements E2EEAdapter {
     const selfUserId = this.#client.user?.id;
     // Call-plane transport: ONE retry, not the DM plane's three — the admit
     // re-drive and the reconcile tick are the outer ladder, and the active
-    // session's disposal signal cuts the wait on hang-up.
+    // session's disposal signal cuts the wait on hang-up. The listing is not
+    // an /mls/ route but the join path waits on it before its first intent,
+    // so it rides the same per-request deadline as the delivery-service
+    // routes: a listing the server never answers must not hold the joiner's
+    // ladder open past `MLS_REQUEST_DEADLINE_MS`.
     const transport: RatelimitTransportOptions = {
       signal: this.#mlsCall?.signal,
       maxRetries: CALL_PLANE_RATELIMIT_RETRIES,
+      deadlineMs: MLS_REQUEST_DEADLINE_MS,
     };
     const outcomes = await Promise.all(
       [...byUser].map(
@@ -4587,7 +4599,10 @@ export class E2EEBridge implements E2EEAdapter {
       notFoundOutcome?: boolean;
       callFullOutcome?: boolean;
       headers?: Record<string, string>;
-      /** Per-route budget / signal; the active call's signal is the default. */
+      /**
+       * Per-route budget / signal / deadline; the active call's signal and
+       * `MLS_REQUEST_DEADLINE_MS` are the defaults.
+       */
       transport?: RatelimitTransportOptions;
     },
   ): Promise<MlsHttpResult<T>> {
@@ -4597,7 +4612,12 @@ export class E2EEBridge implements E2EEAdapter {
     // bound it throws `E2EERateLimitError`, which the session treats like
     // any other thrown transport failure — loud, never plaintext. Every
     // /mls/ request belongs to the active call, so its disposal signal cuts
-    // the wait (and the request) the moment the call ends.
+    // the wait (and the request) the moment the call ends — and EVERY /mls/
+    // request rides the per-request deadline (`MLS_REQUEST_DEADLINE_MS`,
+    // 429 waits included), so a delivery service that accepts the
+    // connection and never answers becomes a thrown `E2EERequestTimeoutError`
+    // the session's ladders route to loud, never an open-ended hold on the
+    // publish gate. A caller may shorten the deadline; none may drop it.
     const response = await this.#fetchRatelimited(
       method,
       path,
@@ -4611,6 +4631,7 @@ export class E2EEBridge implements E2EEAdapter {
         body: body !== undefined ? JSON.stringify(body) : undefined,
       },
       {
+        deadlineMs: MLS_REQUEST_DEADLINE_MS,
         ...opts?.transport,
         signal: opts?.transport?.signal ?? this.#mlsCall?.signal,
       },

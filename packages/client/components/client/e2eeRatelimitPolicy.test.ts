@@ -7,8 +7,10 @@
 // wait is bounded above and below, the bound on retries is real — after it
 // the transport throws a TYPED error a caller can tell from "unreachable" —
 // and the loop that applies all of that behaves: it hands back the first
-// non-429, reports the first 429 exactly once, stops on abort, and the
-// roster reconcile built on it pins every arrival before it throws.
+// non-429, reports the first 429 exactly once, stops on abort, cuts a request
+// the server never answers at the per-request deadline (429 waits included,
+// never retried, typed apart from a rate limit), and the roster reconcile
+// built on it pins every arrival before it throws.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -20,12 +22,15 @@ import {
   fetchWithRatelimitPolicy,
   isMlsPath,
   isRateLimited,
+  isRequestTimeout,
+  MLS_REQUEST_DEADLINE_MS,
   RATELIMIT_DEFAULT_DELAY_MS,
   RATELIMIT_JITTER_MS,
   RATELIMIT_MAX_DELAY_MS,
   RATELIMIT_MAX_RETRIES,
   RATELIMIT_SLACK_MS,
   ratelimitRetryDelayMs,
+  requestDeadlineSignal,
   retryAfterMs,
   settleCallRosterReconcile,
 } from "./e2eeRatelimitPolicy.ts";
@@ -365,6 +370,156 @@ test("abortableSleep resolves on time and rejects on abort", async () => {
   const pending = abortableSleep(60_000, controller.signal);
   controller.abort(new Error("cut"));
   await assert.rejects(pending, /cut/);
+});
+
+// ---- The per-request deadline ---------------------------------------------
+
+/** A fetch that never answers: it settles only when its signal aborts. */
+function hung(seen: AbortSignal[]) {
+  let calls = 0;
+  return {
+    calls: () => calls,
+    fetch: (signal?: AbortSignal) =>
+      new Promise<Response>((_, reject) => {
+        calls++;
+        if (signal) seen.push(signal);
+        signal?.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+      }),
+  };
+}
+
+test("the deadline clears the worst-case 429 ladder with room to spare", () => {
+  // Three waits, each clamped to the server's 10 s window (slack + jitter
+  // are inside the clamp): 30 s of sleeping, ~33 s with the round-trips. The
+  // deadline must sit comfortably above that, or a merely rate-limited
+  // request would be cut before its last legitimate retry.
+  const worstSleep = RATELIMIT_MAX_RETRIES * RATELIMIT_MAX_DELAY_MS;
+  assert.equal(worstSleep, 30_000);
+  assert.ok(MLS_REQUEST_DEADLINE_MS >= worstSleep + 10_000);
+  assert.equal(MLS_REQUEST_DEADLINE_MS, 45_000);
+});
+
+test("a request the server never answers is cut at the deadline, typed, unretried", async () => {
+  const seen: AbortSignal[] = [];
+  const h = hung(seen);
+  await assert.rejects(
+    fetchWithRatelimitPolicy(h.fetch, "POST", "/mls/groups", {
+      deadlineMs: 20,
+    }),
+    (error: unknown) =>
+      isRequestTimeout(error) &&
+      !isRateLimited(error) &&
+      error.method === "POST" &&
+      error.path === "/mls/groups" &&
+      error.deadlineMs === 20,
+  );
+  // The transport does not retry a deadline cut: one attempt, and the
+  // signal that attempt rode is the one that was aborted.
+  assert.equal(h.calls(), 1);
+  assert.equal(seen.length, 1);
+  assert.ok(seen[0].aborted);
+});
+
+test("the deadline also bounds the 429 wait, and that cut is not a rate limit", async () => {
+  // Always 429 with a reset far past the deadline: the real sleep is what
+  // the deadline has to cut through, and the caller must be told "timed
+  // out", never "rate limited" (which would read as a server verdict).
+  const s = scripted([() => ratelimited(10_000)]);
+  await assert.rejects(
+    fetchWithRatelimitPolicy(
+      s.fetch,
+      "GET",
+      "/mls/channels/01ABC/open_group",
+      { deadlineMs: 20 },
+      { ...s.effects, sleep: abortableSleep },
+    ),
+    (error: unknown) => isRequestTimeout(error) && !isRateLimited(error),
+  );
+  assert.equal(s.calls(), 1);
+});
+
+test("the caller's own abort still wins under a deadline, with its reason", async () => {
+  const controller = new AbortController();
+  const hungUp = new Error("hung up");
+  const seen: AbortSignal[] = [];
+  const h = hung(seen);
+  const pending = fetchWithRatelimitPolicy(h.fetch, "GET", "/mls/x", {
+    signal: controller.signal,
+    deadlineMs: 60_000,
+  });
+  controller.abort(hungUp);
+  await assert.rejects(pending, (error: unknown) => error === hungUp);
+  assert.equal(seen[0].reason, hungUp);
+});
+
+test("a request that answers in time disarms its deadline", async () => {
+  const seen: AbortSignal[] = [];
+  const response = await fetchWithRatelimitPolicy(
+    async (signal) => {
+      if (signal) seen.push(signal);
+      return ok();
+    },
+    "GET",
+    "/mls/x",
+    { deadlineMs: 5 },
+  );
+  assert.equal(response.status, 200);
+  await abortableSleep(15);
+  // The composed signal the attempt rode never fires after the fact — the
+  // timer was released with the response, not left to abort a settled
+  // request (and keep the event loop alive) later.
+  assert.equal(seen[0].aborted, false);
+});
+
+test("no deadline means no deadline: the caller's signal is passed through", async () => {
+  const controller = new AbortController();
+  const seen: AbortSignal[] = [];
+  await fetchWithRatelimitPolicy(
+    async (signal) => {
+      if (signal) seen.push(signal);
+      return ok();
+    },
+    "GET",
+    "/e2ee/devices/01ABC",
+    { signal: controller.signal },
+  );
+  assert.equal(seen[0], controller.signal);
+});
+
+test("requestDeadlineSignal: an already-aborted base aborts at once with its reason", () => {
+  const base = new AbortController();
+  const reason = new Error("call is over");
+  base.abort(reason);
+  const deadline = requestDeadlineSignal(
+    60_000,
+    new Error("late"),
+    base.signal,
+  );
+  assert.ok(deadline.signal.aborted);
+  assert.equal(deadline.signal.reason, reason);
+  deadline.release(); // must be a harmless no-op
+});
+
+test("requestDeadlineSignal: release detaches from the base", async () => {
+  const base = new AbortController();
+  const deadline = requestDeadlineSignal(
+    60_000,
+    new Error("late"),
+    base.signal,
+  );
+  deadline.release();
+  base.abort(new Error("after release"));
+  assert.equal(deadline.signal.aborted, false);
+});
+
+test("requestDeadlineSignal: the deadline fires with the given reason", async () => {
+  const late = new Error("late");
+  const deadline = requestDeadlineSignal(5, late);
+  await abortableSleep(15);
+  assert.ok(deadline.signal.aborted);
+  assert.equal(deadline.signal.reason, late);
 });
 
 // ---- The call-roster reconcile's settlement -------------------------------

@@ -291,11 +291,15 @@ const MAX_DICE_TOASTS = 5;
 const MAX_VIDEO_PARTICIPANTS = 30;
 
 /**
- * Upper bound on the open-group probe (T0d): the fail-safe holds the publish
- * gate while the probe is "pending", so a HUNG fetch would keep a live call
- * paused (publishing nothing) indefinitely. A timeout rejects into the probe's
- * catch, which resolves "none" — the ratified probe-error availability escape
- * (R2-6, same origin as the DS).
+ * Upper bound on the open-group probe. The probe decides nothing about the
+ * publish gate any more (the T0d availability escape it used to feed was
+ * withdrawn 2026-09-06 — the gate is never released without a DS verdict,
+ * whatever the probe says); what it still owns is attribution: the chip's
+ * open-group input for the no-session branches, and the RE-SECURING reason
+ * the fail-safe logs when the DS has not answered at 5 s. A probe that hangs
+ * would leave both reading "pending" for the whole call, so the timeout
+ * rejects into the probe's catch and settles "none" — a completed verdict for
+ * the chip, and only that.
  */
 const OPEN_GROUP_PROBE_TIMEOUT_MS = 10_000;
 
@@ -981,11 +985,14 @@ class Voice {
    */
   #publishGate = new Set<string>();
   /**
-   * Open-group probe lifecycle for the CURRENT call (media-gate LOW-2): the
-   * T0d fail-safe must distinguish a COMPLETED "no open group" verdict from a
-   * still-pending probe — releasing the gate on a merely-slow probe for a call
-   * that turns out E2EE would auto-resume plaintext. Tri-state read by the
-   * session via `channelHasOpenGroup`.
+   * Open-group probe lifecycle for the CURRENT call, read by the session via
+   * `channelHasOpenGroup`. It no longer decides anything about the publish
+   * gate (the T0d availability escape that released on a completed "none"
+   * was withdrawn 2026-09-06 — every value holds); the session's fail-safe
+   * reads it only to NAME the hold in its RE-SECURING reason (pending / rate
+   * limited / open group known), and the chip's no-session branches read it
+   * for open-group attribution. "pending" is kept distinct from "none" so
+   * neither reader mistakes a probe that has not answered for a verdict.
    */
   #openGroupProbe: "pending" | "open" | "none" | "ratelimited" = "pending";
 
@@ -2526,10 +2533,11 @@ class Voice {
       // Probe whether this channel already has an open E2EE group — the chip's
       // in-call FE-7 input, the §0.2 #9 self-attribution for web/toggle-off
       // shells (gate F4: this must run for EVERY call, not just E2EE-capable
-      // ones), and the T0d fail-safe's tri-state gate (media-gate LOW-2: the
-      // fail-safe holds the publish gate while the probe is PENDING; a
-      // completed 404 / feature-off / error resolves "none" — probe-error ⇒
-      // availability escape is RATIFIED, same origin as the DS, R2-6). Raw
+      // ones), and the name the T0d fail-safe gives its RE-SECURING hold when
+      // the DS has not answered at 5 s. It decides NOTHING about the publish
+      // gate: the availability escape that released on a completed "none"
+      // (R2-6 / G-M2) was withdrawn 2026-09-06, and a 404 / feature-off /
+      // error now settles "none" purely as the chip's completed verdict. Raw
       // authenticated fetch so it works without the desktop bridge.
       this.#openGroupProbe = "pending";
       {
@@ -2557,14 +2565,14 @@ class Voice {
                   // default it kept when the probe gave up with the rest.
                   maxRetries: RATELIMIT_MAX_RETRIES + 1,
                   onRatelimited: () => {
-                    // A 429 is neither a verdict about the group nor the
-                    // unreachability the "none" arm is ratified for: the
-                    // DS answered, from this session's own MLS bucket,
-                    // which only an E2EE call's bring-up spends. Tell the
+                    // A 429 is not a verdict about the group: the DS
+                    // answered, from this session's own MLS bucket, which
+                    // only an E2EE call's bring-up spends. Tell the
                     // fail-safe NOW — it reads this at 5 s and the reset
-                    // may be 10 s away — so it holds the gate instead of
-                    // releasing on a "completed" no-group verdict, while
-                    // the policy keeps asking (bounded) for the real one.
+                    // may be 10 s away — so its RE-SECURING reason names
+                    // the exhausted budget (the gate holds either way),
+                    // while the policy keeps asking (bounded) for the real
+                    // verdict the chip attributes from.
                     if (gen === this.#connectGen) {
                       this.#openGroupProbe = "ratelimited";
                     }
