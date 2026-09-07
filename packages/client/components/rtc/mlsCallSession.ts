@@ -77,6 +77,10 @@ import type {
 
 import { isScreenLeg } from "../ui/components/features/voice/participantIdentity";
 import {
+  type LocalPublicationEncryption,
+  unencryptedLocalPublications,
+} from "./localPublicationEncryption";
+import {
   admitGraceWindow,
   billAdmitGrace,
   settleAdmitGrace,
@@ -600,6 +604,23 @@ export interface MlsMediaBinding {
    */
   setEncryptionEnabled?(enabled: boolean): Promise<void>;
   /**
+   * The SFU's record of every LOCAL publication — sid, source and
+   * `trackInfo.encryption` exactly as the server answered our AddTrack.
+   * This is the declaration every receiver arms its cryptor from, and it
+   * is NOT what `setEncryptionEnabled(true)` guarantees: livekit stamps the
+   * type when it builds the request and republishes only what is
+   * registered when the flip runs, so a publish in flight across the flip
+   * lands declared NONE with E2EE mode on. Read live from the Room.
+   */
+  localPublications?(): LocalPublicationEncryption[];
+  /**
+   * Unpublish + publish the named local publications so they are
+   * re-declared under the participant's CURRENT encryption type. Called
+   * only with E2EE mode on and the publish gate held (the caller pauses
+   * around it), so the republished tracks come up paused and GCM.
+   */
+  republishLocalPublications?(trackSids: readonly string[]): Promise<void>;
+  /**
    * Pause / resume local upstream publishing under a NAMED reason (R2-7): the
    * gate owner (state.tsx) is a reason-SET, so `negotiating`/`enable-window`/
    * `mixed` pauses can't collapse or double-count, and a resume only lifts its
@@ -1050,6 +1071,16 @@ export class MlsCallSession {
   // --- Enable + lifecycle (step 6) -------------------------------------------
   /** Whether LiveKit E2EE mode is currently ON (`setEncryptionEnabled(true)`). */
   #e2eeEnabled = false;
+  /**
+   * The in-flight local-declaration check (`#assertLocalDeclarations`) and
+   * whether a publication landed while it ran (coalesced trailing re-run).
+   * `#localDeclarationPlain` is set while a NONE-declared local publication
+   * is being re-declared, so the recovery clears only an escalation this
+   * path armed.
+   */
+  #localDeclarationCheck: Promise<boolean> | null = null;
+  #localDeclarationRecheck = false;
+  #localDeclarationPlain = false;
   /** Whether local publishing is paused for a mixed (non-enrolled) call. */
   #mixPaused = false;
   /** Pending re-upgrade hysteresis timer (mix cleared → resume after 15 s). */
@@ -3142,21 +3173,28 @@ export class MlsCallSession {
       "resecuring"
     ) {
       media.onEncryptionState?.("resecuring", error);
-      // Escalate to loud if the window does not resolve within the bound. Armed
-      // once; refreshed only by a genuine recovery (noteEncryptionRecovered).
-      if (!this.#resecureTimer) {
-        const timer = setTimeout(() => {
-          this.#resecureTimer = null;
-          this.#timers.delete(timer);
-          if (this.#terminal()) return;
-          this.#latchLoud(error);
-        }, RESECURE_ESCALATE_MS);
-        this.#resecureTimer = timer;
-        this.#timers.add(timer);
-      }
+      this.#armResecureEscalation(error);
     } else {
       this.#latchLoud(error);
     }
+  }
+
+  /**
+   * Escalate to loud if a RE-SECURING does not resolve within the bound.
+   * Armed once; refreshed only by a genuine recovery
+   * (`noteEncryptionRecovered`, the first local key, a corrected local
+   * declaration).
+   */
+  #armResecureEscalation(error: unknown): void {
+    if (this.#resecureTimer) return;
+    const timer = setTimeout(() => {
+      this.#resecureTimer = null;
+      this.#timers.delete(timer);
+      if (this.#terminal()) return;
+      this.#latchLoud(error);
+    }, RESECURE_ESCALATE_MS);
+    this.#resecureTimer = timer;
+    this.#timers.add(timer);
   }
 
   /**
@@ -3833,6 +3871,17 @@ export class MlsCallSession {
     try {
       await media.pausePublishing?.("enable-window");
       await media.setEncryptionEnabled?.(true);
+      // The flip republished what was registered; anything that landed
+      // during it is declared NONE. Re-declare inside the window, so no
+      // frame goes out under a declaration a receiver would disarm on.
+      if (!(await this.#assertLocalDeclarations("enable"))) {
+        // The correction did not land: loud is latched, or the escalation
+        // is armed and will latch it. Keep the window held and the label
+        // out of `e2ee` (fail-closed). Room E2EE mode IS on, so
+        // `#e2eeEnabled` stays true; the banner's Stay-unencrypted escape
+        // is what releases `enable-window` (`local_confirm` resumes it).
+        return;
+      }
       await media.resumePublishing?.("enable-window");
       // A `mixed` pause that predates this enable is released only NOW, after
       // the flip, so no plaintext frame escapes in between: a mix declared
@@ -3850,6 +3899,131 @@ export class MlsCallSession {
       // paused) and surface loud rather than resume into plaintext.
       this.#e2eeEnabled = false;
       this.#onMediaError(error);
+    }
+  }
+
+  /**
+   * A local publication was (re)registered on the Room. With E2EE mode on,
+   * check its SFU declaration: a publish that was in flight across the
+   * enable flip lands declared NONE (see `localPublicationEncryption.ts`),
+   * every receiver disarms for us, and we are inaudible behind a green
+   * chip. `state.tsx` calls this from `localTrackPublished`.
+   */
+  noteLocalPublicationsChanged(): void {
+    if (!this.#e2eeEnabled || this.#terminal()) return;
+    void this.#assertLocalDeclarations("publish");
+  }
+
+  /**
+   * Single-flight (coalesced trailing re-run) assertion that every local
+   * publication the SFU has on record is declared GCM, re-declaring the
+   * ones that are not. `"enable"` runs inside `#enable`'s own pause window
+   * (the caller holds and releases `enable-window`); `"publish"` owns the
+   * window itself. A publication that is still not GCM after its republish
+   * latches loud — the terminal banner with the Leave / Stay-unencrypted
+   * escape — rather than resuming under a declaration peers cannot decode.
+   *
+   * Resolves `true` when every local publication is on record as GCM at
+   * exit, `false` when the correction did not land (the caller must then
+   * leave the window held rather than resume).
+   */
+  async #assertLocalDeclarations(
+    via: "enable" | "publish",
+  ): Promise<boolean> {
+    if (this.#localDeclarationCheck) {
+      this.#localDeclarationRecheck = true;
+      return this.#localDeclarationCheck;
+    }
+    const run = this.#assertLocalDeclarationsOnce(via);
+    this.#localDeclarationCheck = run;
+    let declared: boolean;
+    try {
+      declared = await run;
+    } finally {
+      if (this.#localDeclarationCheck === run) {
+        this.#localDeclarationCheck = null;
+      }
+    }
+    if (this.#localDeclarationRecheck) {
+      this.#localDeclarationRecheck = false;
+      // A publication landed while we were re-declaring: the republish's
+      // own registration, or another in-flight publish. Look again under
+      // the same window ownership: an `enable` caller still holds its
+      // window, a `publish` run released its own and this one takes it.
+      return this.#assertLocalDeclarations(via);
+    }
+    return declared;
+  }
+
+  async #assertLocalDeclarationsOnce(
+    via: "enable" | "publish",
+  ): Promise<boolean> {
+    const media = this.#media;
+    // No seam on this binding: nothing to vouch for or against (vacuous).
+    if (!media?.localPublications) return true;
+    // E2EE mode went off (a downgrade) or the session ended under us: the
+    // transition that did it owns the gate now; report not-declared so an
+    // `enable` caller does not resume on top of it.
+    if (!this.#e2eeEnabled || this.#terminal()) return false;
+    const plain = unencryptedLocalPublications(media.localPublications());
+    if (plain.length === 0) {
+      if (this.#localDeclarationPlain) {
+        this.#localDeclarationPlain = false;
+        this.#clearResecureTimer();
+        media.onEncryptionState?.("clear");
+        console.info("[mls] local publications re-declared encrypted");
+      }
+      return true;
+    }
+    const error = new Error(
+      `Local publications were declared unencrypted to the SFU with E2EE ` +
+        `enabled: ${plain.join(", ")} — re-declaring.`,
+    );
+    console.warn(
+      "[mls] local publication declared plaintext to the SFU after E2EE enable — republishing",
+      plain,
+    );
+    // Bounded amber while we correct it (chip gate (b) reads the declaration
+    // directly and is already amber); loud if the correction cannot land.
+    this.#localDeclarationPlain = true;
+    media.onEncryptionState?.("resecuring", error);
+    this.#armResecureEscalation(error);
+    const ownsWindow = via === "publish";
+    try {
+      if (ownsWindow) await media.pausePublishing?.("enable-window");
+      if (!this.#e2eeEnabled || this.#terminal()) return false;
+      if (!media.republishLocalPublications) {
+        // No republish seam on this binding: the declaration cannot be
+        // corrected from here, so the escalation latches loud at its bound
+        // and the window stays held (fail-closed — never resume into a
+        // declaration receivers will disarm on).
+        return false;
+      }
+      await media.republishLocalPublications(plain);
+      if (!this.#e2eeEnabled || this.#terminal()) return false;
+      const still = unencryptedLocalPublications(media.localPublications());
+      if (still.length > 0) {
+        // The republish came back NONE again — the SFU is not recording
+        // what we declare, or the flip did not take. Loud now, window held.
+        console.error(
+          "[mls] local publications still declared plaintext after republish",
+          still,
+        );
+        this.#latchLoud(error);
+        return false;
+      }
+      this.#localDeclarationPlain = false;
+      this.#clearResecureTimer();
+      media.onEncryptionState?.("clear");
+      console.info("[mls] local publications re-declared encrypted", plain);
+      if (ownsWindow) await media.resumePublishing?.("enable-window");
+      return true;
+    } catch (republishError) {
+      // Fail-closed: the window stays held; #onMediaError classifies it
+      // (loud outside a rotation window), and the banner's escape releases
+      // `enable-window` explicitly (`local_confirm` resumes the reason).
+      this.#onMediaError(republishError);
+      return false;
     }
   }
 
@@ -4171,6 +4345,8 @@ export class MlsCallSession {
     }
     this.#e2eeEnabled = false;
     this.#mixPaused = false;
+    this.#localDeclarationPlain = false;
+    this.#localDeclarationRecheck = false;
     if (!confirmedInterlude) this.#announcedBy = undefined;
   }
 

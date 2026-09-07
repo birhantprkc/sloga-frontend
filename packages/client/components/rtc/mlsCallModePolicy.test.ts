@@ -190,6 +190,7 @@ const baseChip = (over: Partial<ChipInputs>): ChipInputs => ({
   latchedError: false,
   publishingIdentities: [],
   observedEncrypted: new Map(),
+  localPublicationsEncrypted: true,
   rosterVerified: [true, true],
   channelHasOpenGroup: true,
   capableAndEnabled: true,
@@ -208,6 +209,60 @@ test("chip green requires ALL of (a) native, (b) observed-encrypted, (c) verifie
       }),
     ),
     "e2ee",
+  );
+});
+
+test("chip (b) fail-closed: a LOCAL publication not declared GCM is NOT green", () => {
+  // The shipped-desktop shape (2026-09-06): worker status TRUE for us, the
+  // peer observed encrypted, roster verified — and our mic on the SFU's
+  // record as NONE. Every gate the old chip read was green.
+  const inputs = baseChip({
+    publishingIdentities: ["me:d", "peer:d"],
+    observedEncrypted: new Map([
+      ["me:d", true],
+      ["peer:d", true],
+    ]),
+    localPublicationsEncrypted: false,
+  });
+  assert.equal(inputs.e2eeEnabled && inputs.hasLocalKey, true);
+  assert.equal(
+    chipState(inputs),
+    "resecuring",
+    "a NONE-declared local publication must never read green",
+  );
+  // Same inputs once the session has re-declared it: green (an unverified
+  // roster still drops to amber-unverified as before).
+  assert.equal(
+    chipState({ ...inputs, localPublicationsEncrypted: true }),
+    "e2ee",
+  );
+  assert.equal(
+    chipState({
+      ...inputs,
+      localPublicationsEncrypted: true,
+      rosterVerified: [true, false],
+    }),
+    "e2ee_unverified",
+  );
+});
+
+test("chip: the local declaration never outranks a loud verdict or a mix", () => {
+  assert.equal(
+    chipState(
+      baseChip({ localPublicationsEncrypted: false, latchedError: true }),
+    ),
+    "not_encrypted",
+  );
+  assert.equal(
+    chipState(baseChip({ localPublicationsEncrypted: false, mode: MIXED })),
+    "not_encrypted",
+  );
+  // And it says nothing about a call that is not an E2EE call.
+  assert.equal(
+    chipState(
+      baseChip({ localPublicationsEncrypted: false, mode: { kind: "off" } }),
+    ),
+    "none",
   );
 });
 
@@ -342,6 +397,7 @@ test("chip plaintext/off/no-session with no open group → none", () => {
       latchedError: false,
       publishingIdentities: [],
       observedEncrypted: new Map(),
+      localPublicationsEncrypted: true,
       rosterVerified: [],
       channelHasOpenGroup: false,
       capableAndEnabled: false,
@@ -360,6 +416,7 @@ test("chip ME-7/R2-4: capable+enabled, NO session, open E2EE group ⇒ not_encry
       latchedError: false,
       publishingIdentities: [],
       observedEncrypted: new Map(),
+      localPublicationsEncrypted: true,
       rosterVerified: [],
       channelHasOpenGroup: true,
       capableAndEnabled: true,
@@ -378,6 +435,7 @@ test("chip §0.2#9 self-attribution: toggle-OFF self in an E2EE channel ⇒ not_
       latchedError: false,
       publishingIdentities: [],
       observedEncrypted: new Map(),
+      localPublicationsEncrypted: true,
       rosterVerified: [],
       channelHasOpenGroup: true,
       capableAndEnabled: false,
