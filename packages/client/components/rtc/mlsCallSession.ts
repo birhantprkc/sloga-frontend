@@ -1105,6 +1105,8 @@ export class MlsCallSession {
   #rotationWindowTimer: ReturnType<typeof setTimeout> | null = null;
   /** RE-SECURING → loud escalation timer (armed on the first in-window error). */
   #resecureTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Origin the pending escalation would latch with (`control` wins). */
+  #resecureOrigin: LoudLatchOrigin = "media";
   /** Loud NOT-ENCRYPTED latched (terminal for the media chip until re-establish). */
   #loudLatched = false;
   /** What raised the latch: only a `media` latch can heal (`loudHealVerdict`). */
@@ -1129,6 +1131,16 @@ export class MlsCallSession {
   #lastInstallAt = 0;
   /** When a media-plane error was last surfaced (stamped even under the latch). */
   #lastMediaErrorAt = 0;
+  /**
+   * When each DEVICE was last observed ADDED to the MLS roster by the roster
+   * diff of `#reconcileOnce` — a transition in natively verified group state
+   * (a leaf appears only through a commit this device verified). The heal
+   * witness reads THIS, never `#recentAdds`: that map is also stamped by
+   * `#tryAdmit`'s already-member short-circuit BEFORE the intent is verified,
+   * so a DS-relayed join request naming a current member could mint a
+   * "re-add" that never happened and heal a latch over dead air.
+   */
+  #healAdds = new Map<string, number>();
   /** The one-shot heal probe armed by a new install under a media latch. */
   #healTimer: ReturnType<typeof setTimeout> | null = null;
   #healGeneration = 0;
@@ -2229,11 +2241,16 @@ export class MlsCallSession {
       // keeps counting across re-drives and the bound is real. A re-drive that
       // aborts again lands back in `#abortAdmit`, which schedules the next tick.
       for (const [key, entry] of [...this.#pendingAdmits]) {
-        // A ledgered rejoin serve whose device was re-added since is done:
-        // retire it rather than remove the live leaf it would now target.
+        // A ledgered rejoin serve for a device this group has EVER observed
+        // added is retired, not re-driven: the serve it asked for either
+        // completed (the Add is that observation) or the intent is a late or
+        // replayed one that postdates the Add — and past the 15 s §4.8 window
+        // a re-drive would remove the LIVE leaf (intents carry no freshness).
+        // A device that genuinely wiped again re-broadcasts every 10 s and is
+        // served directly, never through this ledger.
         if (entry.rejoin) {
           const device = `${entry.request.user_id}:${entry.request.device_id}`;
-          if ((this.#recentAdds.get(device) ?? -1) > entry.ledgeredAt) {
+          if (this.#recentAdds.has(device)) {
             this.#pendingAdmits.delete(key);
             continue;
           }
@@ -3177,6 +3194,7 @@ export class MlsCallSession {
     this.#scheduledAdmits.clear();
     this.#pendingAdmits.clear(); // requests are group-scoped
     this.#recentAdds.clear(); // add observations are group-scoped (§4.8)
+    this.#healAdds.clear();
     this.#rejoinServed.clear(); // so are served-rejoin observations
     this.#lastRosterIdentities.clear();
     if (this.#admitRetryTimer) {
@@ -3478,12 +3496,17 @@ export class MlsCallSession {
    * declaration).
    */
   #armResecureEscalation(error: unknown, origin: LoudLatchOrigin): void {
+    // A control arm landing while a media timer is pending UPGRADES the
+    // pending latch's origin (a control latch never heals); the reverse
+    // never downgrades.
+    if (origin === "control") this.#resecureOrigin = "control";
     if (this.#resecureTimer) return;
+    this.#resecureOrigin = origin;
     const timer = setTimeout(() => {
       this.#resecureTimer = null;
       this.#timers.delete(timer);
       if (this.#terminal()) return;
-      this.#latchLoud(error, origin);
+      this.#latchLoud(error, this.#resecureOrigin);
     }, RESECURE_ESCALATE_MS);
     this.#resecureTimer = timer;
     this.#timers.add(timer);
@@ -3698,7 +3721,8 @@ export class MlsCallSession {
     const peers = [...this.#loudPeers].map(([device, latchedSids]) => {
       // Device-scoped: the owner or any of its legs still in the SFU counts.
       const present = sfuDevices.has(device);
-      const addedAt = this.#recentAdds.get(device);
+      // From the verified roster diff only — see `#healAdds`.
+      const addedAt = this.#healAdds.get(device);
       // Absent accessor ⇒ null ⇒ not "all new" (fail-closed); publishing
       // nothing is neither "left" nor "re-keyed".
       const sids = present ? this.#deviceTrackSids(device) : [];
@@ -3969,9 +3993,14 @@ export class MlsCallSession {
       const now = Date.now();
       const roster = new Set(mlsIdentities);
       const sfu = new Set(media.sfuParticipants());
+      // The first reconcile of a group stamps everyone into `#recentAdds`
+      // (over-suppression in the fail-safe direction, §4.8); the heal witness
+      // takes only genuine absent→present transitions.
+      const firstReconcile = this.#lastRosterIdentities.size === 0;
       for (const identity of mlsIdentities) {
         if (!this.#lastRosterIdentities.has(identity)) {
           this.#recentAdds.set(identity, now);
+          if (!firstReconcile) this.#healAdds.set(stripLeg(identity), now);
           // Re-added: the served rejoin completed, the gap is closed, and a
           // ledgered serve for it must never be re-driven onto the live leaf.
           this.#rejoinServed.delete(identity);
