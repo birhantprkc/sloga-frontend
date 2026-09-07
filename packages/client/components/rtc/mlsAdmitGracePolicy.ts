@@ -138,3 +138,32 @@ export function settleAdmitGrace(
     pendingSince: null,
   };
 }
+
+/**
+ * When an OPEN window's timer should next fire after a re-arm (enrolment
+ * evidence seen, or an expiry that found the admit still in progress), or
+ * `null` when the window's budget deadline has passed and it must lapse.
+ *
+ * A re-arm may EXTEND a window, never SHORTEN it. The old arithmetic re-armed
+ * to `now + base` unconditionally: the window a stayer arms at a rejoiner's
+ * connect is `base + primaries × stagger` (14 s in a 1:1 with two primaries),
+ * and the rejoiner's own intent — enrolment evidence, arriving within a
+ * second — re-armed it to `now + 10 s`, so the very event that proves the
+ * joiner is enrolling cut its window by a third and made it lapse inside the
+ * Remove→Add gap of a served rejoin (2026-09-07, a contributor to the rejoin
+ * beat). The deadline still caps: extension never buys budget.
+ */
+export function rearmAdmitGraceExpiry(input: {
+  nowMs: number;
+  /** When the window's current timer would fire. */
+  currentExpiryMs: number;
+  baseMs: number;
+  /** The window's budget deadline (arm time + remaining budget). */
+  deadlineMs: number;
+}): number | null {
+  if (input.deadlineMs <= input.nowMs) return null;
+  return Math.min(
+    input.deadlineMs,
+    Math.max(input.currentExpiryMs, input.nowMs + input.baseMs),
+  );
+}

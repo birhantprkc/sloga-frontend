@@ -4,11 +4,13 @@
 // Focus (rejoin plan §6 tests 2/3/8): the startup wipe's target selection
 // (channel-scoped, orphan-sparing, once-per-page), the peer-side rejoin-serve
 // staleness gate, and the generation-guarded Welcome acceptance.
-import { test } from "node:test";
 import assert from "node:assert/strict";
+import { test } from "node:test";
 
 import {
   REJOIN_SERVE_SUPPRESS_MS,
+  admitInProgressVerdict,
+  rejoinReintentWindowMs,
   rejoinServeAction,
   startupWipeTargets,
   welcomeVerdict,
@@ -143,5 +145,93 @@ test("with no live group nothing adopts (post-teardown straggler)", () => {
       liveGeneration: 4,
     }),
     { adopt: false, resolveWait: false },
+  );
+});
+
+// ---- the served-rejoin window + "still admitting" (the rejoin beat) ----------
+
+const WINDOW = rejoinReintentWindowMs({
+  joinerRetryMs: 10_000,
+  submitTimeoutMs: 10_000,
+  settleMs: 2_000,
+});
+
+test("the served-rejoin window is the re-broadcast cadence + one submit + the settle", () => {
+  assert.equal(WINDOW, 22_000);
+});
+
+const idle = {
+  scheduledAdmit: false,
+  ledgeredAdmit: false,
+  scheduledRejoin: false,
+  ledgeredRejoin: false,
+  rejoinServedAtMs: null,
+  windowMs: WINDOW,
+};
+
+test("nothing scheduled, ledgered or served ⇒ not in progress", () => {
+  assert.equal(admitInProgressVerdict({ ...idle, nowMs: 50_000 }), false);
+});
+
+test("each admit/rejoin arm alone keeps the window alive", () => {
+  for (const arm of [
+    "scheduledAdmit",
+    "ledgeredAdmit",
+    "scheduledRejoin",
+    "ledgeredRejoin",
+  ] as const) {
+    assert.equal(
+      admitInProgressVerdict({ ...idle, [arm]: true, nowMs: 50_000 }),
+      true,
+      arm,
+    );
+  }
+});
+
+test("🔴 a stale leaf removed while the device is connected keeps its window alive until the re-Add is due", () => {
+  // The phase nothing else ledgers: the Remove landed, the rejoiner's next
+  // broadcast (10 s cadence) has not arrived, no Add is scheduled. Measured
+  // live 2026-09-07: the window lapsed here and the stayer went `mixed`.
+  assert.equal(
+    admitInProgressVerdict({
+      ...idle,
+      rejoinServedAtMs: 10_000,
+      nowMs: 20_000,
+    }),
+    true,
+  );
+  assert.equal(
+    admitInProgressVerdict({
+      ...idle,
+      rejoinServedAtMs: 10_000,
+      nowMs: 10_000 + WINDOW - 1,
+    }),
+    true,
+  );
+});
+
+test("at and past the window a served rejoin no longer counts (liveness bound)", () => {
+  assert.equal(
+    admitInProgressVerdict({
+      ...idle,
+      rejoinServedAtMs: 10_000,
+      nowMs: 10_000 + WINDOW,
+    }),
+    false,
+  );
+  assert.equal(
+    admitInProgressVerdict({
+      ...idle,
+      rejoinServedAtMs: 10_000,
+      nowMs: 90_000,
+    }),
+    false,
+  );
+});
+
+test("a backwards clock jump reads as inside the window (the deadline still caps)", () => {
+  assert.equal(
+    admitInProgressVerdict({ ...idle, rejoinServedAtMs: 10_000, nowMs: 5_000 }),
+    true,
   );
 });

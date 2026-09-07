@@ -20,6 +20,7 @@ import { test } from "node:test";
 import {
   admitGraceWindow,
   billAdmitGrace,
+  rearmAdmitGraceExpiry,
   settleAdmitGrace,
 } from "./mlsAdmitGracePolicy.ts";
 
@@ -143,6 +144,60 @@ test("a backwards clock jump cannot refund via settle", () => {
     billMs: 0,
     pendingSince: null,
   });
+});
+
+// ---- rearmAdmitGraceExpiry: a refresh extends, never shortens ---------------
+
+test("🔴 a refresh never shortens an open window", () => {
+  // A 14 s window armed at t=0 (base + 2 primaries × stagger); the joiner's
+  // own intent at t=1 s is enrolment evidence. Re-arming to now + base cut it
+  // to 11 s and made it lapse inside a served rejoin's Remove→Add gap
+  // (2026-09-07). The later of the two wins.
+  assert.equal(
+    rearmAdmitGraceExpiry({
+      nowMs: 1_000,
+      currentExpiryMs: 14_000,
+      baseMs: BASE,
+      deadlineMs: 60_000,
+    }),
+    14_000,
+  );
+});
+
+test("a refresh extends a window that would otherwise fire sooner than now + base", () => {
+  assert.equal(
+    rearmAdmitGraceExpiry({
+      nowMs: 9_000,
+      currentExpiryMs: 10_000,
+      baseMs: BASE,
+      deadlineMs: 60_000,
+    }),
+    19_000,
+  );
+});
+
+test("the budget deadline caps every extension", () => {
+  assert.equal(
+    rearmAdmitGraceExpiry({
+      nowMs: 55_000,
+      currentExpiryMs: 56_000,
+      baseMs: BASE,
+      deadlineMs: 60_000,
+    }),
+    60_000,
+  );
+});
+
+test("past the deadline the window must lapse", () => {
+  assert.equal(
+    rearmAdmitGraceExpiry({
+      nowMs: 60_000,
+      currentExpiryMs: 60_000,
+      baseMs: BASE,
+      deadlineMs: 60_000,
+    }),
+    null,
+  );
 });
 
 test("🔴 interleaved stretches sum to the same ceiling as one long one", () => {

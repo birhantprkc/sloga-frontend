@@ -95,3 +95,73 @@ export function welcomeVerdict(opts: {
     resolveWait: adopt && opts.waitGeneration === opts.liveGeneration,
   };
 }
+
+/**
+ * How long after this member watched a CONNECTED device lose its MLS leaf
+ * (a served rejoin: the stale leaf was removed so the device can be re-added)
+ * that device's re-Add is still expected — so its admit-grace may re-arm
+ * instead of lapsing into non-enrolled.
+ *
+ * The gap it covers: the rejoiner is never told it was served, so the Add
+ * waits for its next intent broadcast (`joinerRetryMs` cadence), and a slow
+ * Remove submit can push that broadcast onto the still-present leaf, where it
+ * is served as a SECOND rejoin — hence one submit bound on top — plus the
+ * propagation settle. The stagger, claim and submit of the Add itself are
+ * covered by the ordinary scheduled/ledgered-admit arms of
+ * `admitInProgressVerdict`. Measured live 2026-09-07 on 0.58.0: the party
+ * that stayed read a quick rejoiner as non-enrolled for the whole gap — chip
+ * Not encrypted, the downgrade banner with Turn off encryption for ~12 s, on
+ * every quick rejoin, both directions.
+ *
+ * Bounds are passed in (the `rotationWindowMs` pattern) because the session
+ * owns the constants; the spec pins the sum.
+ */
+export function rejoinReintentWindowMs(bounds: {
+  joinerRetryMs: number;
+  submitTimeoutMs: number;
+  settleMs: number;
+}): number {
+  return bounds.joinerRetryMs + bounds.submitTimeoutMs + bounds.settleMs;
+}
+
+/**
+ * Whether this member is observably still working on admitting an identity —
+ * the test an expiring admit-grace window re-arms on (bounded by the window's
+ * own budget deadline, which the caller enforces).
+ *
+ *  - `scheduledAdmit` / `ledgeredAdmit` — an Add timer is scheduled, or an
+ *    aborted attempt sits in the re-drive ledger.
+ *  - `scheduledRejoin` / `ledgeredRejoin` — the same for a rejoin serve (stale
+ *    leaf removal). The ledgered arm was missing: a retryable serve abort sat
+ *    in the ledger under its own key, invisible to the re-arm, and the window
+ *    could lapse while the serve was merely waiting for its retry tick.
+ *  - `rejoinServedAtMs` — when this member watched the identity's stale leaf go
+ *    while the device stayed connected (`null` = never). Inside
+ *    `rejoinReintentWindowMs` its re-Add is expected and nothing else ledgers
+ *    that phase. A clock that jumped backwards reads as inside the window;
+ *    the deadline still caps it.
+ *
+ * This is a LIVENESS bound only: the pending stretch is still billed and a
+ * device that never re-broadcasts goes loud at the smaller of the window and
+ * the budget deadline.
+ */
+export function admitInProgressVerdict(opts: {
+  scheduledAdmit: boolean;
+  ledgeredAdmit: boolean;
+  scheduledRejoin: boolean;
+  ledgeredRejoin: boolean;
+  rejoinServedAtMs: number | null;
+  nowMs: number;
+  windowMs: number;
+}): boolean {
+  if (
+    opts.scheduledAdmit ||
+    opts.ledgeredAdmit ||
+    opts.scheduledRejoin ||
+    opts.ledgeredRejoin
+  ) {
+    return true;
+  }
+  if (opts.rejoinServedAtMs === null) return false;
+  return opts.nowMs - opts.rejoinServedAtMs < opts.windowMs;
+}

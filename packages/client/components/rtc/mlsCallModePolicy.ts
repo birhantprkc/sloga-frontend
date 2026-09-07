@@ -573,6 +573,116 @@ export function loudModeFallback(mode: CallMode): CallMode | null {
 }
 
 /**
+ * The mode label a session may WRITE while a loud verdict is latched.
+ *
+ * `loudModeFallback` covers the ENTRY into loud: it drops `e2ee` to
+ * `negotiating` so the terminal banner and its Leave / Stay-unencrypted
+ * escape render. The mode machine keeps running underneath, though, and any
+ * `mix_detected` → `mix_cleared` cycle under the latch (a peer's leave +
+ * rejoin, a browser peer joining and leaving) ends in the T2 warm resume,
+ * which wrote `e2ee` back — publish gate empty, chip still red from the
+ * latched error, `isTerminalLoud` false, `confirmPlaintext` refusing.
+ * Measured live 2026-09-07 on the L3 receiver after the publisher's rejoin:
+ * red chip, no banner, no way out but leaving the call, and the pause the
+ * banner had promised silently lifted.
+ *
+ * So while latched, `e2ee` is unreachable: it folds to `negotiating`, whose
+ * `#setMode` lockstep re-asserts the negotiating publish gate (the banner's
+ * "your audio and video stay paused" is true again) and whose shape
+ * `isTerminalLoud` renders. Every other label passes: `mixed` and `interlude`
+ * carry their own banners with the same native-confirmed escape, `off` is a
+ * plain call, `call_full` is terminal. A red chip therefore always has a
+ * banner with an escape — by construction, not by the order timers happen to
+ * fire.
+ */
+export function modeUnderLoudLatch(
+  next: CallMode,
+  loudLatched: boolean,
+): CallMode {
+  return loudLatched && next.kind === "e2ee" ? { kind: "negotiating" } : next;
+}
+
+/**
+ * Where a loud latch came from. Only a MEDIA latch — a LiveKit
+ * `encryptionError` or a native frame-key error, classified outside every
+ * rotation window or escalated from a re-securing that never resolved — can
+ * heal (`loudHealVerdict`). A CONTROL latch (a failed join ladder, a
+ * destroyed envelope, local publications the SFU keeps recording as
+ * plaintext, a terminal session failure) says nothing a later epoch could
+ * disprove; it stays terminal until the group re-establishes or the call ends.
+ */
+export type LoudLatchOrigin = "media" | "control";
+
+/** What the session knows about the participant whose frames failed. */
+export interface LoudHealParticipant {
+  /** The latch carried a participant identity (LiveKit's `CryptorError`). */
+  known: boolean;
+  /** That participant is in the SFU right now. */
+  present: boolean;
+  /** It was observed ADDED to the MLS roster after the latch was set. */
+  readdedAfterLatch: boolean;
+  /**
+   * None of the track SIDs it published at latch time is published now.
+   * New tracks decrypt at the new key index, which the install's `setKey`
+   * re-validated, so a persisting failure re-emits inside the settle.
+   */
+  sidsAllNew: boolean;
+}
+
+/** The witnesses a latched session must hold before its loud latch may heal. */
+export interface LoudHealInputs {
+  origin: LoudLatchOrigin;
+  /** Monotonic local key-install counter at the moment the latch was set. */
+  latchedInstallSeq: number;
+  /** The same counter now — a strictly larger value means a new epoch's keys. */
+  installSeq: number;
+  /** Any media-plane error (LiveKit or native key path) since that install. */
+  errorSinceInstall: boolean;
+  /** A FRESH reconcile reported neither non-enrolled nor pending identities. */
+  rosterConsistent: boolean;
+  participant: LoudHealParticipant;
+}
+
+/**
+ * Whether a loud latch may heal. `heal` ONLY when the group RE-KEYED past the
+ * failure, the media plane stayed clean through the settle, the roster is
+ * consistent, and the FAILING PEER'S situation provably changed. Anything
+ * short of that is `hold`, and the latch stays terminal exactly as before.
+ *
+ * A mere recovery (the missing key arriving, `noteEncryptionRecovered`) still
+ * never heals — R1 of the 2026-09-07 L3 leg, kept on purpose: it proves
+ * nothing about why frames failed.
+ *
+ * Why the peer-scoped witness (media-E2EE review, 2026-09-07): the LiveKit
+ * worker emits ONE error for a key index and then marks it invalid, after
+ * which every frame at that index is dropped SILENTLY; a new epoch's install
+ * re-validates only the index it installs. A peer still sending at an OLD
+ * index after the re-key therefore produces zero errors and zero decrypts —
+ * the exact class the latch exists for — so "no error since the install" on
+ * its own would heal over silently dropped media. It is sufficient only once
+ * the failing peer is gone, or was re-added after the latch and publishes
+ * only tracks that did not exist at latch time (those decrypt at the fresh
+ * index; if they fail, the error re-emits inside the settle and holds).
+ * A latch that never learned WHICH peer failed has no such witness: hold.
+ *
+ * Both chip planes are required (invariant 11): control (a verified commit
+ * installed a new epoch, the roster matches the SFU set) and media (no decrypt
+ * error through the settle, the failing peer's frames gone or re-keyed). A
+ * hostile DS cannot mint the witness — the keys come from a natively verified
+ * commit, the roster must match the SFU set, the errors are local truth.
+ */
+export function loudHealVerdict(inputs: LoudHealInputs): "heal" | "hold" {
+  if (inputs.origin !== "media") return "hold";
+  if (inputs.installSeq <= inputs.latchedInstallSeq) return "hold";
+  if (inputs.errorSinceInstall) return "hold";
+  if (!inputs.rosterConsistent) return "hold";
+  const peer = inputs.participant;
+  if (!peer.known) return "hold";
+  if (!peer.present) return "heal";
+  return peer.readdedAfterLatch && peer.sidsAllNew ? "heal" : "hold";
+}
+
+/**
  * What the session does when a FRESH reconcile reports a non-enrolled
  * participant (the roster is not consistent), by the current mode:
  *

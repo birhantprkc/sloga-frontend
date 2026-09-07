@@ -84,6 +84,7 @@ import {
 import {
   admitGraceWindow,
   billAdmitGrace,
+  rearmAdmitGraceExpiry,
   settleAdmitGrace,
 } from "./mlsAdmitGracePolicy";
 import {
@@ -96,11 +97,14 @@ import {
 import {
   type CallMode,
   type CallModeEvent,
+  type LoudLatchOrigin,
   type RotationWindowOpener,
   callModeTransition,
   classifyEncryptionError,
+  loudHealVerdict,
   loudModeFallback,
   mixDetectedAction,
+  modeUnderLoudLatch,
   parseCtlPayload,
   rotationWindowMs,
 } from "./mlsCallModePolicy";
@@ -116,6 +120,8 @@ import {
   negotiatingFailsafeReason,
 } from "./mlsNegotiatingFailsafe";
 import {
+  admitInProgressVerdict,
+  rejoinReintentWindowMs,
   rejoinServeAction,
   startupWipeTargets,
   welcomeVerdict,
@@ -320,6 +326,36 @@ const MAX_QUEUE_BYTES = 32 * 1024 * 1024;
 /** Admit-schedule delay for a member at `leafIndex` (0-based roster order). */
 export function leafStaggerDelayMs(leafIndex: number): number {
   return Math.max(0, leafIndex) * ADMIT_STAGGER_MS;
+}
+
+/**
+ * How long after a CONNECTED device lost its MLS leaf (a served rejoin) its
+ * re-Add is still expected, so its admit-grace re-arms instead of lapsing
+ * into non-enrolled: the rejoiner's next broadcast + one submit + the settle
+ * (`rejoinReintentWindowMs`). Liveness bound only — the window's budget
+ * deadline still caps it.
+ */
+const REJOIN_REINTENT_WINDOW_MS = rejoinReintentWindowMs({
+  joinerRetryMs: JOINER_RETRY_MS,
+  submitTimeoutMs: SUBMIT_TIMEOUT_MS,
+  settleMs: ROTATION_SETTLE_MS,
+});
+
+/**
+ * How long after a new local key install under a MEDIA loud latch the heal
+ * probe waits before judging (`loudHealVerdict`) — the same bound the design
+ * gives a re-securing to resolve before it goes loud. The worker re-emits a
+ * persisting failure once per freshly installed key index, so a failure that
+ * survives the re-key surfaces inside this window and holds the latch.
+ */
+const LOUD_HEAL_SETTLE_MS = RESECURE_ESCALATE_MS;
+
+/** The participant a LiveKit `CryptorError` names, if the error carries one. */
+function cryptorErrorParticipant(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const identity = (error as { participantIdentity?: unknown })
+    .participantIdentity;
+  return typeof identity === "string" && identity !== "" ? identity : undefined;
 }
 
 /** Where a `POST /mls/groups` response routes the caller. */
@@ -594,7 +630,20 @@ export interface MlsMediaBinding {
    * sends nothing and its token cannot subscribe.
    */
   unpublishedLegs?(): string[];
-  /** Surface the media-plane state for the 6.5 chip / callEncryptionError. */
+  /**
+   * The track SIDs `identity` currently publishes (empty when absent). Read
+   * at a media loud latch and again by the heal probe: a peer that re-added
+   * after the latch and publishes ONLY new tracks decrypts at the freshly
+   * installed key index, which is the one shape a persisting failure cannot
+   * hide in (the worker re-emits once per fresh index).
+   */
+  participantTrackSids?(identity: string): string[];
+  /**
+   * Surface the media-plane state for the 6.5 chip / callEncryptionError.
+   * `"loud"` carries the error to latch; `"clear"` WITH an error asks the UI
+   * to forget exactly that latched object (heal / re-establish), `"clear"`
+   * without one only ends a transient re-securing.
+   */
   onEncryptionState?(state: MediaEncryptionState, error?: unknown): void;
   /**
    * Surface the latest roster reconciliation (step 5). `state.tsx` renders the
@@ -1040,6 +1089,25 @@ export class MlsCallSession {
   #resecureTimer: ReturnType<typeof setTimeout> | null = null;
   /** Loud NOT-ENCRYPTED latched (terminal for the media chip until re-establish). */
   #loudLatched = false;
+  /** What raised the latch: only a `media` latch can heal (`loudHealVerdict`). */
+  #loudOrigin: LoudLatchOrigin = "control";
+  /** The latched error object — the UI clears exactly this one on heal/re-establish. */
+  #loudError: unknown;
+  /** The participant whose frames failed (LiveKit's `CryptorError`), if known. */
+  #loudParticipant: string | undefined;
+  /** That participant's published track SIDs at latch time. */
+  #loudParticipantSids = new Set<string>();
+  #loudLatchedAt = 0;
+  /** `#installSeq` at latch time — a strictly larger value means a new epoch's keys. */
+  #loudLatchedInstallSeq = -1;
+  /** Monotonic count of local key installs (epochs restart across groups; this does not). */
+  #installSeq = 0;
+  #lastInstallAt = 0;
+  /** When a media-plane error was last surfaced (stamped even under the latch). */
+  #lastMediaErrorAt = 0;
+  /** The one-shot heal probe armed by a new install under a media latch. */
+  #healTimer: ReturnType<typeof setTimeout> | null = null;
+  #healGeneration = 0;
 
   // --- Roster reconciliation (step 5) ----------------------------------------
   /** Pending 10 s leave-grace removals, keyed by device-qualified identity. */
@@ -1057,9 +1125,24 @@ export class MlsCallSession {
     {
       timer: ReturnType<typeof setTimeout>;
       deadline: number;
+      /** When `timer` fires — a re-arm may only move this LATER. */
+      expiresAt: number;
       pendingSince: number | null;
     }
   >();
+  /**
+   * When this member watched a CONNECTED device lose its MLS leaf — a served
+   * rejoin (the stale leaf removed so the device can be re-added), observed
+   * either as our own `#removeStaleLeaf` or, on every other member, as the
+   * roster diff in `#reconcileOnce`. Until the device's re-Add lands (or
+   * `REJOIN_REINTENT_WINDOW_MS` passes) its admit-grace re-arms
+   * (`admitInProgressVerdict`): nothing else ledgers the phase between the
+   * Remove and the rejoiner's next intent broadcast, and the window lapsing
+   * there is the 2026-09-07 rejoin beat — chip Not encrypted + the downgrade
+   * banner with Turn off encryption for ~12 s on every quick rejoin. Cleared
+   * when the identity is observed added, on leave, and with the group.
+   */
+  #rejoinServed = new Map<string, number>();
   /**
    * Admit-grace milliseconds already CONSUMED by each identity in this call —
    * a decaying budget, capped at `ADMIT_GRACE_MAX_MS` for the call's life.
@@ -1166,7 +1249,19 @@ export class MlsCallSession {
    */
   #pendingAdmits = new Map<
     string,
-    { request: MlsJoinRequest; attempts: number }
+    {
+      request: MlsJoinRequest;
+      attempts: number;
+      /**
+       * The intent was DS-flagged `rejoin` (a same-device member wiping and
+       * re-entering). A re-drive must keep the flag: re-driven as a normal
+       * admit, `#tryAdmit` found the STALE leaf, stamped `#recentAdds`, and
+       * the rejoiner's next real intent was refused by the §4.8 gate for 15 s
+       * — one transient listing failure on the serve widened the Remove→Add
+       * gap past every bound and brought the rejoin beat back.
+       */
+      rejoin: boolean;
+    }
   >();
   /** Self-rescheduling re-drive tick for `#pendingAdmits` (null when idle). */
   #admitRetryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -2051,7 +2146,12 @@ export class MlsCallSession {
       return;
     }
 
-    const entry = this.#pendingAdmits.get(key) ?? { request, attempts: 0 };
+    const entry = this.#pendingAdmits.get(key) ?? {
+      request,
+      attempts: 0,
+      // The dedup key namespace IS the flag (`#serveRejoin` reserves `rejoin:`).
+      rejoin: key.startsWith("rejoin:"),
+    };
     entry.request = request; // freshest intent wins (a re-broadcast supersedes)
     entry.attempts++;
     if (entry.attempts > MAX_ADMIT_RETRIES) {
@@ -2087,7 +2187,7 @@ export class MlsCallSession {
       // keeps counting across re-drives and the bound is real. A re-drive that
       // aborts again lands back in `#abortAdmit`, which schedules the next tick.
       for (const entry of [...this.#pendingAdmits.values()]) {
-        void this.#onJoinRequest(entry.request, false);
+        void this.#onJoinRequest(entry.request, entry.rejoin);
       }
     }, ADMIT_RETRY_MS);
     this.#admitRetryTimer = timer;
@@ -2232,6 +2332,13 @@ export class MlsCallSession {
     } catch {
       return;
     }
+    // From here the device is CONNECTED and about to be MLS-absent until its
+    // next intent lands an Add: keep it pending across that gap (the other
+    // members learn the same thing from the roster diff in `#reconcileOnce`).
+    this.#noteRejoinServed(
+      `${request.user_id}:${request.device_id}`,
+      Date.now(),
+    );
     console.warn(
       `[mls] removing stale leaf for rejoin: ${request.user_id}:${request.device_id}`,
     );
@@ -2275,6 +2382,7 @@ export class MlsCallSession {
         // observed Add (§4.8): a racing admitter's win put this leaf in the
         // roster, so stale rejoin re-broadcasts for it must not be served.
         this.#recentAdds.set(key, Date.now());
+        this.#rejoinServed.delete(key);
         return this.#abortAdmit(key, request, "already_member");
       }
       if (state.members.length >= MAX_E2EE_CALL_MEMBERS) {
@@ -2353,6 +2461,7 @@ export class MlsCallSession {
     // — either way the leaf is fresh) so a stale rejoin re-broadcast landing
     // after it cannot re-remove the member it was already served by.
     this.#recentAdds.set(key, Date.now());
+    this.#rejoinServed.delete(key);
   }
 
   // ---- Submit + arbitrate (the H1 / NEW-2 critical section) -----------------
@@ -3000,6 +3109,7 @@ export class MlsCallSession {
     this.#scheduledAdmits.clear();
     this.#pendingAdmits.clear(); // requests are group-scoped
     this.#recentAdds.clear(); // add observations are group-scoped (§4.8)
+    this.#rejoinServed.clear(); // so are served-rejoin observations
     this.#lastRosterIdentities.clear();
     if (this.#admitRetryTimer) {
       clearTimeout(this.#admitRetryTimer);
@@ -3182,6 +3292,18 @@ export class MlsCallSession {
    */
   #onLocalKeyInstalled(): void {
     this.#hasLocalKey = true;
+    this.#installSeq++;
+    this.#lastInstallAt = Date.now();
+    // A new epoch's keys under a MEDIA latch: the group re-keyed past the
+    // failure. Give the media plane one settle, then let `loudHealVerdict`
+    // judge (`#runHealProbe`). A control latch never heals this way.
+    if (
+      this.#loudLatched &&
+      this.#loudOrigin === "media" &&
+      this.#installSeq > this.#loudLatchedInstallSeq
+    ) {
+      this.#armHealProbe();
+    }
     // 6.7b MEDIUM-1: installing the FIRST local key is the genuine recovery
     // that closes the joiner window (`!#hasLocalKey` — see #surfaceError /
     // classifyEncryptionError). Clear the awaiting-first-key escalation HERE,
@@ -3248,6 +3370,10 @@ export class MlsCallSession {
    * (via `noteEncryptionRecovered`) instead of sticking the chip loud.
    */
   #surfaceError(error: unknown): void {
+    // Stamped BEFORE the latched early-return: the heal probe needs to see
+    // errors that arrive under the latch (a failure that survives a re-key
+    // re-emits once per freshly installed key index).
+    this.#lastMediaErrorAt = Date.now();
     const media = this.#media;
     if (!media || this.#terminal() || this.#loudLatched) return;
 
@@ -3258,7 +3384,7 @@ export class MlsCallSession {
       media.onEncryptionState?.("resecuring", error);
       this.#armResecureEscalation(error);
     } else {
-      this.#latchLoud(error);
+      this.#latchLoud(error, "media");
     }
   }
 
@@ -3274,7 +3400,7 @@ export class MlsCallSession {
       this.#resecureTimer = null;
       this.#timers.delete(timer);
       if (this.#terminal()) return;
-      this.#latchLoud(error);
+      this.#latchLoud(error, "media");
     }, RESECURE_ESCALATE_MS);
     this.#resecureTimer = timer;
     this.#timers.add(timer);
@@ -3333,7 +3459,15 @@ export class MlsCallSession {
     this.#timers.add(timer);
   }
 
-  #latchLoud(error: unknown): void {
+  /**
+   * Latch loud. `origin` decides whether the latch can ever heal short of a
+   * re-establish: only a `media` latch (a LiveKit `encryptionError` or a
+   * native key-path error, outside every window or escalated) records the
+   * failing participant and its tracks for `loudHealVerdict`; a `control`
+   * latch (the default — failed ladder, destroyed envelope, plaintext-recorded
+   * local publications, terminal session failure) is terminal as before.
+   */
+  #latchLoud(error: unknown, origin: LoudLatchOrigin = "control"): void {
     if (this.#loudLatched) return;
     // A disposed session reports nothing: the abort `dispose()` just fired
     // surfaces as a thrown request, and `disconnect()` has already cleared
@@ -3341,6 +3475,19 @@ export class MlsCallSession {
     // NEXT call's chip.
     if (this.#state === "closed") return;
     this.#loudLatched = true;
+    this.#loudOrigin = origin;
+    this.#loudError = error;
+    this.#loudLatchedAt = Date.now();
+    this.#loudLatchedInstallSeq = this.#installSeq;
+    const peer =
+      origin === "media" ? cryptorErrorParticipant(error) : undefined;
+    this.#loudParticipant = peer;
+    this.#loudParticipantSids = new Set(
+      peer !== undefined
+        ? (this.#media?.participantTrackSids?.(peer) ?? [])
+        : [],
+    );
+    this.#clearHealProbe();
     this.#clearResecureTimer();
     this.#media?.onEncryptionState?.("loud", error);
     // A loud verdict after the mode reached `e2ee` used to leave the chip red
@@ -3359,6 +3506,113 @@ export class MlsCallSession {
       clearTimeout(this.#resecureTimer);
       this.#timers.delete(this.#resecureTimer);
       this.#resecureTimer = null;
+    }
+  }
+
+  /** Forget a loud latch and everything the heal probe recorded for it. */
+  #clearLoudLatch(): void {
+    this.#clearHealProbe();
+    this.#loudLatched = false;
+    this.#loudOrigin = "control";
+    this.#loudError = undefined;
+    this.#loudParticipant = undefined;
+    this.#loudParticipantSids = new Set();
+    this.#loudLatchedAt = 0;
+    this.#loudLatchedInstallSeq = -1;
+    this.#lastMediaErrorAt = 0;
+  }
+
+  #clearHealProbe(): void {
+    if (this.#healTimer) {
+      clearTimeout(this.#healTimer);
+      this.#timers.delete(this.#healTimer);
+      this.#healTimer = null;
+    }
+  }
+
+  /**
+   * Arm (or re-arm — a newer install supersedes) the one-shot heal probe,
+   * `LOUD_HEAL_SETTLE_MS` after a new local key install under a media latch.
+   * Generation-guarded: a probe that is already past its await when a newer
+   * install lands cannot act on the stale world.
+   */
+  #armHealProbe(): void {
+    this.#clearHealProbe();
+    const generation = ++this.#healGeneration;
+    const timer = setTimeout(() => {
+      this.#timers.delete(timer);
+      if (this.#healTimer === timer) this.#healTimer = null;
+      void this.#runHealProbe(generation);
+    }, LOUD_HEAL_SETTLE_MS);
+    this.#healTimer = timer;
+    this.#timers.add(timer);
+  }
+
+  /**
+   * Judge a media latch after the settle (`loudHealVerdict`, peer-scoped —
+   * see its doc for why "no error since the install" alone is not enough).
+   * On `heal`: forget the latch, clear the UI's latched error, and restore
+   * the `e2ee` label only when the mode is the folded `negotiating` with Room
+   * E2EE on and no `mixed` pause held (never label `e2ee` over a held mixed
+   * gate or from an interlude); otherwise a reconcile lets the existing
+   * machinery drive. Publishing resumes only through the `#setMode` lockstep,
+   * with Room E2EE on and the current epoch's local key installed.
+   */
+  async #runHealProbe(generation: number): Promise<void> {
+    if (!this.#loudLatched || this.#state !== "active") return;
+    const result = await this.reconcileNow();
+    if (
+      generation !== this.#healGeneration ||
+      !this.#loudLatched ||
+      this.#state !== "active" ||
+      !result
+    ) {
+      return;
+    }
+    const media = this.#media;
+    if (!media) return;
+    const peer = this.#loudParticipant;
+    const present =
+      peer !== undefined && media.sfuParticipants().includes(peer);
+    const addedAt = peer !== undefined ? this.#recentAdds.get(peer) : undefined;
+    // Absent accessor ⇒ null ⇒ not "all new" (fail-closed).
+    const sids =
+      peer !== undefined && present
+        ? (media.participantTrackSids?.(peer) ?? null)
+        : [];
+    const verdict = loudHealVerdict({
+      origin: this.#loudOrigin,
+      latchedInstallSeq: this.#loudLatchedInstallSeq,
+      installSeq: this.#installSeq,
+      errorSinceInstall: this.#lastMediaErrorAt >= this.#lastInstallAt,
+      rosterConsistent:
+        result.nonEnrolled.length === 0 && result.pending.length === 0,
+      participant: {
+        known: peer !== undefined,
+        present,
+        readdedAfterLatch:
+          addedAt !== undefined && addedAt > this.#loudLatchedAt,
+        sidsAllNew:
+          sids !== null &&
+          sids.every((sid) => !this.#loudParticipantSids.has(sid)),
+      },
+    });
+    if (verdict !== "heal") return;
+    console.info(
+      `[mls] loud latch healed: the group re-keyed past the failure and ` +
+        `${peer} ${present ? "re-published under the new epoch" : "left the call"}`,
+    );
+    const error = this.#loudError;
+    this.#clearLoudLatch();
+    media.onEncryptionState?.("clear", error);
+    if (
+      this.#callMode.kind === "negotiating" &&
+      this.#e2eeEnabled &&
+      !this.#mixPaused
+    ) {
+      this.#setModeChained({ kind: "e2ee" });
+    } else {
+      void this.reconcileNow();
     }
   }
 
@@ -3383,7 +3637,17 @@ export class MlsCallSession {
     }
     this.#clearResecureTimer();
     this.#rotationWindow = false;
-    this.#loudLatched = false;
+    // A re-establish is the terminus a loud latch waits for: the group is
+    // being replaced, the mode has dropped to `negotiating` (gate held) and
+    // the ladder either succeeds — then the chip must be allowed to go green
+    // honestly — or exhausts into `#onLoud`, which latches again. The UI's
+    // `callEncryptionError` follows the session's latch instead of outliving
+    // it (it used to stay set until disconnect, leaving a successfully
+    // re-established call red with no banner and no escape).
+    if (this.#loudLatched && this.#loudError !== undefined) {
+      this.#media?.onEncryptionState?.("clear", this.#loudError);
+    }
+    this.#clearLoudLatch();
     this.#installEpoch = -1;
     this.#hasLocalKey = false;
     this.#lastOwnWon = null;
@@ -3420,52 +3684,76 @@ export class MlsCallSession {
     // the eager clear dropped its window, and the stale-leaf removal then
     // left it SFU-present/MLS-absent with no grace — instant mixed, leg
     // stopped. Window sizing: see `ADMIT_GRACE_BASE_MS`.
+    this.#armAdmitGrace(identity);
+    void this.reconcileNow();
+  }
+
+  /**
+   * Open an admit-grace window for `identity` unless it is us, a bare
+   * identity, or already windowed. Shared by the SFU join hook and the
+   * served-rejoin observation (`#noteRejoinServed`): a device whose stale
+   * leaf was just removed needs a window at THAT moment, not the one armed
+   * at its connect, which by then may have lapsed inert and been dropped.
+   */
+  #armAdmitGrace(identity: string): void {
     if (
-      identity !== this.#media?.localIdentity() &&
+      identity === this.#media?.localIdentity() ||
       // A bare identity has no E2EE device and can never be admitted: the
       // roster policy reports it non-enrolled on sight (I3 — the enrolled
       // sides pause before it has published a frame), so a window here would
       // only feed the expiry re-arm and the per-call budget for nothing.
-      isDeviceQualified(identity) &&
-      !this.#admitGrace.has(identity)
+      !isDeviceQualified(identity) ||
+      this.#admitGrace.has(identity)
     ) {
-      // Whatever this identity has NOT already spent in grace during this
-      // call. Exhausted ⇒ arm nothing: it falls straight through to
-      // non-enrolled and the loud path, which is also what makes a full
-      // LiveKit reconnect safe. `handleSignalRestarted` re-emits
-      // `ParticipantConnected` for EVERY remote (the events are buffered
-      // while state is `Reconnecting` and replayed on `Reconnected`), so this
-      // hook fires for participants that were already here and already loud;
-      // billing against a per-call budget means those replays cannot mint
-      // fresh windows and blank the mixed banner's names.
-      const window = admitGraceWindow({
-        usedMs: this.#admitGraceUsed.get(identity) ?? 0,
-        primaries:
-          this.#media
-            ?.sfuParticipants()
-            .filter((participant) => !isScreenLeg(participant)).length ?? 0,
-        baseMs: ADMIT_GRACE_BASE_MS,
-        staggerMs: ADMIT_STAGGER_MS,
-        maxMs: ADMIT_GRACE_MAX_MS,
-      });
-      if (window) {
-        const timer = setTimeout(() => {
-          this.#timers.delete(timer);
-          this.#onAdmitGraceExpiry(identity);
-        }, window.graceMs);
-        this.#admitGrace.set(identity, {
-          timer,
-          deadline: Date.now() + window.budgetMs,
-          // Assumed pending until the reconcile kicked below reports
-          // otherwise: conservative for the unknown gap (an enrolled
-          // rejoiner or a reconnect replay is settled inert one round trip
-          // later, costing milliseconds, not a window).
-          pendingSince: Date.now(),
-        });
-        this.#timers.add(timer);
-      }
+      return;
     }
-    void this.reconcileNow();
+    // Whatever this identity has NOT already spent in grace during this
+    // call. Exhausted ⇒ arm nothing: it falls straight through to
+    // non-enrolled and the loud path, which is also what makes a full
+    // LiveKit reconnect safe. `handleSignalRestarted` re-emits
+    // `ParticipantConnected` for EVERY remote (the events are buffered
+    // while state is `Reconnecting` and replayed on `Reconnected`), so this
+    // hook fires for participants that were already here and already loud;
+    // billing against a per-call budget means those replays cannot mint
+    // fresh windows and blank the mixed banner's names.
+    const window = admitGraceWindow({
+      usedMs: this.#admitGraceUsed.get(identity) ?? 0,
+      primaries:
+        this.#media
+          ?.sfuParticipants()
+          .filter((participant) => !isScreenLeg(participant)).length ?? 0,
+      baseMs: ADMIT_GRACE_BASE_MS,
+      staggerMs: ADMIT_STAGGER_MS,
+      maxMs: ADMIT_GRACE_MAX_MS,
+    });
+    if (!window) return;
+    const now = Date.now();
+    const timer = setTimeout(() => {
+      this.#timers.delete(timer);
+      this.#onAdmitGraceExpiry(identity);
+    }, window.graceMs);
+    this.#admitGrace.set(identity, {
+      timer,
+      deadline: now + window.budgetMs,
+      expiresAt: now + window.graceMs,
+      // Assumed pending until the next reconcile reports otherwise:
+      // conservative for the unknown gap (an enrolled rejoiner or a
+      // reconnect replay is settled inert one round trip later, costing
+      // milliseconds, not a window).
+      pendingSince: now,
+    });
+    this.#timers.add(timer);
+  }
+
+  /**
+   * Record that a CONNECTED device lost its MLS leaf (a served rejoin) and
+   * make sure a grace window covers it until its re-Add: arm one if none is
+   * open, then extend whatever is open (a refresh can only ever extend).
+   */
+  #noteRejoinServed(identity: string, nowMs: number): void {
+    this.#rejoinServed.set(identity, nowMs);
+    this.#armAdmitGrace(identity);
+    this.#refreshAdmitGrace(identity);
   }
 
   /**
@@ -3477,6 +3765,7 @@ export class MlsCallSession {
     if (this.#terminal() || this.#state !== "active") return;
     if (identity === this.#media?.localIdentity()) return; // never remove self
     this.#clearAdmitGrace(identity); // a leaver holds no admit window
+    this.#rejoinServed.delete(identity); // nor a pending re-Add
     if (this.#leaveGrace.has(identity)) return; // already pending
     const timer = setTimeout(() => {
       this.#leaveGrace.delete(identity);
@@ -3546,17 +3835,39 @@ export class MlsCallSession {
     // first reconcile of a group stamps everyone — over-suppression bounded
     // by one `REJOIN_SERVE_SUPPRESS_MS` window, in the refuse-to-remove
     // (fail-safe) direction.
+    const localIdentity = media.localIdentity() ?? "";
     {
       const now = Date.now();
+      const roster = new Set(mlsIdentities);
+      const sfu = new Set(media.sfuParticipants());
       for (const identity of mlsIdentities) {
         if (!this.#lastRosterIdentities.has(identity)) {
           this.#recentAdds.set(identity, now);
+          // Re-added: the served rejoin completed, the gap is closed.
+          this.#rejoinServed.delete(identity);
         }
       }
-      this.#lastRosterIdentities = new Set(mlsIdentities);
+      // The mirror direction: a device that is STILL CONNECTED just lost its
+      // leaf. A leave-grace Remove re-checks SFU absence before it stages, so
+      // a connected device loses its leaf only through a rejoin serve — whose
+      // Add waits for the device's next intent broadcast — or another
+      // member's commit. Either way a re-Add is expected: keep the device
+      // pending across the gap on EVERY member, not just the one whose
+      // Remove won (the others' stagger timers find the leaf already gone
+      // and return without ever reaching `#removeStaleLeaf`).
+      for (const identity of this.#lastRosterIdentities) {
+        if (
+          !roster.has(identity) &&
+          sfu.has(identity) &&
+          identity !== localIdentity &&
+          isDeviceQualified(identity)
+        ) {
+          this.#noteRejoinServed(identity, now);
+        }
+      }
+      this.#lastRosterIdentities = roster;
     }
 
-    const localIdentity = media.localIdentity() ?? "";
     const result = reconcileRoster(
       media.sfuParticipants(),
       mlsIdentities,
@@ -3733,6 +4044,7 @@ export class MlsCallSession {
     }
     this.#ghostTimers.clear();
     this.#nonEnrolled = [];
+    this.#rejoinServed.clear();
   }
 
   #clearLeaveGrace(identity: string): void {
@@ -3820,11 +4132,15 @@ export class MlsCallSession {
    * lives here until our stagger fires and finds the leaf already present.
    */
   #admitInProgress(identity: string): boolean {
-    return (
-      this.#scheduledAdmits.has(identity) ||
-      this.#pendingAdmits.has(identity) ||
-      this.#scheduledAdmits.has(`rejoin:${identity}`)
-    );
+    return admitInProgressVerdict({
+      scheduledAdmit: this.#scheduledAdmits.has(identity),
+      ledgeredAdmit: this.#pendingAdmits.has(identity),
+      scheduledRejoin: this.#scheduledAdmits.has(`rejoin:${identity}`),
+      ledgeredRejoin: this.#pendingAdmits.has(`rejoin:${identity}`),
+      rejoinServedAtMs: this.#rejoinServed.get(identity) ?? null,
+      nowMs: Date.now(),
+      windowMs: REJOIN_REINTENT_WINDOW_MS,
+    });
   }
 
   /**
@@ -3854,11 +4170,26 @@ export class MlsCallSession {
    */
   #rearmAdmitGrace(
     identity: string,
-    entry: { timer: ReturnType<typeof setTimeout>; deadline: number },
+    entry: {
+      timer: ReturnType<typeof setTimeout>;
+      deadline: number;
+      expiresAt: number;
+    },
     stillEnrolling: boolean,
   ): boolean {
-    const remaining = entry.deadline - Date.now();
-    if (remaining <= 0 || !stillEnrolling) return false;
+    if (!stillEnrolling) return false;
+    const now = Date.now();
+    // Extend, never shorten (`rearmAdmitGraceExpiry`): the window armed at
+    // connect is `base + primaries × stagger`, and re-arming to `now + base`
+    // on the joiner's own intent cut it short — a contributor to the
+    // 2026-09-07 rejoin beat. The deadline still caps.
+    const expiresAt = rearmAdmitGraceExpiry({
+      nowMs: now,
+      currentExpiryMs: entry.expiresAt,
+      baseMs: ADMIT_GRACE_BASE_MS,
+      deadlineMs: entry.deadline,
+    });
+    if (expiresAt === null) return false;
     clearTimeout(entry.timer);
     this.#timers.delete(entry.timer);
     const timer = setTimeout(
@@ -3866,9 +4197,10 @@ export class MlsCallSession {
         this.#timers.delete(timer);
         this.#onAdmitGraceExpiry(identity);
       },
-      Math.min(ADMIT_GRACE_BASE_MS, remaining),
+      Math.max(0, expiresAt - now),
     );
     entry.timer = timer;
+    entry.expiresAt = expiresAt;
     this.#timers.add(timer);
     return true;
   }
@@ -3979,6 +4311,7 @@ export class MlsCallSession {
       // the flag. Enable runs only on a consistent roster (its callers'
       // precondition), so nothing is left to keep the pause for. Releasing
       // an un-held reason is a no-op.
+      this.#foldBeforeMixedRelease(); // see the T2 timer — same gate ordering
       await media.resumePublishing?.("mixed");
       this.#mixPaused = false;
       this.#setModeChained({ kind: "e2ee" }); // T0b (LOW-3: serialize the label)
@@ -4182,6 +4515,11 @@ export class MlsCallSession {
           // re-drives T2.
           if (this.#hasLocalKey) await this.#enable();
         } else {
+          // Under a loud latch the label below folds to `negotiating`. Fold
+          // EAGERLY, before the `mixed` release, so the negotiating gate is
+          // asserted while `mixed` is still held and the publish gate never
+          // empties — not even for the chained microtask.
+          this.#foldBeforeMixedRelease();
           await this.#media?.resumePublishing?.("mixed");
           this.#mixPaused = false;
           this.#setModeChained({ kind: "e2ee" }); // T2 (LOW-3: serialize the label)
@@ -4208,6 +4546,14 @@ export class MlsCallSession {
     // surviving dispose() must not touch the shared publish gate or clobber
     // the next call's UI signals through this binding.
     if (this.#state === "closed") return;
+    // Under a loud latch `e2ee` is unreachable and folds to `negotiating`
+    // (`modeUnderLoudLatch`): the terminal banner with its Leave /
+    // Stay-unencrypted escape stays with the red chip, and the lockstep
+    // below re-asserts the negotiating gate. Every path that writes a label
+    // goes through here, so the machine running on under a latch (a peer's
+    // rejoin declaring and clearing a mix, then the T2 warm resume) can no
+    // longer end in a red chip with no banner and the promised pause lifted.
+    mode = modeUnderLoudLatch(mode, this.#loudLatched);
     const wasNegotiating = this.#callMode.kind === "negotiating";
     this.#callMode = mode;
     if (mode.kind === "negotiating" && !wasNegotiating) {
@@ -4407,6 +4753,22 @@ export class MlsCallSession {
       clearTimeout(this.#reupgradeTimer);
       this.#timers.delete(this.#reupgradeTimer);
       this.#reupgradeTimer = null;
+    }
+  }
+
+  /**
+   * The two places that release the `mixed` gate and then label `e2ee` call
+   * this FIRST: when a loud latch would fold that label to `negotiating`,
+   * assert it now (direct, eager — the `#dropModeToNegotiating` pattern) so
+   * the negotiating gate is held before `mixed` is released. Without it the
+   * gate sits empty for the chained microtask between the release and the
+   * folded label — encrypted publishing, never plaintext, but a pause the
+   * banner promises must not flicker.
+   */
+  #foldBeforeMixedRelease(): void {
+    const next = modeUnderLoudLatch({ kind: "e2ee" }, this.#loudLatched);
+    if (next.kind === "negotiating" && this.#callMode.kind !== "negotiating") {
+      this.#setMode(next);
     }
   }
 

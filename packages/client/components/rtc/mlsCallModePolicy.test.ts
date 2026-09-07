@@ -10,12 +10,15 @@ import { test } from "node:test";
 import {
   type CallMode,
   type ChipInputs,
+  type LoudHealInputs,
   callModeTransition,
   chipState,
   classifyEncryptionError,
   isTerminalLoud,
+  loudHealVerdict,
   loudModeFallback,
   mixDetectedAction,
+  modeUnderLoudLatch,
   parseCtlPayload,
   rotationWindowMs,
 } from "./mlsCallModePolicy.ts";
@@ -606,6 +609,162 @@ test("a loud latch anywhere else keeps the mode", () => {
   ];
   for (const mode of keep)
     assert.equal(loudModeFallback(mode), null, mode.kind);
+});
+
+// ---- the label a latched session may write ----------------------------------
+
+test("🔴 under a loud latch, e2ee is unreachable: it folds to negotiating", () => {
+  // The R2 dead end (2026-09-07): after the latch the machine kept running
+  // and a mix_detected → mix_cleared cycle wrote `e2ee` back — red chip from
+  // the latched error, no banner, no escape, the promised pause lifted.
+  const folded = modeUnderLoudLatch(E2EE, true);
+  assert.deepEqual(folded, NEGOTIATING);
+  assert.equal(isTerminalLoud(folded, "not_encrypted", true), true);
+});
+
+test("without a latch the label passes through unchanged", () => {
+  assert.deepEqual(modeUnderLoudLatch(E2EE, false), E2EE);
+  assert.deepEqual(modeUnderLoudLatch(MIXED, false), MIXED);
+});
+
+test("every other label passes under a latch (they carry their own banners or are terminal)", () => {
+  const pass: CallMode[] = [
+    NEGOTIATING,
+    MIXED,
+    INTERLUDE_UNCONF,
+    INTERLUDE_CONF,
+    { kind: "off" },
+    { kind: "call_full" },
+  ];
+  for (const mode of pass)
+    assert.deepEqual(modeUnderLoudLatch(mode, true), mode, mode.kind);
+});
+
+test("🔴 composition: latch → mix → mix cleared → the T2 resume cannot reach e2ee", () => {
+  // Latch in e2ee folds to negotiating; a rejoining peer's beat declares a
+  // mix (T0c declare = the session sets `mixed`); the mix clears and the T2
+  // timer labels e2ee — which must fold back to the terminal-loud shape.
+  const latched = loudModeFallback(E2EE)!;
+  assert.deepEqual(latched, NEGOTIATING);
+  const mixed: CallMode = MIXED; // #onMixDetected's direct label
+  const cleared = callModeTransition(mixed, { type: "mix_cleared" });
+  assert.deepEqual(cleared.effects, [
+    { do: "schedule_reupgrade", viaSuccessor: false },
+  ]);
+  const t2 = modeUnderLoudLatch(E2EE, true); // what the timer may write
+  assert.deepEqual(t2, NEGOTIATING);
+  assert.equal(isTerminalLoud(t2, "not_encrypted", true), true);
+});
+
+test("chip: negotiating + latched error is loud; negotiating without one is amber", () => {
+  const base: ChipInputs = {
+    hasSession: true,
+    sessionState: "active",
+    mode: NEGOTIATING,
+    e2eeEnabled: false,
+    hasLocalKey: false,
+    resecuring: false,
+    latchedError: false,
+    publishingIdentities: [],
+    observedEncrypted: new Map(),
+    localPublicationsEncrypted: true,
+    rosterVerified: [],
+    channelHasOpenGroup: true,
+    capableAndEnabled: true,
+  };
+  assert.equal(chipState({ ...base, latchedError: true }), "not_encrypted");
+  // The heal's intermediate: the latch is gone, the label is still folded
+  // until the chained `e2ee` lands.
+  assert.equal(chipState(base), "resecuring");
+});
+
+// ---- healing a media latch: the peer-scoped witness ------------------------
+
+const HEAL_OK: LoudHealInputs = {
+  origin: "media",
+  latchedInstallSeq: 3,
+  installSeq: 4,
+  errorSinceInstall: false,
+  rosterConsistent: true,
+  participant: {
+    known: true,
+    present: false,
+    readdedAfterLatch: false,
+    sidsAllNew: false,
+  },
+};
+
+test("a media latch heals once the group re-keyed and the failing peer LEFT", () => {
+  assert.equal(loudHealVerdict(HEAL_OK), "heal");
+});
+
+test("…or once that peer was re-added after the latch and publishes only NEW tracks", () => {
+  assert.equal(
+    loudHealVerdict({
+      ...HEAL_OK,
+      participant: {
+        known: true,
+        present: true,
+        readdedAfterLatch: true,
+        sidsAllNew: true,
+      },
+    }),
+    "heal",
+  );
+});
+
+test("🔴 a present peer still publishing a latched-time track holds (silent drops at an invalid index)", () => {
+  // The worker emits one error per key index and then drops silently; a peer
+  // still sending at its old index after the re-key produces no error and no
+  // decrypt. "No error since the install" alone would heal over dead air.
+  assert.equal(
+    loudHealVerdict({
+      ...HEAL_OK,
+      participant: {
+        known: true,
+        present: true,
+        readdedAfterLatch: true,
+        sidsAllNew: false,
+      },
+    }),
+    "hold",
+  );
+  assert.equal(
+    loudHealVerdict({
+      ...HEAL_OK,
+      participant: {
+        known: true,
+        present: true,
+        readdedAfterLatch: false,
+        sidsAllNew: true,
+      },
+    }),
+    "hold",
+  );
+});
+
+test("🔴 every other missing witness holds", () => {
+  const holds: Partial<LoudHealInputs>[] = [
+    { origin: "control" },
+    { installSeq: 3 }, // no new epoch since the latch
+    { installSeq: 2 },
+    { errorSinceInstall: true },
+    { rosterConsistent: false },
+    {
+      participant: {
+        known: false,
+        present: false,
+        readdedAfterLatch: false,
+        sidsAllNew: false,
+      },
+    },
+  ];
+  for (const over of holds)
+    assert.equal(
+      loudHealVerdict({ ...HEAL_OK, ...over }),
+      "hold",
+      JSON.stringify(over),
+    );
 });
 
 // ---- mix detected: what the session does, by mode ---------------------------
