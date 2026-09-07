@@ -75,6 +75,7 @@ import type {
   ResponseSubmitMlsCommit,
 } from "@revolt/client";
 
+import { isRateLimited } from "../client/e2eeRatelimitPolicy";
 import { isScreenLeg } from "../ui/components/features/voice/participantIdentity";
 import {
   type LocalPublicationEncryption,
@@ -109,7 +110,11 @@ import {
   spliceParkedAfterWelcome,
 } from "./mlsDrainPolicy";
 import { joinRequestAction } from "./mlsJoinRequestPolicy";
-import { negotiatingFailsafeAction } from "./mlsNegotiatingFailsafe";
+import {
+  type NegotiatingFailsafeInput,
+  negotiatingFailsafeAction,
+  negotiatingFailsafeReason,
+} from "./mlsNegotiatingFailsafe";
 import {
   rejoinServeAction,
   startupWipeTargets,
@@ -141,15 +146,23 @@ const RETRY_DELAY_MS = 500;
 /** Bound on successive rejoin/successor re-establishes before failing loud. */
 const MAX_REESTABLISH = 3;
 /**
- * Fail-safe (T0d, R2-6): if the session produces NO verdict within this window
- * (DS unreachable — no create/join response) AND the channel has no known open
- * MLS group, release the `negotiating` publish gate so a plain voice call is
- * never stuck muted. If an open group IS known, the gate stays asserted and the
- * state goes loud RE-SECURING — an E2EE-known call never auto-resumes plaintext.
+ * Fail-safe (T0d): if the session has NO Delivery-Service verdict within this
+ * window (no create/join response yet — slow, rate limited, or unreachable),
+ * hold the `negotiating` publish gate and go amber RE-SECURING so the delayed
+ * start is visible. The gate is NEVER released without a DS verdict: the R2-6
+ * availability escape that released it to plaintext when the channel had no
+ * known open group was withdrawn 2026-09-06 (user decision — its premise was
+ * not provable from the client, and the chip was wrong for as long as the DS
+ * took to answer). The hold is bounded by the transport's per-request
+ * deadline (`MLS_REQUEST_DEADLINE_MS`, 45 s, 429 waits included — a create
+ * the DS never answers throws into the group-action catch → `#onLoud`) plus
+ * the existing loud ladder (the join loop's bounded broadcasts and Welcome
+ * waits, `MAX_REESTABLISH`), after which the session goes LOUD; the 240 s
+ * `SELF_ENROLMENT_DEADLINE_MS` is only the backstop for a path that reaches
+ * neither. The rule itself lives in `mlsNegotiatingFailsafe.ts` so it can be
+ * tested.
  */
 const NEGOTIATING_FAILSAFE_MS = 5_000;
-// `MAX_FAILSAFE_REARMS` moved to `mlsNegotiatingFailsafe.ts` with the decision
-// it bounds, so the rule and its bound can be tested together.
 /**
  * Backoff before an admitter re-drives a join request whose attempt aborted
  * transiently. The joiner re-broadcasts only `MAX_JOINER_RETRIES` times over
@@ -171,6 +184,19 @@ const MAX_ADMIT_RETRIES = 6;
  * reaches neither — and it is additionally suppressed while an establish is
  * actually in flight (`enrolmentVerdict`'s `establishInFlight`), so a slow
  * but live ladder can never false-alarm.
+ *
+ * That suppression is safe because an in-flight establish is itself bounded,
+ * request by request: every delivery-service wait (and the join path's
+ * roster listing) rides the transport's per-request deadline
+ * (`MLS_REQUEST_DEADLINE_MS`, 45 s, 429 waits included), every Welcome wait
+ * is a timer, and every loop has a cap. So the real bound on a hung start
+ * is the deadline plus the ladder — a create the DS never answers throws at
+ * 45 s into the group-action catch → `#onLoud`; a joiner whose intents are
+ * never answered spends `(MAX_JOINER_RETRIES + 1) × (45 s + JOINER_RETRY_MS)`
+ * ≈ 220 s per establish (+ 45 s for the listing pin), up to `1 +
+ * MAX_REESTABLISH` establishes, then asserts exhaustion loud — and this
+ * deadline never has to fire for any of that. It is NOT what bounds the T0d
+ * hold; the request deadline is.
  */
 const SELF_ENROLMENT_DEADLINE_MS = 240_000;
 /** Re-check interval for the self-enrolment assertion while still pending. */
@@ -853,14 +879,13 @@ export interface MlsCallSessionDeps {
    */
   requestMfaTicket?: () => Promise<string | undefined>;
   /**
-   * The channel's open-group probe state (tri-state, media-gate LOW-2). Read
-   * by the T0d fail-safe: `"open"` ⇒ hold the gate + loud RE-SECURING (an
-   * E2EE-known call never auto-resumes plaintext); `"pending"` ⇒ hold the
-   * gate and re-arm the fail-safe (bounded); `"none"` (a COMPLETED 404 /
-   * feature-off / probe error — the error arm is RATIFIED, R2-6: the probe
-   * and the DS share an origin) ⇒ the availability escape may release.
+   * The channel's open-group probe state (media-gate LOW-2). Read by the
+   * T0d fail-safe, which since 2026-09-06 holds the gate for EVERY value —
+   * the R2-6 availability escape that released it on `"none"` is withdrawn.
+   * The value only names the hold in the console
+   * (`negotiatingFailsafeReason`).
    */
-  channelHasOpenGroup?: () => "open" | "none" | "pending";
+  channelHasOpenGroup?: () => "open" | "none" | "pending" | "ratelimited";
 }
 
 /** One staged own commit awaiting arbitration (native pending mirror). */
@@ -1091,8 +1116,6 @@ export class MlsCallSession {
   #callMode: CallMode = { kind: "negotiating" };
   /** For a remote announce (T4): the user who announced plaintext. */
   #announcedBy: string | undefined;
-  /** T0d fail-safe re-arms consumed while the open-group probe was pending. */
-  #failsafeRearms = 0;
   /**
    * 🔴 Has the DS answered our create/join at all?
    *
@@ -1110,6 +1133,20 @@ export class MlsCallSession {
    * conflicts and never trips it; the JOINER always does.
    */
   #dsVerdictSeen = false;
+  /**
+   * The DS answered a 429 to some `/mls/` request of this bring-up — latched
+   * from the bridge's first-429 notifier (`registerMlsSink`), read by the
+   * fail-safe as `transportRatelimited`. The transport's wait (up to three
+   * of ~10 s) otherwise leaves every other term quiet: `#ensureKeyPackages`
+   * returns best-effort, the create has not answered, nothing is latched,
+   * and the probe may already read "none" — which, until 2026-09-06, was
+   * the release arm: plaintext to the SFU under no chip until the delayed
+   * create landed. The gate now holds regardless; this term names the wait
+   * in the RE-SECURING reason so the delayed start is attributable.
+   */
+  #dsRatelimited = false;
+  /** Cuts every call-plane request and its 429 wait on `dispose()`. */
+  #abort = new AbortController();
   /** Serializes §3.4 mode transitions + their awaited media effects (F8). */
   #modeChain: Promise<void> = Promise.resolve();
   /** Self-rescheduling heartbeat tick + its enabled gate. */
@@ -1187,7 +1224,12 @@ export class MlsCallSession {
    */
   async start(): Promise<void> {
     if (this.#state !== "starting") return;
-    this.#unregisterSink = this.#deps.bridge.registerMlsSink(this.#onSink);
+    this.#unregisterSink = this.#deps.bridge.registerMlsSink(this.#onSink, {
+      signal: this.#abort.signal,
+      onRatelimited: () => {
+        this.#dsRatelimited = true;
+      },
+    });
     this.#armNegotiatingFailsafe();
     this.#armEnrolmentAssertion();
     try {
@@ -1206,43 +1248,49 @@ export class MlsCallSession {
   }
 
   /**
-   * T0d fail-safe (R2-6 + media-gate LOW-2, tri-state): if we are STILL
-   * negotiating after the window (DS unreachable — no create/join verdict):
-   *  - probe says "open"    ⇒ hold the gate + loud RE-SECURING (an E2EE-known
-   *    call never auto-resumes plaintext);
-   *  - probe says "pending" ⇒ hold the gate and RE-ARM (bounded — a hung
-   *    probe eventually errors to "none" via fetch's own failure);
-   *  - probe says "none" (a COMPLETED verdict, incl. the RATIFIED error arm)
-   *    ⇒ availability escape: release the gate, keep negotiating quietly.
+   * T0d fail-safe, fail-closed (user decision 2026-09-06): if we are STILL
+   * negotiating after the window with NO Delivery-Service verdict (no
+   * create/join response yet — slow, rate limited, or unreachable), hold the
+   * publish gate and go amber RE-SECURING so the delayed start is visible
+   * (`#toResecuring` → `onStateChange` → the chip, reactively). Whatever the
+   * open-group probe says: the R2-6 availability escape — "no verdict AND
+   * probe says no open group ⇒ DS unreachable ⇒ release the gate, keep
+   * negotiating quietly" — is WITHDRAWN. Its premise was never provable
+   * from here: a slow create, a transport waiting out a 429 and a probe
+   * whose own budget was spent all looked like unreachability at 5 s, and
+   * each released plaintext to the SFU under NO chip (a `starting` session
+   * renders as nothing) for as long as the DS took to answer.
+   *
+   * The hold ends one of two ways, neither of them here:
+   *  - the DS answers (`#dsVerdictSeen`): create/join routes as normal and
+   *    `#toActive`, the join ladder, or a loud failure takes over; or
+   *  - the bounded ladder ends: the create the DS never answers is cut by
+   *    the transport's per-request deadline (`MLS_REQUEST_DEADLINE_MS`,
+   *    45 s, 429 waits included) and throws into the group-action catch →
+   *    `#onLoud`; a joiner's unanswered intents count against its bounded
+   *    broadcasts and the join ladder's terminal asserts exhaustion; the
+   *    240 s `SELF_ENROLMENT_DEADLINE_MS` backstop catches a path that
+   *    reaches neither. Each goes LOUD through `#latchLoud` — the
+   *    NOT-ENCRYPTED chip + the Leave / Stay-unencrypted banner, where
+   *    "Stay" is the user's explicit consent to plaintext.
+   *
+   * "ignore" is the only other outcome: a verdict exists (the routed path
+   * carries its own bound and terminal), or a loud verdict is already
+   * LATCHED (that path holds the gate and owns the only escape). Nothing
+   * here ever calls `resumePublishing`.
    */
   #armNegotiatingFailsafe(): void {
     const timer = setTimeout(() => {
       this.#timers.delete(timer);
       if (this.#terminal() || this.#callMode.kind !== "negotiating") return;
-      switch (
-        negotiatingFailsafeAction({
-          dsVerdictSeen: this.#dsVerdictSeen,
-          probe: this.#deps.channelHasOpenGroup?.() ?? "none",
-          rearmsUsed: this.#failsafeRearms,
-        })
-      ) {
-        case "ignore":
-          return;
-        case "resecure":
-          this.#toResecuring("negotiation timed out with an open E2EE group");
-          return;
-        case "rearm":
-          this.#failsafeRearms++;
-          this.#armNegotiatingFailsafe();
-          return;
-        case "release":
-          // Completed no-group verdict (or the probe never resolved past the
-          // bounded re-arms — same-origin, so the DS is unreachable too) →
-          // availability escape: release the gate, keep negotiating in the
-          // background (a late verdict still applies).
-          void this.#media?.resumePublishing?.("negotiating");
-          return;
-      }
+      const input: NegotiatingFailsafeInput = {
+        dsVerdictSeen: this.#dsVerdictSeen,
+        probe: this.#deps.channelHasOpenGroup?.() ?? "none",
+        loudLatched: this.#loudLatched,
+        transportRatelimited: this.#dsRatelimited,
+      };
+      if (negotiatingFailsafeAction(input) === "ignore") return;
+      this.#toResecuring(negotiatingFailsafeReason(input));
     }, NEGOTIATING_FAILSAFE_MS);
     this.#timers.add(timer);
   }
@@ -1318,6 +1366,14 @@ export class MlsCallSession {
       // is never deferred by it: `#joinPath` asserts exhaustion from INSIDE
       // the establish, and deferring that latch to the 240 s deadline would
       // re-create the parked-muted-behind-an-amber-chip state (§4.3/§4.4).
+      // The suppression is safe because a live establish is bounded on its
+      // own: every delivery-service request it awaits rides the transport's
+      // per-request deadline (`MLS_REQUEST_DEADLINE_MS`), so a create or
+      // intent the DS never answers throws — into the group-action catch
+      // (loud) or the join loop's bounded broadcasts — instead of keeping
+      // this flag up for good. (Between 2026-09-06 and that deadline the
+      // flag was narrowed to `&& #dsVerdictSeen` to bound a hung first
+      // create; the deadline bounds it at the transport, where it belongs.)
       establishInFlight: this.#establishInFlight,
       ladderExhausted,
       deadlineLapsed: Date.now() >= this.#enrolmentDeadline,
@@ -1388,6 +1444,9 @@ export class MlsCallSession {
     this.#setState("closed"); // set first so every guard short-circuits
     this.#unregisterSink?.();
     this.#unregisterSink = null;
+    // Cut every in-flight call-plane request and 429 wait: a retry ladder
+    // must not outlive the call it was started for.
+    this.#abort.abort();
 
     this.#stopReconcile(); // gate off the self-rescheduling reconcile loop
     // The real end of the call, and the only correct place to forget how much
@@ -1472,6 +1531,12 @@ export class MlsCallSession {
         );
       }
     } catch (error) {
+      if (this.#terminal()) return; // disposed mid-wait: the abort is ours
+      // A 429 past the transport's bounded retries is NOT best-effort: the
+      // DS is up and refusing us, and staying quiet here left the session
+      // with no verdict, no latch and a "none" chip while the create behind
+      // it waited too. Rethrow, so `start()` fails it LOUD (`#onLoud`).
+      if (isRateLimited(error)) throw error;
       console.error(
         "[mls] KeyPackage publish failed (enrol best-effort)",
         error,
@@ -1676,7 +1741,19 @@ export class MlsCallSession {
     // the admitter's (and any existing member's) leaf passes
     // verify_leaf_credential on the FIRST Welcome pass — instead of a
     // reject → reconcile → reprocess round-trip and a retry-window key gap.
-    await this.#reconcileRoster();
+    try {
+      await this.#reconcileRoster();
+    } catch (error) {
+      // The pre-pin is an optimization, not the gate. A listing that did not
+      // arrive (a 429 past the transport's bounded retries, offline) leaves
+      // the Welcome's own leaf verification to re-drive the reconcile through
+      // `fetch_identity`, and the bounded join ladder below still ends loud
+      // if the pin never lands. Never plaintext; not loud on its own.
+      console.warn(
+        "[mls] pre-join roster pin skipped — listing unavailable",
+        error,
+      );
+    }
 
     for (let attempt = 0; attempt <= MAX_JOINER_RETRIES; attempt++) {
       // §4.2: a superseded join loop broadcasts NOTHING — every re-broadcast
@@ -1895,12 +1972,15 @@ export class MlsCallSession {
     // before the Add commit fans out, so this member accepts the joiner's leaf
     // instead of failing loud (admitter) / poisoning (existing member). Wrap
     // so a rejected reconcile doesn't ORPHAN the reserved key (audit final LOW).
+    // A listing that did not arrive now THROWS (it used to be swallowed, and
+    // the admit went on to spend a claim against a pin it did not hold):
+    // ledger it, and let the re-drive fetch it in the next window.
     try {
       await this.#reconcileRoster([
         { userId: request.user_id, deviceId: request.device_id },
       ]);
     } catch (error) {
-      return this.#abortAdmit(key, request, "state_unavailable", error);
+      return this.#abortAdmit(key, request, "listing_unavailable", error);
     }
     if (this.#state !== "active") {
       return this.#abortAdmit(key, request, "not_active");
@@ -1955,6 +2035,9 @@ export class MlsCallSession {
     error?: unknown,
   ): void {
     this.#scheduledAdmits.delete(key);
+    // A claim or listing cut by `dispose()` lands here as a thrown request;
+    // the call is over, so there is nothing to ledger or re-drive.
+    if (this.#state === "closed") return;
 
     if (!admitAbortIsRetryable(abort)) {
       this.#pendingAdmits.delete(key);
@@ -2040,7 +2123,7 @@ export class MlsCallSession {
         { userId: request.user_id, deviceId: request.device_id },
       ]);
     } catch (error) {
-      return this.#abortAdmit(key, request, "state_unavailable", error);
+      return this.#abortAdmit(key, request, "listing_unavailable", error);
     }
     try {
       await this.#deps.bridge.callVerifyJoinIntent(request);
@@ -3252,6 +3335,11 @@ export class MlsCallSession {
 
   #latchLoud(error: unknown): void {
     if (this.#loudLatched) return;
+    // A disposed session reports nothing: the abort `dispose()` just fired
+    // surfaces as a thrown request, and `disconnect()` has already cleared
+    // the encryption-error signal this would otherwise re-latch into the
+    // NEXT call's chip.
+    if (this.#state === "closed") return;
     this.#loudLatched = true;
     this.#clearResecureTimer();
     this.#media?.onEncryptionState?.("loud", error);
@@ -3927,9 +4015,7 @@ export class MlsCallSession {
    * exit, `false` when the correction did not land (the caller must then
    * leave the window held rather than resume).
    */
-  async #assertLocalDeclarations(
-    via: "enable" | "publish",
-  ): Promise<boolean> {
+  async #assertLocalDeclarations(via: "enable" | "publish"): Promise<boolean> {
     if (this.#localDeclarationCheck) {
       this.#localDeclarationRecheck = true;
       return this.#localDeclarationCheck;
@@ -4468,6 +4554,7 @@ export class MlsCallSession {
   }
 
   #onLoud(error: unknown): void {
+    if (this.#state === "closed") return; // disposed: the abort is ours
     console.error("[mls] loud failure", error);
     this.#lastError = error;
     this.#setState("failed");

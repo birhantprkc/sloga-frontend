@@ -40,6 +40,15 @@ import type {
   Message,
 } from "stoat.js";
 
+import {
+  type CallRosterOutcome,
+  type RatelimitTransportOptions,
+  CALL_PLANE_RATELIMIT_RETRIES,
+  fetchWithRatelimitPolicy,
+  isMlsPath,
+  MLS_REQUEST_DEADLINE_MS,
+  settleCallRosterReconcile,
+} from "./e2eeRatelimitPolicy";
 import { classifyEnvelopeError } from "./mlsEnvelopeClassify";
 import { IS_OVERLAY_WINDOW, IS_POPOUT_WINDOW } from "./popout";
 
@@ -509,6 +518,21 @@ export type MlsSinkEvent =
 
 /** The active call session's inbound MLS event sink. */
 export type MlsSessionSink = (event: MlsSinkEvent) => void;
+
+/**
+ * What a call session binds beside its sink (`registerMlsSink`): its
+ * disposal signal, which cuts every call-plane request and 429 wait the
+ * moment the call ends, and a notifier the bridge fires on the FIRST 429 of
+ * any `/mls/` request. The session's negotiating fail-safe reads what it
+ * latches from that at 5 s — when the reset the transport is waiting for
+ * may still be 10 s away, and every other term it consults is quiet. Every
+ * call-plane request additionally rides the per-request deadline
+ * (`MLS_REQUEST_DEADLINE_MS`), composed with this signal by the transport.
+ */
+export interface MlsCallTransport {
+  signal?: AbortSignal;
+  onRatelimited?: () => void;
+}
 
 /**
  * How a processed inbound envelope should be dispositioned by the mailbox
@@ -1207,18 +1231,24 @@ export class E2EEBridge implements E2EEAdapter {
     path: string,
     body?: unknown,
     headers?: Record<string, string>,
+    transport?: RatelimitTransportOptions,
   ): Promise<T> {
     const [authHeader, authValue] = this.#client.authenticationHeader;
 
-    const response = await fetch(`${this.#client.options.baseURL}${path}`, {
+    const response = await this.#fetchRatelimited(
       method,
-      headers: {
-        [authHeader]: authValue,
-        ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
-        ...headers,
+      path,
+      {
+        method,
+        headers: {
+          [authHeader]: authValue,
+          ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+          ...headers,
+        },
+        body: body !== undefined ? JSON.stringify(body) : undefined,
       },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    });
+      transport,
+    );
 
     if (!response.ok) {
       throw new Error(`E2EE API ${method} ${path} failed: ${response.status}`);
@@ -1227,6 +1257,53 @@ export class E2EEBridge implements E2EEAdapter {
     return response.status === 204
       ? (undefined as T)
       : ((await response.json()) as T);
+  }
+
+  /**
+   * `fetch` with the 429 policy (`e2eeRatelimitPolicy`): wait out the
+   * server's reset — bounded — and only then fail, with a TYPED error a
+   * caller can tell from "unreachable". Shared by `#api` and `#apiMls`, so
+   * every /e2ee and /mls caller inherits it: the DM-plane housekeeping, the
+   * call-plane roster reconcile, the KeyPackage claim that admits a joiner.
+   *
+   * Before this, one busy window at call bring-up (observed live 2026-09-06
+   * on a fresh enrollment: three 429s on `GET /e2ee/devices/<user>`) threw a
+   * generic transport error into every one of them, and each swallowed it
+   * in its own way — a peer left unpinned, an admit ledgered against a pin
+   * that was never going to land in the next 5 s, a housekeeping pass
+   * skipped until the next connect.
+   *
+   * The loop itself is `fetchWithRatelimitPolicy` (pure, tested under
+   * `node --test`); this is the binding: the body of a 429 is consumed
+   * there, the caller only ever sees a non-429 response, the typed error, or
+   * the abort it asked for. `init.body` is a string, so re-sending is safe.
+   * `transport` carries the per-request budget, abort signal and deadline;
+   * the policy hands each attempt the signal it must ride (the caller's,
+   * composed with the deadline). The FIRST 429 of any delivery-service
+   * request is reported to the active call session
+   * (`MlsCallTransport.onRatelimited`), whose negotiating fail-safe reads
+   * that latch at 5 s — CHAINED after the caller's own `onRatelimited`, never
+   * in place of it.
+   */
+  #fetchRatelimited(
+    method: string,
+    path: string,
+    init: RequestInit,
+    transport?: RatelimitTransportOptions,
+  ): Promise<Response> {
+    const url = `${this.#client.options.baseURL}${path}`;
+    return fetchWithRatelimitPolicy(
+      (signal) => fetch(url, { ...init, signal }),
+      method,
+      path,
+      {
+        ...transport,
+        onRatelimited: (ratelimitedMethod, ratelimitedPath) => {
+          transport?.onRatelimited?.(ratelimitedMethod, ratelimitedPath);
+          if (isMlsPath(ratelimitedPath)) this.#mlsCall?.onRatelimited?.();
+        },
+      },
+    );
   }
 
   async refreshStatus(): Promise<NativeStatus> {
@@ -1279,6 +1356,19 @@ export class E2EEBridge implements E2EEAdapter {
       // status query on the side-effect-free provisioning check first.
       const provisioned = await this.#isProvisioned();
       if (!provisioned) {
+        // Proven never-provisioned (or wiped): RECORD it. The snapshot is
+        // all the call-capability predicate can read, and it has to tell
+        // "E2EE was never set up here" (a plain call, as today) from "status
+        // never resolved" (hold the publish gate loud — R2-4 review
+        // MAJOR-1). Without this write a fresh desktop left the snapshot
+        // UNSET for its whole session — nothing else writes it on an
+        // unprovisioned device — so every call join read as capable with no
+        // device id and held loud. `#setDisabledStatus` opens no engine, so
+        // the restore-first contract above is untouched, and it is the value
+        // the wipe path writes: a fresh device and a wiped device read
+        // identically. A later enable / restore overwrites it through
+        // `refreshStatus`, and `#isProvisioned` is re-asked on every connect.
+        this.#setDisabledStatus();
         // Returning user on a new device (account opted in on another device)
         // ⇒ surface the restore-vs-start-fresh choice; the engine stays
         // unopened until the user picks. A brand-new user (never opted in) is
@@ -1687,6 +1777,7 @@ export class E2EEBridge implements E2EEAdapter {
    */
   async #reconcileDevices(
     userId: string,
+    transport?: RatelimitTransportOptions,
   ): Promise<{ new_devices: string[]; listing: unknown[] } | null> {
     await this.#ensureBootStatus();
     if (!this.status.get("state")?.enabled) return null;
@@ -1694,6 +1785,9 @@ export class E2EEBridge implements E2EEAdapter {
     const devices = await this.#api<unknown[]>(
       "GET",
       `/e2ee/devices/${userId}`,
+      undefined,
+      undefined,
+      transport,
     );
     const report = await this.#invoke<{
       revoked: string[];
@@ -1772,6 +1866,18 @@ export class E2EEBridge implements E2EEAdapter {
    * Returns the users for whom a device was newly pinned, so the caller can
    * surface it. Gated on what the native op actually WROTE — never on
    * `new_devices`, which also reports re-presented revoked devices.
+   *
+   * Throws — AFTER every listing that did arrive has been reconciled and
+   * pinned — when any user's listing could not be fetched or reconciled (a
+   * 429 past the transport's bounded retries, offline, a 5xx, a native
+   * store failure), rethrowing the first cause (typed `E2EERateLimitError`
+   * when it was a rate limit). A listing that arrived but does not VERIFY is
+   * not a throw: that is a verdict, the device stays unverified, and its
+   * leaf is refused loudly later. Both used to be swallowed alike, which
+   * left every caller unable to tell "no pin yet, ask again in a window"
+   * from "no pin, ever": the admitter went on to spend a claim it could not
+   * use, and the drain counted a reconcile that never ran as progress
+   * toward giving up on the joiner.
    */
   async reconcileCallRoster(
     roster: { userId: string; deviceIds: string[] }[],
@@ -1784,19 +1890,42 @@ export class E2EEBridge implements E2EEAdapter {
     }
 
     const selfUserId = this.#client.user?.id;
-    const pinnedUsers = await Promise.all(
-      [...byUser].map(([userId, deviceIds]) =>
-        this.#reconcileDevices(userId)
-          .then(async (report) => {
-            // Own devices are pinned only from a self bundle — own-device
-            // fan-out reaches every active pin of ours, so a listing pin
-            // here would silently widen the audience for every DM we send.
-            // (Native refuses this too; both guards are deliberate.)
-            if (!report || !selfUserId || userId === selfUserId) return null;
+    // Call-plane transport: ONE retry, not the DM plane's three — the admit
+    // re-drive and the reconcile tick are the outer ladder, and the active
+    // session's disposal signal cuts the wait on hang-up. The listing is not
+    // an /mls/ route but the join path waits on it before its first intent,
+    // so it rides the same per-request deadline as the delivery-service
+    // routes: a listing the server never answers must not hold the joiner's
+    // ladder open past `MLS_REQUEST_DEADLINE_MS`.
+    const transport: RatelimitTransportOptions = {
+      signal: this.#mlsCall?.signal,
+      maxRetries: CALL_PLANE_RATELIMIT_RETRIES,
+      deadlineMs: MLS_REQUEST_DEADLINE_MS,
+    };
+    const outcomes = await Promise.all(
+      [...byUser].map(
+        async ([userId, deviceIds]): Promise<CallRosterOutcome> => {
+          let report: { new_devices: string[]; listing: unknown[] } | null;
+          try {
+            report = await this.#reconcileDevices(userId, transport);
+          } catch (error) {
+            // No listing, so no pin: the device stays unverified (fail
+            // closed) and the caller is told, below.
+            return { kind: "unfetched", userId, error };
+          }
 
-            const targets = [...deviceIds];
-            if (!targets.length) return null;
+          // Own devices are pinned only from a self bundle — own-device
+          // fan-out reaches every active pin of ours, so a listing pin
+          // here would silently widen the audience for every DM we send.
+          // (Native refuses this too; both guards are deliberate.)
+          if (!report || !selfUserId || userId === selfUserId) {
+            return { kind: "settled", userId };
+          }
 
+          const targets = [...deviceIds];
+          if (!targets.length) return { kind: "settled", userId };
+
+          try {
             const pinned = await this.#invoke<string[]>(
               "e2ee_pin_call_identities",
               {
@@ -1806,16 +1935,30 @@ export class E2EEBridge implements E2EEAdapter {
                 devices: report.listing,
               },
             );
-            return pinned.length ? userId : null;
-          })
-          .catch(() => {
-            /* unfetchable / unverifiable stays unverified — fail closed */
-            return null;
-          }),
+            return { kind: pinned.length ? "pinned" : "settled", userId };
+          } catch {
+            /* unverifiable stays unverified — fail closed; a verdict, not a
+               transport failure, so nothing to retry */
+            return { kind: "settled", userId };
+          }
+        },
       ),
     );
 
-    return pinnedUsers.filter((id): id is string => id !== null);
+    // Pins first, then the throw (`settleCallRosterReconcile`): every
+    // listing that arrived is pinned by now, so the caller that retries in
+    // the next window never re-earns them.
+    const settled = settleCallRosterReconcile(outcomes);
+    if (settled.kind === "unfetched") {
+      // The count, never the user ids: this line lands in every shell's log.
+      console.warn(
+        `[e2ee] call roster reconcile: ${settled.unfetchedCount} of ` +
+          `${outcomes.length} listing(s) unavailable`,
+        settled.error,
+      );
+      throw settled.error;
+    }
+    return settled.pinnedUsers;
   }
 
   /**
@@ -2860,8 +3003,9 @@ export class E2EEBridge implements E2EEAdapter {
    * several channel fetches can race this at boot; only one pair of native
    * calls runs). Uses #onReady's side-effect-free gate: `#isProvisioned`
    * first, so a fresh install NEVER opens the engine and key-backup restore
-   * stays reachable (design §6.1). Returns with `status` still unset on a
-   * PROVEN-unprovisioned device; on native failure it retries once and then
+   * stays reachable (design §6.1). Leaves `status` as the proven-disabled
+   * snapshot on a PROVEN-unprovisioned device (the value `#onReady` and the
+   * wipe path write); on native failure it retries once and then
    * THROWS — a failure is ambiguous (the conversation may be encrypted),
    * and returning normally would let the caller seed the session-long
    * channel cache with server rows, the very symptom this exists to fix.
@@ -2874,8 +3018,14 @@ export class E2EEBridge implements E2EEAdapter {
           if (!(await this.#isProvisioned())) {
             // Proven unprovisioned. A SURVIVING status snapshot is a lie
             // (pre-wipe `enabled: true` would pass every enabled-gate —
-            // diff-review HIGH-1); overwrite it with the truth.
-            if (this.status.get("state")?.enabled) this.#setDisabledStatus();
+            // diff-review HIGH-1), and an UNSET one (this ran before
+            // `#onReady` resolved) leaves the call-capability predicate
+            // unable to tell "never set up" from "unresolved" — write the
+            // proven truth in both cases. An already-disabled snapshot is
+            // left alone: the per-fetch callers would otherwise churn the
+            // reactive map on every DM open.
+            const state = this.status.get("state");
+            if (!state || state.enabled) this.#setDisabledStatus();
             return;
           }
           await this.refreshStatus();
@@ -2904,8 +3054,9 @@ export class E2EEBridge implements E2EEAdapter {
       // fetch messages BEFORE `#onReady` has resolved the native status —
       // an encrypted conversation would then silently seed (and cache, for
       // the whole session) SERVER rows instead of the native transcript.
-      // Resolve it here; a still-unset status afterwards means a proven
-      // unprovisioned device → honest server-history fallback. A THROW
+      // Resolve it here; a proven unprovisioned device reads `enabled:
+      // false` afterwards → honest server-history fallback (the unset check
+      // below is a belt-and-braces guard, never a verdict). A THROW
       // (native failure after retry) propagates and fails the fetch —
       // retryable in the view, never silently the wrong transcript.
       await this.#ensureBootStatus();
@@ -4123,20 +4274,35 @@ export class E2EEBridge implements E2EEAdapter {
    * null between calls. At most one call is active at a time.
    */
   #mlsSink: MlsSessionSink | null = null;
+  /**
+   * The active call session's transport binding (`MlsCallTransport`),
+   * registered with its sink and cleared with it: the disposal signal every
+   * call-plane request rides, and the first-429 notifier.
+   */
+  #mlsCall: MlsCallTransport | null = null;
 
   /**
    * Register the active call session's inbound sink for `Mls*` events
-   * (`MlsJoinRequested` / `MlsCommit` / `MlsWelcome`). Returns an unregister
-   * fn (idempotent — only clears if still the current sink). While none is
-   * registered the events are dropped and their envelopes stay queued +
-   * unacked server-side, so a later call re-drains them: never ack what no
-   * call consumes. The session — NOT this bridge — acks after durable
-   * processing (§3.3).
+   * (`MlsJoinRequested` / `MlsCommit` / `MlsWelcome`), and its transport
+   * binding — the disposal signal that cuts every call-plane request on
+   * hang-up, and the first-429 notifier its fail-safe latches from. Returns
+   * an unregister fn (idempotent — only clears if still the current sink).
+   * While none is registered the events are dropped and their envelopes
+   * stay queued + unacked server-side, so a later call re-drains them:
+   * never ack what no call consumes. The session — NOT this bridge — acks
+   * after durable processing (§3.3).
    */
-  registerMlsSink(sink: MlsSessionSink): () => void {
+  registerMlsSink(
+    sink: MlsSessionSink,
+    transport: MlsCallTransport = {},
+  ): () => void {
     this.#mlsSink = sink;
+    this.#mlsCall = transport;
     return () => {
-      if (this.#mlsSink === sink) this.#mlsSink = null;
+      if (this.#mlsSink === sink) {
+        this.#mlsSink = null;
+        this.#mlsCall = null;
+      }
     };
   }
 
@@ -4454,19 +4620,43 @@ export class E2EEBridge implements E2EEAdapter {
       notFoundOutcome?: boolean;
       callFullOutcome?: boolean;
       headers?: Record<string, string>;
+      /**
+       * Per-route budget / signal / deadline; the active call's signal and
+       * `MLS_REQUEST_DEADLINE_MS` are the defaults.
+       */
+      transport?: RatelimitTransportOptions;
     },
   ): Promise<MlsHttpResult<T>> {
     const [authHeader, authValue] = this.#client.authenticationHeader;
 
-    const response = await fetch(`${this.#client.options.baseURL}${path}`, {
+    // A 429 is waited out (bounded) inside `#fetchRatelimited`; past the
+    // bound it throws `E2EERateLimitError`, which the session treats like
+    // any other thrown transport failure — loud, never plaintext. Every
+    // /mls/ request belongs to the active call, so its disposal signal cuts
+    // the wait (and the request) the moment the call ends — and EVERY /mls/
+    // request rides the per-request deadline (`MLS_REQUEST_DEADLINE_MS`,
+    // 429 waits included), so a delivery service that accepts the
+    // connection and never answers becomes a thrown `E2EERequestTimeoutError`
+    // the session's ladders route to loud, never an open-ended hold on the
+    // publish gate. A caller may shorten the deadline; none may drop it.
+    const response = await this.#fetchRatelimited(
       method,
-      headers: {
-        [authHeader]: authValue,
-        ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
-        ...(opts?.headers ?? {}),
+      path,
+      {
+        method,
+        headers: {
+          [authHeader]: authValue,
+          ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+          ...(opts?.headers ?? {}),
+        },
+        body: body !== undefined ? JSON.stringify(body) : undefined,
       },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    });
+      {
+        deadlineMs: MLS_REQUEST_DEADLINE_MS,
+        ...opts?.transport,
+        signal: opts?.transport?.signal ?? this.#mlsCall?.signal,
+      },
+    );
 
     if (response.ok) {
       const parsed =
@@ -4557,7 +4747,10 @@ export class E2EEBridge implements E2EEAdapter {
   mlsClaimKeyPackage(
     body: MlsClaimKeyPackagesBody,
   ): Promise<MlsHttpResult<ResponseClaimMlsKeyPackages>> {
-    return this.#apiMls("POST", "/mls/key_packages/claim", body);
+    // Admit path: ONE retry — the session's 5 s re-drive is the outer ladder.
+    return this.#apiMls("POST", "/mls/key_packages/claim", body, {
+      transport: { maxRetries: CALL_PLANE_RATELIMIT_RETRIES },
+    });
   }
 
   /**

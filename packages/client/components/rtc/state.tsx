@@ -166,6 +166,13 @@ import {
 import { WatchDuck } from "./watchDuck";
 import { WatchTogether } from "./watchTogether";
 
+import {
+  fetchWithRatelimitPolicy,
+  isRateLimited,
+  MLS_REQUEST_DEADLINE_MS,
+  RATELIMIT_MAX_RETRIES,
+  requestDeadlineSignal,
+} from "../client/e2eeRatelimitPolicy";
 import { LiveAnnotations } from "./annotations/liveAnnotations";
 import {
   type RecordingTarget,
@@ -204,6 +211,11 @@ import {
   type MlsSessionState,
   MlsCallSession,
 } from "./mlsCallSession";
+import {
+  canConfirmNoSessionPlaintext,
+  e2eeProvenOff,
+  sessionSetupDecision,
+} from "./mlsSessionSetupPolicy";
 import {
   SCREEN_AUDIO_WATCH_MS,
   screenAudioDeviceGone,
@@ -286,11 +298,15 @@ const MAX_DICE_TOASTS = 5;
 const MAX_VIDEO_PARTICIPANTS = 30;
 
 /**
- * Upper bound on the open-group probe (T0d): the fail-safe holds the publish
- * gate while the probe is "pending", so a HUNG fetch would keep a live call
- * paused (publishing nothing) indefinitely. A timeout rejects into the probe's
- * catch, which resolves "none" — the ratified probe-error availability escape
- * (R2-6, same origin as the DS).
+ * Upper bound on the open-group probe. The probe decides nothing about the
+ * publish gate any more (the T0d availability escape it used to feed was
+ * withdrawn 2026-09-06 — the gate is never released without a DS verdict,
+ * whatever the probe says); what it still owns is attribution: the chip's
+ * open-group input for the no-session branches, and the RE-SECURING reason
+ * the fail-safe logs when the DS has not answered at 5 s. A probe that hangs
+ * would leave both reading "pending" for the whole call, so the timeout
+ * rejects into the probe's catch and settles "none" — a completed verdict for
+ * the chip, and only that.
  */
 const OPEN_GROUP_PROBE_TIMEOUT_MS = 10_000;
 
@@ -976,13 +992,16 @@ class Voice {
    */
   #publishGate = new Set<string>();
   /**
-   * Open-group probe lifecycle for the CURRENT call (media-gate LOW-2): the
-   * T0d fail-safe must distinguish a COMPLETED "no open group" verdict from a
-   * still-pending probe — releasing the gate on a merely-slow probe for a call
-   * that turns out E2EE would auto-resume plaintext. Tri-state read by the
-   * session via `channelHasOpenGroup`.
+   * Open-group probe lifecycle for the CURRENT call, read by the session via
+   * `channelHasOpenGroup`. It no longer decides anything about the publish
+   * gate (the T0d availability escape that released on a completed "none"
+   * was withdrawn 2026-09-06 — every value holds); the session's fail-safe
+   * reads it only to NAME the hold in its RE-SECURING reason (pending / rate
+   * limited / open group known), and the chip's no-session branches read it
+   * for open-group attribution. "pending" is kept distinct from "none" so
+   * neither reader mistakes a probe that has not answered for a verdict.
    */
-  #openGroupProbe: "pending" | "open" | "none" = "pending";
+  #openGroupProbe: "pending" | "open" | "none" | "ratelimited" = "pending";
 
   constructor(
     voiceSettings: VoiceSettings,
@@ -1877,7 +1896,17 @@ class Voice {
       // "Encrypt my calls" (§0.2 #9): with it OFF we negotiate plaintext —
       // no session, no E2EE Room — and appear non-enrolled to E2EE peers
       // (their loud downgrade attributes it to us). LOCAL per-device toggle.
-      this.#settings.e2eeCallsEnabled;
+      this.#settings.e2eeCallsEnabled &&
+      // E2EE proven OFF on this device is the same class as the toggle: no
+      // identity, no session, not an E2EE call — a plain voice call the
+      // peers attribute to us. Only a PROVEN off counts (`e2eeProvenOff`: a
+      // LOADED snapshot saying `enabled: false`, which the bridge writes at
+      // boot for a never-provisioned device and after a wipe). An unloaded
+      // snapshot cannot be told from an enrolled device, so it stays capable
+      // and the session-setup decision below holds the gate loud rather than
+      // let plaintext out on a device that may be enrolled (R2-4,
+      // fail-closed).
+      !e2eeProvenOff(bridge?.status.get("state"));
     if (e2eeCapable) {
       try {
         this.#mlsKeyProvider = new MlsKeyProvider();
@@ -2342,6 +2371,10 @@ class Voice {
       // can reject (native listener registration), and an owned rejection
       // outside the try escaped with no teardown — worker/provider held and
       // the UI stuck on CONNECTING until the next user action.
+      // Whether the native keys-changed listener registered — the one
+      // asynchronous setup step. An input to the session-setup decision
+      // below: `false` on a capable shell is a hold, never a release.
+      let keysListenerBound = false;
       if (e2eeCapable) {
         // Keys-changed loop (§3.5): native pushes `e2ee:call-keys-changed` on
         // every LOCAL epoch advance. Route it INTO the session (the SOLE
@@ -2350,17 +2383,57 @@ class Voice {
         // loud-state debounce — replacing 6.3's direct `provider.applyKeys`.
         // (`bridge` is non-null here — `e2eeCapable` required it.)
         if (bridge) {
-          const unlisten = await bridge.onCallKeysChanged((event) => {
+          // Bounded like every delivery-service wait (`MLS_REQUEST_DEADLINE_MS`;
+          // R2-4 fail-closed): a registration that never settled used to hang
+          // connect() on CONNECTING for good — nothing had published, so the
+          // gate was fine, but the user was stuck. At the deadline the attempt
+          // carries on WITHOUT the listener and the session-setup decision
+          // below holds the gate loud, so the failure resolves to the Leave /
+          // Stay banner. A registration that settles late is unlistened on
+          // arrival — no session will ever be built for it. A native REFUSAL
+          // lands on the same hold (it used to tear the call down).
+          const deadline = requestDeadlineSignal(
+            MLS_REQUEST_DEADLINE_MS,
+            new Error(
+              "E2EE call setup timed out: the native key-change listener did not register",
+            ),
+          );
+          const registration = bridge.onCallKeysChanged((event) => {
             void this.#mlsSession?.onLocalKeysChanged(
               event.group_id,
               event.epoch,
             );
           });
+          let unlisten: (() => void) | undefined;
+          try {
+            unlisten = await Promise.race([
+              registration,
+              new Promise<never>((_, reject) => {
+                deadline.signal.addEventListener(
+                  "abort",
+                  () => reject(deadline.signal.reason),
+                  { once: true },
+                );
+              }),
+            ]);
+            keysListenerBound = true;
+          } catch (error) {
+            console.error(
+              "[rtc] E2EE keys-changed listener did not register; the publish gate holds",
+              error,
+            );
+            void registration.then(
+              (late) => late(),
+              () => undefined,
+            );
+          } finally {
+            deadline.release();
+          }
           // A newer connect() may have superseded us across the await — drop
           // this listener immediately rather than orphaning it, and never clobber
           // the newer invocation's shared state (gate HIGH).
           if (gen !== this.#connectGen) {
-            unlisten();
+            unlisten?.();
             // Strip THIS room's listeners before abandoning it (FE-9c): its
             // async `disconnected` event would otherwise fire `#setState(
             // "DISCONNECTED")` + `nativeCallServiceStop()` and clobber the newer
@@ -2521,31 +2594,71 @@ class Voice {
       // Probe whether this channel already has an open E2EE group — the chip's
       // in-call FE-7 input, the §0.2 #9 self-attribution for web/toggle-off
       // shells (gate F4: this must run for EVERY call, not just E2EE-capable
-      // ones), and the T0d fail-safe's tri-state gate (media-gate LOW-2: the
-      // fail-safe holds the publish gate while the probe is PENDING; a
-      // completed 404 / feature-off / error resolves "none" — probe-error ⇒
-      // availability escape is RATIFIED, same origin as the DS, R2-6). Raw
+      // ones), and the name the T0d fail-safe gives its RE-SECURING hold when
+      // the DS has not answered at 5 s. It decides NOTHING about the publish
+      // gate: the availability escape that released on a completed "none"
+      // (R2-6 / G-M2) was withdrawn 2026-09-06, and a 404 / feature-off /
+      // error now settles "none" purely as the chip's completed verdict. Raw
       // authenticated fetch so it works without the desktop bridge.
       this.#openGroupProbe = "pending";
       {
         const apiClient = this.getClient();
         if (apiClient) {
           const [authHeader, authValue] = apiClient.authenticationHeader;
-          void fetch(
-            `${apiClient.options.baseURL}/mls/channels/${channel.id}/open_group`,
-            {
-              headers: { [authHeader]: authValue },
-              signal: AbortSignal.timeout(OPEN_GROUP_PROBE_TIMEOUT_MS),
-            },
-          )
-            .then(async (response) => {
+          const path = `/mls/channels/${channel.id}/open_group`;
+          const url = `${apiClient.options.baseURL}${path}`;
+          const probe = async (): Promise<"open" | "none" | "ratelimited"> => {
+            try {
+              const response = await fetchWithRatelimitPolicy(
+                () =>
+                  fetch(url, {
+                    headers: { [authHeader]: authValue },
+                    signal: AbortSignal.timeout(OPEN_GROUP_PROBE_TIMEOUT_MS),
+                  }),
+                "GET",
+                path,
+                {
+                  // One wait more than the transport's own bound: the last
+                  // retry lands after the server's LAST reset hint, so a
+                  // bring-up burst that spent the whole window still gets
+                  // a real verdict for the chip's open-group attribution
+                  // (the no-session branches) instead of the fail-open
+                  // default it kept when the probe gave up with the rest.
+                  maxRetries: RATELIMIT_MAX_RETRIES + 1,
+                  onRatelimited: () => {
+                    // A 429 is not a verdict about the group: the DS
+                    // answered, from this session's own MLS bucket, which
+                    // only an E2EE call's bring-up spends. Tell the
+                    // fail-safe NOW — it reads this at 5 s and the reset
+                    // may be 10 s away — so its RE-SECURING reason names
+                    // the exhausted budget (the gate holds either way),
+                    // while the policy keeps asking (bounded) for the real
+                    // verdict the chip attributes from.
+                    if (gen === this.#connectGen) {
+                      this.#openGroupProbe = "ratelimited";
+                    }
+                  },
+                },
+              );
+              return response.ok ? "open" : "none";
+            } catch (error) {
+              if (isRateLimited(error)) return "ratelimited";
+              throw error;
+            }
+          };
+          void probe()
+            .then((verdict) => {
               // Ownership guard: a stale probe resolving after a hang-up /
               // rejoin must not clobber the NEXT call's tri-state (the T0d
               // fail-safe reads it; the new call runs its own probe).
               if (gen !== this.#connectGen) return;
-              const open = response.ok;
-              this.#openGroupProbe = open ? "open" : "none";
-              this.#setCallChannelHasOpenGroup(open);
+              this.#openGroupProbe = verdict;
+              // `ratelimited` says nothing about the group: the chip's
+              // open-group attribution keeps its default rather than
+              // vouching either way.
+              if (verdict !== "ratelimited") {
+                this.#setCallChannelHasOpenGroup(verdict === "open");
+              }
             })
             .catch(() => {
               if (gen !== this.#connectGen) return;
@@ -2562,9 +2675,17 @@ class Voice {
       // later connect() disposes this session via disconnect(). `start()` is
       // fire-and-forget — with `media_e2ee_enabled` off it enrols, gets
       // FeatureDisabled, and settles into "plaintext" (a normal voice call).
+      const setup = sessionSetupDecision({
+        e2eeCapable,
+        bridge: !!bridge,
+        keyProvider: this.#mlsKeyProvider !== undefined,
+        userId: !!selfUserId,
+        deviceId: !!e2eeDeviceId,
+        identityOk: e2eeIdentityOk,
+        keysListenerBound,
+      });
       if (
-        e2eeCapable &&
-        e2eeIdentityOk &&
+        setup.action === "session" &&
         bridge &&
         this.#mlsKeyProvider &&
         selfUserId &&
@@ -2589,9 +2710,24 @@ class Voice {
         this.#setCallSessionState(session.state());
         void session.start();
       } else if (e2eeCapable) {
-        // Capable shell but identity/provider setup failed: release the gate
-        // (no session will manage it) so the plain call is not stuck muted.
-        this.#publishGate.delete("negotiating");
+        // Capable shell, no session — R2-4, withdrawn 2026-09-06 under the
+        // T0d rule: the gate is never released without a DS verdict, and
+        // with no session no verdict can ever come. `negotiating` stays where
+        // the R2-5 assertion put it; the structured error latches so the
+        // existing loud state renders — the NOT-ENCRYPTED chip, and the
+        // Leave / Stay banner through `isTerminalLoud` (no mode + latched) —
+        // and the banner's "Stay unencrypted" is the only release
+        // (`#confirmNoSessionPlaintext`). `prev ??` keeps the identity-
+        // mismatch error latched above; the decision's reason names every
+        // other arm. Re-sweep so a track published across the awaits above
+        // is paused under the held gate. (`setup` is `hold_loud` here by
+        // construction — the fallback text only satisfies the type.)
+        const reason =
+          setup.action === "hold_loud"
+            ? setup.reason
+            : "This call could not be encrypted: the call session could not be set up";
+        console.error("[rtc] holding the publish gate:", reason);
+        this.#setCallEncryptionError((prev) => prev ?? new Error(reason));
         if (this.room() === room) void this.#applyPublishGate(room);
       }
     } catch (error) {
@@ -5933,7 +6069,10 @@ class Voice {
    */
   async confirmCallPlaintext(): Promise<void> {
     const session = this.#mlsSession;
-    if (!session) return;
+    if (!session) {
+      await this.#confirmNoSessionPlaintext();
+      return;
+    }
     const client = this.getClient();
     const names: Record<string, string> = {};
     for (const identity of this.callNonEnrolled()) {
@@ -5942,6 +6081,37 @@ class Voice {
       if (user?.username) names[userId] = user.username;
     }
     await session.confirmPlaintext(names);
+  }
+
+  /**
+   * "Stay unencrypted" for a call that has NO session: the R2-4 hold — an
+   * E2EE-capable shell whose session could not be constructed (see
+   * `sessionSetupDecision`). The session's `confirmPlaintext` cannot serve
+   * it: its native roster dialog computes from a group, and no group exists.
+   * The banner press is the explicit consent (`canConfirmNoSessionPlaintext`
+   * says why that gives up nothing the dialog protects). Same order as a
+   * `local_confirm`: the mode flips to a confirmed interlude BEFORE the
+   * resume, so no frame leaves while the banner still promises a pause, and
+   * the chip stays NOT-ENCRYPTED (the latched error keeps it red). No
+   * `set_e2ee(false)`: the Room's send path was never enabled — that is the
+   * session's `enabled` step — so every publication is plaintext-declared
+   * already.
+   */
+  async #confirmNoSessionPlaintext(): Promise<void> {
+    const room = this.room();
+    if (
+      !room ||
+      !canConfirmNoSessionPlaintext({
+        hasSession: this.#mlsSession !== undefined,
+        e2eeCapable: this.callE2EECapable(),
+        latchedError: this.callEncryptionError() !== undefined,
+        gateHeld: this.#publishGate.has("negotiating"),
+      })
+    ) {
+      return;
+    }
+    this.#setCallMode({ kind: "interlude", localConfirmed: true });
+    await this.#resumeGate(room, "negotiating");
   }
 
   /** Toggle the call roster / verification panel (chip click, slice 6.5). */
