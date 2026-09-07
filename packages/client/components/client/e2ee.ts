@@ -1356,6 +1356,19 @@ export class E2EEBridge implements E2EEAdapter {
       // status query on the side-effect-free provisioning check first.
       const provisioned = await this.#isProvisioned();
       if (!provisioned) {
+        // Proven never-provisioned (or wiped): RECORD it. The snapshot is
+        // all the call-capability predicate can read, and it has to tell
+        // "E2EE was never set up here" (a plain call, as today) from "status
+        // never resolved" (hold the publish gate loud — R2-4 review
+        // MAJOR-1). Without this write a fresh desktop left the snapshot
+        // UNSET for its whole session — nothing else writes it on an
+        // unprovisioned device — so every call join read as capable with no
+        // device id and held loud. `#setDisabledStatus` opens no engine, so
+        // the restore-first contract above is untouched, and it is the value
+        // the wipe path writes: a fresh device and a wiped device read
+        // identically. A later enable / restore overwrites it through
+        // `refreshStatus`, and `#isProvisioned` is re-asked on every connect.
+        this.#setDisabledStatus();
         // Returning user on a new device (account opted in on another device)
         // ⇒ surface the restore-vs-start-fresh choice; the engine stays
         // unopened until the user picks. A brand-new user (never opted in) is
@@ -2990,8 +3003,9 @@ export class E2EEBridge implements E2EEAdapter {
    * several channel fetches can race this at boot; only one pair of native
    * calls runs). Uses #onReady's side-effect-free gate: `#isProvisioned`
    * first, so a fresh install NEVER opens the engine and key-backup restore
-   * stays reachable (design §6.1). Returns with `status` still unset on a
-   * PROVEN-unprovisioned device; on native failure it retries once and then
+   * stays reachable (design §6.1). Leaves `status` as the proven-disabled
+   * snapshot on a PROVEN-unprovisioned device (the value `#onReady` and the
+   * wipe path write); on native failure it retries once and then
    * THROWS — a failure is ambiguous (the conversation may be encrypted),
    * and returning normally would let the caller seed the session-long
    * channel cache with server rows, the very symptom this exists to fix.
@@ -3004,8 +3018,14 @@ export class E2EEBridge implements E2EEAdapter {
           if (!(await this.#isProvisioned())) {
             // Proven unprovisioned. A SURVIVING status snapshot is a lie
             // (pre-wipe `enabled: true` would pass every enabled-gate —
-            // diff-review HIGH-1); overwrite it with the truth.
-            if (this.status.get("state")?.enabled) this.#setDisabledStatus();
+            // diff-review HIGH-1), and an UNSET one (this ran before
+            // `#onReady` resolved) leaves the call-capability predicate
+            // unable to tell "never set up" from "unresolved" — write the
+            // proven truth in both cases. An already-disabled snapshot is
+            // left alone: the per-fetch callers would otherwise churn the
+            // reactive map on every DM open.
+            const state = this.status.get("state");
+            if (!state || state.enabled) this.#setDisabledStatus();
             return;
           }
           await this.refreshStatus();
@@ -3034,8 +3054,9 @@ export class E2EEBridge implements E2EEAdapter {
       // fetch messages BEFORE `#onReady` has resolved the native status —
       // an encrypted conversation would then silently seed (and cache, for
       // the whole session) SERVER rows instead of the native transcript.
-      // Resolve it here; a still-unset status afterwards means a proven
-      // unprovisioned device → honest server-history fallback. A THROW
+      // Resolve it here; a proven unprovisioned device reads `enabled:
+      // false` afterwards → honest server-history fallback (the unset check
+      // below is a belt-and-braces guard, never a verdict). A THROW
       // (native failure after retry) propagates and fails the fetch —
       // retryable in the view, never silently the wrong transcript.
       await this.#ensureBootStatus();

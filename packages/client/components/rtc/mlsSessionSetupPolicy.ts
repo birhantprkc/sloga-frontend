@@ -35,7 +35,46 @@
  * calls" off, E2EE proven off on this device, a worker that failed to
  * construct) is not an E2EE call: no gate was ever asserted for it and none
  * is asserted here — `"plain"` is the only verdict such a shell can get.
+ * "Proven off" is `e2eeProvenOff` below — a LOADED snapshot that says so,
+ * never an unresolved one.
  */
+
+/**
+ * The part of the bridge's status snapshot the capability rule reads.
+ * Structural on purpose: the bridge class cannot be imported under
+ * `node --test`, and only `enabled` decides anything here.
+ */
+export interface E2EEStatusSnapshot {
+  enabled: boolean;
+}
+
+/**
+ * Whether E2EE is PROVEN off on this device — with "Encrypt my calls" off,
+ * the one device-level fact that removes a shell from the E2EE-capable set.
+ *
+ * True ONLY for a LOADED snapshot that says `enabled: false`. The bridge
+ * writes that value only from the side-effect-free filesystem check — at
+ * boot for a never-provisioned device (`#onReady`, or the boot-race history
+ * fetch's `#ensureBootStatus` when it resolves first) and after a wipe
+ * (`#setDisabledStatus`) — so a fresh device and a wiped device read the
+ * same. No runtime fault yields it: a provisioned store that fails to
+ * open THROWS and leaves the snapshot untouched, so `false` is an honest
+ * "never set up here" — no identity, no session, a plain call the peers
+ * attribute to us.
+ *
+ * `undefined` (the boot status never resolved, or it threw) is NOT proven
+ * off: it cannot be told from an enrolled device, so the shell stays capable
+ * and `sessionSetupDecision` holds the gate loud (R2-4, fail-closed). A
+ * snapshot with `enabled: true` is plainly not off. Before this rule the
+ * predicate read the raw field, and a fresh desktop — whose snapshot was
+ * never written at all — came out capable with no identity: a loud hold on
+ * every call (R2-4 review MAJOR-1).
+ */
+export function e2eeProvenOff(
+  snapshot: E2EEStatusSnapshot | undefined | null,
+): boolean {
+  return snapshot?.enabled === false;
+}
 
 export interface SessionSetupInput {
   /**

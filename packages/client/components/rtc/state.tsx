@@ -213,6 +213,7 @@ import {
 } from "./mlsCallSession";
 import {
   canConfirmNoSessionPlaintext,
+  e2eeProvenOff,
   sessionSetupDecision,
 } from "./mlsSessionSetupPolicy";
 import {
@@ -1896,14 +1897,16 @@ class Voice {
       // no session, no E2EE Room — and appear non-enrolled to E2EE peers
       // (their loud downgrade attributes it to us). LOCAL per-device toggle.
       this.#settings.e2eeCallsEnabled &&
-      // E2EE proven OFF on this device (the status snapshot has loaded and
-      // says so) is the same class as the toggle: no identity, no session,
-      // not an E2EE call — a plain voice call the peers attribute to us.
-      // Only a PROVEN off counts: an unloaded snapshot cannot be told from
-      // an enrolled device, so it stays capable and the session-setup
-      // decision below holds the gate loud rather than let plaintext out on
-      // a device that may be enrolled (R2-4, fail-closed).
-      bridge?.status.get("state")?.enabled !== false;
+      // E2EE proven OFF on this device is the same class as the toggle: no
+      // identity, no session, not an E2EE call — a plain voice call the
+      // peers attribute to us. Only a PROVEN off counts (`e2eeProvenOff`: a
+      // LOADED snapshot saying `enabled: false`, which the bridge writes at
+      // boot for a never-provisioned device and after a wipe). An unloaded
+      // snapshot cannot be told from an enrolled device, so it stays capable
+      // and the session-setup decision below holds the gate loud rather than
+      // let plaintext out on a device that may be enrolled (R2-4,
+      // fail-closed).
+      !e2eeProvenOff(bridge?.status.get("state"));
     if (e2eeCapable) {
       try {
         this.#mlsKeyProvider = new MlsKeyProvider();

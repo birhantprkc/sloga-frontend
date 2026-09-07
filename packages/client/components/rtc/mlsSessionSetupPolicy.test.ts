@@ -11,9 +11,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  type E2EEStatusSnapshot,
   type NoSessionConfirmInput,
   type SessionSetupInput,
   canConfirmNoSessionPlaintext,
+  e2eeProvenOff,
   sessionSetupDecision,
 } from "./mlsSessionSetupPolicy.ts";
 
@@ -137,6 +139,103 @@ test("PROOF: every hold reason is a call-level statement that never suggests res
     assert.doesNotMatch(decision.reason, /wipe|reset|clear|remove/i);
     assert.match(decision.reason, /^This call could not be encrypted: /);
   }
+});
+
+// ---- "E2EE proven off on this device" ---------------------------------------
+//
+// The bridge's status snapshot is written only when the native status query
+// RESOLVES (`refreshStatus` sets it after the invoke returns) or when the
+// side-effect-free provisioning check proves the device unprovisioned
+// (`#setDisabledStatus`: at boot in `#onReady`, and after a wipe). A query
+// that throws sets nothing, so "threw" and "not resolved yet" both reach this
+// rule as `undefined`. The bridge class cannot be imported under `node --test`
+// (it pulls in Capacitor and stoat.js), so that state shape is pinned here by
+// the two literals below rather than by driving the class.
+
+/** What `#setDisabledStatus` writes (fresh device at boot, and after a wipe). */
+const DISABLED_SNAPSHOT = {
+  enabled: false,
+  published: false,
+  device_id: null,
+  protocol_version: 1,
+  claimed: false,
+};
+
+/**
+ * What `refreshStatus` writes after a wipe: native `Shell::status`'s
+ * not-provisioned fast path plus the `claimed` carried over (false after the
+ * synchronous zeroing that precedes it).
+ */
+const NATIVE_UNPROVISIONED_SNAPSHOT = {
+  enabled: false,
+  published: false,
+  device_id: null,
+  protocol_version: 1,
+  claimed: false,
+};
+
+/** The capability predicate's use of the rule, reduced to its E2EE term. */
+function capableGiven(snapshot: E2EEStatusSnapshot | undefined | null) {
+  return !e2eeProvenOff(snapshot);
+}
+
+test("proven off: a LOADED snapshot with enabled === false → not capable → plain call, no gate", () => {
+  assert.equal(e2eeProvenOff({ enabled: false }), true);
+  assert.equal(capableGiven({ enabled: false }), false);
+  assert.deepEqual(
+    sessionSetupDecision({
+      ...READY,
+      e2eeCapable: capableGiven({ enabled: false }),
+      deviceId: false,
+      identityOk: false,
+    }),
+    { action: "plain" },
+  );
+});
+
+test("unresolved: an UNSET snapshot (boot query pending, or it threw) is NOT proven off → capable → hold loud", () => {
+  assert.equal(e2eeProvenOff(undefined), false);
+  assert.equal(e2eeProvenOff(null), false);
+  assert.equal(capableGiven(undefined), true);
+  const decision = sessionSetupDecision({
+    ...READY,
+    e2eeCapable: capableGiven(undefined),
+    deviceId: false,
+    identityOk: false,
+  });
+  assert.equal(decision.action, "hold_loud");
+  assert.match(
+    decision.action === "hold_loud" ? decision.reason : "",
+    /identity is not available yet/,
+  );
+});
+
+test("enrolled: a snapshot with enabled === true is not proven off → capable", () => {
+  assert.equal(e2eeProvenOff({ enabled: true }), false);
+  assert.equal(capableGiven({ enabled: true }), true);
+});
+
+test("a fresh device and a wiped device read identically, and both are proven off", () => {
+  assert.deepEqual(DISABLED_SNAPSHOT, NATIVE_UNPROVISIONED_SNAPSHOT);
+  assert.equal(e2eeProvenOff(DISABLED_SNAPSHOT), true);
+  assert.equal(e2eeProvenOff(NATIVE_UNPROVISIONED_SNAPSHOT), true);
+});
+
+test("PROOF: only a boolean false proves off — a missing snapshot, a missing field, or any other value never does", () => {
+  const notProvenOff: (E2EEStatusSnapshot | undefined | null)[] = [
+    undefined,
+    null,
+    {} as E2EEStatusSnapshot,
+    { enabled: undefined as unknown as boolean },
+    { enabled: true },
+    { enabled: 0 as unknown as boolean },
+    { enabled: "false" as unknown as boolean },
+  ];
+  for (const snapshot of notProvenOff) {
+    assert.equal(e2eeProvenOff(snapshot), false, JSON.stringify(snapshot));
+    assert.equal(capableGiven(snapshot), true, JSON.stringify(snapshot));
+  }
+  assert.equal(e2eeProvenOff({ enabled: false }), true);
 });
 
 // ---- the escape: "Stay unencrypted" with no session ------------------------
