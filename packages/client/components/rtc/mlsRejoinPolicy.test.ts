@@ -229,9 +229,12 @@ test("at and past the window a served rejoin no longer counts (liveness bound)",
   );
 });
 
-test("a backwards clock jump reads as inside the window (the deadline still caps)", () => {
+test("a backwards clock jump reads as LAPSED, not as a fresh window", () => {
+  // The budget deadline moves with the same clock, so "inside the window"
+  // would have kept a departed-but-SFU-present device pending for the whole
+  // jump.
   assert.equal(
     admitInProgressVerdict({ ...idle, rejoinServedAtMs: 10_000, nowMs: 5_000 }),
-    true,
+    false,
   );
 });

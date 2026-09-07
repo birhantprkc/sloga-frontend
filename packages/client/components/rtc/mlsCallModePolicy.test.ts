@@ -640,7 +640,7 @@ test("every other label passes under a latch (they carry their own banners or ar
     assert.deepEqual(modeUnderLoudLatch(mode, true), mode, mode.kind);
 });
 
-test("🔴 composition: latch → mix → mix cleared → the T2 resume cannot reach e2ee", () => {
+test("composition: latch → mix → mix cleared → the T2 resume cannot reach e2ee", () => {
   // Latch in e2ee folds to negotiating; a rejoining peer's beat declares a
   // mix (T0c declare = the session sets `mixed`); the mix clears and the T2
   // timer labels e2ee — which must fold back to the terminal-loud shape.
@@ -680,18 +680,15 @@ test("chip: negotiating + latched error is loud; negotiating without one is ambe
 
 // ---- healing a media latch: the peer-scoped witness ------------------------
 
+const LEFT = { present: false, readdedAfterLatch: false, sidsAllNew: false };
+const REKEYED = { present: true, readdedAfterLatch: true, sidsAllNew: true };
 const HEAL_OK: LoudHealInputs = {
   origin: "media",
   latchedInstallSeq: 3,
   installSeq: 4,
   errorSinceInstall: false,
   rosterConsistent: true,
-  participant: {
-    known: true,
-    present: false,
-    readdedAfterLatch: false,
-    sidsAllNew: false,
-  },
+  peers: [LEFT],
 };
 
 test("a media latch heals once the group re-keyed and the failing peer LEFT", () => {
@@ -699,18 +696,7 @@ test("a media latch heals once the group re-keyed and the failing peer LEFT", ()
 });
 
 test("…or once that peer was re-added after the latch and publishes only NEW tracks", () => {
-  assert.equal(
-    loudHealVerdict({
-      ...HEAL_OK,
-      participant: {
-        known: true,
-        present: true,
-        readdedAfterLatch: true,
-        sidsAllNew: true,
-      },
-    }),
-    "heal",
-  );
+  assert.equal(loudHealVerdict({ ...HEAL_OK, peers: [REKEYED] }), "heal");
 });
 
 test("🔴 a present peer still publishing a latched-time track holds (silent drops at an invalid index)", () => {
@@ -720,24 +706,30 @@ test("🔴 a present peer still publishing a latched-time track holds (silent dr
   assert.equal(
     loudHealVerdict({
       ...HEAL_OK,
-      participant: {
-        known: true,
-        present: true,
-        readdedAfterLatch: true,
-        sidsAllNew: false,
-      },
+      peers: [{ present: true, readdedAfterLatch: true, sidsAllNew: false }],
     }),
     "hold",
   );
   assert.equal(
     loudHealVerdict({
       ...HEAL_OK,
-      participant: {
-        known: true,
-        present: true,
-        readdedAfterLatch: false,
-        sidsAllNew: true,
-      },
+      peers: [{ present: true, readdedAfterLatch: false, sidsAllNew: true }],
+    }),
+    "hold",
+  );
+});
+
+test("🔴 with no named device EVERY remote present at the latch must be gone or re-keyed", () => {
+  // The worker posts a plain Error; only the MissingKey message names the
+  // participant, so a decoy-key failure leaves the set = all remotes.
+  assert.equal(loudHealVerdict({ ...HEAL_OK, peers: [LEFT, REKEYED] }), "heal");
+  assert.equal(
+    loudHealVerdict({
+      ...HEAL_OK,
+      peers: [
+        REKEYED,
+        { present: true, readdedAfterLatch: false, sidsAllNew: false },
+      ],
     }),
     "hold",
   );
@@ -750,14 +742,7 @@ test("🔴 every other missing witness holds", () => {
     { installSeq: 2 },
     { errorSinceInstall: true },
     { rosterConsistent: false },
-    {
-      participant: {
-        known: false,
-        present: false,
-        readdedAfterLatch: false,
-        sidsAllNew: false,
-      },
-    },
+    { peers: [] }, // nobody the failure could have come from = no witness
   ];
   for (const over of holds)
     assert.equal(

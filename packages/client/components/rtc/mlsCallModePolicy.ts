@@ -613,18 +613,24 @@ export function modeUnderLoudLatch(
  */
 export type LoudLatchOrigin = "media" | "control";
 
-/** What the session knows about the participant whose frames failed. */
-export interface LoudHealParticipant {
-  /** The latch carried a participant identity (LiveKit's `CryptorError`). */
-  known: boolean;
-  /** That participant is in the SFU right now. */
+/**
+ * What the session knows NOW about one device whose frames the latch could
+ * have come from: the device the error named when the worker's message
+ * carried one, else every remote device that was in the call at latch time
+ * (LiveKit's worker re-wraps its `CryptorError` into a plain `Error` before
+ * posting it, and only the MissingKey message embeds the identity — the
+ * decoy/withheld-key failure reads `InvalidKey: Decryption failed: …`).
+ */
+export interface LoudHealPeer {
+  /** The device (its primary or any screen leg) is in the SFU right now. */
   present: boolean;
   /** It was observed ADDED to the MLS roster after the latch was set. */
   readdedAfterLatch: boolean;
   /**
-   * None of the track SIDs it published at latch time is published now.
-   * New tracks decrypt at the new key index, which the install's `setKey`
-   * re-validated, so a persisting failure re-emits inside the settle.
+   * It publishes at least one track now and NONE of them existed at latch
+   * time. New tracks decrypt at the new key index, which the install's
+   * `setKey` re-validated, so a persisting failure re-emits inside the
+   * settle. A device publishing nothing is neither gone nor re-keyed.
    */
   sidsAllNew: boolean;
 }
@@ -632,7 +638,7 @@ export interface LoudHealParticipant {
 /** The witnesses a latched session must hold before its loud latch may heal. */
 export interface LoudHealInputs {
   origin: LoudLatchOrigin;
-  /** Monotonic local key-install counter at the moment the latch was set. */
+  /** Epoch-keys-applied counter at the moment the latch was set. */
   latchedInstallSeq: number;
   /** The same counter now — a strictly larger value means a new epoch's keys. */
   installSeq: number;
@@ -640,7 +646,11 @@ export interface LoudHealInputs {
   errorSinceInstall: boolean;
   /** A FRESH reconcile reported neither non-enrolled nor pending identities. */
   rosterConsistent: boolean;
-  participant: LoudHealParticipant;
+  /**
+   * Every device the failure could have come from. Empty means the latch
+   * has no witness at all (no remote was present) and must hold.
+   */
+  peers: readonly LoudHealPeer[];
 }
 
 /**
@@ -660,10 +670,12 @@ export interface LoudHealInputs {
  * index after the re-key therefore produces zero errors and zero decrypts —
  * the exact class the latch exists for — so "no error since the install" on
  * its own would heal over silently dropped media. It is sufficient only once
- * the failing peer is gone, or was re-added after the latch and publishes
- * only tracks that did not exist at latch time (those decrypt at the fresh
- * index; if they fail, the error re-emits inside the settle and holds).
- * A latch that never learned WHICH peer failed has no such witness: hold.
+ * EVERY device the failure could have come from is gone, or was re-added
+ * after the latch and publishes only tracks that did not exist at latch time
+ * (those decrypt at the fresh index; if they fail, the error re-emits inside
+ * the settle and holds). When the error named its device the set is that one
+ * device; otherwise it is every remote present at latch time — the same set
+ * in a 1:1 call. No device at all: hold.
  *
  * Both chip planes are required (invariant 11): control (a verified commit
  * installed a new epoch, the roster matches the SFU set) and media (no decrypt
@@ -676,10 +688,12 @@ export function loudHealVerdict(inputs: LoudHealInputs): "heal" | "hold" {
   if (inputs.installSeq <= inputs.latchedInstallSeq) return "hold";
   if (inputs.errorSinceInstall) return "hold";
   if (!inputs.rosterConsistent) return "hold";
-  const peer = inputs.participant;
-  if (!peer.known) return "hold";
-  if (!peer.present) return "heal";
-  return peer.readdedAfterLatch && peer.sidsAllNew ? "heal" : "hold";
+  if (inputs.peers.length === 0) return "hold";
+  return inputs.peers.every(
+    (peer) => !peer.present || (peer.readdedAfterLatch && peer.sidsAllNew),
+  )
+    ? "heal"
+    : "hold";
 }
 
 /**

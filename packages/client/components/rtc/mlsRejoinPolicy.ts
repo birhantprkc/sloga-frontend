@@ -138,8 +138,10 @@ export function rejoinReintentWindowMs(bounds: {
  *  - `rejoinServedAtMs` — when this member watched the identity's stale leaf go
  *    while the device stayed connected (`null` = never). Inside
  *    `rejoinReintentWindowMs` its re-Add is expected and nothing else ledgers
- *    that phase. A clock that jumped backwards reads as inside the window;
- *    the deadline still caps it.
+ *    that phase. A clock that jumped backwards (now before the stamp) reads
+ *    as LAPSED: the alternative kept a departed-but-SFU-present device
+ *    pending for the whole jump, and the budget deadline it would fall back
+ *    on moves with the same clock.
  *
  * This is a LIVENESS bound only: the pending stretch is still billed and a
  * device that never re-broadcasts goes loud at the smaller of the window and
@@ -163,5 +165,6 @@ export function admitInProgressVerdict(opts: {
     return true;
   }
   if (opts.rejoinServedAtMs === null) return false;
-  return opts.nowMs - opts.rejoinServedAtMs < opts.windowMs;
+  const elapsed = opts.nowMs - opts.rejoinServedAtMs;
+  return elapsed >= 0 && elapsed < opts.windowMs;
 }
