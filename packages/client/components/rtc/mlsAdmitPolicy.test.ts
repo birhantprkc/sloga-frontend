@@ -18,6 +18,7 @@ const ALL: AdmitAbort[] = [
   "not_active",
   "other_group",
   "state_unavailable",
+  "listing_unavailable",
   "not_a_member",
   "leaf_unverifiable",
   "already_member",
@@ -42,12 +43,21 @@ test("the transient aborts that stranded the joiner are ALL retryable", () => {
     "not_active",
     "other_group",
     "state_unavailable",
+    "listing_unavailable",
     "not_a_member",
     "claim_failed",
     "leaf_unverifiable",
   ] as const) {
     assert.equal(admitAbortIsRetryable(abort), true, abort);
   }
+});
+
+test("an unfetched listing is retryable but never benign", () => {
+  // The 2026-09-06 shape: a 429 on the joiner's listing. Retryable, because
+  // the bucket resets in seconds and the re-drive re-runs the reconcile; not
+  // benign, because until it does that participant is NOT in the group.
+  assert.equal(admitAbortIsRetryable("listing_unavailable"), true);
+  assert.equal(admitAbortIsBenign("listing_unavailable"), false);
 });
 
 test("mls_leaf_rejected is a TARGET refusal, not a session failure", () => {

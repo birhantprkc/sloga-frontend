@@ -41,10 +41,35 @@ export interface NegotiatingFailsafeInput {
    * conflicts and never trips it, the JOINER always does.
    */
   dsVerdictSeen: boolean;
-  /** The channel's open-group probe, whose own verdict may still be pending. */
-  probe: "open" | "pending" | "none";
+  /**
+   * The channel's open-group probe, whose own verdict may still be pending.
+   *
+   * `ratelimited`: the probe was answered 429. That is not a verdict about
+   * the group and it is not unreachability either — the DS answered, and
+   * the budget it is refusing from is this session's own MLS bucket, which
+   * nothing but an E2EE call's bring-up spends. The availability escape is
+   * justified by same-origin UNREACHABILITY (R2-6), so it does not apply:
+   * treat it like an open group and hold the gate, loud.
+   */
+  probe: "open" | "pending" | "none" | "ratelimited";
   /** Re-arms already consumed against [`MAX_FAILSAFE_REARMS`]. */
   rearmsUsed: number;
+  /**
+   * A loud verdict is already latched (`#latchLoud`): the establish threw —
+   * a 429 past the transport's bounded retries, a 5xx, a native refusal — or
+   * the self-enrolment assertion fired. The chip reads NOT-ENCRYPTED and the
+   * banner offers Leave / Stay-unencrypted on the promise that publishing is
+   * paused.
+   *
+   * 🔴 Firing the availability escape under that latch made the promise
+   * false: `#onLoud` leaves the mode at `negotiating` and this fail-safe only
+   * re-checked the mode, so a create that failed inside the 5 s window
+   * resumed plaintext five seconds later, under a red chip, with the user
+   * told it was paused. The latch already holds the gate and owns the only
+   * escape (the native-confirmed "Stay unencrypted"); there is nothing left
+   * for the fail-safe to decide.
+   */
+  loudLatched: boolean;
 }
 
 /**
@@ -52,17 +77,24 @@ export interface NegotiatingFailsafeInput {
  * path carries its own bound and its own terminal outcome (`join timed out
  * after retries` → RE-SECURING, a loud failure, or an active session), so
  * firing anyway adds no safety — it reports a failure that has not happened.
+ * The same holds once a loud verdict is LATCHED: that path already holds the
+ * gate and offers its own escape, and the one thing the fail-safe could add
+ * is a release it must never make.
  *
  * Strictly more conservative than the behaviour it replaces, in the only
  * direction that matters: it never RELEASES the publish gate in a case where
  * the old code held it, and it never resumes plaintext on an E2EE-known call.
- * It only declines to raise an alarm.
+ * It only declines to raise an alarm — or, for `ratelimited`, raises the one
+ * the old code mistook for a completed no-group verdict.
  */
 export function negotiatingFailsafeAction(
   input: NegotiatingFailsafeInput,
 ): NegotiatingFailsafeAction {
+  if (input.loudLatched) return "ignore";
   if (input.dsVerdictSeen) return "ignore";
-  if (input.probe === "open") return "resecure";
+  if (input.probe === "open" || input.probe === "ratelimited") {
+    return "resecure";
+  }
   if (input.probe === "pending" && input.rearmsUsed < MAX_FAILSAFE_REARMS) {
     return "rearm";
   }

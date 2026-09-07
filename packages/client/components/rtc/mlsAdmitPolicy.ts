@@ -21,6 +21,14 @@ export type AdmitAbort =
   | "other_group"
   /** Native `callState` failed — we cannot read our own roster. */
   | "state_unavailable"
+  /**
+   * A roster user's signed device listing could not be fetched (a 429 past
+   * the transport's bounded retries, offline, a 5xx), so no pin could be made
+   * and the joiner's leaf cannot be verified. Distinct from
+   * `state_unavailable` so the log names the listing, not our own store; the
+   * re-drive is what makes the next window's fetch happen.
+   */
+  | "listing_unavailable"
   /** We are not in the group's verified roster, so we cannot admit anyone. */
   | "not_a_member"
   /** The joiner is already in the roster — another member's Add won. */
@@ -67,6 +75,7 @@ export function admitAbortIsRetryable(abort: AdmitAbort): boolean {
     case "not_active":
     case "other_group":
     case "state_unavailable":
+    case "listing_unavailable":
     case "not_a_member":
     case "claim_failed":
     case "leaf_unverifiable":

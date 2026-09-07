@@ -166,6 +166,10 @@ import {
 import { WatchDuck } from "./watchDuck";
 import { WatchTogether } from "./watchTogether";
 
+import {
+  ratelimitRetryDelayMs,
+  retryAfterMs,
+} from "../client/e2eeRatelimitPolicy";
 import { LiveAnnotations } from "./annotations/liveAnnotations";
 import {
   type RecordingTarget,
@@ -982,7 +986,7 @@ class Voice {
    * that turns out E2EE would auto-resume plaintext. Tri-state read by the
    * session via `channelHasOpenGroup`.
    */
-  #openGroupProbe: "pending" | "open" | "none" = "pending";
+  #openGroupProbe: "pending" | "open" | "none" | "ratelimited" = "pending";
 
   constructor(
     voiceSettings: VoiceSettings,
@@ -2531,21 +2535,57 @@ class Voice {
         const apiClient = this.getClient();
         if (apiClient) {
           const [authHeader, authValue] = apiClient.authenticationHeader;
-          void fetch(
-            `${apiClient.options.baseURL}/mls/channels/${channel.id}/open_group`,
-            {
-              headers: { [authHeader]: authValue },
-              signal: AbortSignal.timeout(OPEN_GROUP_PROBE_TIMEOUT_MS),
-            },
-          )
-            .then(async (response) => {
+          const url = `${apiClient.options.baseURL}/mls/channels/${channel.id}/open_group`;
+          const probe = async (): Promise<"open" | "none" | "ratelimited"> => {
+            for (let retry = 0; ; retry++) {
+              const response = await fetch(url, {
+                headers: { [authHeader]: authValue },
+                signal: AbortSignal.timeout(OPEN_GROUP_PROBE_TIMEOUT_MS),
+              });
+              if (response.status !== 429) {
+                return response.ok ? "open" : "none";
+              }
+              // A 429 is neither a verdict about the group nor the
+              // unreachability the "none" arm is ratified for: the DS
+              // answered, from this session's own MLS bucket, which only
+              // an E2EE call's bring-up spends. Tell the fail-safe NOW —
+              // it reads this at 5 s and the reset may be 10 s away — so
+              // it holds the gate instead of releasing on a "completed"
+              // no-group verdict, then keep asking (bounded) for the real
+              // answer.
+              if (gen === this.#connectGen) {
+                this.#openGroupProbe = "ratelimited";
+              }
+              const body = (await response.json().catch(() => null)) as {
+                retry_after?: unknown;
+              } | null;
+              const delay = ratelimitRetryDelayMs(
+                retry + 1,
+                retryAfterMs({
+                  bodyRetryAfter: body?.retry_after,
+                  resetAfterHeader: response.headers.get(
+                    "X-RateLimit-Reset-After",
+                  ),
+                  retryAfterHeader: response.headers.get("Retry-After"),
+                }),
+              );
+              if (delay === null) return "ratelimited";
+              await new Promise<void>((resolve) => setTimeout(resolve, delay));
+            }
+          };
+          void probe()
+            .then((verdict) => {
               // Ownership guard: a stale probe resolving after a hang-up /
               // rejoin must not clobber the NEXT call's tri-state (the T0d
               // fail-safe reads it; the new call runs its own probe).
               if (gen !== this.#connectGen) return;
-              const open = response.ok;
-              this.#openGroupProbe = open ? "open" : "none";
-              this.#setCallChannelHasOpenGroup(open);
+              this.#openGroupProbe = verdict;
+              // `ratelimited` says nothing about the group: the chip's
+              // open-group attribution keeps its default rather than
+              // vouching either way.
+              if (verdict !== "ratelimited") {
+                this.#setCallChannelHasOpenGroup(verdict === "open");
+              }
             })
             .catch(() => {
               if (gen !== this.#connectGen) return;

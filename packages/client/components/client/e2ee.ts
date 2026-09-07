@@ -40,6 +40,14 @@ import type {
   Message,
 } from "stoat.js";
 
+import {
+  E2EERateLimitError,
+  RATELIMIT_DEFAULT_DELAY_MS,
+  RATELIMIT_JITTER_MS,
+  RATELIMIT_MAX_RETRIES,
+  ratelimitRetryDelayMs,
+  retryAfterMs,
+} from "./e2eeRatelimitPolicy";
 import { classifyEnvelopeError } from "./mlsEnvelopeClassify";
 import { IS_OVERLAY_WINDOW, IS_POPOUT_WINDOW } from "./popout";
 
@@ -1210,7 +1218,7 @@ export class E2EEBridge implements E2EEAdapter {
   ): Promise<T> {
     const [authHeader, authValue] = this.#client.authenticationHeader;
 
-    const response = await fetch(`${this.#client.options.baseURL}${path}`, {
+    const response = await this.#fetchRatelimited(method, path, {
       method,
       headers: {
         [authHeader]: authValue,
@@ -1227,6 +1235,63 @@ export class E2EEBridge implements E2EEAdapter {
     return response.status === 204
       ? (undefined as T)
       : ((await response.json()) as T);
+  }
+
+  /**
+   * `fetch` with the 429 policy (`e2eeRatelimitPolicy`): wait out the
+   * server's reset — bounded — and only then fail, with a TYPED error a
+   * caller can tell from "unreachable". Shared by `#api` and `#apiMls`, so
+   * every /e2ee and /mls caller inherits it: the DM-plane housekeeping, the
+   * call-plane roster reconcile, the KeyPackage claim that admits a joiner.
+   *
+   * Before this, one busy window at call bring-up (observed live 2026-09-06
+   * on a fresh enrollment: three 429s on `GET /e2ee/devices/<user>`) threw a
+   * generic transport error into every one of them, and each swallowed it
+   * in its own way — a peer left unpinned, an admit ledgered against a pin
+   * that was never going to land in the next 5 s, a housekeeping pass
+   * skipped until the next connect.
+   *
+   * The body of a 429 (`{retry_after}` in ms) is consumed here; the caller
+   * only ever sees a non-429 response or the typed error. `init.body` is a
+   * string, so re-sending it is safe.
+   */
+  async #fetchRatelimited(
+    method: string,
+    path: string,
+    init: RequestInit,
+  ): Promise<Response> {
+    const url = `${this.#client.options.baseURL}${path}`;
+    for (let retry = 0; ; retry++) {
+      const response = await fetch(url, init);
+      if (response.status !== 429) return response;
+
+      const body = (await response.json().catch(() => null)) as {
+        retry_after?: unknown;
+      } | null;
+      const hint = retryAfterMs({
+        bodyRetryAfter: body?.retry_after,
+        resetAfterHeader: response.headers.get("X-RateLimit-Reset-After"),
+        retryAfterHeader: response.headers.get("Retry-After"),
+      });
+      const delay = ratelimitRetryDelayMs(
+        retry + 1,
+        hint,
+        Math.random() * RATELIMIT_JITTER_MS,
+      );
+      if (delay === null) {
+        throw new E2EERateLimitError(
+          method,
+          path,
+          hint ?? RATELIMIT_DEFAULT_DELAY_MS,
+          retry + 1,
+        );
+      }
+      console.warn(
+        `[e2ee] ${method} ${path} rate limited; retrying in ` +
+          `${Math.round(delay)} ms (${retry + 1}/${RATELIMIT_MAX_RETRIES})`,
+      );
+      await new Promise<void>((resolve) => setTimeout(resolve, delay));
+    }
   }
 
   async refreshStatus(): Promise<NativeStatus> {
@@ -1772,6 +1837,18 @@ export class E2EEBridge implements E2EEAdapter {
    * Returns the users for whom a device was newly pinned, so the caller can
    * surface it. Gated on what the native op actually WROTE — never on
    * `new_devices`, which also reports re-presented revoked devices.
+   *
+   * Throws — AFTER every listing that did arrive has been reconciled and
+   * pinned — when any user's listing could not be fetched or reconciled (a
+   * 429 past the transport's bounded retries, offline, a 5xx, a native
+   * store failure), rethrowing the first cause (typed `E2EERateLimitError`
+   * when it was a rate limit). A listing that arrived but does not VERIFY is
+   * not a throw: that is a verdict, the device stays unverified, and its
+   * leaf is refused loudly later. Both used to be swallowed alike, which
+   * left every caller unable to tell "no pin yet, ask again in a window"
+   * from "no pin, ever": the admitter went on to spend a claim it could not
+   * use, and the drain counted a reconcile that never ran as progress
+   * toward giving up on the joiner.
    */
   async reconcileCallRoster(
     roster: { userId: string; deviceIds: string[] }[],
@@ -1784,36 +1861,55 @@ export class E2EEBridge implements E2EEAdapter {
     }
 
     const selfUserId = this.#client.user?.id;
+    const unfetched: { userId: string; error: unknown }[] = [];
     const pinnedUsers = await Promise.all(
-      [...byUser].map(([userId, deviceIds]) =>
-        this.#reconcileDevices(userId)
-          .then(async (report) => {
-            // Own devices are pinned only from a self bundle — own-device
-            // fan-out reaches every active pin of ours, so a listing pin
-            // here would silently widen the audience for every DM we send.
-            // (Native refuses this too; both guards are deliberate.)
-            if (!report || !selfUserId || userId === selfUserId) return null;
+      [...byUser].map(async ([userId, deviceIds]) => {
+        let report: { new_devices: string[]; listing: unknown[] } | null;
+        try {
+          report = await this.#reconcileDevices(userId);
+        } catch (error) {
+          // No listing, so no pin: the device stays unverified (fail
+          // closed) and the caller is told, below.
+          unfetched.push({ userId, error });
+          return null;
+        }
 
-            const targets = [...deviceIds];
-            if (!targets.length) return null;
+        // Own devices are pinned only from a self bundle — own-device
+        // fan-out reaches every active pin of ours, so a listing pin
+        // here would silently widen the audience for every DM we send.
+        // (Native refuses this too; both guards are deliberate.)
+        if (!report || !selfUserId || userId === selfUserId) return null;
 
-            const pinned = await this.#invoke<string[]>(
-              "e2ee_pin_call_identities",
-              {
-                selfUserId,
-                userId,
-                targets,
-                devices: report.listing,
-              },
-            );
-            return pinned.length ? userId : null;
-          })
-          .catch(() => {
-            /* unfetchable / unverifiable stays unverified — fail closed */
-            return null;
-          }),
-      ),
+        const targets = [...deviceIds];
+        if (!targets.length) return null;
+
+        try {
+          const pinned = await this.#invoke<string[]>(
+            "e2ee_pin_call_identities",
+            {
+              selfUserId,
+              userId,
+              targets,
+              devices: report.listing,
+            },
+          );
+          return pinned.length ? userId : null;
+        } catch {
+          /* unverifiable stays unverified — fail closed; a verdict, not a
+             transport failure, so nothing to retry */
+          return null;
+        }
+      }),
     );
+
+    if (unfetched.length) {
+      console.warn(
+        "[e2ee] call roster reconcile: listing unavailable for",
+        unfetched.map((entry) => entry.userId),
+        unfetched[0].error,
+      );
+      throw unfetched[0].error;
+    }
 
     return pinnedUsers.filter((id): id is string => id !== null);
   }
@@ -4458,7 +4554,10 @@ export class E2EEBridge implements E2EEAdapter {
   ): Promise<MlsHttpResult<T>> {
     const [authHeader, authValue] = this.#client.authenticationHeader;
 
-    const response = await fetch(`${this.#client.options.baseURL}${path}`, {
+    // A 429 is waited out (bounded) inside `#fetchRatelimited`; past the
+    // bound it throws `E2EERateLimitError`, which the session treats like
+    // any other thrown transport failure — loud, never plaintext.
+    const response = await this.#fetchRatelimited(method, path, {
       method,
       headers: {
         [authHeader]: authValue,

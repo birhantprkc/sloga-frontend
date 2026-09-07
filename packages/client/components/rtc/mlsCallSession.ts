@@ -853,14 +853,16 @@ export interface MlsCallSessionDeps {
    */
   requestMfaTicket?: () => Promise<string | undefined>;
   /**
-   * The channel's open-group probe state (tri-state, media-gate LOW-2). Read
-   * by the T0d fail-safe: `"open"` ⇒ hold the gate + loud RE-SECURING (an
+   * The channel's open-group probe state (media-gate LOW-2). Read by the
+   * T0d fail-safe: `"open"` ⇒ hold the gate + loud RE-SECURING (an
    * E2EE-known call never auto-resumes plaintext); `"pending"` ⇒ hold the
    * gate and re-arm the fail-safe (bounded); `"none"` (a COMPLETED 404 /
    * feature-off / probe error — the error arm is RATIFIED, R2-6: the probe
-   * and the DS share an origin) ⇒ the availability escape may release.
+   * and the DS share an origin) ⇒ the availability escape may release;
+   * `"ratelimited"` (a 429 — the DS answered, so R2-6's unreachability
+   * premise does not hold) ⇒ hold + loud, as for `"open"`.
    */
-  channelHasOpenGroup?: () => "open" | "none" | "pending";
+  channelHasOpenGroup?: () => "open" | "none" | "pending" | "ratelimited";
 }
 
 /** One staged own commit awaiting arbitration (native pending mirror). */
@@ -1213,7 +1215,15 @@ export class MlsCallSession {
    *  - probe says "pending" ⇒ hold the gate and RE-ARM (bounded — a hung
    *    probe eventually errors to "none" via fetch's own failure);
    *  - probe says "none" (a COMPLETED verdict, incl. the RATIFIED error arm)
-   *    ⇒ availability escape: release the gate, keep negotiating quietly.
+   *    ⇒ availability escape: release the gate, keep negotiating quietly;
+   *  - probe says "ratelimited" ⇒ the DS answered (429), so the escape's
+   *    unreachability premise is false: hold + loud, as for "open";
+   *  - a loud verdict is already LATCHED (`#latchLoud` — the establish threw
+   *    inside the window, or the enrolment assertion fired) ⇒ nothing left
+   *    to decide: that path holds the gate and owns the only escape. Before
+   *    this term, a create that failed at 2 s went `failed` with the mode
+   *    still `negotiating`, and this timer released the gate at 5 s under a
+   *    red chip whose banner had just promised publishing was paused.
    */
   #armNegotiatingFailsafe(): void {
     const timer = setTimeout(() => {
@@ -1224,6 +1234,7 @@ export class MlsCallSession {
           dsVerdictSeen: this.#dsVerdictSeen,
           probe: this.#deps.channelHasOpenGroup?.() ?? "none",
           rearmsUsed: this.#failsafeRearms,
+          loudLatched: this.#loudLatched,
         })
       ) {
         case "ignore":
@@ -1676,7 +1687,19 @@ export class MlsCallSession {
     // the admitter's (and any existing member's) leaf passes
     // verify_leaf_credential on the FIRST Welcome pass — instead of a
     // reject → reconcile → reprocess round-trip and a retry-window key gap.
-    await this.#reconcileRoster();
+    try {
+      await this.#reconcileRoster();
+    } catch (error) {
+      // The pre-pin is an optimization, not the gate. A listing that did not
+      // arrive (a 429 past the transport's bounded retries, offline) leaves
+      // the Welcome's own leaf verification to re-drive the reconcile through
+      // `fetch_identity`, and the bounded join ladder below still ends loud
+      // if the pin never lands. Never plaintext; not loud on its own.
+      console.warn(
+        "[mls] pre-join roster pin skipped — listing unavailable",
+        error,
+      );
+    }
 
     for (let attempt = 0; attempt <= MAX_JOINER_RETRIES; attempt++) {
       // §4.2: a superseded join loop broadcasts NOTHING — every re-broadcast
@@ -1895,12 +1918,15 @@ export class MlsCallSession {
     // before the Add commit fans out, so this member accepts the joiner's leaf
     // instead of failing loud (admitter) / poisoning (existing member). Wrap
     // so a rejected reconcile doesn't ORPHAN the reserved key (audit final LOW).
+    // A listing that did not arrive now THROWS (it used to be swallowed, and
+    // the admit went on to spend a claim against a pin it did not hold):
+    // ledger it, and let the re-drive fetch it in the next window.
     try {
       await this.#reconcileRoster([
         { userId: request.user_id, deviceId: request.device_id },
       ]);
     } catch (error) {
-      return this.#abortAdmit(key, request, "state_unavailable", error);
+      return this.#abortAdmit(key, request, "listing_unavailable", error);
     }
     if (this.#state !== "active") {
       return this.#abortAdmit(key, request, "not_active");
@@ -2040,7 +2066,7 @@ export class MlsCallSession {
         { userId: request.user_id, deviceId: request.device_id },
       ]);
     } catch (error) {
-      return this.#abortAdmit(key, request, "state_unavailable", error);
+      return this.#abortAdmit(key, request, "listing_unavailable", error);
     }
     try {
       await this.#deps.bridge.callVerifyJoinIntent(request);
@@ -3927,9 +3953,7 @@ export class MlsCallSession {
    * exit, `false` when the correction did not land (the caller must then
    * leave the window held rather than resume).
    */
-  async #assertLocalDeclarations(
-    via: "enable" | "publish",
-  ): Promise<boolean> {
+  async #assertLocalDeclarations(via: "enable" | "publish"): Promise<boolean> {
     if (this.#localDeclarationCheck) {
       this.#localDeclarationRecheck = true;
       return this.#localDeclarationCheck;
