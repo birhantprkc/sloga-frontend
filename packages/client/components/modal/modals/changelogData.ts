@@ -8,6 +8,43 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // Linux 0.58.0 (2026-09-07). Copy constraints, load-bearing:
+  // - Linux-only release: encrypted calls switched on for the Linux app, proven
+  //   on the wire (receiver-side ciphertext tap) and with a deliberate key
+  //   failure the same day. Windows and Android still bundle 0.57.0; the
+  //   closing line self-resolves at the next shell sweep.
+  // - Say "cannot be secured", never the exact banner sentence, and never
+  //   "turned off" / "starting capture" wording: those strings are build gate
+  //   markers.
+  // - EXCLUDED, no live leg on this build: the shorter join banner, the
+  //   immediate pause when a plain browser joins, the chip after people churn,
+  //   group-chat calls, the cancelled-picker dialog. They ride the next sweep's
+  //   entry once they have been seen live.
+  // - `web_version` is what Settings will print once this entry reaches the web.
+  {
+    id: "sloga-2026-09-07",
+    title: "Patch Notes",
+    published_at: "2026-09-07T18:30:00.000Z",
+    web_version: "0.58.0",
+    markdown_content: `## v0.58.0 — Encrypted calls on Linux
+
+### 🔒 Your calls on Linux are now end-to-end encrypted
+- **Voice, camera and screen share from the Linux app are encrypted before they leave your machine**, the same way they already are on Windows. The server relays your frames but cannot read them; only the people in the call hold the keys.
+- Nothing to switch on. When everyone in the call is on an app that supports it, the call chip reads Encrypted and stays that way. A call with someone on the web or an older app tells you so before anything is sent.
+- We checked this the hard way: a Linux install exactly like yours published a call while the other end recorded every frame as it arrived, before decryption. All of them were unreadable. Breaking the other end's copy of the key on purpose made that side fail loudly rather than show a picture.
+
+### ⏸️ A call that cannot be secured never sends in the clear quietly
+- **If the encryption handshake is slow, your microphone and camera wait**: the chip shows the call re-securing and nothing goes out unencrypted in the meantime.
+- If it fails, you get a clear choice: leave the call, or stay and continue without encryption. The app will not make that decision for you.
+
+### 🖥️ Screen sharing on X11
+- **The screen picker opens on top of the Sloga window** instead of somewhere behind it, lists your screens and windows, and closes with Escape.
+- Sloga's own windows are no longer offered as something to share, which also removes a crash that picking one could cause.
+
+### 🔢 Version
+- The Linux app moves to v0.58.0 today. Windows and Android get these changes with their next update.
+`,
+  },
   // Sidebar highlight (web-only at publish, 2026-09-05). Copy constraints,
   // load-bearing:
   // - The setting recolors ONLY what MenuButton paints in its `active` state:
