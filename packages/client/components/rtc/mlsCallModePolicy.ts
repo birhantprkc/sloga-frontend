@@ -281,6 +281,17 @@ export interface ChipInputs {
   publishingIdentities: readonly string[];
   /** LiveKit's observed per-participant encryption status (identity → bool). */
   observedEncrypted: ReadonlyMap<string, boolean>;
+  /**
+   * Every LOCAL publication is on the SFU's record as GCM (vacuous when we
+   * publish nothing). The observed status above witnesses the worker's
+   * cryptor, not the declaration receivers arm their cryptors from: a mic
+   * publish still in flight when E2EE was enabled lands declared NONE, the
+   * worker still says "encrypted", and every peer disarms for us and hears
+   * nothing while this chip read green (desktop 0.57.0, 2026-09-06). The
+   * session re-declares such publications; until it has, the chip must
+   * not vouch for them. Derived by `localPublicationsEncrypted`.
+   */
+  localPublicationsEncrypted: boolean;
   /** The VERIFIED MLS roster: every member's `user_verified` flag. */
   rosterVerified: readonly boolean[];
   /** The channel has an open MLS group (the probe result — FE-7). */
@@ -292,8 +303,8 @@ export interface ChipInputs {
 /**
  * Derive the §4.4 chip. DUAL-GATED green (invariant 11 / amendment A1):
  * (a) native control-plane health, (b) LiveKit-observed per-participant
- * encryption over TRACK-PUBLISHING participants, (c) every roster member
- * user-verified. Neither gate alone is green; either's absence drops to
+ * encryption over TRACK-PUBLISHING participants AND every local publication
+ * declared GCM to the SFU, (c) every roster member user-verified. Neither gate alone is green; either's absence drops to
  * resecuring/not_encrypted (fail-closed). Server flags can never promote.
  * Precedence: not_encrypted > resecuring > e2ee_unverified > e2ee > none.
  */
@@ -365,9 +376,11 @@ export function chipState(inputs: ChipInputs): ChipState {
   const mediaObserved = inputs.publishingIdentities.every(
     (identity) => inputs.observedEncrypted.get(identity) === true,
   );
-  if (!mediaObserved) {
-    // (a) holds but (b) not yet satisfied for a publishing participant —
-    // bounded amber (the session arms the 10 s escalation → loud, R2-2).
+  if (!mediaObserved || !inputs.localPublicationsEncrypted) {
+    // (a) holds but (b) not yet satisfied for a publishing participant, or
+    // one of OUR OWN publications is not on record as GCM — bounded amber
+    // (the session arms the 10 s escalation → loud, R2-2, and republishes
+    // the local declaration).
     return "resecuring";
   }
 

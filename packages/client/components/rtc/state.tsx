@@ -190,6 +190,7 @@ import { InRoom } from "./components/InRoom";
 import { RoomAudioManager } from "./components/RoomAudioManager";
 import { isDiceRollMessage, summariseDiceRoll } from "./diceRoll";
 import { faceSettingsActive } from "./faceFilterCatalog";
+import { localPublicationsEncrypted } from "./localPublicationEncryption";
 import { MlsKeyProvider } from "./mlsCallKeys";
 import {
   type CallMode,
@@ -2292,6 +2293,13 @@ class Voice {
     room.addListener("localTrackPublished", (pub) => {
       this.#setCallParticipantsVersion((v) => v + 1);
       if (this.#publishGate.size > 0) void this.#applyPublishGate(room);
+      // A publish that was in flight across the session's E2EE flip lands
+      // here declared NONE (livekit stamps the type when it builds the
+      // request, and the flip republishes only what was registered). The
+      // session re-declares it; until then the chip reads amber, never
+      // green, off the same `trackInfo` (rtc/localPublicationEncryption.ts).
+      if (this.room() === room)
+        this.#mlsSession?.noteLocalPublicationsChanged();
       const track = pub.track;
       if (!track) return;
       track.on(TrackEvent.UpstreamResumed, () => {
@@ -2942,6 +2950,34 @@ class Voice {
         });
       },
       setEncryptionEnabled: (enabled) => room.setE2EEEnabled(enabled),
+      // What the SFU has on record for OUR publications — the declaration
+      // receivers arm their cryptors from, and the one gate (b) of the chip
+      // reads for the local identity. `trackInfo` on a local publication is
+      // the server's answer to our own AddTrack, present from registration.
+      localPublications: () =>
+        [...room.localParticipant.trackPublications.values()].map((pub) => ({
+          trackSid: pub.trackSid,
+          source: pub.source,
+          encryption: pub.trackInfo?.encryption,
+        })),
+      // Re-declare the named publications under the participant's CURRENT
+      // encryption type (GCM once the session flipped it). Same unpublish +
+      // publish pair livekit's own `republishAllTracks` runs, restricted to
+      // the sids that need it so a correctly declared screen share is not
+      // torn down alongside a mis-declared mic. The session holds the
+      // publish gate around this; `localTrackPublished` re-applies it to the
+      // new publication. Stale-room guarded like the gate itself.
+      republishLocalPublications: async (trackSids) => {
+        if (this.room() !== room) return;
+        for (const sid of trackSids) {
+          const pub = room.localParticipant.trackPublications.get(sid);
+          const track = pub?.track;
+          if (!pub || !track) continue;
+          await room.localParticipant.unpublishTrack(track, false);
+          if (this.room() !== room) return;
+          await room.localParticipant.publishTrack(track, pub.options);
+        }
+      },
       pausePublishing: (reason) => this.#pauseGate(room, reason),
       resumePublishing: (reason) => this.#resumeGate(room, reason),
     };
@@ -5859,6 +5895,19 @@ class Voice {
       const v = this.callEncryption.get(identity);
       if (v !== undefined) observed.set(identity, v);
     }
+    // The worker's "encrypted" status for OUR identity says the cryptor is
+    // on, not what the SFU was told; the declaration receivers arm from is
+    // `trackInfo.encryption` on our own publications. Re-read on every
+    // participants-version bump (a republish registers a new publication).
+    const localDeclared = room
+      ? localPublicationsEncrypted(
+          [...room.localParticipant.trackPublications.values()].map((pub) => ({
+            trackSid: pub.trackSid,
+            source: pub.source,
+            encryption: pub.trackInfo?.encryption,
+          })),
+        )
+      : true;
     return chipState({
       hasSession: !!session,
       sessionState,
@@ -5869,6 +5918,7 @@ class Voice {
       latchedError: this.callEncryptionError() !== undefined,
       publishingIdentities: publishing,
       observedEncrypted: observed,
+      localPublicationsEncrypted: localDeclared,
       rosterVerified: this.callRoster().members.map((m) => m.user_verified),
       channelHasOpenGroup: this.callChannelHasOpenGroup(),
       capableAndEnabled: this.#settings.e2eeCallsEnabled,
