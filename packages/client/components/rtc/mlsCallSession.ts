@@ -3718,11 +3718,22 @@ export class MlsCallSession {
     const sfuDevices = new Set(
       media.sfuParticipants().map((identity) => stripLeg(identity)),
     );
+    // The settle must run from the LATEST of the last key install and the
+    // most recent observed re-Add of a present witness: a probe armed by the
+    // Remove epoch's install can otherwise fire the moment its own reconcile
+    // observes the rejoiner's Add, before a single frame under the new key
+    // has been judged (leg 9, 2026-09-07 — a 10 s false green over a key that
+    // was still wrong). When that settle is the only missing witness the
+    // probe re-arms once; the Add epoch's own install re-arms it anyway.
+    let latestAddedAt = 0;
     const peers = [...this.#loudPeers].map(([device, latchedSids]) => {
       // Device-scoped: the owner or any of its legs still in the SFU counts.
       const present = sfuDevices.has(device);
       // From the verified roster diff only — see `#healAdds`.
       const addedAt = this.#healAdds.get(device);
+      if (present && addedAt !== undefined && addedAt > latestAddedAt) {
+        latestAddedAt = addedAt;
+      }
       // Absent accessor ⇒ null ⇒ not "all new" (fail-closed); publishing
       // nothing is neither "left" nor "re-keyed".
       const sids = present ? this.#deviceTrackSids(device) : [];
@@ -3736,16 +3747,26 @@ export class MlsCallSession {
           sids.every((sid) => !latchedSids.has(sid)),
       };
     });
+    const settleElapsed =
+      Date.now() - Math.max(this.#lastInstallAt, latestAddedAt) >=
+      LOUD_HEAL_SETTLE_MS;
     const verdict = loudHealVerdict({
       origin: this.#loudOrigin,
       latchedInstallSeq: this.#loudLatchedInstallSeq,
       installSeq: this.#installSeq,
       errorSinceInstall: this.#lastMediaErrorAt >= this.#lastInstallAt,
+      settleElapsed,
       rosterConsistent:
         result.nonEnrolled.length === 0 && result.pending.length === 0,
       peers,
     });
-    if (verdict !== "heal") return;
+    if (verdict !== "heal") {
+      if (!settleElapsed && !this.#healRetried) {
+        this.#healRetried = true;
+        this.#armHealProbe();
+      }
+      return;
+    }
     console.info(
       `[mls] loud latch healed: the group re-keyed past the failure and ` +
         `every device it could have come from left or re-published under ` +

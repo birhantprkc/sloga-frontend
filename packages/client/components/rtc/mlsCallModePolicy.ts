@@ -644,6 +644,14 @@ export interface LoudHealInputs {
   installSeq: number;
   /** Any media-plane error (LiveKit or native key path) since that install. */
   errorSinceInstall: boolean;
+  /**
+   * The settle has run since BOTH the last key install and the latest
+   * observed re-Add of a witnessed device. Leg 9 of the 2026-09-07 sitting:
+   * a probe armed by the Remove epoch's install fired the instant its own
+   * reconcile observed the rejoiner's Add, before one frame under the new
+   * key had been judged, and healed over a key that was still wrong.
+   */
+  settleElapsed: boolean;
   /** A FRESH reconcile reported neither non-enrolled nor pending identities. */
   rosterConsistent: boolean;
   /**
@@ -687,6 +695,7 @@ export function loudHealVerdict(inputs: LoudHealInputs): "heal" | "hold" {
   if (inputs.origin !== "media") return "hold";
   if (inputs.installSeq <= inputs.latchedInstallSeq) return "hold";
   if (inputs.errorSinceInstall) return "hold";
+  if (!inputs.settleElapsed) return "hold";
   if (!inputs.rosterConsistent) return "hold";
   if (inputs.peers.length === 0) return "hold";
   return inputs.peers.every(

@@ -687,6 +687,7 @@ const HEAL_OK: LoudHealInputs = {
   latchedInstallSeq: 3,
   installSeq: 4,
   errorSinceInstall: false,
+  settleElapsed: true,
   rosterConsistent: true,
   peers: [LEFT],
 };
@@ -741,6 +742,8 @@ test("🔴 every other missing witness holds", () => {
     { installSeq: 3 }, // no new epoch since the latch
     { installSeq: 2 },
     { errorSinceInstall: true },
+    // Leg 9 (2026-09-07): judged before the settle since the latest Add.
+    { settleElapsed: false },
     { rosterConsistent: false },
     { peers: [] }, // nobody the failure could have come from = no witness
   ];
