@@ -15,6 +15,7 @@ import {
   chipState,
   classifyEncryptionError,
   isTerminalLoud,
+  latestPresentAddedAt,
   loudHealVerdict,
   loudModeFallback,
   mixDetectedAction,
@@ -753,6 +754,28 @@ test("🔴 every other missing witness holds", () => {
       "hold",
       JSON.stringify(over),
     );
+});
+
+test("the heal settle runs from the latest re-Add of a PRESENT witness only", () => {
+  // Leg 9 (2026-09-07): the present rejoiner's later Add dominates.
+  assert.equal(
+    latestPresentAddedAt([
+      { present: true, addedAt: 100 },
+      { present: true, addedAt: 250 },
+    ]),
+    250,
+  );
+  // Leg 8: an absent witness's Add is ignored — its frames are gone.
+  assert.equal(
+    latestPresentAddedAt([
+      { present: false, addedAt: 900 },
+      { present: true, addedAt: 100 },
+    ]),
+    100,
+  );
+  // Never re-added / no witness: nothing later than the install.
+  assert.equal(latestPresentAddedAt([{ present: true }]), 0);
+  assert.equal(latestPresentAddedAt([]), 0);
 });
 
 // ---- mix detected: what the session does, by mode ---------------------------

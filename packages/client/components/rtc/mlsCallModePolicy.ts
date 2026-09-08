@@ -646,10 +646,11 @@ export interface LoudHealInputs {
   errorSinceInstall: boolean;
   /**
    * The settle has run since BOTH the last key install and the latest
-   * observed re-Add of a witnessed device. Leg 9 of the 2026-09-07 sitting:
-   * a probe armed by the Remove epoch's install fired the instant its own
-   * reconcile observed the rejoiner's Add, before one frame under the new
-   * key had been judged, and healed over a key that was still wrong.
+   * observed re-Add of a PRESENT witness (`latestPresentAddedAt`). Leg 9 of
+   * the 2026-09-07 sitting: a probe armed by the Remove epoch's install fired
+   * the instant its own reconcile observed the rejoiner's Add, before one
+   * frame under the new key had been judged, and healed over a key that was
+   * still wrong.
    */
   settleElapsed: boolean;
   /** A FRESH reconcile reported neither non-enrolled nor pending identities. */
@@ -691,6 +692,23 @@ export interface LoudHealInputs {
  * hostile DS cannot mint the witness — the keys come from a natively verified
  * commit, the roster must match the SFU set, the errors are local truth.
  */
+/**
+ * The latest observed re-Add among the PRESENT witnesses of a media latch
+ * (0 when none). The heal settle must run from it as well as from the last
+ * key install; an absent witness does not count — its frames are gone.
+ */
+export function latestPresentAddedAt(
+  witnesses: readonly { present: boolean; addedAt?: number }[],
+): number {
+  let latest = 0;
+  for (const w of witnesses) {
+    if (w.present && w.addedAt !== undefined && w.addedAt > latest) {
+      latest = w.addedAt;
+    }
+  }
+  return latest;
+}
+
 export function loudHealVerdict(inputs: LoudHealInputs): "heal" | "hold" {
   if (inputs.origin !== "media") return "hold";
   if (inputs.installSeq <= inputs.latchedInstallSeq) return "hold";

@@ -104,6 +104,7 @@ import {
   type RotationWindowOpener,
   callModeTransition,
   classifyEncryptionError,
+  latestPresentAddedAt,
   loudHealVerdict,
   loudModeFallback,
   mixDetectedAction,
@@ -1146,6 +1147,14 @@ export class MlsCallSession {
   #healGeneration = 0;
   /** A probe that could not judge (no fresh roster) gets ONE re-arm per install. */
   #healRetried = false;
+  /**
+   * When the live probe was armed. A witness re-Add observed AFTER that
+   * moment has not had its settle yet (the roster diff re-arms on it — see
+   * `#reconcileOnce`); one observed at or before it has, because the timer
+   * itself is the settle. Immune to wall-clock jitter, unlike a `Date.now()`
+   * delta against the same clock the timer runs on.
+   */
+  #healArmedAt = 0;
 
   // --- Roster reconciliation (step 5) ----------------------------------------
   /** Pending 10 s leave-grace removals, keyed by device-qualified identity. */
@@ -3680,6 +3689,7 @@ export class MlsCallSession {
   #armHealProbe(): void {
     this.#clearHealProbe();
     const generation = ++this.#healGeneration;
+    this.#healArmedAt = Date.now();
     const timer = setTimeout(() => {
       this.#timers.delete(timer);
       if (this.#healTimer === timer) this.#healTimer = null;
@@ -3723,22 +3733,22 @@ export class MlsCallSession {
     // Remove epoch's install can otherwise fire the moment its own reconcile
     // observes the rejoiner's Add, before a single frame under the new key
     // has been judged (leg 9, 2026-09-07 — a 10 s false green over a key that
-    // was still wrong). When that settle is the only missing witness the
-    // probe re-arms once; the Add epoch's own install re-arms it anyway.
-    let latestAddedAt = 0;
+    // was still wrong). The roster diff re-arms the probe on such an Add
+    // (`#reconcileOnce`), which also aborts THIS probe through the generation
+    // check after its own reconcile; a re-Add observed after this probe was
+    // armed therefore only ever reaches the verdict as `settleElapsed: false`
+    // in a race, and holds.
     const peers = [...this.#loudPeers].map(([device, latchedSids]) => {
       // Device-scoped: the owner or any of its legs still in the SFU counts.
       const present = sfuDevices.has(device);
       // From the verified roster diff only — see `#healAdds`.
       const addedAt = this.#healAdds.get(device);
-      if (present && addedAt !== undefined && addedAt > latestAddedAt) {
-        latestAddedAt = addedAt;
-      }
       // Absent accessor ⇒ null ⇒ not "all new" (fail-closed); publishing
       // nothing is neither "left" nor "re-keyed".
       const sids = present ? this.#deviceTrackSids(device) : [];
       return {
         present,
+        addedAt,
         readdedAfterLatch:
           addedAt !== undefined && addedAt > this.#loudLatchedAt,
         sidsAllNew:
@@ -3747,9 +3757,7 @@ export class MlsCallSession {
           sids.every((sid) => !latchedSids.has(sid)),
       };
     });
-    const settleElapsed =
-      Date.now() - Math.max(this.#lastInstallAt, latestAddedAt) >=
-      LOUD_HEAL_SETTLE_MS;
+    const settleElapsed = latestPresentAddedAt(peers) <= this.#healArmedAt;
     const verdict = loudHealVerdict({
       origin: this.#loudOrigin,
       latchedInstallSeq: this.#loudLatchedInstallSeq,
@@ -3760,13 +3768,7 @@ export class MlsCallSession {
         result.nonEnrolled.length === 0 && result.pending.length === 0,
       peers,
     });
-    if (verdict !== "heal") {
-      if (!settleElapsed && !this.#healRetried) {
-        this.#healRetried = true;
-        this.#armHealProbe();
-      }
-      return;
-    }
+    if (verdict !== "heal") return;
     console.info(
       `[mls] loud latch healed: the group re-keyed past the failure and ` +
         `every device it could have come from left or re-published under ` +
@@ -4021,7 +4023,23 @@ export class MlsCallSession {
       for (const identity of mlsIdentities) {
         if (!this.#lastRosterIdentities.has(identity)) {
           this.#recentAdds.set(identity, now);
-          if (!firstReconcile) this.#healAdds.set(stripLeg(identity), now);
+          if (!firstReconcile) {
+            const device = stripLeg(identity);
+            this.#healAdds.set(device, now);
+            // A verified re-Add of a latched witness is as strong an event
+            // as a key install: restart the heal settle from it, with a fresh
+            // could-not-judge retry. (Review of 9e5fa880: an in-probe re-arm
+            // shared the one retry with the could-not-judge path and could
+            // leave a real re-key stuck red until the next epoch.)
+            if (
+              this.#loudLatched &&
+              this.#loudOrigin === "media" &&
+              this.#loudPeers.has(device)
+            ) {
+              this.#healRetried = false;
+              this.#armHealProbe();
+            }
+          }
           // Re-added: the served rejoin completed, the gap is closed, and a
           // ledgered serve for it must never be re-driven onto the live leaf.
           this.#rejoinServed.delete(identity);
