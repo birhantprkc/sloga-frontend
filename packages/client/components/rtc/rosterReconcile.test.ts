@@ -365,6 +365,24 @@ test("an admitted identity still in the grace set is neither pending nor non-enr
   assert.deepEqual(result.pending, []);
 });
 
+test("a STALE-LEAF rejoiner (in the SFU and in the roster) is silent here, grace or not", () => {
+  // A device that left and rejoined inside the leave-grace still holds its
+  // old leaf, so from the roster's inputs it is simply a member. The policy
+  // cannot see the beat that follows its stale-leaf removal — that phase is
+  // ledgered in the session (`admitInProgressVerdict`), not here.
+  for (const graced of [[], [ALICE]]) {
+    const result = reconcileRoster(
+      [SELF, ALICE],
+      [SELF, ALICE],
+      SELF,
+      keyed(),
+      graced,
+    );
+    assert.deepEqual(result.nonEnrolled, []);
+    assert.deepEqual(result.pending, []);
+  }
+});
+
 test("a pending primary and its keyed leg collapse to ONE pending row", () => {
   // Same dedupe rule as non-enrolled: the banner-side consumer names people.
   const result = reconcileRoster(

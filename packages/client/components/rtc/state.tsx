@@ -2253,6 +2253,12 @@ class Voice {
       // rather than being canonicalized, or ending a share would arm a Remove
       // of the sharer, who never left (§5.3 rule 3).
       this.#mlsSession?.onParticipantLeft(participant.identity);
+      // Forget its observed encryption status: the same identity rejoining
+      // is a NEW participant whose publications start NONE-declared, and a
+      // stale `true` here would let gate (b) read it encrypted until LiveKit
+      // re-emits (it emits on the first publication, so the hole was brief —
+      // but there is no reason to keep it).
+      this.callEncryption.delete(participant.identity);
       this.#setCallParticipantsVersion((v) => v + 1);
     });
 
@@ -3043,12 +3049,38 @@ class Voice {
       // upstream-paused, indistinguishable on the wire from a plaintext
       // client. The roster policy classifies primaries by whether their SFU
       // identity names a device (`isDeviceQualified`) instead.
+      // What `identity` publishes right now, by track SID. The session reads
+      // it at a media loud latch and again from its heal probe: a peer that
+      // re-added after the latch and publishes ONLY new tracks decrypts at the
+      // freshly installed key index. Absent participant ⇒ nothing.
+      participantTrackSids: (identity) => {
+        const p =
+          identity === room.localParticipant.identity
+            ? room.localParticipant
+            : room.remoteParticipants.get(identity);
+        return p
+          ? [...p.trackPublications.values()].map((pub) => pub.trackSid)
+          : [];
+      },
       onEncryptionState: (state, error) => {
         // Latch a loud media-plane failure into the existing structured signal
         // (6.5 classifies RE-SECURING vs NOT-ENCRYPTED from callEncryption +
         // this). A transient RE-SECURING is not latched (it may recover).
         if (state === "loud" && error !== undefined) {
           this.#setCallEncryptionError((prev) => prev ?? error);
+        }
+        // The session forgot its latch — a re-establish replaced the group,
+        // or the peer-scoped heal fired — and names the object it latched.
+        // Clear exactly that one: the identity-mismatch and no-session holds
+        // never coexist with a session (one is constructed only when the
+        // identity checks out), and a bare `"clear"` (a transient re-securing
+        // ending) carries no error and touches nothing. Until this the UI
+        // latch outlived the session's, leaving a successfully re-established
+        // call red with no banner and no escape.
+        if (state === "clear" && error !== undefined) {
+          this.#setCallEncryptionError((prev) =>
+            prev === error ? undefined : prev,
+          );
         }
       },
       onRosterReconciled: (result) => {
