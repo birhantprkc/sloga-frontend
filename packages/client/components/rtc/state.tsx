@@ -517,6 +517,10 @@ class Voice {
   private sound: SoundController;
 
   private openModal;
+  /** Dismiss stale dialogs whose subject this class just tore down. */
+  #closeModalsOfType: ModalControllerExtended["removeOfType"];
+  /** A web screen-share start is in flight (the user is in the OS picker). */
+  #screenshareStarting = false;
   private getClient;
   /** App MFA password prompt — reused to mint the MLS first-publish ticket
    * (slice 6.4); the password is entered natively and never reaches the store. */
@@ -1274,6 +1278,7 @@ class Voice {
     };
 
     this.openModal = modals.openModal;
+    this.#closeModalsOfType = modals.removeOfType;
     this.#mfaFlow = modals.mfaFlow;
 
     this.getClient = useClient();
@@ -4715,6 +4720,21 @@ class Voice {
       void stopScreenAudio(this.#screenAudioSessionId);
       await room.localParticipant.setScreenShareEnabled(false);
 
+      // The quality dialog is asking about a share that no longer exists, so
+      // it goes with it. Without this it outlived every stop — including the
+      // `ended` stop when the shared window closes — and the next start
+      // opened another one on top of it. That is how a user who could not see
+      // the dialogs at all (they were behind a fullscreen call — see
+      // `leaveFullscreenForModal` in components/modal) stacked one per
+      // attempt, 2026-09-10.
+      //
+      // NOT the source picker: its `onClose` is what answers
+      // `window.native.screenPickerCallback`, and closing it from here would
+      // bypass that and leave the shell's picker waiting forever. It also
+      // cannot be open on this path — a share it has not answered yet has not
+      // published, so `screenshare()` is false and this branch is unreachable.
+      this.#closeModalsOfType("screen_share_settings");
+
       // The track's stop() already tore the processor down; just drop the
       // handle so the next share starts from a clean slate.
       this.#screenShield = undefined;
@@ -4723,6 +4743,17 @@ class Voice {
 
       this.sound.playSound("streamEnd");
     } else {
+      // A start is only observable in `screenshare()` once getDisplayMedia
+      // has resolved, and the user is staring at the OS picker for all of
+      // that. A second press inside that window used to land here again:
+      // livekit dedupes the PUBLICATION (a pending publish of the same source
+      // is awaited and returned), but everything this method does AROUND the
+      // publish then ran a second time against that one track — another
+      // privacy-shield processor, another `ended` handler, another quality
+      // dialog. Guarding the START only: a press that arrives after the track
+      // is up takes the stop branch above, which must stay reachable.
+      if (this.#screenshareStarting) return;
+
       // Mint the native screen-audio staleness token for this attempt (F2)
       // — a second toggle, cancel, or disconnect bumps it and dooms any
       // capture still in flight below.
@@ -4758,6 +4789,11 @@ class Voice {
       }
 
       try {
+        // Set inside the try so that a throw can never wedge screen share for
+        // the rest of the call; nothing can interleave between the check
+        // above and here, as there is no await in between.
+        this.#screenshareStarting = true;
+
         // Bitrate/framerate for the publish encoding come from the initial
         // (stored) quality. If the picker changes the quality afterwards, the
         // `callback` below re-applies the encoding to the new tier — a bare
@@ -5071,6 +5107,8 @@ class Voice {
         // Electron shell's AbortError "Error starting capture" — is not an
         // error to the user who just cancelled; everything else surfaces.
         if (!isScreenShareCancel(e)) this.onErr(e);
+      } finally {
+        this.#screenshareStarting = false;
       }
     }
   }
