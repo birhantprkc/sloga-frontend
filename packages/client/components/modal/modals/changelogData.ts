@@ -9,11 +9,18 @@ import type { ChangelogResponse } from "./Changelog";
  */
 export const CHANGELOGS: ChangelogResponse[] = [
   // v0.58.1 (2026-09-11). Copy constraints, load-bearing:
-  // - 🔴 PROVISIONAL. Nothing in this entry has been seen on a live call. It is
-  //   drafted ahead of the shell rebuild so it is ready the moment that test
-  //   lands. DEMOTE anything the test does not confirm onto the next entry's
-  //   EXCLUDED list rather than shipping it announced — this file's standing
-  //   rule is that a fix is announced after it has been seen working.
+  // - 🔴 ANNOUNCED WITHOUT A LIVE LEG, deliberately. The standing rule in this
+  //   file — announce a fix only once it has been seen working — was WAIVED by
+  //   the operator for this entry on 2026-09-10, after the trade was put to
+  //   them: ship now and fix on report, rather than hold the release. Nothing
+  //   below has run on a real call. Everything below is covered by unit specs
+  //   (the mute gate has a negative-control regression test) and the fullscreen
+  //   dialog fix was reproduced and re-verified in a real browser, but that is
+  //   not the same thing and this comment exists so nobody later mistakes it
+  //   for one.
+  // - 🔴 If a report comes back on any of these, THIS entry is what to correct
+  //   first: an announced fix that does not work is worse than an unannounced
+  //   one, because the user has been told to stop looking for the bug.
   // - The voice-activity items only reach users on the Voice Activity input
   //   mode (Settings → Voice). Open Mic and Push to Talk were never affected,
   //   so the copy names the mode rather than implying every muted user was
@@ -21,7 +28,8 @@ export const CHANGELOGS: ChangelogResponse[] = [
   // - This entry CLEARS the held-back list from the 0.58.0 entry: group-chat
   //   calls, the cancelled-picker dialog, the shorter join banner, the
   //   immediate pause when a plain browser joins, and the chip after people
-  //   churn. Anything the shell test does not cover goes back on the list.
+  //   churn. Those were held back for want of a live leg they never got; they
+  //   ship announced here under the same waiver as the rest of this entry.
   // - Say "cannot be secured", never the exact banner sentence, and never
   //   "turned off" / "starting capture" wording: those strings are build gate
   //   markers and the notes must not collide with them.
