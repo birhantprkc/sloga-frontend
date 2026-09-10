@@ -48,7 +48,11 @@
  *   3. have the CARRIER talk and the SUBJECT stay silent, then:
  *        SLOGA_LEG.roles()                -> prints the live table
  *        SLOGA_LEG.carrier("<sid|trackSid>")  pin the one with rising energy
- *   4. SLOGA_LEG.start({ label: "shapeB-consent-run1", shape: "b" })
+ *   4. SLOGA_LEG.start({ label: "shapeB-consent-run1", shape: "b",
+ *                          consent: "yes" | "no" })
+ *      `consent` is REQUIRED: 2.5 computes the polarity over the two arms
+ *      separately, and the reducer refuses a dump whose arm disagrees with
+ *      the --consent it was reduced under.
  *   5. run the leg
  *   6. SLOGA_LEG.stop(); SLOGA_LEG.summary(); SLOGA_LEG.save()
  *
@@ -97,6 +101,7 @@
     truncated: false,
     label: null,
     shape: null,
+    consent: null,
     seat: null,
     startedAtWall: null,
     startedAtPerf: null,
@@ -599,9 +604,21 @@
           '[leg-sampler] REFUSING TO START: pass { shape: "a" } or { shape: "b" }. Shape decides whether M1 has a value at all.',
         );
       }
+      // 2.5's H3 rule makes POLARITY a required OUTPUT, and the reducer's
+      // cross-check `if (dump.consent && dump.consent !== args.consent)` was
+      // DEAD CODE while the dump carried no consent: the whole polarity rule
+      // then rested on a CLI flag typed by hand hours later, with nothing on
+      // the capture to check it against. The arm is recorded HERE, by the
+      // operator who is about to run the arm.
+      if (o.consent !== "yes" && o.consent !== "no") {
+        throw new Error(
+          '[leg-sampler] REFUSING TO START: pass { consent: "yes" } or { consent: "no" } — which arm this run belongs to. 2.5 computes polarity SEPARATELY over the two arms, and a capture that does not name its own arm can only be filed into one by hand.',
+        );
+      }
       state.intervalMs = o.intervalMs != null ? o.intervalMs : 100;
       state.label = o.label != null ? String(o.label) : null;
       state.shape = o.shape;
+      state.consent = o.consent;
       state.seat = o.seat != null ? String(o.seat) : o.shape === "b" ? "web-observer(manager-free)" : "shell-observer";
       state.ticks = [];
       state.truncated = false;
@@ -625,6 +642,8 @@
           state.label +
           " shape=" +
           state.shape +
+          " consent=" +
+          state.consent +
           " interval=" +
           state.intervalMs +
           "ms",
@@ -669,6 +688,7 @@
         schema: SCHEMA,
         label: state.label,
         shape: state.shape,
+        consent: state.consent,
         seat: state.seat,
         userAgent: navigator.userAgent,
         intervalMs: state.intervalMs,

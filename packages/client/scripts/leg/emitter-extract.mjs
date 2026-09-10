@@ -245,16 +245,53 @@ function lineOf(src, idx) {
 }
 
 /**
- * Extract the key set of the objects pushed into / mapped into the array that
+ * The body of a private method `#name(...)`, as [start, end) over the
+ * comment-stripped source. Used to follow `const X = this.#name(...)` into the
+ * place the entries are actually built.
+ */
+function privateMethodBody(clean, name) {
+  const re = new RegExp("(^|[^.\\w$])#" + name + "\\s*\\(", "g");
+  let m;
+  while ((m = re.exec(clean)) !== null) {
+    const parenIdx = clean.indexOf("(", m.index);
+    if (parenIdx < 0) continue;
+    const afterParen = matchBracket(clean, parenIdx);
+    if (afterParen < 0) continue;
+    let i = afterParen;
+    // A return-type annotation may sit between `)` and the body `{`. Stop at
+    // anything that proves this was a CALL, not a declaration.
+    while (i < clean.length && clean[i] !== "{" && clean[i] !== ";" && clean[i] !== ")" && clean[i] !== ",") i++;
+    if (clean[i] !== "{") continue;
+    const end = matchBracket(clean, i);
+    if (end < 0) continue;
+    return { start: i, end };
+  }
+  return null;
+}
+
+/**
+ * Extract the key set of the objects pushed into / returned as the array that
  * a `publications:` value names. Returns a Set, or null when the shape is not
  * extractable — never a guess.
+ *
+ * 🔴 WHY THE OLD FALLBACK IS GONE (wave 0c). When the emitter moved the census
+ * into a helper (`const gateTraceCensus = this.#gateTraceCensus(room);`), none
+ * of the `IDENT.push(` / `IDENT = [` markers matched, and the old code then
+ * scanned the WHOLE FILE for the first `=> ({` and reported THAT object's keys
+ * as the publications[] entry key set. Measured: it answered
+ * `trackSid, source, encryption` — keys of an unrelated literal — instead of
+ * refusing. A silently WRONG key set is worse than no key set: it makes the
+ * bidirectional emitter check pass while checking the wrong thing. A whole-file
+ * guess is never taken; either the value expression can be followed, or this
+ * returns null and the caller records "NOT EXTRACTABLE".
  */
 function publicationEntryKeys(clean, valueExpr) {
   const keys = new Set();
   let found = false;
   const idm = /^([A-Za-z_$][A-Za-z0-9_$]*)$/.exec(valueExpr);
-  const collectAt = (braceIdx) => {
-    const parsed = objectSegments(clean, braceIdx);
+  const collectAt = (src, braceIdx) => {
+    if (braceIdx < 0) return;
+    const parsed = objectSegments(src, braceIdx);
     if (!parsed) return;
     for (const seg of parsed.segments) {
       const k = segmentKey(seg);
@@ -262,41 +299,55 @@ function publicationEntryKeys(clean, valueExpr) {
     }
     found = true;
   };
-  const skipWs = (i) => {
-    while (i < clean.length && /\s/.test(clean[i])) i++;
+  const skipWs = (src, i) => {
+    while (i < src.length && /\s/.test(src[i])) i++;
     return i;
+  };
+  // Object literals built INSIDE a region (a method body, or the whole file
+  // when the identifier is a local): `X.push({...})` and `return [{...}]`.
+  const collectInRegion = (from, to) => {
+    const region = clean.slice(from, to);
+    for (const marker of [".push(", "return [", "return ("]) {
+      let at = 0;
+      for (;;) {
+        const idx = region.indexOf(marker, at);
+        if (idx < 0) break;
+        at = idx + marker.length;
+        let i = skipWs(region, idx + marker.length);
+        if (region[i] === "[") i = skipWs(region, i + 1);
+        if (region[i] === "{") collectAt(region, i);
+      }
+    }
   };
   if (idm) {
     const ident = idm[1];
-    for (const marker of [`${ident}.push(`, `${ident} = [`, `${ident}: `]) {
+    // (a) the identifier is filled in place.
+    for (const marker of [`${ident}.push(`, `${ident} = [`, `${ident}: [`]) {
       let from = 0;
       for (;;) {
         const at = clean.indexOf(marker, from);
         if (at < 0) break;
         from = at + marker.length;
-        let i = skipWs(at + marker.length);
-        if (clean[i] === "{") collectAt(i);
+        let i = skipWs(clean, at + marker.length);
+        if (clean[i] === "[") i = skipWs(clean, i + 1);
+        if (clean[i] === "{") collectAt(clean, i);
       }
     }
-  }
-  // `X.map((p) => ({ ... }))` and inline array literals of objects.
-  if (!found) {
-    const src = idm ? clean : valueExpr;
-    const arrow = src.indexOf("=> ({");
-    if (arrow >= 0) collectAt(src.indexOf("{", arrow + 3));
-    else if (valueExpr.startsWith("[")) {
-      const b = valueExpr.indexOf("{");
-      if (b >= 0) {
-        const parsed = objectSegments(valueExpr, b);
-        if (parsed) {
-          for (const seg of parsed.segments) {
-            const k = segmentKey(seg);
-            if (k.key) keys.add(k.key);
-          }
-          found = true;
-        }
+    // (b) the identifier is assigned from a private helper: follow it INTO
+    // that helper and nowhere else.
+    if (!found) {
+      const assign = new RegExp("(?:const|let|var)\\s+" + ident + "\\s*=\\s*this\\.#([A-Za-z0-9_$]+)\\s*\\(");
+      const am = assign.exec(clean);
+      if (am) {
+        const body = privateMethodBody(clean, am[1]);
+        if (body) collectInRegion(body.start, body.end);
       }
     }
+  } else if (valueExpr.startsWith("[")) {
+    collectAt(valueExpr, valueExpr.indexOf("{"));
+  } else if (valueExpr.includes("=> ({")) {
+    // An inline `X.map((p) => ({ ... }))` IN THE VALUE EXPRESSION ITSELF.
+    collectAt(valueExpr, valueExpr.indexOf("{", valueExpr.indexOf("=> ({") + 3));
   }
   return found ? keys : null;
 }

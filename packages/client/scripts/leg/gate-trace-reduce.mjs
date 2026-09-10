@@ -26,6 +26,15 @@
  *    gate pauses via pauseUpstream() and the remote track then reads
  *    muted:false, enabled:false with ZERO RTP.
  *  - A MISSING field is `unknown`, never a zero and never a "flat".
+ *  - It NEVER selects a row off a STRUCTURAL CONSTANT. C0's absent half needs
+ *    POSITIVE evidence that an ASSIGNED sid is absent from the publication map
+ *    (`c0AbsentEvidence`); the sid-not-yet-assigned case selects nothing, and
+ *    C6 and C4 are evaluated after it rather than being shadowed by it.
+ *  - A row is about the LEAKING publication: C4 matches the resume's `subject`
+ *    against the publication under test, and the mute seam must name the
+ *    trackSid the leaking ssrc carried.
+ *  - M2 is scoped to THIS leg's transition, in TIME and by `connectGen`. An
+ *    unscoped M2 read a hang-up 60 s earlier as this leg's leave.
  *  - shape (a) ALWAYS yields M1 = unknown, and never selects a row.
  *  - `ciphertext` is an ABSENCE and is admissible ONLY with a same-tick
  *    POSITIVE CONTROL on the carrier's ssrc.
@@ -46,7 +55,13 @@
  *      untouched; the slice re-enters Investigate for the consent-dependent
  *      term. It is a separate exit status precisely so no script can read it
  *      as "done".
- *   7  AGGREGATE ONLY: nothing is selected at all.
+ *   7  AGGREGATE ONLY: nothing is selected at all — INCLUDING the case where
+ *      an arm is missing. "POLARITY UNMEASURED" is exit 7: polarity is a claim
+ *      about TWO arms, and an aggregate whose no-consent arm is absent,
+ *      DISCARDED or shape (a) cannot make it. That guard did not exist; all
+ *      three of those shapes exited 0 printing "the row accounts for the
+ *      polarity as well as the window", and §2.4 itself says the shape most
+ *      likely to be cut is exactly the one that produced it.
  *
  * ---------------------------------------------------------------------------
  * 🔴 PINNED KEYS — READ THIS BEFORE ADDING A FIELD.
@@ -90,28 +105,49 @@ export const GATE_CONTEXT_KEYS = [
 /** Per-seam keys BEYOND common + gate context. The pinned contract. */
 export const SEAM_KEYS = {
   "connect.add": ["e2eeCapable"],
-  "disconnect.preclear": ["via"],
+  // `disconnect.entry` is the UNCONDITIONAL record above `disconnect()`'s
+  // `try`; `disconnect.preclear` is the one inside it, after the
+  // `this.#connectGen++`. `connectGenPhase` says which is which, so the two
+  // records of ONE teardown are joinable and cannot be counted twice.
+  "disconnect.entry": ["via", "connectGenPhase"],
+  "disconnect.preclear": ["via", "connectGenPhase"],
   pauseGate: ["reason", "edge", "staleRoom"],
   "pauseGate.staleRoom": ["reason", "staleRoom"],
   resumeGate: ["reason", "emptied", "staleRoom"],
   "localTrackPublished.entry": [
     "subject",
-    "subjectSidPresent",
+    "subjectSource",
+    "subjectSid",
+    "subjectSidInPublications",
     "publicationCount",
+    "publicationKeys",
     "publications",
   ],
   localSenderCreated: [
     "subject",
-    "subjectSidPresent",
+    "subjectSource",
+    "subjectSid",
+    // 🔴 The C0 discriminator. `subjectSidPresent` — the single field this
+    // seam used to carry — was a STRUCTURAL CONSTANT `false` (see
+    // `c0AbsentEvidence`), so a C0 row read off it fired on every publish of
+    // any kind and, because §2.5 is first-match-wins, made C6 and C4
+    // unreachable. `subjectSidAssigned` separates "no sid to look up yet"
+    // from "an assigned sid that the map genuinely no longer holds";
+    // `publicationKeys` is the map itself, which is what makes
+    // "absent from a POPULATED map" a measurement rather than a guess.
+    "subjectSidAssigned",
+    "subjectSidInPublications",
     "publicationCount",
+    "publicationKeys",
+    "publications",
     "upstreamPaused",
     "hasSender",
     "senderHasTrack",
     "transportState",
   ],
   "sweeper.dropped": ["stillCurrent", "sweeperGen"],
-  "track.upstreamResumed": ["subject"],
-  "track.processorUpdate": ["subject"],
+  "track.upstreamResumed": ["subject", "subjectSource", "subjectSid"],
+  "track.processorUpdate": ["subject", "subjectSource", "subjectSid"],
   setMode: [
     "branch",
     "wasNegotiating",
@@ -142,7 +178,15 @@ export const SEAM_KEYS = {
 
 export const SEAMS = Object.keys(SEAM_KEYS);
 
-/** A `publications[]` entry on `localTrackPublished.entry` — OBJECTS, not strings. */
+/**
+ * A `publications[]` entry — OBJECTS, not strings. Emitted by BOTH
+ * `localTrackPublished.entry` and `localSenderCreated` (they share one
+ * `#gateTraceCensus` helper in the emitter).
+ *
+ * `text` was listed here and emitted by NOBODY; a key in this list that no
+ * emitter emits is a standing invitation to read a field that will always be
+ * absent, so it is gone (wave-0c item 12).
+ */
 export const PUB_ENTRY_KEYS = [
   "name",
   "source",
@@ -153,7 +197,6 @@ export const PUB_ENTRY_KEYS = [
   "transportState",
   "upstream",
   "op",
-  "text",
 ];
 
 /**
@@ -164,7 +207,8 @@ export const PUB_ENTRY_KEYS = [
  */
 export const READS = {
   "connect.add": [],
-  "disconnect.preclear": ["via"],
+  "disconnect.entry": ["via", "connectGen", "connectGenPhase"],
+  "disconnect.preclear": ["via", "connectGen", "connectGenPhase"],
   pauseGate: [],
   "pauseGate.staleRoom": [],
   resumeGate: ["reason", "emptied", "staleRoom"],
@@ -172,30 +216,48 @@ export const READS = {
     "gate",
     "gateSize",
     "gateGen",
+    "connectGen",
     "passes",
     "currentRoom",
     "subject",
-    "subjectSidPresent",
+    "subjectSource",
+    "subjectSid",
+    "subjectSidInPublications",
     "publicationCount",
+    "publicationKeys",
     "publications",
   ],
   localSenderCreated: [
     "gate",
     "gateSize",
     "gateGen",
+    "connectGen",
     "passes",
     "currentRoom",
     "subject",
-    "subjectSidPresent",
+    "subjectSource",
+    "subjectSid",
+    "subjectSidAssigned",
+    "subjectSidInPublications",
     "publicationCount",
+    "publicationKeys",
+    "publications",
     "upstreamPaused",
-    "hasSender",
+    // 🔴 `hasSender` is NOT read here and must not be: at
+    // `ParticipantEvent.LocalSenderCreated` the emitter computes it as
+    // `!!sender`, where `sender` is the argument livekit passes straight
+    // out of `track.sender = yield this.engine.createSender(...)` — so it
+    // is `true` by construction. A structural constant cannot discriminate
+    // anything, and reading one is how the old `subjectSidPresent` row
+    // became a tautology (wave-0c item 13). It stays in SEAM_KEYS because
+    // the emitter still emits it and an emitted key the reducer does not
+    // know is its own failure.
     "senderHasTrack",
     "transportState",
   ],
   "sweeper.dropped": ["stillCurrent", "sweeperGen"],
-  "track.upstreamResumed": ["subject"],
-  "track.processorUpdate": ["subject"],
+  "track.upstreamResumed": ["subject", "subjectSid"],
+  "track.processorUpdate": ["subject", "subjectSid"],
   setMode: [],
   "applyMode.effect": [],
   rejoinFresh: ["seq", "phase"],
@@ -204,6 +266,8 @@ export const READS = {
 
 /** Keys of a publications[] entry this file reads. */
 export const PUB_ENTRY_READS = [
+  "name",
+  "source",
   "trackSid",
   "upstreamPaused",
   "hasSender",
@@ -220,6 +284,32 @@ export const PUB_ENTRY_READS = [
  * unfilterable record is a reported gap, never a silent pass.
  */
 const SOFT_KEY_CURRENT_ROOM = "currentRoom";
+
+/**
+ * Seams that MUST carry `currentRoom` (wave-0c item 14).
+ *
+ * A RENAME is already caught by the bidirectional key check (the new name is a
+ * key the reducer does not know). A DELETION was not: the reducer is allowed to
+ * know a key no emitter emits, so `currentRoom` quietly vanishing from a seam
+ * would turn `partitionByRoom` — the filter that keeps records of an ABANDONED
+ * Room out of a verdict — into a pass-through, with nothing louder than a NOTE.
+ *
+ * These are the seams that HAVE a Room in hand at the point they log. The two
+ * `disconnect.*` seams deliberately do not: they run while the Room is being
+ * torn down, and M2 attributes them by `connectGen` instead. The
+ * `mlsCallSession.ts` seams are not Room-scoped at all.
+ */
+export const REQUIRE_CURRENT_ROOM = [
+  "connect.add",
+  "pauseGate",
+  "pauseGate.staleRoom",
+  "resumeGate",
+  "localTrackPublished.entry",
+  "localSenderCreated",
+  "sweeper.dropped",
+  "track.upstreamResumed",
+  "track.processorUpdate",
+];
 
 // --------------------------------------------------------------------------
 // field access
@@ -305,6 +395,18 @@ REDUCE one run:
                               localTrackPublished.entry may lie (default 1500).
   --resumed-window-ms <n>     §2.5 C4's "immediately before the mute" (default
                               1000, measured back from the flow window's end).
+  --m2-window-ms <n>          How far BEFORE the fiducial a teardown may lie and
+                              still belong to THIS leg's transition (default
+                              30000). M2 is scoped in time AND attributed by
+                              connectGen; an unscoped M2 counted a hang-up 60 s
+                              earlier as this leg's leave.
+  --m2-gen-span <n>           How many connectGen generations below the leak a
+                              teardown may lie (default 3: disconnect() records
+                              entry pre-bump, bumps, records preclear, and
+                              #connectAttempt bumps once more).
+  --m2-pair-window-ms <n>     How far apart the disconnect.entry and
+                              disconnect.preclear of ONE teardown may lie and
+                              still be counted as one leave (default 2000).
   --out <file>                Write the reduction as JSON (temp + fsync + rename).
   --require-verdict           Exit 5 if M1 has no value.
   --quiet                     Suppress the human timeline; still writes --out.
@@ -313,6 +415,12 @@ AGGREGATE the arms (§2.5's H3 polarity rule):
   --aggregate <r1.json> <r2.json> ...
                               Reduction reports written by --out. Prints the
                               per-arm verdict and the POLARITY outcome.
+  --min-arm-runs <n>          Minimum USABLE (shape (b), not discarded) runs
+                              REQUIRED IN EACH ARM before any verdict (default
+                              1; §2.4 specifies 5 — pass "--min-arm-runs 5" for
+                              the real leg). A missing, discarded or shape-(a)
+                              no-consent arm can never be read as "the row
+                              accounts for the polarity".
 
 PRE-FLIGHT a log:
   --check-log <file>          Does a [gate-trace] record reach this log
@@ -335,6 +443,10 @@ function parseArgs(argv) {
     driveWindowMs: 2000,
     muteGraceMs: 1500,
     resumedWindowMs: 1000,
+    m2WindowMs: 30000,
+    m2GenSpan: 3,
+    m2PairWindowMs: 2000,
+    minArmRuns: 1,
     leakAfter: null,
     quiet: false,
     aggregate: [],
@@ -364,6 +476,10 @@ function parseArgs(argv) {
       case "--drive-window-ms": out.driveWindowMs = num(); break;
       case "--mute-grace-ms": out.muteGraceMs = num(); break;
       case "--resumed-window-ms": out.resumedWindowMs = num(); break;
+      case "--m2-window-ms": out.m2WindowMs = num(); break;
+      case "--m2-gen-span": out.m2GenSpan = num(); break;
+      case "--m2-pair-window-ms": out.m2PairWindowMs = num(); break;
+      case "--min-arm-runs": out.minArmRuns = num(); break;
       case "--out": out.out = next(); break;
       case "--require-verdict": out.requireVerdict = true; break;
       case "--quiet": out.quiet = true; break;
@@ -733,6 +849,20 @@ function carrierContinuity(dump, skewMs, maxStallMs) {
   return { verdict: "continuous", reason: null, stalls: [] };
 }
 
+/**
+ * The `trackSid` the leaking rows carry, so M3 can be REQUIRED to be about the
+ * same publication (wave-0c item 10). `null` when the rows disagree or none
+ * carried one - an unknown correlation is reported, never assumed to match.
+ */
+function windowTrackSid(arr, from, to) {
+  const sids = new Set();
+  for (const r of arr) {
+    if (r.t < from || r.t > to) continue;
+    if (r.trackSid != null) sids.add(r.trackSid);
+  }
+  return sids.size === 1 ? [...sids][0] : null;
+}
+
 /** Ticks where the subject's ssrc carried NEW bytes. Pausedness, nothing else. */
 export function subjectFlowWindows(rows, maxStallMs) {
   const wins = [];
@@ -745,25 +875,63 @@ export function subjectFlowWindows(rows, maxStallMs) {
         if (open === null) open = arr[i - 1];
         lastFlow = arr[i];
       } else if (open !== null && lastFlow && arr[i].t - lastFlow.t > maxStallMs) {
-        wins.push({ ssrc, from: open.t, to: lastFlow.t, bytes: (lastFlow.bytes ?? 0) - (open.bytes ?? 0) });
+        wins.push({ ssrc, from: open.t, to: lastFlow.t, bytes: (lastFlow.bytes ?? 0) - (open.bytes ?? 0), trackSid: windowTrackSid(arr, open.t, lastFlow.t) });
         open = null;
         lastFlow = null;
       }
     }
     if (open !== null && lastFlow) {
-      wins.push({ ssrc, from: open.t, to: lastFlow.t, bytes: (lastFlow.bytes ?? 0) - (open.bytes ?? 0), openEnded: true });
+      wins.push({ ssrc, from: open.t, to: lastFlow.t, bytes: (lastFlow.bytes ?? 0) - (open.bytes ?? 0), trackSid: windowTrackSid(arr, open.t, lastFlow.t), openEnded: true });
     }
   }
   wins.sort((a, b) => a.from - b.from);
   return wins;
 }
 
+/**
+ * 🔴 ONE TICK CAN CARRY MORE THAN ONE SUBJECT ROW, and this used to be read
+ * PAIRWISE over the flattened row list.
+ *
+ * `observer-sampler.js` pushes EVERY inbound-rtp audio row of every tick, and
+ * `roleOf` answers "subject" for every remote audio row that is not the pinned
+ * carrier. Real `getStats()` reports a lingering old inbound-rtp beside the new
+ * one for some hundreds of ms after a republish, so the flattened list
+ * alternates old,new,old,new and the pairwise reading emits a "change" on
+ * nearly every tick - the EARLIEST of which sits in CALL 1. That moves
+ * `changes[0].t` back before the rejoin, which (a) hands `pinLeakWindow` a
+ * call-1 fiducial and (b) makes 2.4's fiducial-disagreement discard read
+ * `aligned` for almost any `-negotiating` edge, silently disabling it.
+ *
+ * A change is therefore the FIRST TICK AT WHICH AN SSRC THAT APPEARED IN NO
+ * EARLIER TICK IS SEEN. A lingering old ssrc emits nothing; the fresh SSRC of
+ * the rejoin emits exactly one change, at the tick it first appears.
+ */
 export function ssrcChanges(rows) {
-  const out = [];
-  let last = null;
+  const ticks = new Map();
   for (const r of rows) {
-    if (last !== null && r.ssrc !== last) out.push({ t: r.t, from: last, to: r.ssrc });
-    last = r.ssrc;
+    if (!ticks.has(r.t)) ticks.set(r.t, []);
+    ticks.get(r.t).push(r.ssrc);
+  }
+  const order = [...ticks.keys()].sort((a, b) => a - b);
+  const seen = new Set();
+  const out = [];
+  let prev = [];
+  for (let i = 0; i < order.length; i++) {
+    const t = order[i];
+    const here = ticks.get(t);
+    if (i > 0) {
+      for (const s of here) {
+        if (seen.has(s)) continue;
+        out.push({
+          t,
+          from: prev.length === 1 ? prev[0] : [...prev],
+          to: s,
+          lingering: here.filter((x) => x !== s),
+        });
+      }
+    }
+    for (const s of here) seen.add(s);
+    prev = here;
   }
   return out;
 }
@@ -777,27 +945,37 @@ export function ssrcChanges(rows) {
  * before the leave, that no rejoin evidence can possibly explain. Wave 0 read
  * M3 against it.
  */
-export function pinLeakWindow(flow, changes, leakAfter, toleranceMs) {
-  // A flow window OPENS at the sample BEFORE its first byte delta, and the
-  // fiducial is itself only known to within one sampling interval, so
-  // "at or after" is applied with exactly one interval of tolerance — stated,
-  // never silent. A call-1 window sits many intervals earlier and is still
-  // rejected.
-  const tol = Number.isFinite(toleranceMs) ? toleranceMs : 0;
+export function pinLeakWindow(flow, changes, leakAfter) {
+  // 🔴 NO TOLERANCE. This used to accept `w.from >= fid - intervalMs`, which
+  // widens acceptance ONLY BACKWARDS, into pre-fiducial territory - the exact
+  // direction B4 exists to refuse - while buying nothing for the window it
+  // claimed to admit: the fresh SSRC's own flow window opens at the first
+  // sample that CARRIES that ssrc, which is the fiducial tick itself, so
+  // `w.from === fid` exactly (measured on this harness's own fixtures). The
+  // only windows a tolerance could admit are windows of ANOTHER ssrc that
+  // opened one interval earlier - i.e. call 1 still flowing. Deleted, and
+  // S10's control now probes the boundary it left untested.
+  const tol = 0;
   if (flow.length === 0) {
     return { window: null, basis: "the subject's ssrc never carried new bytes in this capture", fiducial: null, rejected: [], toleranceMs: tol };
   }
-  const pick = (fid, how) => {
-    const qualifies = (w) => w.from >= fid - tol;
+  // 🔴 And the window must be ON THE FRESH SSRC when the fiducial IS an ssrc
+  // change. A lingering old inbound-rtp row (the shape real getStats() reports
+  // for some hundreds of ms after a republish) opens a flow window of its own
+  // AT the fiducial tick, which ties `w.from >= fid` and can win the pick — so
+  // M3 would then be measured against the OLD ssrc's last gasp. Measured on
+  // this harness's own `lingering` capture: it did.
+  const pick = (fid, how, ssrc) => {
+    const qualifies = (w) => w.from >= fid && (ssrc === null || w.ssrc === ssrc);
     return {
       window: flow.find(qualifies) ?? null,
-      basis: `${how} (with one ${tol} ms sampling interval of tolerance, because a flow window opens at the sample BEFORE its first byte delta)`,
+      basis: `${how} (NO tolerance: a fresh ssrc's flow window opens at the first sample carrying that ssrc, which is the fiducial tick itself; a tolerance could only admit a window of the PREVIOUS ssrc)`,
       fiducial: fid,
       rejected: flow.filter((w) => !qualifies(w)),
       toleranceMs: tol,
     };
   };
-  if (leakAfter !== null) return pick(leakAfter, `--leak-after ${leakAfter} (operator override of the SSRC-change fiducial)`);
+  if (leakAfter !== null) return pick(leakAfter, `--leak-after ${leakAfter} (operator override of the SSRC-change fiducial; no ssrc is implied by it, so any flow window at or after it qualifies)`, null);
   if (changes.length === 0) {
     return {
       window: null,
@@ -809,7 +987,8 @@ export function pinLeakWindow(flow, changes, leakAfter, toleranceMs) {
   }
   return pick(
     changes[0].t,
-    `the first flow window at or after the SSRC-change fiducial ${changes[0].t}${changes.length > 1 ? ` (the FIRST of ${changes.length} ssrc changes; use --leak-after to pick another)` : ""}`,
+    `the first flow window ON THE FRESH SSRC ${changes[0].to} at or after the SSRC-change fiducial ${changes[0].t}${changes.length > 1 ? ` (the FIRST of ${changes.length} ssrc changes; use --leak-after to pick another)` : ""}`,
+    changes[0].to,
   );
 }
 
@@ -948,30 +1127,135 @@ function measureM1(dump, shape, audible, subjRows, carrRows, leak) {
 }
 
 // --------------------------------------------------------------------------
-// M2 — B6: only a `via:"user"` pre-clear is a real leave; M4: dedupe by `seq`
+// M2 — B6: only a `via:"user"` teardown is a real leave; M4: dedupe by `seq`;
+// wave-0c B5: SCOPED IN TIME to the leg's own transition and ATTRIBUTED by
+// `connectGen`, and it consumes `disconnect.entry` so the arm is witnessed
+// even when the teardown throws.
 // --------------------------------------------------------------------------
 
-function measureM2(records, coverage) {
-  if (records.length === 0) {
-    return { verdict: "unknown", reason: "no [gate-trace] records were recovered — neither arm is positively witnessed, and silence is not evidence for either", evidence: [], userLeaves: 0, connectLeading: 0, viaUnknown: 0, reestablishEvents: 0 };
+/**
+ * The `connectGen` the leak belongs to, read off the seams inside the leak's
+ * own scope. M2 needs it BEFORE M3 runs, and it is the only thing that can say
+ * whether a teardown produced the transition INTO this call or belongs to
+ * another one entirely.
+ */
+function connectGenAtLeak(records, leak, opts, coverage) {
+  if (!leak.window) return null;
+  const from = leak.window.from - opts.driveWindowMs;
+  const to = leak.window.to + opts.muteGraceMs;
+  // `--log` is repeatable and records arrive in FILE order, so read the gen off
+  // the EARLIEST in-scope seam rather than whichever file was concatenated
+  // first.
+  const inScope = records
+    .filter((r) => (r.at === "localSenderCreated" || r.at === "localTrackPublished.entry") && r.t >= from && r.t <= to)
+    .sort((a, b) => a.t - b.t);
+  for (const r of inScope) {
+    const g = readField(r, "connectGen", coverage);
+    if (g.found && typeof g.value === "number") return g.value;
   }
-  const pre = records.filter((r) => r.at === "disconnect.preclear");
-  const userLeaves = [];
+  return null;
+}
+
+/**
+ * 🔴 WHY THIS IS SCOPED. `measureM2` used to filter `disconnect.preclear` over
+ * the WHOLE capture. Measured: injecting ONE `via:"user"` record 60 s before
+ * the window flipped a run from `M2: no-disconnect / DECISION: C1` to
+ * `M2: both / DECISION: no row`. `via:"user"` has four emitters — a real
+ * hang-up, `#connectAttempt`'s catch teardown, the MLS `autoLeave` binding and
+ * sign-out — so a leg that begins after ANY of them reads a leave that had
+ * nothing to do with this rejoin.
+ *
+ * Two independent bounds, both printed, every exclusion reported with its
+ * reason:
+ *   - TIME: the leg's own transition, `[fiducial - m2WindowMs, leak.to]`;
+ *   - GENERATION: `connectGen` must be STRICTLY BELOW the leak's (a teardown
+ *     that named this call or a later one did not produce the transition into
+ *     it) and within `genSpan` of it. Measured bump sequence in `state.tsx`:
+ *     `disconnect()` records `disconnect.entry` with the PRE-bump gen, then
+ *     `this.#connectGen++`, then `disconnect.preclear` with the POST-bump gen;
+ *     `#connectAttempt` then does `const gen = ++this.#connectGen`. So a
+ *     leave -> rejoin puts the real leave 3 and 2 generations below the leak
+ *     and the rejoin's own leading teardown 2 and 1 below it.
+ *
+ * The two records of ONE `disconnect()` call are JOINED (entry, then preclear
+ * one generation up, within `pairWindowMs`) so a single leave is counted once.
+ */
+function measureM2(records, coverage, scope) {
+  const empty = { verdict: "unknown", evidence: [], userLeaves: 0, connectLeading: 0, viaUnknown: 0, reestablishEvents: 0, admitted: [], excluded: [], entrySeamSeen: false };
+  if (records.length === 0) {
+    return { ...empty, reason: "no [gate-trace] records were recovered — neither arm is positively witnessed, and silence is not evidence for either" };
+  }
+  if (!scope || scope.from === null) {
+    return { ...empty, reason: "no leak instant could be pinned, so M2 cannot be scoped to THIS leg's transition. An UNSCOPED M2 counts every teardown in the capture — measured: one via=\"user\" record 60 s early flipped the verdict and the row — so it is refused rather than answered." };
+  }
+
+  const inWindow = (r) => r.t >= scope.from && r.t <= scope.to;
+  const teardowns = records.filter((r) => r.at === "disconnect.entry" || r.at === "disconnect.preclear");
+  const entrySeamSeen = teardowns.some((r) => r.at === "disconnect.entry");
+  const admitted = [];
+  const excluded = [];
   let connectLeading = 0;
   let viaUnknown = 0;
-  for (const r of pre) {
+  for (const r of teardowns) {
     const via = readField(r, "via", coverage);
-    if (!via.found) {
-      viaUnknown += 1;
+    const gen = readField(r, "connectGen", coverage);
+    const phase = readField(r, "connectGenPhase", coverage);
+    const row = { at: r.at, t: r.t, via: show(via), connectGen: show(gen), connectGenPhase: show(phase), source: r.source };
+    const why = [];
+    if (!inWindow(r)) {
+      why.push(`outside this leg's transition window ${scope.from}..${scope.to} (t=${r.t}, ${r.t < scope.from ? r.t - scope.from : r.t - scope.to} ms)`);
+    }
+    if (scope.leakConnectGen === null) {
+      why.push("the connectGen at the leak is UNKNOWN, so no teardown can be attributed to this leg's transition");
+    } else if (!gen.found || typeof gen.value !== "number") {
+      why.push("no readable connectGen");
+    } else if (gen.value >= scope.leakConnectGen) {
+      why.push(`connectGen=${gen.value} is NOT below the leak's ${scope.leakConnectGen} — this teardown named this call or a later one, so it did not produce the transition INTO it`);
+    } else if (scope.leakConnectGen - gen.value > scope.genSpan) {
+      why.push(`connectGen=${gen.value} is ${scope.leakConnectGen - gen.value} generations below the leak's ${scope.leakConnectGen}, beyond the ${scope.genSpan} that one leave->rejoin spans`);
+    }
+    if (why.length) {
+      excluded.push({ ...row, why: why.join("; ") });
       continue;
     }
-    if (via.value === "user") userLeaves.push(r);
-    else if (via.value === "connect-leading") connectLeading += 1;
-    else viaUnknown += 1;
+    if (!via.found) {
+      viaUnknown += 1;
+      excluded.push({ ...row, why: "no readable `via`: a leave cannot be told from the connect-leading teardown that fires on every rejoin press" });
+      continue;
+    }
+    if (via.value === "connect-leading") {
+      connectLeading += 1;
+      continue;
+    }
+    if (via.value !== "user") {
+      viaUnknown += 1;
+      excluded.push({ ...row, why: `via=${JSON.stringify(via.value)} is neither "user" nor "connect-leading"` });
+      continue;
+    }
+    admitted.push({ ...row, connectGenNum: typeof gen.value === "number" ? gen.value : null });
+  }
+
+  // The entry/preclear PAIR of one `disconnect()` call is ONE leave.
+  admitted.sort((a, b) => a.t - b.t);
+  const leaves = [];
+  for (const x of admitted) {
+    const prev = leaves[leaves.length - 1];
+    const pairs =
+      prev &&
+      prev.at === "disconnect.entry" &&
+      x.at === "disconnect.preclear" &&
+      x.t - prev.t <= scope.pairWindowMs &&
+      (prev.connectGenNum === null || x.connectGenNum === null || x.connectGenNum === prev.connectGenNum + 1);
+    if (pairs) {
+      prev.pairedWithPreclearAt = x.t;
+      continue;
+    }
+    leaves.push({ ...x });
   }
 
   // M4 — the two rejoinFresh records of ONE #rejoinFresh call share a `seq`.
-  const fresh = records.filter((r) => r.at === "rejoinFresh");
+  const fresh = records.filter((r) => r.at === "rejoinFresh" && inWindow(r));
+  const freshOutside = records.filter((r) => r.at === "rejoinFresh" && !inWindow(r)).length;
   const seqs = new Set();
   let seqless = 0;
   for (const r of fresh) {
@@ -979,27 +1263,31 @@ function measureM2(records, coverage) {
     if (s.found) seqs.add(s.value);
     else seqless += 1;
   }
-  const drops = records.filter((r) => r.at === "dropModeToNegotiating");
+  const drops = records.filter((r) => r.at === "dropModeToNegotiating" && inWindow(r));
+  const dropsOutside = records.filter((r) => r.at === "dropModeToNegotiating" && !inWindow(r)).length;
   const reestablishEvents = seqs.size + seqless + drops.length;
 
-  const ev = [...userLeaves, ...fresh, ...drops].map((r) => ({ at: r.at, t: r.t, source: r.source }));
+  const ev = [...leaves.map((x) => ({ at: x.at, t: x.t, source: x.source })), ...fresh.map((r) => ({ at: r.at, t: r.t, source: r.source })), ...drops.map((r) => ({ at: r.at, t: r.t, source: r.source }))];
   const tail =
-    ` [disconnect.preclear: ${userLeaves.length} via="user", ${connectLeading} via="connect-leading" (fires on EVERY rejoin press and is NOT evidence of a leave), ${viaUnknown} with no readable via;` +
-    ` rejoinFresh records ${fresh.length} => ${seqs.size} distinct seq${seqless ? ` + ${seqless} seq-less` : ""}, dropModeToNegotiating ${drops.length}]`;
+    ` [scope ${scope.from}..${scope.to} (${scope.windowMs} ms before the fiducial ${scope.fiducial}), leak connectGen ${scope.leakConnectGen === null ? "unknown" : scope.leakConnectGen}, genSpan ${scope.genSpan};` +
+    ` teardown records ${teardowns.length} => ${leaves.length} distinct via="user" leave(s), ${connectLeading} via="connect-leading" (fires on EVERY rejoin press and is NOT evidence of a leave), ${viaUnknown} unreadable, ${excluded.length} excluded;` +
+    ` disconnect.entry seam ${entrySeamSeen ? "present" : "ABSENT — a teardown that threw before disconnect.preclear would be invisible"};` +
+    ` rejoinFresh records ${fresh.length} => ${seqs.size} distinct seq${seqless ? ` + ${seqless} seq-less` : ""}${freshOutside ? ` (${freshOutside} outside the window)` : ""}, dropModeToNegotiating ${drops.length}${dropsOutside ? ` (${dropsOutside} outside)` : ""}]`;
 
-  if (userLeaves.length && (seqs.size || seqless || drops.length)) {
-    return { verdict: "both", reason: "BOTH arms are witnessed in this window (a real user disconnect AND an in-place re-establish). Attribute per-instant on the timeline before using this; the run is a mixed observation." + tail, evidence: ev, userLeaves: userLeaves.length, connectLeading, viaUnknown, reestablishEvents };
+  const base = { evidence: ev, userLeaves: leaves.length, connectLeading, viaUnknown, reestablishEvents, admitted: leaves, excluded, entrySeamSeen };
+  if (leaves.length && reestablishEvents) {
+    return { ...base, verdict: "both", reason: "BOTH arms are witnessed inside this leg's own transition (a real user disconnect AND an in-place re-establish). Attribute per-instant on the timeline before using this; the run is a mixed observation." + tail };
   }
-  if (userLeaves.length) {
-    return { verdict: "disconnect-ran", reason: `Voice.disconnect ran on the USER's leave: ${userLeaves.length} disconnect.preclear record(s) with via="user".` + tail, evidence: ev, userLeaves: userLeaves.length, connectLeading, viaUnknown, reestablishEvents };
+  if (leaves.length) {
+    return { ...base, verdict: "disconnect-ran", reason: `Voice.disconnect ran on the USER's leave: ${leaves.length} teardown(s) with via="user" inside this leg's transition.` + tail };
   }
-  if (seqs.size || seqless || drops.length) {
-    return { verdict: "no-disconnect", reason: `no via="user" pre-clear; the in-place arm is positively witnessed by ${reestablishEvents} re-establish EVENT(s).` + tail, evidence: ev, userLeaves: 0, connectLeading, viaUnknown, reestablishEvents };
+  if (reestablishEvents) {
+    return { ...base, verdict: "no-disconnect", reason: `no via="user" teardown inside this leg's transition; the in-place arm is positively witnessed by ${reestablishEvents} re-establish EVENT(s).` + tail };
   }
   if (viaUnknown) {
-    return { verdict: "unknown", reason: `${viaUnknown} disconnect.preclear record(s) carried no readable \`via\`. Without it a leave cannot be told from the connect-leading pre-clear that fires on every rejoin press, so NEITHER arm is witnessed.` + tail, evidence: ev, userLeaves: 0, connectLeading, viaUnknown, reestablishEvents };
+    return { ...base, verdict: "unknown", reason: `${viaUnknown} teardown record(s) carried no readable \`via\`. Without it a leave cannot be told from the connect-leading teardown that fires on every rejoin press, so NEITHER arm is witnessed.` + tail };
   }
-  return { verdict: "unknown", reason: "gate-trace records were recovered but NEITHER arm's seam appeared. Neither arm is positively witnessed." + tail, evidence: [], userLeaves: 0, connectLeading, viaUnknown, reestablishEvents };
+  return { ...base, verdict: "unknown", reason: "gate-trace records were recovered but NEITHER arm's seam appeared inside this leg's transition. Neither arm is positively witnessed." + tail };
 }
 
 // --------------------------------------------------------------------------
@@ -1009,6 +1297,12 @@ function measureM2(records, coverage) {
 function readPublication(entry, coverage) {
   const g = (k) => show(readPubField(entry, k, coverage));
   return {
+    // `name` is `${source}/${trackSid}` — the SAME string `track.upstreamResumed`
+    // carries as its `subject` and the key `repauseSpent` / `repausePending`
+    // are keyed by. C4 is selected by MATCHING those (wave-0c B4), so it is
+    // read, not merely emitted.
+    name: g("name"),
+    source: g("source"),
     trackSid: g("trackSid"),
     upstreamPaused: g("upstreamPaused"),
     hasSender: g("hasSender"),
@@ -1024,10 +1318,13 @@ function readSeam(rec, coverage) {
   const f = (k) => readField(rec, k, coverage);
   const gate = f("gate");
   const gateSize = f("gateSize");
-  // `publications` is emitted by localTrackPublished.entry ONLY. readField
-  // THROWS on a key that is not in READS for THIS seam, which is how the table
-  // stays honest: it cannot be read past.
-  const pubsRaw = rec.at === "localTrackPublished.entry" ? f("publications") : MISSING;
+  // Both census seams carry `publications` and `publicationKeys` (they share
+  // one `#gateTraceCensus` helper in the emitter). readField THROWS on a key
+  // that is not in READS for THIS seam, which is how the table stays honest:
+  // it cannot be read past.
+  const isCensus = rec.at === "localTrackPublished.entry" || rec.at === "localSenderCreated";
+  const pubsRaw = isCensus ? f("publications") : MISSING;
+  const keysRaw = isCensus ? f("publicationKeys") : MISSING;
   const reasons = gate.found ? (Array.isArray(gate.value) ? gate.value : [gate.value]) : "unknown";
   const publications = !pubsRaw.found
     ? "unknown"
@@ -1040,21 +1337,31 @@ function readSeam(rec, coverage) {
     t: rec.t,
     source: rec.source,
     subject: show(f("subject")),
+    subjectSource: isCensus ? show(f("subjectSource")) : "unknown",
+    subjectSid: show(f("subjectSid")),
+    // Only `localSenderCreated` can carry it: it is the only seam at which a
+    // sid may not be assigned yet.
+    subjectSidAssigned: rec.at === "localSenderCreated" ? show(f("subjectSidAssigned")) : "unknown",
+    subjectSidInPublications: isCensus ? show(f("subjectSidInPublications")) : "unknown",
+    publicationKeys: keysRaw.found && Array.isArray(keysRaw.value) ? keysRaw.value : "unknown",
     reasons,
     // 🔴 gateSize is read, never DERIVED from `gate.length`: a payload that
     // carries one and not the other is a contract break, and inventing the
     // number would hide it.
     gateSize: show(gateSize),
     gateGen: show(f("gateGen")),
+    connectGen: show(f("connectGen")),
     passes: show(f("passes")),
     publicationCount: show(f("publicationCount")),
-    subjectSidPresent: show(f("subjectSidPresent")),
     publications,
     publicationsWereStrings: stringEntries,
+    // H2: whether this record could be room-filtered at all. Kept and COUNTED
+    // when it could not; a record that cannot be attributed to the live Room
+    // may not SELECT a row once its seam demonstrably carries the key.
+    roomFiltered: Object.prototype.hasOwnProperty.call(rec.payload, SOFT_KEY_CURRENT_ROOM),
     ...(rec.at === "localSenderCreated"
       ? {
           upstreamPaused: show(f("upstreamPaused")),
-          hasSender: show(f("hasSender")),
           senderHasTrack: show(f("senderHasTrack")),
           transportState: show(f("transportState")),
         }
@@ -1063,28 +1370,141 @@ function readSeam(rec, coverage) {
 }
 
 /**
+ * C0's ABSENT half — the one reading in this whole reduction that a structural
+ * constant faked, and did.
+ *
+ * The seam used to carry ONE field, `subjectSidPresent`, computed as
+ * `gtSid !== null && trackPublications.has(gtSid)`. In pinned
+ * livekit-client 2.15.13 that is FALSE BY CONSTRUCTION at this instant on BOTH
+ * reachable branches:
+ *   - `this.emit(ParticipantEvent.LocalSenderCreated, track.sender, track)`
+ *     (esm.mjs 23811) precedes `track.sid = ti.sid` (23900) and
+ *     `this.addTrackPublication(publication)` (23910), so at a FIRST publish
+ *     there is no sid to look up at all;
+ *   - on a REPUBLISH `unpublishTrack` has already run
+ *     `this.trackPublications.delete(publication.trackSid)` (24121) and never
+ *     touches `track.sid`, so the track still carries the PREVIOUS
+ *     publication's sid and the map genuinely no longer holds it.
+ * Reading `false` as C0 therefore fired on every publish of any kind, and
+ * because §2.5 is FIRST MATCH WINS with C0 above C6 and C4 it made both of
+ * those rows unreachable — measured: setting only that field to its reachable
+ * value flipped this harness's own C6 and C4 fixtures to C0.
+ *
+ * So the absent half now requires POSITIVE evidence of an ABSENCE, never the
+ * absence of an assignment:
+ *   1. `subjectSidAssigned === true`. The "no sid yet" case is REFUSED here —
+ *      that is the whole point.
+ *   2. `subjectSidInPublications === false` — that assigned sid is not a key
+ *      of `trackPublications`.
+ *   3. `publicationKeys` is read and the sid is confirmed absent from it, so
+ *      the two fields cannot silently disagree.
+ * The CLASS of the absence is reported and never flattened:
+ *   `absent-from-populated-map`  the census still held other publications;
+ *   `absent-with-stale-sid`      the map was empty. Still positive evidence —
+ *                                an assigned sid can only come from
+ *                                `track.sid = ti.sid` after a successful
+ *                                publish, so it proves a publication existed
+ *                                and its map entry is gone — but it is a
+ *                                WEAKER reading than the first and is printed
+ *                                as itself.
+ * Anything else returns `ok: false` and C0 is NOT selected; evaluation then
+ * FALLS THROUGH to C6 and C4 rather than stopping at half a row.
+ */
+function c0AbsentEvidence(seam) {
+  const no = (why, cls) => ({ ok: false, why, class: cls ?? null });
+  if (!seam) return no("there is no localSenderCreated record inside the leak's drive window, and it is the ONLY seam inside the republish window C0 names");
+  if (seam.at !== "localSenderCreated") {
+    return no(`C0's absent half is readable only at localSenderCreated; the seam in scope is ${seam.at}, which by construction reports the publication PRESENT (addTrackPublication runs before the emit)`);
+  }
+  if (seam.subjectSidAssigned === "unknown") {
+    return no("the sender seam carried no subjectSidAssigned, so 'absent' cannot be told from 'no sid assigned yet' — the exact conflation that made C0 a tautology");
+  }
+  if (seam.subjectSidAssigned !== true) {
+    return no("subjectSidAssigned=false: the track had NO sid at this instant, so nothing could be looked up in trackPublications. That is the sid-not-yet-assigned case and it is NOT evidence of an absence", "sid-not-yet-assigned");
+  }
+  if (seam.subjectSidInPublications === "unknown") {
+    return no("subjectSidAssigned=true but the seam carried no subjectSidInPublications — the lookup itself is unmeasured");
+  }
+  if (seam.subjectSidInPublications !== false) {
+    return no(`subjectSidInPublications=${JSON.stringify(seam.subjectSidInPublications)} — the publication was NOT absent`);
+  }
+  const keys = seam.publicationKeys;
+  if (keys === "unknown") {
+    return no("subjectSidInPublications=false but publicationKeys is UNMEASURED, so 'absent from a populated map' cannot be distinguished from 'absent from nothing'");
+  }
+  if (typeof seam.subjectSid === "string" && keys.includes(seam.subjectSid)) {
+    return no(`the payload CONTRADICTS ITSELF: subjectSidInPublications=false while publicationKeys contains ${JSON.stringify(seam.subjectSid)}. A contract break is reported, never resolved in favour of a row`);
+  }
+  const cls = keys.length > 0 ? "absent-from-populated-map" : "absent-with-stale-sid";
+  return {
+    ok: true,
+    class: cls,
+    why:
+      cls === "absent-from-populated-map"
+        ? `the sid ${JSON.stringify(seam.subjectSid)} WAS assigned and is absent from a map that still held ${keys.length} other publication key(s) ${JSON.stringify(keys)}`
+        : `the sid ${JSON.stringify(seam.subjectSid)} WAS assigned (which only happens after a successful publish) and trackPublications is EMPTY, so its entry has been deleted — positive, but weaker than the populated-map reading, and printed as itself`,
+  };
+}
+
+/**
  * B5 — C0's row is "ABSENT at the leak, PRESENT at the mute", so the two
  * halves come from DIFFERENT seams and the pair is reported.
  *
  * In pinned livekit-client 2.15.13 `addTrackPublication(publication)` runs
- * BEFORE `emit(LocalTrackPublished, publication)`, so `subjectSidPresent` on
- * `localTrackPublished.entry` is `true` BY CONSTRUCTION and can only ever
- * supply the PRESENT half. Wave 0 preferred that seam for both halves, which
- * made the absent half unobservable.
+ * BEFORE `emit(LocalTrackPublished, publication)`, so
+ * `subjectSidInPublications` on `localTrackPublished.entry` is `true` BY
+ * CONSTRUCTION and can only ever supply the PRESENT half. Wave 0 preferred
+ * that seam for both halves, which made the absent half unobservable — and
+ * wave 0b then read the absent half off a field that was `false` by
+ * construction, which made it unfalsifiable instead (see `c0AbsentEvidence`).
  */
 function measureM3(records, leak, opts, coverage) {
   const w = leak.window;
   const scopeFrom = w.from - opts.driveWindowMs;
   const muteScopeTo = w.to + opts.muteGraceMs;
+  // wave-0c item 10: the trackSid the LEAKING ssrc carried, so every seam this
+  // reduction reaches a verdict through can be required to be about the same
+  // publication. `null` when the sampler could not correlate one — reported,
+  // never assumed to match.
+  const leakTrackSid = w.trackSid ?? null;
 
   const senderSeams = records.filter((r) => r.at === "localSenderCreated" && r.t >= scopeFrom && r.t <= w.from);
   const leakSeam = senderSeams.length ? readSeam(senderSeams[senderSeams.length - 1], coverage) : null;
+  // 🔴 The sender seam CANNOT be required to name the leaking sid: at
+  // `LocalSenderCreated` the sid is unassigned on a first publish and STALE
+  // (the previous publication's) on a republish, because `unpublishTrack`
+  // never clears `track.sid`. So the correlation is CLASSIFIED and printed
+  // rather than enforced — enforcing it would make C0 unselectable in exactly
+  // the window C0 describes.
+  const leakSeamCorrelation = !leakSeam
+    ? "none"
+    : leakTrackSid === null
+      ? "uncorrelated (the sampler pinned no trackSid on the leaking ssrc)"
+      : leakSeam.subjectSid === leakTrackSid
+        ? "match"
+        : leakSeam.subjectSidAssigned === false
+          ? "no-sid (a FIRST publish: nothing to correlate)"
+          : `stale-sid (${JSON.stringify(leakSeam.subjectSid)} vs the leaking ${JSON.stringify(leakTrackSid)} — expected on a republish)`;
 
   const publishedBefore = records.filter((r) => r.at === "localTrackPublished.entry" && r.t >= scopeFrom && r.t <= w.from);
   const beforeSeam = publishedBefore.length ? readSeam(publishedBefore[publishedBefore.length - 1], coverage) : null;
 
-  const publishedAfter = records.filter((r) => r.at === "localTrackPublished.entry" && r.t >= w.from && r.t <= muteScopeTo);
-  const muteSeam = publishedAfter.length ? readSeam(publishedAfter[0], coverage) : null;
+  // The MUTE seam must be about the LEAKING publication. `leakSeam` is just
+  // "the last localSenderCreated in the window" by necessity; this one is not,
+  // because `localTrackPublished.entry` carries an ASSIGNED sid.
+  const afterCandidates = records
+    .filter((r) => r.at === "localTrackPublished.entry" && r.t >= w.from && r.t <= muteScopeTo)
+    .map((r) => readSeam(r, coverage));
+  const muteRejected = [];
+  let muteSeam = null;
+  for (const s of afterCandidates) {
+    if (leakTrackSid !== null && s.subjectSid !== leakTrackSid) {
+      muteRejected.push({ t: s.t, subject: s.subject, why: `names ${JSON.stringify(s.subjectSid)}, not the leaking publication ${JSON.stringify(leakTrackSid)}` });
+      continue;
+    }
+    muteSeam = s;
+    break;
+  }
 
   // gen equality where available (H2): the leak seam and the mute seam must
   // belong to the SAME gate generation, or they are not a pair.
@@ -1092,10 +1512,28 @@ function measureM3(records, leak, opts, coverage) {
   if (leakSeam && muteSeam && leakSeam.gateGen !== "unknown" && muteSeam.gateGen !== "unknown") {
     genPair = leakSeam.gateGen === muteSeam.gateGen ? "same" : "different";
   }
+  // H1's `passes()` is a MONOTONIC LIFETIME counter (`coalescingSweeper`
+  // declares `let passes = 0` OUTSIDE `drive` and never resets it), so only a
+  // DELTA between two records means anything. Recording the raw number as if
+  // it were per-drive is how it got quoted as one (wave-0c item 13).
+  const passesDelta =
+    leakSeam && muteSeam && typeof leakSeam.passes === "number" && typeof muteSeam.passes === "number"
+      ? muteSeam.passes - leakSeam.passes
+      : "unknown";
 
-  // B3 — drops are scoped to the drive containing the leak instant, and a drop
-  // must have LANDED (`stillCurrent === true`) and belong to the same sweeper
-  // generation as the gate at the leak.
+  // B3 — drops are scoped to the leak's own ~drive window and must have LANDED
+  // (`stillCurrent === true`) in the same sweeper generation as the gate at the
+  // leak.
+  //
+  // 🔴 SAY WHAT THAT SCOPE ACTUALLY IS (wave-0c item 8). `sweeperGen` is
+  // `#gateGen`, and `#gateGen` is bumped when a SWEEPER IS CREATED — inside
+  // `if (!this.#gateSweeper)` in `#applyPublishGate`, i.e. ONCE PER CALL (plus
+  // once at connect and once at disconnect) — NOT once per drive. So the
+  // generation match excludes drops from ANOTHER CALL and nothing finer:
+  // within one call this is a TIME window, not a drive. It is described that
+  // way here and in the printed report rather than being called "the leak's
+  // drive", which would claim a precision the emitter cannot supply.
+
   const gateGenAtLeak = leakSeam?.gateGen ?? beforeSeam?.gateGen ?? "unknown";
   const dropWindow = { from: scopeFrom, to: muteScopeTo };
   const allDrops = records.filter((r) => r.at === "sweeper.dropped");
@@ -1123,26 +1561,44 @@ function measureM3(records, leak, opts, coverage) {
   const inResumed = (r) => r.t >= resumedWindow.from && r.t <= resumedWindow.to;
   const allResumed = records.filter((r) => r.at === "track.upstreamResumed");
   const allProcessor = records.filter((r) => r.at === "track.processorUpdate");
+  // Whether THIS seam demonstrably carries `currentRoom` in THIS capture. Once
+  // it does, a record of that seam WITHOUT it cannot be attributed to the live
+  // Room and may not SELECT a row (it is still kept and counted).
+  const roomKeyWitness = {
+    "track.upstreamResumed": allResumed.some((r) => Object.prototype.hasOwnProperty.call(r.payload, SOFT_KEY_CURRENT_ROOM)),
+    "track.processorUpdate": allProcessor.some((r) => Object.prototype.hasOwnProperty.call(r.payload, SOFT_KEY_CURRENT_ROOM)),
+  };
   const pick = (arr) =>
-    arr.filter(inResumed).map((r) => ({ t: r.t, subject: show(readField(r, "subject", coverage)), source: r.source }));
+    arr.filter(inResumed).map((r) => ({
+      t: r.t,
+      subject: show(readField(r, "subject", coverage)),
+      subjectSid: show(readField(r, "subjectSid", coverage)),
+      roomFiltered: Object.prototype.hasOwnProperty.call(r.payload, SOFT_KEY_CURRENT_ROOM),
+      source: r.source,
+    }));
   const outside = (arr) =>
     arr.filter((r) => !inResumed(r)).map((r) => ({ t: r.t, offsetMs: r.t - w.to, source: r.source }));
 
   return {
-    leakWindow: { from: w.from, to: w.to, ssrc: w.ssrc, bytes: w.bytes },
+    leakWindow: { from: w.from, to: w.to, ssrc: w.ssrc, bytes: w.bytes, trackSid: leakTrackSid },
+    leakTrackSid,
     leakBasis: leak.basis,
     rejectedFlowWindows: leak.rejected,
     scope: { from: scopeFrom, muteTo: muteScopeTo, driveWindowMs: opts.driveWindowMs, muteGraceMs: opts.muteGraceMs },
     leakSeam,
+    leakSeamCorrelation,
     beforeSeam,
     muteSeam,
+    muteSeamRejected: muteRejected,
     genPair,
+    passesDelta,
     gateGenAtLeak,
     dropWindow,
     drops: dropsKept,
     dropsDiscarded,
     resumedWindow,
     resumedWindowMs: opts.resumedWindowMs,
+    roomKeyWitness,
     upstreamResumed: pick(allResumed),
     upstreamResumedOutside: outside(allResumed),
     processorUpdate: pick(allProcessor),
@@ -1169,75 +1625,147 @@ const ROW_TEXT = {
  * answered only by --aggregate. This value can NEVER, on its own, select a
  * row: `selectRow` gates it on M1.
  */
+/**
+ * C4's discriminator is a resume OF THE PUBLICATION UNDER TEST, inside the
+ * bounded window before the mute.
+ *
+ * 🔴 It used to be `m3.upstreamResumed.length > 0` — EVERY `track.upstreamResumed`
+ * in the window, for ANY track; `subject` was read and used only for printing.
+ * Measured: retargeting the fixture's resume to `screen_share/TR_TOTALLY_OTHER`
+ * still yielded `DECISION (§2.5) : C4`. Both sides carry the same
+ * `${source}/${trackSid}` string, so they are MATCHED.
+ */
+function resumeMatching(m3, p) {
+  if (m3.upstreamResumed.length === 0) {
+    return { ok: false, why: `no track.upstreamResumed record lies inside the ${m3.resumedWindowMs} ms window before the mute` };
+  }
+  if (p.name === "unknown") {
+    return { ok: false, why: "the census entry carried no `name`, so no resume can be matched to it — C4 is not selected off an unnamed publication" };
+  }
+  const named = m3.upstreamResumed.filter((r) => r.subject === p.name);
+  if (named.length === 0) {
+    return {
+      ok: false,
+      why: `${m3.upstreamResumed.length} track.upstreamResumed record(s) lie in the window but NONE names ${JSON.stringify(p.name)} (their subjects: ${JSON.stringify(m3.upstreamResumed.map((r) => r.subject))}). A resume of another track is not evidence about this one`,
+    };
+  }
+  // H2, applied to selection: once this seam demonstrably carries
+  // `currentRoom`, a record of it that does NOT may be kept and counted but
+  // may not SELECT a row.
+  const selectable = named.filter((r) => r.roomFiltered || !m3.roomKeyWitness["track.upstreamResumed"]);
+  if (selectable.length === 0) {
+    return { ok: false, why: `the matching track.upstreamResumed record(s) carry NO currentRoom while other records of that seam in this capture DO — they cannot be attributed to the live Room, so they may not select a row` };
+  }
+  const caveat = m3.roomKeyWitness["track.upstreamResumed"] ? "" : " (🔴 NO record of this seam carried currentRoom in this capture, so the resume could not be room-filtered at all — this selection is UNFILTERED and the emitter owes the key)";
+  return { ok: true, t: selectable[0].t, caveat };
+}
+
 function evaluateWindow(m2, m3) {
   const leakSeam = m3.leakSeam;
   const seam = leakSeam ?? m3.beforeSeam;
+  const notes = [];
+  const done = (o) => ({ ...o, notes, conclusion: notes.length ? `${o.conclusion} || ${notes.join(" || ")}` : o.conclusion });
   if (!seam) {
-    return { row: null, conclusion: "no localSenderCreated (and no localTrackPublished.entry) record lies inside the leak's drive window — M3 is unfillable and no row can be described", wave1: null, perPub: [] };
+    return done({ row: null, conclusion: "no localSenderCreated (and no localTrackPublished.entry) record lies inside the leak's drive window — M3 is unfillable and no row can be described", wave1: null, perPub: [] });
   }
   if (seam.gateSize === "unknown") {
-    return { row: null, conclusion: `the reason-set size at the leak is unknown (${seam.at} carried no gateSize) — no row can be described`, wave1: null, perPub: [] };
+    return done({ row: null, conclusion: `the reason-set size at the leak is unknown (${seam.at} carried no gateSize) — no row can be described`, wave1: null, perPub: [] });
   }
   const empty = Number(seam.gateSize) === 0;
   if (empty) {
-    if (m2.verdict === "no-disconnect") return { row: "C1", conclusion: ROW_TEXT.C1.c, wave1: ROW_TEXT.C1.w, perPub: [] };
-    if (m2.verdict === "disconnect-ran") return { row: null, conclusion: "a real user disconnect + an EMPTY set is a new carrier this plan does not account for — re-enter Investigate, do not guess", wave1: "hardening only (D1, D4, D5)", perPub: [] };
-    return { row: null, conclusion: `an EMPTY set but M2 is ${m2.verdict} — the C1 row and the unaccounted row differ ONLY on M2, so no row can be described`, wave1: null, perPub: [] };
+    if (m2.verdict === "no-disconnect") return done({ row: "C1", conclusion: ROW_TEXT.C1.c, wave1: ROW_TEXT.C1.w, perPub: [] });
+    if (m2.verdict === "disconnect-ran") return done({ row: null, conclusion: "a real user disconnect + an EMPTY set is a new carrier this plan does not account for — re-enter Investigate, do not guess", wave1: "hardening only (D1, D4, D5)", perPub: [] });
+    return done({ row: null, conclusion: `an EMPTY set but M2 is ${m2.verdict} — the C1 row and the unaccounted row differ ONLY on M2, so no row can be described`, wave1: null, perPub: [] });
   }
 
   // Non-empty. §2.5 order, FIRST MATCH WINS.
   if (m3.drops.length > 0) {
-    return { row: "C3", conclusion: `${ROW_TEXT.C3.c} (${m3.drops.length} kept, ${m3.dropsDiscarded.length} discarded as out-of-scope / guard-discarded / wrong generation)`, wave1: ROW_TEXT.C3.w, perPub: [] };
+    return done({ row: "C3", conclusion: `${ROW_TEXT.C3.c} (${m3.drops.length} kept, ${m3.dropsDiscarded.length} discarded as out-of-scope / guard-discarded / wrong generation)`, wave1: ROW_TEXT.C3.w, perPub: [] });
   }
 
-  // C0: the pair. ABSENT at the leak (localSenderCreated) and PRESENT at the
-  // mute (localTrackPublished.entry).
-  const absentHalf = leakSeam ? leakSeam.subjectSidPresent : "unknown";
-  const presentHalf = m3.muteSeam ? m3.muteSeam.subjectSidPresent : "unknown";
-  const pair = `absent-half(localSenderCreated)=${absentHalf} present-half(localTrackPublished.entry)=${presentHalf}`;
-  if (absentHalf === false) {
+  // C0: the pair. POSITIVELY ABSENT at the leak (localSenderCreated) and
+  // PRESENT at the mute (localTrackPublished.entry).
+  //
+  // 🔴 A C0 that fires on the sid-not-yet-assigned case makes C6 and C4
+  // UNREACHABLE, because this table is first-match-wins. So when the absent
+  // half is not established we do NOT return here: we record why and FALL
+  // THROUGH to the rows below.
+  const c0 = c0AbsentEvidence(leakSeam);
+  const presentHalf = m3.muteSeam ? m3.muteSeam.subjectSidInPublications : "unknown";
+  const pair = `absent-half(localSenderCreated)=${c0.ok ? `ABSENT [${c0.class}]` : `NOT ESTABLISHED${c0.class ? ` [${c0.class}]` : ""}`} present-half(localTrackPublished.entry)=${presentHalf}`;
+  if (c0.ok) {
     if (presentHalf === true) {
       if (m3.genPair === "different") {
-        return { row: null, conclusion: `the C0 pair spans TWO gate generations (${m3.leakSeam.gateGen} vs ${m3.muteSeam.gateGen}) — they are not a pair and C0 is not established. ${pair}`, wave1: null, perPub: [] };
+        return done({ row: null, conclusion: `the C0 pair spans TWO gate generations (${m3.leakSeam.gateGen} vs ${m3.muteSeam.gateGen}) — they are not a pair and C0 is not established. ${pair}`, wave1: null, perPub: [] });
       }
-      return { row: "C0", conclusion: `${ROW_TEXT.C0.c}. ${pair}`, wave1: ROW_TEXT.C0.w, perPub: [] };
+      return done({ row: "C0", conclusion: `${ROW_TEXT.C0.c}. ${c0.why}. ${pair}`, wave1: ROW_TEXT.C0.w, perPub: [] });
     }
-    return { row: null, conclusion: `the subject's publication was ABSENT at the leak, but C0's PRESENT half is ${presentHalf === "unknown" ? "UNMEASURED (no localTrackPublished.entry inside the mute window)" : "false"} — half a row is not a row. ${pair}`, wave1: null, perPub: [] };
+    notes.push(`C0's absent half HELD (${c0.why}) but its PRESENT half is ${presentHalf === "unknown" ? "UNMEASURED (no localTrackPublished.entry naming the leaking publication inside the mute window)" : String(presentHalf)} — half a row is not a row, so C0 is not selected and the rows below were evaluated`);
+  } else {
+    notes.push(`C0 NOT selected: ${c0.why}`);
   }
 
   // Per publication, from the mute seam's census when it carries one; else the
-  // subject's own flat fields at the sender seam.
+  // sender seam's own census; else the sender seam's flat fields.
   const perPub = [];
-  const pubs = m3.muteSeam && Array.isArray(m3.muteSeam.publications) ? m3.muteSeam.publications : [];
+  const skipped = [];
+  const censusSeam =
+    m3.muteSeam && Array.isArray(m3.muteSeam.publications)
+      ? m3.muteSeam
+      : leakSeam && Array.isArray(leakSeam.publications)
+        ? leakSeam
+        : null;
+  const pubs = censusSeam ? censusSeam.publications : [];
   for (const p of pubs) {
+    // wave-0c item 10: a row is about the LEAKING publication. When the
+    // sampler pinned a trackSid on the leaking ssrc, a census entry that is
+    // not that publication is reported and skipped rather than being allowed
+    // to select a row about it.
+    if (m3.leakTrackSid !== null && p.trackSid !== m3.leakTrackSid) {
+      skipped.push({ trackSid: p.trackSid, why: `not the leaking publication (the sampler pinned trackSid ${JSON.stringify(m3.leakTrackSid)} on the leaking ssrc)` });
+      continue;
+    }
     if (p.upstreamPaused === true && (p.op === "repause" || p.upstream === "live")) {
-      perPub.push({ trackSid: p.trackSid, row: "C6" });
+      perPub.push({ trackSid: p.trackSid, name: p.name, row: "C6", via: `${censusSeam.at} census` });
       continue;
     }
-    if (p.upstreamPaused === false && m3.upstreamResumed.length > 0) {
-      perPub.push({ trackSid: p.trackSid, row: "C4" });
+    if (p.upstreamPaused === false) {
+      const r = resumeMatching(m3, p);
+      if (r.ok) {
+        perPub.push({ trackSid: p.trackSid, name: p.name, row: "C4", via: `${censusSeam.at} census, resume at ${r.t}${r.caveat}` });
+        continue;
+      }
+      perPub.push({ trackSid: p.trackSid, name: p.name, row: null, why: r.why });
       continue;
     }
-    perPub.push({ trackSid: p.trackSid, row: null });
+    perPub.push({ trackSid: p.trackSid, name: p.name, row: null, why: `upstreamPaused=${JSON.stringify(p.upstreamPaused)} matches neither C6 (true over a live sender) nor C4 (false)` });
   }
   if (pubs.length === 0 && leakSeam) {
     const lp = leakSeam.upstreamPaused;
-    if (lp === true && leakSeam.senderHasTrack === true) perPub.push({ trackSid: leakSeam.subject, row: "C6", via: "localSenderCreated flat fields" });
-    else if (lp === false && m3.upstreamResumed.length > 0) perPub.push({ trackSid: leakSeam.subject, row: "C4", via: "localSenderCreated flat fields" });
+    const flat = { trackSid: leakSeam.subjectSid, name: leakSeam.subject };
+    if (lp === true && leakSeam.senderHasTrack === true) perPub.push({ ...flat, row: "C6", via: "localSenderCreated flat fields (no census in scope)" });
+    else if (lp === false) {
+      const r = resumeMatching(m3, flat);
+      if (r.ok) perPub.push({ ...flat, row: "C4", via: `localSenderCreated flat fields, resume at ${r.t}${r.caveat}` });
+      else perPub.push({ ...flat, row: null, why: r.why });
+    }
+  }
+  if (skipped.length) {
+    notes.push(`census entries SKIPPED as not the leaking publication: ${skipped.map((s) => `${s.trackSid} (${s.why})`).join("; ")}`);
   }
 
   const distinct = [...new Set(perPub.map((p) => p.row))].filter((r) => r !== null);
   if (distinct.length > 1) {
-    return { row: "MIXED", conclusion: `two or more rows genuinely hold across publications (${distinct.join(", ")}) — this is a MIXED observation and goes to "re-enter Investigate", never to whichever row was read first`, wave1: null, perPub };
+    return done({ row: "MIXED", conclusion: `two or more rows genuinely hold across publications (${distinct.join(", ")}) — this is a MIXED observation and goes to "re-enter Investigate", never to whichever row was read first`, wave1: null, perPub });
   }
   if (distinct.length === 1) {
     const row = distinct[0];
-    return { row, conclusion: ROW_TEXT[row].c, wave1: ROW_TEXT[row].w, perPub };
+    return done({ row, conclusion: ROW_TEXT[row].c, wave1: ROW_TEXT[row].w, perPub });
   }
-  if (pubs.length === 0 && perPub.length === 0) {
-    return { row: null, conclusion: `the set was non-empty but no seam carried per-publication detail — C6 and C4 are unseparable here. Do NOT default to C4; that is the exact defect F4 corrects. ${pair}`, wave1: null, perPub };
+  if (perPub.length === 0) {
+    return done({ row: null, conclusion: `the set was non-empty but no seam carried per-publication detail about the leaking publication — C6 and C4 are unseparable here. Do NOT default to C4; that is the exact defect F4 corrects. ${pair}`, wave1: null, perPub });
   }
-  return { row: null, conclusion: `set non-empty, no in-scope drop, and none of C0/C6/C4 matched — unaccounted, re-enter Investigate. Do NOT default to C4. ${pair}`, wave1: "hardening only (D0, D1, D4, D5)", perPub };
+  return done({ row: null, conclusion: `set non-empty, no in-scope drop, and none of C0/C6/C4 matched — unaccounted, re-enter Investigate. Do NOT default to C4. ${pair}`, wave1: "hardening only (D0, D1, D4, D5)", perPub });
 }
 
 function selectRow(m1, windowEval, shape) {
@@ -1320,7 +1848,8 @@ function runCheckLog(file) {
 // --aggregate (§2.5's H3 polarity rule — M1 of this lane's contract)
 // --------------------------------------------------------------------------
 
-function runAggregate(files) {
+function runAggregate(files, opts) {
+  const minArmRuns = opts.minArmRuns;
   const reports = [];
   for (const f of files) {
     const r = readJsonStrict(f, "reduction report");
@@ -1348,7 +1877,21 @@ function runAggregate(files) {
 
   const usable = (arm) => arms[arm].filter((x) => !x.r.discarded && x.r.inputs.shape === "b");
   const leakIn = (arm) => usable(arm).some((x) => x.r.M1.verdict === "plaintext");
+  /**
+   * 🔴 MIXED IS NOT SILENTLY DROPPED (wave-0c B2). A no-consent run in which
+   * two rows genuinely hold is NOT evidence that the row under test did not
+   * fire there — dropping it manufactured exactly the "fires only in the
+   * consent arm" reading this rule exists to protect. It is dropped only from
+   * the CONSENT arm's row SELECTION (a mixed observation selects nothing), and
+   * counted separately there.
+   */
   const windowRows = (arm) => new Set(usable(arm).map((x) => x.r.decision.windowRow).filter((v) => v && v !== "MIXED"));
+  const mixedRuns = (arm) => usable(arm).filter((x) => x.r.decision.windowRow === "MIXED");
+  const noArmRows = () => {
+    const s = windowRows("no");
+    if (mixedRuns("no").length > 0) s.add("MIXED");
+    return s;
+  };
 
   const finish = (code, verdict, lines) => {
     out.push(`POLARITY OUTCOME  : ${verdict}`);
@@ -1358,18 +1901,40 @@ function runAggregate(files) {
     process.exit(code);
   };
 
-  out.push(`shape-(b), non-discarded runs: consent=yes ${usable("yes").length}, consent=no ${usable("no").length}`);
+  out.push(`shape-(b), non-discarded runs: consent=yes ${usable("yes").length}, consent=no ${usable("no").length}   (minimum per arm for a verdict: ${minArmRuns}; §2.4 specifies FIVE per arm)`);
   out.push(`leak (M1=plaintext) present  : consent=yes ${leakIn("yes")}, consent=no ${leakIn("no")}`);
-  out.push(`window rows (M1-INDEPENDENT) : consent=yes {${[...windowRows("yes")].join(",") || "-"}}, consent=no {${[...windowRows("no")].join(",") || "-"}}`);
+  out.push(`window rows (M1-INDEPENDENT) : consent=yes {${[...windowRows("yes")].join(",") || "-"}}${mixedRuns("yes").length ? ` +${mixedRuns("yes").length} MIXED` : ""}, consent=no {${[...noArmRows()].join(",") || "-"}}`);
   out.push("");
 
-  if (usable("yes").length === 0) {
-    finish(7, "NOTHING SELECTED", ["there are no usable shape-(b) consent runs. §2.5 is evaluated on shape (b); shape (a) may corroborate, never select."]);
+  if (usable("yes").length < minArmRuns) {
+    finish(7, "NOTHING SELECTED", [
+      `the consent arm contributed ${usable("yes").length} usable runs, so polarity is UNMEASURED.`,
+      "§2.5 is evaluated on shape (b) and on runs that were not discarded; shape (a) may corroborate, never select.",
+    ]);
+  }
+  // 🔴 THE MIRROR GUARD (wave-0c B2). There was none: `runAggregate` guarded
+  // only the consent arm, so a no-consent arm that was ABSENT, DISCARDED or
+  // shape (a) — the single most likely operational shape, because §2.4 itself
+  // says "if operator budget forces a cut, cut shape (a)" and the carrier rule
+  // discards runs routinely — printed "the row accounts for the polarity as
+  // well as the window" and exited 0. Measured three ways, all exit 0.
+  // Polarity is a claim about TWO arms and cannot be made from one.
+  if (usable("no").length < minArmRuns) {
+    finish(7, "POLARITY UNMEASURED", [
+      `the no-consent arm contributed ${usable("no").length} usable runs, so polarity is UNMEASURED.`,
+      `A run counts as usable only when it is shape (b) and was NOT discarded; this aggregate saw ${arms.no.length} no-consent report(s) in total.`,
+      "No row may be reported as accounting for the polarity without a non-empty, usable no-consent arm to compare against. §4.1 stays OPEN.",
+    ]);
   }
   if (!leakIn("yes")) {
     finish(7, "NOTHING SELECTED", [
       "the CONSENT arm never reproduced the leak. §2.5: a series that never reproduces the leak in the consent arm is an absence with an unexplained cause and selects NOTHING at all.",
       "The banked 2/2-vs-0/2 entry is untouched. §4.1 stays OPEN.",
+    ]);
+  }
+  if (mixedRuns("yes").length) {
+    finish(7, "NOTHING SELECTED", [
+      `${mixedRuns("yes").length} consent run(s) are MIXED observations (two or more rows genuinely hold). §2.5: a mixed observation goes to "re-enter Investigate", never to whichever row was read first.`,
     ]);
   }
   const cRows = windowRows("yes");
@@ -1388,9 +1953,11 @@ function runAggregate(files) {
     ]);
   }
 
-  if (windowRows("no").has(R)) {
+  if (noArmRows().has(R) || noArmRows().has("MIXED")) {
     finish(6, `${R} confirmed as the WINDOW — POLARITY UNEXPLAINED`, [
-      `${R} fires in BOTH arms while the leak appears ONLY in the consent arm, so ${R} predicts the WINDOW and not the polarity.`,
+      noArmRows().has(R)
+        ? `${R} fires in BOTH arms while the leak appears ONLY in the consent arm, so ${R} predicts the WINDOW and not the polarity.`
+        : `the no-consent arm contains ${mixedRuns("no").length} MIXED run(s). A mixed no-consent run is NOT evidence that ${R} did not fire there, so the polarity is not established.`,
       "This result is INCOMPLETE. §4.1 is NOT closed, the banked 2/2-vs-0/2 entry stands untouched, and the slice re-enters Investigate for the consent-dependent term.",
       "The two carriers this plan has named are C1's `localConfirmed` exemptions and D3's native per-channel grant (§1.4, G5).",
       `The wave-1 fix for ${R} may be taken as HARDENING only. Without this rule a "${R} confirmed" reading closes a consent-triggered defect with a fix for a window that was open on every call.`,
@@ -1400,7 +1967,8 @@ function runAggregate(files) {
   finish(0, `${R} confirmed`, [
     `${R} fires in the consent arm and NOT in the no-consent arm, and the leak appears only in the consent arm — the row accounts for the polarity as well as the window.`,
     ROW_TEXT[R] ? `wave 1: ${ROW_TEXT[R].w}` : "wave 1: see §2.5",
-    `no-consent arm window rows: {${[...windowRows("no")].join(",") || "-"}}`,
+    `arms compared: ${usable("yes").length} usable consent run(s) vs ${usable("no").length} usable no-consent run(s)${usable("yes").length < 5 || usable("no").length < 5 ? " — 🔴 BELOW §2.4's five per arm; the polarity claim is only as strong as the arm that was actually run" : ""}`,
+    `no-consent arm window rows: {${[...noArmRows()].join(",") || "-"}}`,
   ]);
 }
 
@@ -1473,15 +2041,30 @@ function runReduce(args) {
   const discarded = cc.verdict === "discarded" || alignment.status === "unaligned";
 
   const flow = subjectFlowWindows(subjRows, args.maxStallMs);
-  const leak = pinLeakWindow(flow, changes, args.leakAfter, dump.intervalMs);
+  const leak = pinLeakWindow(flow, changes, args.leakAfter);
 
   const m1 = discarded
     ? { verdict: "unknown", reason: `the run is DISCARDED, NOT INTERPRETED (${cc.verdict === "discarded" ? cc.reason : alignment.reason})`, notes: [] }
     : measureM1(dump, args.shape, args.audible, subjRows, carrRows, leak);
-  const m2 = discarded ? { verdict: "unknown", reason: "the run is discarded", evidence: [], userLeaves: 0, connectLeading: 0, viaUnknown: 0, reestablishEvents: 0 } : measureM2(records, coverage);
+  // M2 is scoped to THIS leg's own transition: in time, from the fiducial
+  // back by --m2-window-ms, and by `connectGen` against the leak's own.
+  const leakConnectGen = discarded ? null : connectGenAtLeak(records, leak, args, coverage);
+  const m2Scope =
+    discarded || leak.window === null
+      ? { from: null, to: null, fiducial: leak.fiducial, leakConnectGen, genSpan: args.m2GenSpan, windowMs: args.m2WindowMs, pairWindowMs: args.m2PairWindowMs }
+      : {
+          from: (leak.fiducial ?? leak.window.from) - args.m2WindowMs,
+          to: leak.window.to,
+          fiducial: leak.fiducial ?? leak.window.from,
+          leakConnectGen,
+          genSpan: args.m2GenSpan,
+          windowMs: args.m2WindowMs,
+          pairWindowMs: args.m2PairWindowMs,
+        };
+  const m2 = discarded ? { verdict: "unknown", reason: "the run is discarded", evidence: [], userLeaves: 0, connectLeading: 0, viaUnknown: 0, reestablishEvents: 0, admitted: [], excluded: [], entrySeamSeen: false } : measureM2(records, coverage, m2Scope);
   const m3 =
     discarded || leak.window === null
-      ? { unfillable: true, leakWindow: null, leakBasis: leak.basis, rejectedFlowWindows: leak.rejected, leakSeam: null, beforeSeam: null, muteSeam: null, genPair: "unknown", drops: [], dropsDiscarded: [], upstreamResumed: [], upstreamResumedOutside: [], processorUpdate: [], processorUpdateOutside: [] }
+      ? { unfillable: true, leakWindow: null, leakTrackSid: null, leakBasis: leak.basis, rejectedFlowWindows: leak.rejected, leakSeam: null, leakSeamCorrelation: "none", beforeSeam: null, muteSeam: null, muteSeamRejected: [], genPair: "unknown", passesDelta: "unknown", drops: [], dropsDiscarded: [], roomKeyWitness: {}, upstreamResumed: [], upstreamResumedOutside: [], processorUpdate: [], processorUpdateOutside: [] }
       : measureM3(records, leak, args, coverage);
 
   const windowEval = discarded || m3.unfillable
@@ -1512,6 +2095,7 @@ function runReduce(args) {
     traceLossyPreviewRecords: traces.lossyPreview,
     M1: m1,
     M2: m2,
+    M2Scope: m2Scope,
     M3: m3,
     windowEval,
     decision,
@@ -1545,7 +2129,7 @@ function runReduce(args) {
     out.push("--- leak window (B4: the first flow window at or AFTER the fiducial, never flow[0]) ---");
     out.push(`    basis  : ${leak.basis}`);
     out.push(`    window : ${leak.window ? `${fmt(leak.window.from)} .. ${fmt(leak.window.to)} ssrc=${leak.window.ssrc} (+${leak.window.bytes} B)` : "NONE"}`);
-    for (const r of leak.rejected) out.push(`    REJECTED as pre-fiducial (call 1): ${fmt(r.from)} .. ${fmt(r.to)} ssrc=${r.ssrc} (+${r.bytes} B)`);
+    for (const r of leak.rejected) out.push(`    REJECTED as pre-fiducial (call 1)${leak.fiducial !== null && r.from >= leak.fiducial ? " / not on the fresh ssrc (a lingering old inbound-rtp row)" : ""}: ${fmt(r.from)} .. ${fmt(r.to)} ssrc=${r.ssrc} (+${r.bytes} B)`);
     out.push("");
     out.push("--- timeline (wall clock) ---");
     const events = [];
@@ -1573,22 +2157,30 @@ function runReduce(args) {
     for (const n of m1.notes ?? []) out.push(`    NOTE: ${n}`);
     out.push(`M2 (real leave?)  : ${m2.verdict}`);
     out.push(`    ${m2.reason}`);
+    for (const x of m2.excluded ?? []) out.push(`    EXCLUDED teardown ${x.at} t=${x.t} via=${x.via} connectGen=${x.connectGen}/${x.connectGenPhase}: ${x.why}`);
     out.push(`M3 (reason set + census at the leak) :`);
     if (m3.unfillable) out.push(`    unknown — ${discarded ? "the run is discarded" : `no leak instant (${leak.basis})`}`);
     else {
       out.push(`    drive scope: ${m3.scope.from} .. ${m3.scope.muteTo}  (drive-window ${m3.scope.driveWindowMs} ms before the leak, mute-grace ${m3.scope.muteGraceMs} ms after the flow window)`);
+      out.push(`    leaking publication: trackSid=${m3.leakTrackSid ?? "UNCORRELATED"}  sender-seam correlation: ${m3.leakSeamCorrelation}`);
+      for (const r of m3.muteSeamRejected ?? []) out.push(`        REJECTED localTrackPublished.entry t=${r.t} subject=${r.subject}: ${r.why}`);
       for (const [label, s] of [["leak   (localSenderCreated)", m3.leakSeam], ["before (localTrackPublished.entry)", m3.beforeSeam], ["mute   (localTrackPublished.entry)", m3.muteSeam]]) {
-        out.push(`    ${label}: ${s ? `t=${s.t} subject=${s.subject} reasons=${JSON.stringify(s.reasons)} gateSize=${s.gateSize} gateGen=${s.gateGen} publicationCount=${s.publicationCount} subjectSidPresent=${s.subjectSidPresent} passes=${s.passes}` : "unknown (no such record in scope)"}`);
+        out.push(`    ${label}: ${s ? `t=${s.t} subject=${s.subject} subjectSid=${JSON.stringify(s.subjectSid)} sidAssigned=${s.subjectSidAssigned} sidInPublications=${s.subjectSidInPublications} reasons=${JSON.stringify(s.reasons)} gateSize=${s.gateSize} gateGen=${s.gateGen} connectGen=${s.connectGen} publicationCount=${s.publicationCount} publicationKeys=${JSON.stringify(s.publicationKeys)} passes=${s.passes} roomFiltered=${s.roomFiltered}` : "unknown (no such record in scope)"}`);
         if (s && Array.isArray(s.publications)) {
           for (const p of s.publications) out.push(`        pub ${p.trackSid}: paused=${p.upstreamPaused} sender=${p.hasSender} senderTrack=${p.senderHasTrack} transport=${p.transportState} upstream=${p.upstream} op=${p.op}`);
         } else if (s && s.publications === "unknown" && s.at === "localTrackPublished.entry") {
           out.push(`        publications: unknown${s.publicationsWereStrings ? ` (${s.publicationsWereStrings} entries were STRINGS, not objects — the pinned contract is objects)` : ""}`);
         }
       }
-      out.push(`    C0 pair (B5): absent-half from localSenderCreated = ${m3.leakSeam ? m3.leakSeam.subjectSidPresent : "unknown"}, present-half from localTrackPublished.entry = ${m3.muteSeam ? m3.muteSeam.subjectSidPresent : "unknown"}, gate generations ${m3.genPair}`);
-      out.push(`    sweeper.dropped: ${m3.drops.length} in the leak's drive, ${m3.dropsDiscarded.length} discarded`);
+      {
+        const c0 = c0AbsentEvidence(m3.leakSeam);
+        out.push(`    C0 absent half (localSenderCreated): ${c0.ok ? `ESTABLISHED [${c0.class}] — ${c0.why}` : `NOT established — ${c0.why}`}`);
+        out.push(`    C0 present half (localTrackPublished.entry): subjectSidInPublications = ${m3.muteSeam ? m3.muteSeam.subjectSidInPublications : "unknown"}, gate generations ${m3.genPair}, passes delta leak->mute ${m3.passesDelta} (passes() is a MONOTONIC LIFETIME counter; only the delta means anything)`);
+      }
+      out.push(`    sweeper.dropped: ${m3.drops.length} kept, ${m3.dropsDiscarded.length} discarded. 🔴 SCOPE: a TIME window (${m3.dropWindow.from}..${m3.dropWindow.to}) plus a CALL-scoped generation match — sweeperGen is #gateGen, bumped when a SWEEPER IS CREATED (once per call), so this excludes drops from another CALL and nothing finer.`);
       for (const d of m3.dropsDiscarded) out.push(`        DISCARDED drop t=${d.t} stillCurrent=${d.stillCurrent} sweeperGen=${d.sweeperGen}: ${d.why}`);
-      out.push(`    upstreamResumed: ${m3.upstreamResumed.length} inside ${m3.resumedWindow.from}..${m3.resumedWindow.to} (the ${m3.resumedWindowMs} ms window before the mute), ${m3.upstreamResumedOutside.length} outside`);
+      out.push(`    upstreamResumed: ${m3.upstreamResumed.length} inside ${m3.resumedWindow.from}..${m3.resumedWindow.to} (the ${m3.resumedWindowMs} ms window before the mute), ${m3.upstreamResumedOutside.length} outside. C4 requires one that NAMES the publication under test.`);
+      for (const r of m3.upstreamResumed) out.push(`        inside: t=${r.t} subject=${r.subject} roomFiltered=${r.roomFiltered}`);
       for (const r of m3.upstreamResumedOutside) out.push(`        OUTSIDE upstreamResumed t=${r.t} (${r.offsetMs} ms relative to the flow window's end)`);
       out.push(`    processorUpdate: ${m3.processorUpdate.length} inside the same window, ${m3.processorUpdateOutside.length} outside`);
     }
@@ -1596,7 +2188,8 @@ function runReduce(args) {
     out.push(`WINDOW (M1-independent) : ${windowEval.row ?? "no row"}`);
     out.push(`    ${windowEval.conclusion}`);
     out.push("    🔴 the window row can NEVER select a §2.5 row on its own — see --aggregate for the polarity rule.");
-    for (const p of decision.perPub ?? []) out.push(`    per publication ${p.trackSid}: ${p.row ?? "no row"}${p.via ? ` (via ${p.via})` : ""}`);
+    for (const n of windowEval.notes ?? []) out.push(`    NOTE: ${n}`);
+    for (const p of decision.perPub ?? []) out.push(`    per publication ${p.trackSid}: ${p.row ?? "no row"}${p.via ? ` (via ${p.via})` : ""}${p.why ? ` — ${p.why}` : ""}`);
     out.push(`DECISION (§2.5)   : ${decision.row ?? "no row"}`);
     out.push(`    ${decision.conclusion}`);
     if (decision.wave1) out.push(`    wave 1: ${decision.wave1}`);
@@ -1614,7 +2207,7 @@ function runReduce(args) {
 function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.checkLog) return runCheckLog(args.checkLog);
-  if (args.aggregate.length) return runAggregate(args.aggregate);
+  if (args.aggregate.length) return runAggregate(args.aggregate, args);
   return runReduce(args);
 }
 

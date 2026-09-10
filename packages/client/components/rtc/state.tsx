@@ -394,6 +394,26 @@ type ScreenShareQuality = {
   simulcast?: boolean;
 };
 
+/**
+ * [gate-trace] wave-0 (rejoin-leak plan 2.3). One census ENTRY, shared by
+ * seam 6 (`localTrackPublished.entry`) and seam 7 (`localSenderCreated`) so
+ * the two records are element-wise comparable: the C0 row is read by
+ * comparing the census INSIDE the republish window against the census after
+ * it, and two independently written shapes would drift apart silently.
+ * TRACE ONLY -- nothing but the two records constructs or reads one.
+ */
+type GateTraceCensusEntry = {
+  name: string;
+  source: string;
+  trackSid: string;
+  upstreamPaused: boolean | null;
+  hasSender: boolean;
+  senderHasTrack: boolean;
+  transportState: string | null;
+  upstream: string;
+  op: string;
+};
+
 class Voice {
   #settings: VoiceSettings;
   /** Shared engine that owns the camera track's processor slot + brightness. */
@@ -2728,40 +2748,10 @@ class Voice {
       // track, so `not-gated` for a present publication is itself a datum,
       // and it names entries `${source}/${trackSid}` -- the key
       // `repauseSpent` / `repausePending` are keyed by.
-      const gateTraceCensus: {
-        name: string;
-        source: string;
-        trackSid: string;
-        upstreamPaused: boolean | null;
-        hasSender: boolean;
-        senderHasTrack: boolean;
-        transportState: string | null;
-        upstream: string;
-        op: string;
-      }[] = [];
-      for (const gtPub of room.localParticipant.trackPublications.values()) {
-        const gtGated = gatedPublicationsFrom([gtPub])[0];
-        const gtTrack = gtPub.track;
-        const gtUpstream = gtGated ? gtGated.upstream() : null;
-        const gtOp = gtGated
-          ? publishGateOp({
-              gateHeld: this.#gateHeld(),
-              upstreamPaused: gtGated.upstreamPaused,
-              upstream: gtGated.upstream(),
-            })
-          : null;
-        gateTraceCensus.push({
-          name: `${gtPub.source}/${gtPub.trackSid}`,
-          source: gtPub.source,
-          trackSid: gtPub.trackSid,
-          upstreamPaused: gtTrack?.isUpstreamPaused ?? null,
-          hasSender: !!gtTrack?.sender,
-          senderHasTrack: !!gtTrack?.sender?.track,
-          transportState: gtTrack?.sender?.transport?.state ?? null,
-          upstream: gtUpstream ?? "not-gated",
-          op: gtOp ?? "not-gated",
-        });
-      }
+      const gateTraceCensus = this.#gateTraceCensus(room);
+      const gateTracePublicationKeys = [
+        ...room.localParticipant.trackPublications.keys(),
+      ];
       console.error(
         "[gate-trace] " +
           JSON.stringify({
@@ -2769,10 +2759,12 @@ class Voice {
             p: performance.now(),
             at: "localTrackPublished.entry",
             subject: `${pub.source}/${pub.trackSid}`,
-            subjectSidPresent: room.localParticipant.trackPublications.has(
-              pub.trackSid,
-            ),
+            subjectSource: pub.source,
+            subjectSid: pub.trackSid,
+            subjectSidInPublications:
+              room.localParticipant.trackPublications.has(pub.trackSid),
             publicationCount: room.localParticipant.trackPublications.size,
+            publicationKeys: gateTracePublicationKeys,
             publications: gateTraceCensus,
             gate: [...this.#publishGate],
             gateSize: this.#publishGate.size,
@@ -2817,7 +2809,7 @@ class Voice {
       // `#reassertPublishGate` because that one returns early on an empty
       // gate (the case under test) and cannot say which of the two events
       // fired. OBSERVATION ONLY.
-      const gtTrace = this.#gateTraceListenersFor(track);
+      const gtTrace = this.#gateTraceListenersFor(track, room);
       track.off(TrackEvent.UpstreamResumed, gtTrace.resumed);
       track.off(TrackEvent.TrackProcessorUpdate, gtTrace.processor);
       track.on(TrackEvent.UpstreamResumed, gtTrace.resumed);
@@ -2838,7 +2830,25 @@ class Voice {
     room.localParticipant.on(
       ParticipantEvent.LocalSenderCreated,
       (sender, track) => {
+        // 🔴 `track.sid` is UNASSIGNED on a first publish
+        // (`track.sid = ti.sid` runs after the awaited `negotiate()` this
+        // emit sits inside) and STALE on a republish (`unpublishTrack`
+        // deletes the map entry and never clears `track.sid`).
+        // `subjectSidPresent` -- the field this record carried before -- was
+        // therefore `false` on BOTH reachable paths: a structural constant
+        // that made the plan's C0 row a tautology. It is replaced by three
+        // honest fields: `subjectSid`, `subjectSidAssigned` (the
+        // sid-unassigned case, machine-readable instead of the `no-sid`
+        // string tell inside `subject`) and `subjectSidInPublications`, which
+        // is `null` when there is no sid to look up. The C0 evidence is the
+        // CENSUS -- `publicationCount`, `publicationKeys`, `publications` --
+        // read against seam 6's, which is the only thing that distinguishes
+        // "absent from a POPULATED map" from "no sid assigned yet".
         const gtSid = track.sid ?? null;
+        const gtCensus = this.#gateTraceCensus(room);
+        const gtPublicationKeys = [
+          ...room.localParticipant.trackPublications.keys(),
+        ];
         console.error(
           "[gate-trace] " +
             JSON.stringify({
@@ -2846,10 +2856,16 @@ class Voice {
               p: performance.now(),
               at: "localSenderCreated",
               subject: `${track.source}/${gtSid ?? "no-sid"}`,
-              subjectSidPresent:
-                gtSid !== null &&
-                room.localParticipant.trackPublications.has(gtSid),
+              subjectSource: track.source,
+              subjectSid: gtSid,
+              subjectSidAssigned: gtSid !== null,
+              subjectSidInPublications:
+                gtSid === null
+                  ? null
+                  : room.localParticipant.trackPublications.has(gtSid),
               publicationCount: room.localParticipant.trackPublications.size,
+              publicationKeys: gtPublicationKeys,
+              publications: gtCensus,
               upstreamPaused: isLocalTrack(track)
                 ? track.isUpstreamPaused
                 : null,
@@ -3345,6 +3361,38 @@ class Voice {
     // leave `"connect-leading"` set for the next, genuine leave.
     const gateTraceVia = this.#gateTraceDisconnectVia;
     this.#gateTraceDisconnectVia = "user";
+    // [gate-trace] wave-0 seam 2 (rejoin-leak plan 2.3): the UNCONDITIONAL
+    // entry witness, ABOVE the try. The teardown below is ~15 statements
+    // inside ONE try/catch with no `finally`, so a throw before
+    // `disconnect.preclear` would leave M2 reading `no-disconnect` -- the
+    // in-place arm -- and FALSE-CONFIRM C1 for a call in which `disconnect()`
+    // demonstrably ran. Starvation and a wrong answer are different failures;
+    // this record turns the second into the first.
+    //
+    // 🔴 `connectGen` HERE is the PRE-bump value: `this.#connectGen++`
+    // is the first statement inside the try, so this names the call being torn
+    // down, while `disconnect.preclear` carries this + 1. `connectGenPhase`
+    // says which is which, so a consumer scoping by `connectGen` cannot
+    // mis-join the two records.
+    //
+    // OBSERVATION ONLY, and throw-free: every read is a getter or a spread of
+    // a Set of strings.
+    console.error(
+      "[gate-trace] " +
+        JSON.stringify({
+          t: Date.now(),
+          p: performance.now(),
+          at: "disconnect.entry",
+          via: gateTraceVia,
+          gate: [...this.#publishGate],
+          gateSize: this.#publishGate.size,
+          gateHeld: this.#gateHeld(),
+          gateGen: this.#gateGen,
+          connectGen: this.#connectGen,
+          connectGenPhase: "pre-bump",
+          passes: this.#gateSweeper?.passes() ?? null,
+        }),
+    );
     try {
       // Doom any in-flight connect() FIRST: every await in connect() re-checks
       // this token and bails with its own room teardown. Without the bump a
@@ -3439,7 +3487,11 @@ class Voice {
             gateSize: this.#publishGate.size,
             gateHeld: this.#gateHeld(),
             gateGen: this.#gateGen,
+            // POST-bump: `this.#connectGen++` is the first statement of the
+            // try above, so this is `disconnect.entry`'s value + 1 and names
+            // no call. Scope M2 by the ENTRY record's gen.
             connectGen: this.#connectGen,
+            connectGenPhase: "post-bump",
             passes: this.#gateSweeper?.passes() ?? null,
           }),
       );
@@ -4082,8 +4134,70 @@ class Voice {
     { resumed: () => void; processor: () => void }
   >();
 
-  /** See {@link Voice.#gateTraceTrackListeners}. OBSERVATION ONLY. */
-  #gateTraceListenersFor(track: Track): {
+  /**
+   * [gate-trace] wave-0 (rejoin-leak plan 2.3). The publication CENSUS, built
+   * ONCE for seam 6 (`localTrackPublished.entry`) and seam 7
+   * (`localSenderCreated`) so the two are element-wise comparable -- the C0
+   * row is read by comparing the census inside the republish window against
+   * the census after it.
+   *
+   * 🔴 `upstream` is derived through the SAME `gatedPublicationsFrom`
+   * adapter the sweep uses, never from the two booleans: `UpstreamState` is
+   * three-valued and the live/quiet split reads the TRANSPORT, so a
+   * closed-transport sender would print `pause` where the sweep answers
+   * `none`. The adapter SKIPS a publication with no track, so `not-gated` for
+   * a present publication is itself a datum, and it names entries
+   * `${source}/${trackSid}` -- the key `repauseSpent` / `repausePending` are
+   * keyed by.
+   *
+   * OBSERVATION ONLY: every read is a getter, `gatedPublicationsFrom` and
+   * `publishGateOp` are pure, and nothing here pauses, resumes or writes.
+   */
+  #gateTraceCensus(room: Room): GateTraceCensusEntry[] {
+    const census: GateTraceCensusEntry[] = [];
+    for (const gtPub of room.localParticipant.trackPublications.values()) {
+      const gtGated = gatedPublicationsFrom([gtPub])[0];
+      const gtTrack = gtPub.track;
+      const gtUpstream = gtGated ? gtGated.upstream() : null;
+      const gtOp = gtGated
+        ? publishGateOp({
+            gateHeld: this.#gateHeld(),
+            upstreamPaused: gtGated.upstreamPaused,
+            upstream: gtGated.upstream(),
+          })
+        : null;
+      census.push({
+        name: `${gtPub.source}/${gtPub.trackSid}`,
+        source: gtPub.source,
+        trackSid: gtPub.trackSid,
+        upstreamPaused: gtTrack?.isUpstreamPaused ?? null,
+        hasSender: !!gtTrack?.sender,
+        senderHasTrack: !!gtTrack?.sender?.track,
+        transportState: gtTrack?.sender?.transport?.state ?? null,
+        upstream: gtUpstream ?? "not-gated",
+        op: gtOp ?? "not-gated",
+      });
+    }
+    return census;
+  }
+
+  /**
+   * See {@link Voice.#gateTraceTrackListeners}. OBSERVATION ONLY.
+   *
+   * 🔴 `room` is the Room this track was published INTO, captured at
+   * registration inside the `localTrackPublished` handler, and both records
+   * carry `currentRoom: this.room() === room`. Without it a resume on a
+   * DOOMED Room's surviving `LocalTrack` is indistinguishable from one on the
+   * live call, and the plan's C4 row would be selected off a record belonging
+   * to a call that had already ended. The pair is memoized per TRACK, so the
+   * captured Room is the one that track was FIRST published into; across a
+   * real leave both the Room and the `LocalTrack` are new, so the capture
+   * cannot go stale on any path this corpus takes.
+   */
+  #gateTraceListenersFor(
+    track: Track,
+    room: Room,
+  ): {
     resumed: () => void;
     processor: () => void;
   } {
@@ -4098,12 +4212,15 @@ class Voice {
               p: performance.now(),
               at: "track.upstreamResumed",
               subject: `${track.source}/${track.sid ?? "no-sid"}`,
+              subjectSource: track.source,
+              subjectSid: track.sid ?? null,
               gate: [...this.#publishGate],
               gateSize: this.#publishGate.size,
               gateHeld: this.#gateHeld(),
               gateGen: this.#gateGen,
               connectGen: this.#connectGen,
               passes: this.#gateSweeper?.passes() ?? null,
+              currentRoom: this.room() === room,
             }),
         );
       },
@@ -4115,12 +4232,15 @@ class Voice {
               p: performance.now(),
               at: "track.processorUpdate",
               subject: `${track.source}/${track.sid ?? "no-sid"}`,
+              subjectSource: track.source,
+              subjectSid: track.sid ?? null,
               gate: [...this.#publishGate],
               gateSize: this.#publishGate.size,
               gateHeld: this.#gateHeld(),
               gateGen: this.#gateGen,
               connectGen: this.#connectGen,
               passes: this.#gateSweeper?.passes() ?? null,
+              currentRoom: this.room() === room,
             }),
         );
       },

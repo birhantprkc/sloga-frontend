@@ -42,7 +42,22 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SHELL_DIR="${SLOGA_SHELL_DIR:-/home/mcp/sloga-desktop-el4/electron-shell}"
 FRONTEND_DIR="${SLOGA_FRONTEND_DIR:-$(cd "$HERE/../.." && pwd)}"
 EXPECT_SHELL_COMMIT="${SLOGA_EXPECT_SHELL_COMMIT:-fc4855e4c1b544b8bbaef6fe39317b127a1c95a4}"
-EXPECT_FRONTEND_COMMIT="${SLOGA_EXPECT_FRONTEND_COMMIT:-9610166e5be84213dd27f3a61646f0b36f40081e}"
+# 🔴 THE FRONTEND PIN IS DERIVED FROM THIS WORKTREE, NOT FROZEN IN THIS FILE.
+#
+# It used to default to a literal commit. That commit predates the [gate-trace]
+# instrumentation, so the two halves of the same question were guaranteed to
+# disagree: BEFORE the mandatory re-stage `check_frontend_dist` passed and
+# `check_bundle_serialization` failed (correctly — a leg on that dist produces
+# ZERO records); AFTER it they INVERT, the dist matching the instrumented
+# commit and the frozen literal not. `check` could then never exit 0, and
+# `require_ok` refuses every seat, so the leg was unrunnable either way.
+# Deriving it from HEAD makes the two halves answerable by ONE re-stage.
+# SLOGA_EXPECT_FRONTEND_COMMIT still overrides it, for a leg run against a dist
+# staged from a commit other than the one checked out.
+EXPECT_FRONTEND_COMMIT="${SLOGA_EXPECT_FRONTEND_COMMIT:-$(git -C "$FRONTEND_DIR" rev-parse HEAD 2>/dev/null)}"
+FRONTEND_PIN_SOURCE="${SLOGA_EXPECT_FRONTEND_COMMIT:+SLOGA_EXPECT_FRONTEND_COMMIT}"
+FRONTEND_PIN_SOURCE="${FRONTEND_PIN_SOURCE:-the worktree HEAD of $FRONTEND_DIR}"
+FRONTEND_DIRTY="$(git -C "$FRONTEND_DIR" status --porcelain 2>/dev/null | head -1)"
 APPIMAGE="${SLOGA_APPIMAGE:-$SHELL_DIR/out/Sloga-0.58.3-linux-x86_64.AppImage}"
 LOGDIR="${SLOGA_LEG_LOGDIR:-$HOME/leg-logs}"
 NODE="${NODE:-node}"
@@ -78,6 +93,16 @@ check_shell_dir() {
 
 check_frontend_dist() {
   local info="$SHELL_DIR/frontend-dist/BUILD_INFO.txt"
+  if [ -z "$EXPECT_FRONTEND_COMMIT" ]; then
+    fail "no frontend commit to expect: \`git -C $FRONTEND_DIR rev-parse HEAD\` produced nothing and SLOGA_EXPECT_FRONTEND_COMMIT is unset. Set SLOGA_EXPECT_FRONTEND_COMMIT=<sha> explicitly rather than running a leg against an unpinned dist."
+    return
+  fi
+  ok "expecting frontend commit $EXPECT_FRONTEND_COMMIT (from $FRONTEND_PIN_SOURCE)"
+  if [ -n "$FRONTEND_DIRTY" ]; then
+    fail "the frontend worktree $FRONTEND_DIR is DIRTY, so its HEAD does not describe the code a dist staged from it would contain. Commit the instrumentation (or pass SLOGA_EXPECT_FRONTEND_COMMIT=<sha> for a dist staged elsewhere) before running a leg."
+  else
+    ok "frontend worktree clean, so HEAD describes what a dist staged from it contains"
+  fi
   if [ ! -f "$info" ]; then
     fail "no $info — frontend-dist provenance is unknown, and a leg on an unknown dist proves nothing"
     return
@@ -85,7 +110,7 @@ check_frontend_dist() {
   local fc
   fc=$(sed -n 's/^frontend_commit=//p' "$info" | head -1)
   if [ "$fc" != "$EXPECT_FRONTEND_COMMIT" ]; then
-    fail "frontend-dist was staged from $fc, expected $EXPECT_FRONTEND_COMMIT"
+    fail "frontend-dist was staged from $fc, expected $EXPECT_FRONTEND_COMMIT ($FRONTEND_PIN_SOURCE). 🔴 THIS IS ONE HALF OF A PAIR: the other is check_bundle_serialization, which reads the SAME staged bundle for the [gate-trace] instrumentation. Both are satisfied by ONE re-stage of frontend-dist from the instrumented commit; satisfying either alone leaves \`check\` unable to exit 0, and require_ok then refuses every seat."
   else
     ok "frontend-dist staged from $fc"
   fi
@@ -95,6 +120,23 @@ check_frontend_dist() {
     fail "frontend-dist was staged from a DIRTY tree (dirty=$dirty) — the bundle does not correspond to a commit"
   else
     ok "frontend-dist staged clean"
+  fi
+  # 🔴 `shell_dirty` was READ BY NOBODY. It describes the tree the PACKAGED
+  # seat was built from, and it is currently `true`: the AppImage under test
+  # then corresponds to no commit, which is exactly the provenance question the
+  # `dirty=` line above exists to answer for the other half of the build.
+  local sdirty
+  sdirty=$(sed -n 's/^shell_dirty=//p' "$info" | head -1)
+  if [ -z "$sdirty" ]; then
+    fail "$info carries no shell_dirty= line — the packaged seat's provenance is unknown"
+  elif [ "$sdirty" != "false" ]; then
+    if [ "${SLOGA_ALLOW_DIRTY_SHELL:-0}" = "1" ]; then
+      ok "shell_dirty=$sdirty ACCEPTED because SLOGA_ALLOW_DIRTY_SHELL=1 — 🔴 the packaged seat does NOT correspond to commit $EXPECT_SHELL_COMMIT and any result must say so"
+    else
+      fail "frontend-dist records shell_dirty=$sdirty: the packaged seat was built from a DIRTY shell tree and does not correspond to $EXPECT_SHELL_COMMIT. Re-build it from a clean tree, or set SLOGA_ALLOW_DIRTY_SHELL=1 to accept it — which makes the shell's provenance an UNPROVEN part of every result from this leg."
+    fi
+  else
+    ok "packaged seat built from a clean shell tree"
   fi
 }
 
@@ -497,14 +539,21 @@ RUN ORDER
      observer-sampler.js. Then join, then:
        SLOGA_LEG.roles()
        SLOGA_LEG.carrier("<the sid whose energy is rising while the subject is silent>")
-       SLOGA_LEG.start({ label: "<shape>-<consent|noconsent>-run<N>", shape: "a"|"b" })
+       SLOGA_LEG.start({ label: "<shape>-<consent|noconsent>-run<N>",
+                         shape: "a"|"b", consent: "yes"|"no" })
+     🔴 `consent` is REQUIRED and is recorded ON THE CAPTURE. The reducer
+     refuses a dump whose arm disagrees with its --consent, so a run can no
+     longer be filed into the wrong arm by a mistyped flag hours later.
   6. Operator runs the leg: O3 (consent runs only), O4, O5.
   7. SLOGA_LEG.stop(); SLOGA_LEG.summary(); SLOGA_LEG.save()
   8. node gate-trace-reduce.mjs --sampler <dump.json> --log <subject.log> \
        --shape a|b --consent yes|no --audible-subject yes|no|unknown \
        --out <run.reduced.json>
   9. When all runs are in, BOTH arms together:
-       node gate-trace-reduce.mjs --aggregate <all the .reduced.json>
+       node gate-trace-reduce.mjs --min-arm-runs 5 --aggregate <all the .reduced.json>
+     🔴 BOTH ARMS, and --min-arm-runs is not decoration: an aggregate whose
+     no-consent arm is absent, discarded or shape (a) is "POLARITY UNMEASURED"
+     (exit 7), never a confirmation. §2.4 specifies five runs per arm.
      🔴 Step 9 is not optional. A row that fires in BOTH arms while the leak
      appears only in the consent arm is "<row> confirmed as the WINDOW —
      POLARITY UNEXPLAINED": an INCOMPLETE result that leaves §4.1 OPEN and the

@@ -52,6 +52,7 @@ import { extractEmitters } from "./emitter-extract.mjs";
 import {
   COMMON_KEYS,
   GATE_CONTEXT_KEYS,
+  REQUIRE_CURRENT_ROOM,
   PUB_ENTRY_KEYS,
   PUB_ENTRY_READS,
   READS,
@@ -191,11 +192,16 @@ const flush = () => new Promise((r) => setTimeout(r, 0));
 process.stdout.write("=== sampler refusals (known-bad controls) ===\n");
 {
   const s = makeSampler({ scenario: "refusals" });
-  expectThrow("S1 start() with no RTCPeerConnection captured", () => s.api.start({ shape: "b", label: "x" }), "no RTCPeerConnection was captured");
+  expectThrow("S1 start() with no RTCPeerConnection captured", () => s.api.start({ shape: "b", label: "x", consent: "yes" }), "no RTCPeerConnection was captured");
   const pc = new s.win.RTCPeerConnection();
-  expectThrow("S2 start() with no carrier pinned", () => s.api.start({ shape: "b", label: "x" }), "no carrier pinned");
+  expectThrow("S2 start() with no carrier pinned", () => s.api.start({ shape: "b", label: "x", consent: "yes" }), "no carrier pinned");
   s.api.carrier("PA_CARRIER");
-  expectThrow("S3 start() with no shape", () => s.api.start({ label: "x" }), "shape");
+  expectThrow("S3 start() with no shape", () => s.api.start({ label: "x", consent: "yes" }), "shape");
+  // 🔴 wave-0c item 11. The dump carried no `consent`, so the reducer's
+  // cross-check `if (dump.consent && dump.consent !== args.consent)` was DEAD
+  // CODE and the whole H3 polarity rule rested on a CLI flag with nothing on
+  // the capture to check it against.
+  expectThrow("S3b start() with no consent arm", () => s.api.start({ shape: "b", label: "x" }), "which arm this run belongs to");
   check("S1b the peer connection WAS captured through the constructor hook", s.api._state.pcs.length === 1, `pcs=${s.api._state.pcs.length}`);
   void pc;
 }
@@ -218,10 +224,11 @@ const CALL1_END_TICK = 6;
 const REJOIN_TICK = 18;
 const LEAK_END_TICK = 30;
 const CARRIER_DEATH_TICK = 20;
+const LINGER_TICKS = 4; // how long the OLD inbound-rtp row survives the rejoin
 const STALL_THRESHOLD_MS = 500; // the reducer's real default
 
 /**
- * @param {"plaintext"|"plaintextcall1"|"ciphertext"|"bytesonly"|"deadcarrier"|"nocontrol"} scenario
+ * @param {"plaintext"|"plaintextcall1"|"ciphertext"|"bytesonly"|"deadcarrier"|"nocontrol"|"lingering"} scenario
  */
 async function runScenario(scenario) {
   const s = makeSampler({ scenario });
@@ -240,7 +247,11 @@ async function runScenario(scenario) {
   emit(subjPreTrack, "PA_SUBJECT1", "TR_subject_pre", false);
 
   s.api.carrier("PA_CARRIER");
-  s.api.start({ shape: "b", label: `selftest-${scenario}`, intervalMs: 100 });
+  // The no-consent ARM of this harness. The reducer refuses a dump whose
+  // declared arm disagrees with --consent, so the scenarios reduced with
+  // `--consent no` must declare it here.
+  const armOf = (sc) => (sc === "bytesonly" || sc === "ciphertext" || sc === "nocontrol" ? "no" : "yes");
+  s.api.start({ shape: "b", label: `selftest-${scenario}`, consent: armOf(scenario), intervalMs: 100 });
 
   let cBytes = 10000;
   let cEnergy = 1.0;
@@ -284,8 +295,8 @@ async function runScenario(scenario) {
     }
     if (leaking) {
       sBytes += 1000;
-      if (scenario === "plaintext" || scenario === "plaintextcall1") sEnergy += 0.02;
-      if (scenario !== "plaintext" && scenario !== "plaintextcall1") sConceal += 480;
+      if (scenario === "plaintext" || scenario === "plaintextcall1" || scenario === "lingering") sEnergy += 0.02;
+      if (scenario !== "plaintext" && scenario !== "plaintextcall1" && scenario !== "lingering") sConceal += 480;
     }
     const subjectRow = {
       type: "inbound-rtp",
@@ -295,7 +306,7 @@ async function runScenario(scenario) {
       timestamp: 1000 + i,
       bytesReceived: sBytes,
       packetsReceived: 50 + (leaking || call1 ? i * 5 : 0),
-      audioLevel: (scenario === "plaintext" || scenario === "plaintextcall1") && (leaking || call1) ? 0.3 : 0,
+      audioLevel: (scenario === "plaintext" || scenario === "plaintextcall1" || scenario === "lingering") && (leaking || call1) ? 0.3 : 0,
       totalAudioEnergy: sEnergy,
       concealedSamples: sConceal,
       totalSamplesReceived: 48000 + i * 480,
@@ -309,7 +320,25 @@ async function runScenario(scenario) {
       delete subjectRow.concealedSamples;
     }
 
-    pc._rows = [carrierRow, subjectRow];
+    // 🔴 THE LINGERING ROW (wave-0c item 9, previously untested). Real
+    // `getStats()` reports the OLD inbound-rtp beside the new one for some
+    // hundreds of ms after a republish, and `roleOf` answers "subject" for
+    // every remote audio row that is not the pinned carrier. Read pairwise
+    // over the flattened list, that alternation emitted a "change" on nearly
+    // every tick — the earliest inside call 1 — which moved the fiducial and
+    // silently disabled 2.4's fiducial-disagreement discard. The selftest
+    // never produced this shape: `pc._rows` was always exactly two rows.
+    const lingerRow =
+      scenario === "lingering" && i >= REJOIN_TICK && i < REJOIN_TICK + LINGER_TICKS
+        ? {
+            ...subjectRow,
+            ssrc: SSRC_SUBJECT_PRE,
+            trackIdentifier: subjPreTrack.id,
+            bytesReceived: sBytes - 1000,
+            audioLevel: 0,
+          }
+        : null;
+    pc._rows = lingerRow ? [carrierRow, subjectRow, lingerRow] : [carrierRow, subjectRow];
     s.tick();
     await flush();
     await new Promise((r) => setTimeout(r, TICK_MS));
@@ -322,7 +351,7 @@ async function runScenario(scenario) {
 process.stdout.write("=== sampler scenarios ===\n");
 
 const results = {};
-for (const scenario of ["plaintext", "plaintextcall1", "ciphertext", "bytesonly", "deadcarrier", "nocontrol"]) {
+for (const scenario of ["plaintext", "plaintextcall1", "ciphertext", "bytesonly", "deadcarrier", "nocontrol", "lingering"]) {
   const { dump } = await runScenario(scenario);
   results[scenario] = dump;
   const file = path.join(outdir, `sampler-${scenario}.json`);
@@ -360,15 +389,91 @@ check("S9 muted/enabled are recorded ONLY under annotationOnly", results.plainte
 
 // The B4 control's own precondition: the call-1 dump must really carry a flow
 // window BEFORE the fiducial, or the control proves nothing.
+//
+// 🔴 "Pre-fiducial" is now `w.from < fid` — the EXACT complement of
+// `pinLeakWindow`'s acceptance rule. It used to be `w.from < fid - intervalMs`,
+// i.e. the exact complement of the TOLERANCE, so the control could never probe
+// the boundary the tolerance created and the tolerance went untested for the
+// whole of wave 0b.
 {
   const rows = seriesByRole(results.plaintextcall1, "subject", 0);
   const flow = subjectFlowWindows(rows, 500);
   const changes = ssrcChanges(rows);
-  const pre = changes.length ? flow.filter((w) => w.from < changes[0].t - results.plaintextcall1.intervalMs) : [];
+  const pre = changes.length ? flow.filter((w) => w.from < changes[0].t) : [];
   check(
     "S10 the call-1 control really has a flow window BEFORE the ssrc-change fiducial",
     pre.length > 0 && flow.length > pre.length,
     `flow windows=${flow.length} pre-fiducial=${pre.length} ssrcChanges=${changes.length} — without a pre-fiducial window the B4 control is vacuous`,
+  );
+}
+
+// 🔴 THE BOUNDARY the deleted tolerance used to admit (wave-0c item 9): a
+// call-1 flow window that opens LESS THAN ONE SAMPLING INTERVAL before the
+// fiducial. Under `w.from >= fid - intervalMs` it QUALIFIED, and M3 was then
+// measured against a window on the OLD ssrc, before the rejoin.
+{
+  const d = JSON.parse(JSON.stringify(results.plaintext));
+  const idx = d.ticks.findIndex((tk) => tk.samples.some((s) => s.role === "subject" && s.ssrc === SSRC_SUBJECT_POST));
+  const fid = d.ticks[idx].t;
+  let injected = 0;
+  for (const k of [idx - 1, idx]) {
+    const tk = d.ticks[k];
+    const model = tk.samples.find((s) => s.role === "subject");
+    tk.samples.push({ ...model, ssrc: SSRC_SUBJECT_PRE, trackIdentifier: "subject-track-pre", trackIdentity: "subject-track-pre", bytesReceived: 900000 + injected * 1000, audioLevel: 0, annotationOnly: model.annotationOnly });
+    injected += 1;
+  }
+  writeAtomic(path.join(outdir, "sampler-boundary.json"), JSON.stringify(d));
+  const rows = seriesByRole(d, "subject", 0);
+  const flow = subjectFlowWindows(rows, 500);
+  const changes = ssrcChanges(rows);
+  const boundary = flow.filter((w) => w.ssrc === SSRC_SUBJECT_PRE && w.from < fid && w.from >= fid - d.intervalMs);
+  check(
+    "S10b the boundary control really has a call-1 window INSIDE the deleted tolerance (from < fiducial, within one interval)",
+    boundary.length > 0,
+    `windows on the old ssrc inside [fid-${d.intervalMs}, fid): ${boundary.length} — without one this control cannot probe the tolerance`,
+  );
+  const pinned = pinLeakWindow(flow, changes, null);
+  check(
+    "S10c and it is REJECTED: the leak window is still the one on the FRESH ssrc",
+    pinned.window !== null && pinned.window.ssrc === SSRC_SUBJECT_POST && pinned.rejected.some((w) => w.ssrc === SSRC_SUBJECT_PRE && w.from >= fid - d.intervalMs),
+    `pinned ssrc=${pinned.window ? pinned.window.ssrc : "none"} rejected=${JSON.stringify(pinned.rejected.map((w) => [w.ssrc, w.from - fid]))}`,
+  );
+  check(
+    "S10d the ssrc-change fiducial is UNMOVED by the lingering old rows (exactly one change, at the fresh ssrc's first tick)",
+    changes.length === 1 && changes[0].t === fid,
+    `changes=${JSON.stringify(changes.map((c) => [c.t - fid, c.to]))}`,
+  );
+}
+
+// 🔴 THE LINGERING-ROW control (wave-0c item 9). Untested until now: the
+// selftest only ever produced two rows per tick, so the pairwise reading of
+// ssrcChanges was never exercised against the shape real getStats() produces.
+{
+  const rows = seriesByRole(results.lingering, "subject", 0);
+  const changes = ssrcChanges(rows);
+  const firstPost = rows.find((r) => r.ssrc === SSRC_SUBJECT_POST);
+  // What the OLD pairwise reading would have said, computed here so the control
+  // is not vacuous: it must genuinely differ.
+  let pairwise = 0;
+  let last = null;
+  for (const r of rows) {
+    if (last !== null && r.ssrc !== last) pairwise += 1;
+    last = r.ssrc;
+  }
+  check(
+    "S11 a lingering old inbound-rtp row does NOT manufacture ssrc changes (one change, at the fresh ssrc's first tick)",
+    changes.length === 1 && firstPost && changes[0].t === firstPost.t,
+    `changes=${JSON.stringify(changes.map((c) => c.t))} firstPost=${firstPost ? firstPost.t : "none"}`,
+  );
+  check(
+    "S11b the control is NOT vacuous: read pairwise, the same rows produce MANY changes",
+    pairwise > 2,
+    `the pairwise reading found ${pairwise} change(s), so this capture does not contain the interleaving the fix targets`,
+  );
+  check(
+    "S11c and the lingering rows really are in the capture (two subject ssrcs in one tick)",
+    results.lingering.ticks.some((tk) => new Set(tk.samples.filter((s) => s.role === "subject").map((s) => s.ssrc)).size > 1),
+    "no tick carries two subject rows",
   );
 }
 
@@ -408,6 +513,16 @@ function checkEmitterContract(extracted) {
   for (const p of extracted.problems) {
     problems.push(`E6 ${p.kind} ${path.basename(p.file ?? "?")}:${p.line ?? "?"} — ${p.detail}`);
   }
+  // E7 — `currentRoom` is REQUIRED, not merely known. A rename is caught by E2
+  // above; a DELETION would otherwise be a NOTE, and it turns the H2
+  // abandoned-Room filter into a pass-through.
+  for (const at of REQUIRE_CURRENT_ROOM) {
+    const v = extracted.seams.get(at);
+    if (!v) continue; // E3 already reports a seam nobody emits
+    if (!v.keys.has("currentRoom")) {
+      problems.push(`E7 ${at} does not emit currentRoom. Records of that seam then cannot be attributed to the live Room, and the H2 filter that keeps an ABANDONED Room's records out of a verdict becomes a pass-through for them.`);
+    }
+  }
   return problems;
 }
 
@@ -418,7 +533,8 @@ const corruptDir = path.join(outdir, "emitters-corrupt");
 fs.mkdirSync(corruptDir, { recursive: true });
 {
   const real = fs.readFileSync(EMITTER_FILES[0], "utf8");
-  const renamed = real.replaceAll("subjectSidPresent:", "subjectPresentXX:");
+  // The renamed key must be one the reducer actually READS, or E1 cannot fire.
+  const renamed = real.replaceAll("subjectSidAssigned:", "subjectSidAssignedXX:");
   const fileA = path.join(corruptDir, "state.renamed.tsx");
   writeAtomic(fileA, renamed);
   check("X0 the corrupted emitter copy DIFFERS from the real file", renamed !== real, "the replacement matched nothing, so the control is byte-identical and proves nothing");
@@ -426,7 +542,7 @@ fs.mkdirSync(corruptDir, { recursive: true });
   const probs = checkEmitterContract(extractEmitters([fileA, EMITTER_FILES[1]]));
   check(
     "X1 a RENAMED emitter key is caught in BOTH directions (E1 reads-but-unemitted, E2 emitted-but-unknown)",
-    probs.some((p) => p.startsWith("E1") && p.includes("subjectSidPresent")) && probs.some((p) => p.startsWith("E2") && p.includes("subjectPresentXX")),
+    probs.some((p) => p.startsWith("E1") && p.includes("subjectSidAssigned")) && probs.some((p) => p.startsWith("E2") && p.includes("subjectSidAssignedXX")),
     `problems were: ${probs.join(" | ") || "(none — the check is VACUOUS)"}`,
   );
 
@@ -452,6 +568,19 @@ fs.mkdirSync(corruptDir, { recursive: true });
     "X3 a RENAMED seam literal is caught in both directions (E3 known-but-unemitted, E4 emitted-but-unknown)",
     probs3.some((p) => p.startsWith("E3") && p.includes("localSenderCreated")) && probs3.some((p) => p.startsWith("E4") && p.includes("localSenderCreatedXX")),
     `problems were: ${probs3.join(" | ") || "(none — the check is VACUOUS)"}`,
+  );
+
+  // 🔴 A DELETED `currentRoom`. A rename is caught as an unknown key; a
+  // deletion used to be a NOTE, and it silently disarms the H2 filter.
+  const noRoom = real.replaceAll("currentRoom: this.room() === room,", "");
+  const fileD = path.join(corruptDir, "state.noroom.tsx");
+  writeAtomic(fileD, noRoom);
+  check("X5a the deleted-currentRoom control DIFFERS from the real file", noRoom !== real, "the replacement matched nothing");
+  const probs4 = checkEmitterContract(extractEmitters([fileD, EMITTER_FILES[1]]));
+  check(
+    "X5 a seam that stops emitting currentRoom is caught (the H2 abandoned-Room filter would become a pass-through)",
+    probs4.some((p) => p.startsWith("E7") && p.includes("localSenderCreated")) && probs4.some((p) => p.startsWith("E7") && p.includes("track.upstreamResumed")),
+    `problems were: ${probs4.join(" | ") || "(none — the check is VACUOUS)"}`,
   );
 }
 
@@ -480,45 +609,173 @@ check("E0 the emitter <-> reducer key contract holds in BOTH directions", contra
 // Fixture generation FROM the extracted key sets
 // --------------------------------------------------------------------------
 
+/**
+ * 🔴 REACHABLE VALUES — the discipline this file already applied to key NAMES,
+ * extended to key VALUES (wave-0c B3).
+ *
+ * `makeRec` validated that an override named a key an emitter EMITS. Nothing
+ * validated that the VALUE could occur. So the C6 and C4 fixtures set
+ * `subjectSidPresent: true` at `localSenderCreated` — a value pinned
+ * livekit-client 2.15.13 cannot produce, because the emit at esm.mjs 23811
+ * precedes both `track.sid = ti.sid` (23900) and `addTrackPublication` (23910),
+ * and on a republish `unpublishTrack` deleted the map entry (24121) first.
+ * "C6 is still reachable" and "an UpstreamResumed inside the window selects C4"
+ * both passed ONLY because of that impossible value: with the field set to its
+ * reachable value, both fixtures read C0.
+ *
+ * Every DECISION-BEARING field (everything in the reducer's READS /
+ * PUB_ENTRY_READS) must therefore carry a declaration here, tied to the
+ * emitter's own expression, and a fixture value outside it is a HARD ERROR.
+ * A field with no declaration is also a hard error: adding a READ forces a
+ * reachability justification rather than letting one be assumed.
+ */
+const SID_RE = /^TR_[A-Za-z0-9_-]+$/;
+const SUBJECT_RE = /^[a-z_]+\/(TR_[A-Za-z0-9_-]+|no-sid)$/;
+const isInt = (v) => typeof v === "number" && Number.isInteger(v) && v >= 0;
+
+const REACHABLE = {
+  // ---- gate context, shared by every seam that carries it -----------------
+  "*.gate": {
+    test: (v) => Array.isArray(v) && v.every((x) => ["negotiating", "enable-window", "mixed"].includes(x)),
+    why: '`[...this.#publishGate]`, a Set of PublishGateReason — `export type PublishGateReason = "negotiating" | "enable-window" | "mixed"` (mlsCallSession.ts)',
+  },
+  "*.gateSize": { test: isInt, why: "`this.#publishGate.size`" },
+  "*.gateGen": { test: isInt, why: "`this.#gateGen`, monotonic from 0" },
+  "*.connectGen": { test: isInt, why: "`this.#connectGen`, monotonic from 0" },
+  "*.passes": { test: (v) => v === null || isInt(v), why: "`this.#gateSweeper?.passes() ?? null` — null before a sweeper exists, a monotonic LIFETIME count after" },
+  "*.currentRoom": { values: [true, false], why: "`this.room() === room`" },
+  "*.subject": { test: (v) => typeof v === "string" && SUBJECT_RE.test(v), why: '`${track.source}/${gtSid ?? "no-sid"}` at the sender/track seams, `${pub.source}/${pub.trackSid}` at the publish seam' },
+  "*.subjectSource": { test: (v) => typeof v === "string" && /^[a-z_]+$/.test(v), why: "`track.source` / `pub.source` — livekit's Track.Source enum" },
+  "*.subjectSid": { test: (v) => v === null || SID_RE.test(v), why: "`track.sid ?? null`" },
+  "*.publicationCount": { test: isInt, why: "`room.localParticipant.trackPublications.size`" },
+  "*.publicationKeys": { test: (v) => Array.isArray(v) && v.every((x) => SID_RE.test(x)), why: "`[...room.localParticipant.trackPublications.keys()]` — the map is keyed by trackSid" },
+  "*.publications": { test: (v) => Array.isArray(v), why: "`this.#gateTraceCensus(room)`; each ENTRY is validated against publications[].* below" },
+
+  // ---- localSenderCreated ------------------------------------------------
+  "localSenderCreated.subjectSidAssigned": {
+    values: [true, false],
+    why: "`gtSid !== null` where `gtSid = track.sid ?? null`. FALSE at a first publish (the emit at esm.mjs 23811 precedes `track.sid = ti.sid` at 23900); TRUE on a republish, where `unpublishTrack` deleted the map entry (24121) and never touched `track.sid`. BOTH are reachable, which is exactly why it can discriminate and `subjectSidPresent` could not.",
+  },
+  "localSenderCreated.subjectSidInPublications": {
+    values: [false, null],
+    why: "`gtSid === null ? null : trackPublications.has(gtSid)`. TRUE IS UNREACHABLE: at a first publish there is no sid at all, and on a republish the entry was deleted before this emit — `addTrackPublication` runs only at 23910, after the awaited `negotiate()` this emit sits inside.",
+  },
+  "localSenderCreated.upstreamPaused": { values: [true, false, null], why: "`isLocalTrack(track) ? track.isUpstreamPaused : null`" },
+  "localSenderCreated.senderHasTrack": { values: [true, false], why: "`!!sender.track` — false exactly when a `replaceTrack(null)` has detached it" },
+  "localSenderCreated.transportState": { values: ["new", "connecting", "connected", "disconnected", "failed", "closed", null], why: "`sender.transport?.state ?? null` — RTCDtlsTransportState" },
+
+  // ---- localTrackPublished.entry -----------------------------------------
+  "localTrackPublished.entry.subjectSidInPublications": {
+    values: [true],
+    why: "`trackPublications.has(pub.trackSid)` in the `localTrackPublished` handler. FALSE IS UNREACHABLE: `this.addTrackPublication(publication)` (esm.mjs 23910) runs immediately before `this.emit(ParticipantEvent.LocalTrackPublished, publication)` (23911) and the handler runs synchronously on that emit.",
+  },
+  "localTrackPublished.entry.subjectSid": { test: (v) => typeof v === "string" && SID_RE.test(v), why: "`pub.trackSid` — a publication always carries an assigned sid" },
+
+  // ---- the rest ----------------------------------------------------------
+  "disconnect.entry.via": { values: ["user", "connect-leading"], why: "`#gateTraceDisconnectVia`, declared `\"connect-leading\" | \"user\"`" },
+  "disconnect.preclear.via": { values: ["user", "connect-leading"], why: "same field, consumed once at `disconnect()`'s first statement" },
+  "disconnect.entry.connectGenPhase": { values: ["pre-bump"], why: "the entry record sits ABOVE the try, before `this.#connectGen++`" },
+  "disconnect.preclear.connectGenPhase": { values: ["post-bump"], why: "the pre-clear record sits after `this.#connectGen++`" },
+  "resumeGate.reason": { values: ["negotiating", "enable-window", "mixed"], why: "PublishGateReason" },
+  "resumeGate.emptied": { values: [true, false], why: "whether the delete took the set to size 0" },
+  "resumeGate.staleRoom": { values: [true, false], why: "the `this.room() !== room` early return is recorded under the same `at`" },
+  "sweeper.dropped.stillCurrent": { values: [true, false], why: "`stillCurrent()` — the sweeper-scoped stale-writer guard, logged whether or not it holds" },
+  "sweeper.dropped.sweeperGen": { test: isInt, why: "the `gen` captured when the sweeper was created (`const gen = ++this.#gateGen`) — bumped ONCE PER CALL, not per drive" },
+  "rejoinFresh.phase": { values: ["enter", "afterDrop"], why: "the two literal phases #rejoinFresh emits" },
+  "rejoinFresh.seq": { test: (v) => isInt(v) && v > 0, why: "`++this.#rejoinTraceSeq`" },
+
+  // ---- publications[] entries -------------------------------------------
+  "publications[].name": { test: (v) => typeof v === "string" && SUBJECT_RE.test(v), why: "`${gtPub.source}/${gtPub.trackSid}` — the key repauseSpent/repausePending use and the string track.upstreamResumed carries as its subject" },
+  "publications[].source": { test: (v) => typeof v === "string" && /^[a-z_]+$/.test(v), why: "`gtPub.source`" },
+  "publications[].trackSid": { test: (v) => typeof v === "string" && SID_RE.test(v), why: "`gtPub.trackSid`" },
+  "publications[].upstreamPaused": { values: [true, false, null], why: "`gtTrack?.isUpstreamPaused ?? null`" },
+  "publications[].hasSender": { values: [true, false], why: "`!!gtTrack?.sender` — genuinely two-valued for an arbitrary publication, unlike `hasSender` at localSenderCreated" },
+  "publications[].senderHasTrack": { values: [true, false], why: "`!!gtTrack?.sender?.track`" },
+  "publications[].transportState": { values: ["new", "connecting", "connected", "disconnected", "failed", "closed", null], why: "`gtTrack?.sender?.transport?.state ?? null`" },
+  "publications[].upstream": { values: ["live", "quiet", "unpublished", "not-gated"], why: "`gtGated.upstream()` — UpstreamState is three-valued (`gatedPublicationsFrom`'s thunk) — plus the emitter's own `?? \"not-gated\"` for a publication the adapter SKIPPED (no track)" },
+  "publications[].op": { values: ["pause", "repause", "none", "resume", "not-gated"], why: "`publishGateOp(...)`'s return type, plus the emitter's `?? \"not-gated\"`" },
+};
+
+function reachSpec(at, key) {
+  return REACHABLE[`${at}.${key}`] ?? REACHABLE[`*.${key}`] ?? null;
+}
+
+function assertReachable(at, key, value) {
+  const spec = reachSpec(at, key);
+  if (!spec) {
+    throw new Error(
+      `${at}.${key} is DECISION-BEARING (the reducer READS it) but has no reachability declaration. Declare the values the emitter's own expression can produce, with the justification, rather than letting a fixture assume one.`,
+    );
+  }
+  const ok = spec.values ? spec.values.some((v) => Object.is(v, value)) : spec.test(value);
+  if (!ok) {
+    throw new Error(
+      `fixture value ${JSON.stringify(value)} for ${at}.${key} is NOT REACHABLE. ${spec.why}`,
+    );
+  }
+}
+
 /** Fixture values for the gate context, shared by every seam that carries it. */
 const GATE_BASE = {
   gate: ["negotiating"],
   gateSize: 1,
   gateHeld: true,
   gateGen: 4,
-  connectGen: 2,
+  connectGen: 4,
   passes: 5,
   currentRoom: true,
 };
 
+const EMPTY_GATE = { gate: [], gateSize: 0, gateHeld: false };
+
 const SEAM_BASE = {
   "connect.add": { e2eeCapable: true },
-  "disconnect.preclear": { via: "user" },
+  "disconnect.entry": { via: "user", connectGenPhase: "pre-bump" },
+  "disconnect.preclear": { via: "user", connectGenPhase: "post-bump" },
   pauseGate: { reason: "negotiating", edge: "add", staleRoom: false },
   "pauseGate.staleRoom": { reason: "negotiating", staleRoom: true },
   resumeGate: { reason: "negotiating", emptied: true, staleRoom: false, gate: [], gateSize: 0, gateHeld: false },
   "localTrackPublished.entry": {
     subject: "microphone/TR_subject_post",
-    subjectSidPresent: true,
+    subjectSource: "microphone",
+    subjectSid: "TR_subject_post",
+    subjectSidInPublications: true,
     publicationCount: 1,
+    publicationKeys: ["TR_subject_post"],
     publications: null, // filled from the extracted publications[] key set
   },
   localSenderCreated: {
-    subject: "microphone/TR_subject_post",
-    subjectSidPresent: false,
+    // The REPUBLISH shape: the track still carries the PREVIOUS publication's
+    // sid (`unpublishTrack` never clears `track.sid`) and the map entry for it
+    // is gone. That is C0's window, and every field here is reachable.
+    subject: "microphone/TR_subject_pre",
+    subjectSource: "microphone",
+    subjectSid: "TR_subject_pre",
+    subjectSidAssigned: true,
+    subjectSidInPublications: false,
     publicationCount: 0,
+    publicationKeys: [],
+    publications: [],
     upstreamPaused: false,
     hasSender: true,
     senderHasTrack: true,
     transportState: "connected",
   },
   "sweeper.dropped": { stillCurrent: true, sweeperGen: 4 },
-  "track.upstreamResumed": { subject: "microphone/TR_subject_post" },
-  "track.processorUpdate": { subject: "microphone/TR_subject_post" },
+  "track.upstreamResumed": { subject: "microphone/TR_subject_post", subjectSource: "microphone", subjectSid: "TR_subject_post" },
+  "track.processorUpdate": { subject: "microphone/TR_subject_post", subjectSource: "microphone", subjectSid: "TR_subject_post" },
   setMode: { branch: "lockstep", wasNegotiating: true, incoming: "e2ee", mode: "e2ee", latched: false, localConfirmed: null, hasMedia: true },
   "applyMode.effect": { event: "local_confirm", next: "interlude", do: "keep", enabled: false, reason: "local_confirm" },
   rejoinFresh: { phase: "enter", seq: 1, reason: "poisoned-successor", modeBefore: "e2ee", modeAfter: "negotiating", reestablishes: 0, state: "resecuring" },
   dropModeToNegotiating: { confirmedInterlude: true, modeBefore: "e2ee", modeAfter: "negotiating", state: "resecuring", ran: true },
+};
+
+/** The FIRST-PUBLISH shape of the sender seam: no sid to look up at all. */
+const SENDER_NO_SID = {
+  subject: "microphone/no-sid",
+  subjectSid: null,
+  subjectSidAssigned: false,
+  subjectSidInPublications: null,
 };
 
 const PUB_ENTRY_BASE = {
@@ -531,7 +788,6 @@ const PUB_ENTRY_BASE = {
   transportState: "connected",
   upstream: "live",
   op: "pause",
-  text: "microphone/TR_subject_post paused=false sender=true senderTrack=true transport=connected upstream=live op=pause",
 };
 
 function makePubEntry(overrides = {}) {
@@ -546,15 +802,16 @@ function makePubEntry(overrides = {}) {
     if (k in overrides) e[k] = overrides[k];
     else if (k in PUB_ENTRY_BASE) e[k] = PUB_ENTRY_BASE[k];
     else throw new Error(`no fixture value declared for publications[].${k} — declare one rather than emitting a blank`);
+    // 🔴 VALUES, not just names.
+    if (PUB_ENTRY_READS.includes(k)) assertReachable("publications[]", k, e[k]);
   }
   return e;
 }
 
 /**
  * Build ONE record with EXACTLY the key set the emitter emits for that seam.
- * An override naming a key the emitter does not emit is a hard error: a
- * fixture that carries a field the real seam cannot carry is how wave 0's
- * decision-table case passed on an impossible capture.
+ * An override naming a key the emitter does not emit is a hard error, and so
+ * is a value the emitter's own expression cannot produce.
  */
 function makeRec(at, t, overrides = {}) {
   const seam = extracted.seams.get(at);
@@ -564,6 +821,7 @@ function makeRec(at, t, overrides = {}) {
       throw new Error(`fixture override ${at}.${k} names a key NO EMITTER EMITS — that is precisely the wave-0 defect`);
     }
   }
+  const decisionBearing = new Set(READS[at] ?? []);
   const rec = { t, p: Math.round((t % 100000) * 1.0), at };
   for (const k of seam.keys) {
     if (COMMON_KEYS.includes(k)) continue;
@@ -573,6 +831,12 @@ function makeRec(at, t, overrides = {}) {
     else if (k in GATE_BASE) v = GATE_BASE[k];
     else throw new Error(`no fixture value declared for ${at}.${k} — declare one rather than emitting a blank`);
     if (k === "publications" && v === null) v = [makePubEntry()];
+    if (decisionBearing.has(k) && k !== "publications") assertReachable(at, k, v);
+    if (k === "publications" && Array.isArray(v)) {
+      for (const e of v) {
+        for (const pk of PUB_ENTRY_READS) if (pk in e) assertReachable("publications[]", pk, e[pk]);
+      }
+    }
     rec[k] = v;
   }
   return rec;
@@ -595,117 +859,263 @@ function landmarks(dump) {
   const rows = seriesByRole(dump, "subject", 0);
   const changes = ssrcChanges(rows);
   const flow = subjectFlowWindows(rows, 500);
-  const leak = pinLeakWindow(flow, changes, null, dump.intervalMs);
+  const leak = pinLeakWindow(flow, changes, null);
   if (!leak.window) throw new Error(`the ${dump.label} dump has no post-fiducial flow window; the fixtures cannot be placed`);
   return { fiducial: changes[0].t, from: leak.window.from, to: leak.window.to };
 }
 
-process.stdout.write("=== trace fixtures (generated from the EXTRACTED key sets) ===\n");
+// --------------------------------------------------------------------------
+// 🔴 THE REACHABILITY CONTROLS. The registry has to REJECT the two values that
+// made wave 0b's C6 and C4 controls vacuous, or it proves nothing.
+// --------------------------------------------------------------------------
+process.stdout.write("=== reachable-VALUE controls (the vacuous-fixture defect) ===\n");
+expectThrow(
+  "X4 the C6/C4 fixtures' old `subjectSidInPublications: true` at localSenderCreated is REFUSED as unreachable",
+  () => makeRec("localSenderCreated", 1, { subjectSidInPublications: true }),
+  "NOT REACHABLE",
+);
+expectThrow(
+  "X4b `subjectSidInPublications: false` at localTrackPublished.entry is REFUSED (addTrackPublication precedes the emit)",
+  () => makeRec("localTrackPublished.entry", 1, { subjectSidInPublications: false }),
+  "NOT REACHABLE",
+);
+expectThrow(
+  "X4c an invented publications[] op is REFUSED",
+  () => makePubEntry({ op: "definitely-not-an-op" }),
+  "NOT REACHABLE",
+);
+expectThrow(
+  "X4d a key no emitter emits is still REFUSED (the wave-0 name defect)",
+  () => makeRec("localSenderCreated", 1, { subjectSidPresent: false }),
+  "NO EMITTER EMITS",
+);
+check(
+  "X4e the same fixtures built from REACHABLE values are accepted (the registry is not simply refusing everything)",
+  (() => {
+    try {
+      makeRec("localSenderCreated", 1, { subjectSidInPublications: false, subjectSidAssigned: true });
+      makeRec("localTrackPublished.entry", 1, { subjectSidInPublications: true });
+      makePubEntry({ op: "repause", upstreamPaused: true, upstream: "live" });
+      return true;
+    } catch (e) {
+      return `threw: ${e.message}`;
+    }
+  })() === true,
+  "a reachable fixture was refused, so every green above is vacuous",
+);
 
+process.stdout.write("=== trace fixtures (generated from the EXTRACTED key sets and REACHABLE values) ===\n");
+
+/** row -> { positive, negated } fixture files. Consumed by selftest.sh. */
+const rowMatrix = {};
 let generated = 0;
+
 try {
-  for (const [scenario, tag] of [["plaintext", ""], ["bytesonly", ".bytesonly"], ["plaintextcall1", ".call1"]]) {
+  // The teardown records of ONE real leave, and of the rejoin's own leading
+  // teardown. Generations follow the MEASURED bump order in `state.tsx`:
+  // entry (pre-bump), `#connectGen++`, preclear (post-bump), and
+  // `#connectAttempt`'s own `++this.#connectGen` — so with the leak at
+  // connectGen 4 the user's leave sits at 1/2 and the rejoin's teardown at 2/3.
+  const userLeave = (fid, at = 3000) => [
+    makeRec("disconnect.entry", fid - at, { via: "user", connectGen: 1, connectGenPhase: "pre-bump" }),
+    makeRec("disconnect.preclear", fid - at + 10, { via: "user", connectGen: 2, connectGenPhase: "post-bump" }),
+  ];
+  const connectLeading = (fid) => [
+    makeRec("disconnect.entry", fid - 500, { via: "connect-leading", connectGen: 2, connectGenPhase: "pre-bump" }),
+    makeRec("disconnect.preclear", fid - 490, { via: "connect-leading", connectGen: 3, connectGenPhase: "post-bump" }),
+  ];
+
+  for (const [scenario, tag] of [["plaintext", ""], ["bytesonly", ".bytesonly"], ["plaintextcall1", ".call1"], ["lingering", ".lingering"]]) {
     const L = landmarks(results[scenario]);
 
-    const base = () => [
-      makeRec("disconnect.preclear", L.fiducial - 400, { via: "user" }),
+    // C0 — the republish window: an ASSIGNED (stale) sid that the map no
+    // longer holds, with the map still holding another publication.
+    const c0 = () => [
+      ...userLeave(L.fiducial),
+      ...connectLeading(L.fiducial),
       makeRec("connect.add", L.fiducial - 300),
       makeRec("resumeGate", L.fiducial),
-      makeRec("localSenderCreated", L.from - 20, { subjectSidPresent: false, publicationCount: 0 }),
-      makeRec("localTrackPublished.entry", L.to + 200, { subjectSidPresent: true, publicationCount: 1 }),
+      makeRec("localSenderCreated", L.from - 20, {
+        publicationCount: 1,
+        publicationKeys: ["TR_camera"],
+        publications: [makePubEntry({ name: "camera/TR_camera", source: "camera", trackSid: "TR_camera" })],
+      }),
+      makeRec("localTrackPublished.entry", L.to + 200),
     ];
-
-    // C0 — ABSENT at the leak (localSenderCreated), PRESENT at the mute.
-    writeTrace(`trace-c0${tag}.log`, base());
+    writeTrace(`trace-c0${tag}.log`, c0());
     generated += 1;
 
-    // C1 — the in-place arm, EMPTY set, and a `connect-leading` pre-clear that
-    // is NOT a leave (B6).
+    // C1 — the in-place arm, EMPTY set, and only `connect-leading` teardowns
+    // (B6): they fire on every rejoin press and are not a leave.
     writeTrace(`trace-c1${tag}.log`, [
-      makeRec("disconnect.preclear", L.fiducial - 420, { via: "connect-leading" }),
+      ...connectLeading(L.fiducial),
       makeRec("rejoinFresh", L.fiducial - 400, { phase: "enter", seq: 7 }),
       makeRec("rejoinFresh", L.fiducial - 380, { phase: "afterDrop", seq: 7 }),
       makeRec("dropModeToNegotiating", L.fiducial - 360),
       makeRec("resumeGate", L.fiducial),
-      makeRec("localSenderCreated", L.from - 20, { gate: [], gateSize: 0, gateHeld: false, subjectSidPresent: true, publicationCount: 1 }),
-      makeRec("localTrackPublished.entry", L.to + 200, { gate: [], gateSize: 0, gateHeld: false }),
+      makeRec("localSenderCreated", L.from - 20, { ...EMPTY_GATE }),
+      makeRec("localTrackPublished.entry", L.to + 200, { ...EMPTY_GATE }),
     ]);
     generated += 1;
   }
 
   const L = landmarks(results.plaintext);
+  const base = () => [...userLeave(L.fiducial), ...connectLeading(L.fiducial), makeRec("resumeGate", L.fiducial)];
+
+  rowMatrix.C0 = { positive: "trace-c0.log", negated: "trace-c0-negated.log" };
+
+  // 🔴 C0's DISCRIMINATOR NEGATED: the same run with the sid NOT YET ASSIGNED
+  // (a first publish). `subjectSidInPublications` is then `null`, and the old
+  // reading — "subjectSidPresent === false" — fired here just as hard as on
+  // the republish, which is what made C6 and C4 unreachable.
+  writeTrace("trace-c0-negated.log", [
+    ...base(),
+    makeRec("localSenderCreated", L.from - 20, { ...SENDER_NO_SID }),
+    makeRec("localTrackPublished.entry", L.to + 200),
+  ]);
+  generated += 1;
+
+  // C0's weaker class: an assigned (stale) sid over an EMPTY map.
+  writeTrace("trace-c0-emptymap.log", [
+    ...base(),
+    makeRec("localSenderCreated", L.from - 20),
+    makeRec("localTrackPublished.entry", L.to + 200),
+  ]);
+  generated += 1;
 
   // 🔴 B3's control: ONE stale, guard-DISCARDED drop from a previous call,
   // 5 s before the leak, with a different sweeper generation. The row must
-  // stay C0. Measured on wave 0's reducer, exactly this flipped `no row`
-  // to C3 for the whole run.
+  // stay C0.
   writeTrace("trace-c0-staledrop.log", [
-    ...[
-      makeRec("disconnect.preclear", L.fiducial - 400, { via: "user" }),
-      makeRec("connect.add", L.fiducial - 300),
-      makeRec("resumeGate", L.fiducial),
-      makeRec("localSenderCreated", L.from - 20, { subjectSidPresent: false, publicationCount: 0 }),
-      makeRec("localTrackPublished.entry", L.to + 200, { subjectSidPresent: true, publicationCount: 1 }),
-    ],
+    ...base(),
+    makeRec("localSenderCreated", L.from - 20, {
+      publicationCount: 1,
+      publicationKeys: ["TR_camera"],
+      publications: [makePubEntry({ name: "camera/TR_camera", source: "camera", trackSid: "TR_camera" })],
+    }),
+    makeRec("localTrackPublished.entry", L.to + 200),
     makeRec("sweeper.dropped", L.from - 5000, { stillCurrent: false, sweeperGen: 3 }),
   ]);
   generated += 1;
 
-  // C3 — a drop that LANDED, in the leak's own drive, same generation.
+  // C3 — a drop that LANDED, in the leak's own window, same generation.
   writeTrace("trace-c3.log", [
-    makeRec("disconnect.preclear", L.fiducial - 400, { via: "user" }),
-    makeRec("resumeGate", L.fiducial),
-    makeRec("localSenderCreated", L.from - 20, { subjectSidPresent: false, publicationCount: 0 }),
+    ...base(),
+    makeRec("localSenderCreated", L.from - 20),
     makeRec("sweeper.dropped", L.from - 10, { stillCurrent: true, sweeperGen: 4 }),
-    makeRec("localTrackPublished.entry", L.to + 200, { subjectSidPresent: true, publicationCount: 1 }),
+    makeRec("localTrackPublished.entry", L.to + 200),
+  ]);
+  generated += 1;
+  rowMatrix.C3 = { positive: "trace-c3.log", negated: "trace-c0-staledrop.log" };
+
+  // C6 — the publication PRESENT at the mute with livekit's pause flag
+  // stale-true over a live sender. The sender seam is the FIRST-PUBLISH shape,
+  // so C0's absent half is not established and this row is reachable at all.
+  const c6Census = (paused) => [
+    ...base(),
+    makeRec("localSenderCreated", L.from - 20, { ...SENDER_NO_SID, upstreamPaused: paused, senderHasTrack: true }),
+    makeRec("localTrackPublished.entry", L.to + 200, {
+      publications: [makePubEntry({ upstreamPaused: paused, upstream: "live", op: paused ? "repause" : "pause" })],
+    }),
+  ];
+  writeTrace("trace-c6.log", c6Census(true));
+  generated += 1;
+  // C6's discriminator negated: the same run with the flag FALSE and no
+  // resume — it must select no row, not C6 and not C4.
+  writeTrace("trace-c6-negated.log", c6Census(false));
+  generated += 1;
+  rowMatrix.C6 = { positive: "trace-c6.log", negated: "trace-c6-negated.log" };
+
+  // C4 — flag false, UpstreamResumed inside the bounded window AND NAMING the
+  // publication under test.
+  const c4Base = c6Census(false);
+  writeTrace("trace-c4.log", [...c4Base, makeRec("track.upstreamResumed", L.to - 200)]);
+  generated += 1;
+  // 🔴 C4's discriminator negated, TWO ways.
+  // (i) the resume names ANOTHER track. Measured on wave 0b's reducer:
+  //     retargeting it to screen_share/TR_TOTALLY_OTHER still read C4,
+  //     because the row tested `m3.upstreamResumed.length > 0` for any track.
+  writeTrace("trace-c4-negated.log", [
+    ...c4Base,
+    makeRec("track.upstreamResumed", L.to - 200, {
+      subject: "screen_share/TR_totally_other",
+      subjectSource: "screen_share",
+      subjectSid: "TR_totally_other",
+    }),
+  ]);
+  generated += 1;
+  // (ii) the same run with the resume 30 s earlier: "immediately before the
+  //      mute" is a BOUNDED window.
+  writeTrace("trace-c4-farresumed.log", [...c4Base, makeRec("track.upstreamResumed", L.to - 30000)]);
+  generated += 1;
+  rowMatrix.C4 = { positive: "trace-c4.log", negated: "trace-c4-negated.log" };
+
+  // 🔴 A DEGRADED capture (not an unreachable value): the resume record has
+  // lost its `currentRoom` while its siblings keep theirs — a mixed-version or
+  // truncated log. It may be kept and counted, but it may not SELECT a row.
+  {
+    const recs = [...c4Base, makeRec("track.upstreamResumed", L.to - 200)];
+    const lines = [...recs]
+      .sort((a, b) => a.t - b.t)
+      .map((r) => {
+        if (r.at !== "track.upstreamResumed") return chromiumLine(r.t, r);
+        const { currentRoom, ...withoutRoom } = r;
+        void currentRoom;
+        return chromiumLine(r.t, withoutRoom);
+      });
+    // A second resume record that DOES carry currentRoom, so the seam
+    // demonstrably carries the key in this capture.
+    lines.push(chromiumLine(L.to - 900, makeRec("track.upstreamResumed", L.to - 900, { subject: "camera/TR_camera", subjectSource: "camera", subjectSid: "TR_camera" })));
+    writeAtomic(path.join(outdir, "trace-c4-noroom.log"), lines.join("\n") + "\n");
+    generated += 1;
+  }
+
+  // C1's discriminator negated: the SAME in-place run plus a real `via:"user"`
+  // teardown INSIDE this leg's transition. M2 then witnesses both arms and the
+  // row is not C1.
+  const c1Records = [
+    ...connectLeading(L.fiducial),
+    makeRec("rejoinFresh", L.fiducial - 400, { phase: "enter", seq: 7 }),
+    makeRec("rejoinFresh", L.fiducial - 380, { phase: "afterDrop", seq: 7 }),
+    makeRec("dropModeToNegotiating", L.fiducial - 360),
+    makeRec("resumeGate", L.fiducial),
+    makeRec("localSenderCreated", L.from - 20, { ...EMPTY_GATE }),
+    makeRec("localTrackPublished.entry", L.to + 200, { ...EMPTY_GATE }),
+  ];
+  writeTrace("trace-c1-negated.log", [...c1Records, ...userLeave(L.fiducial, 3000)]);
+  generated += 1;
+  rowMatrix.C1 = { positive: "trace-c1.log", negated: "trace-c1-negated.log" };
+
+  // 🔴 B5's control: the SAME in-place run with a `via:"user"` teardown SIXTY
+  // SECONDS before the fiducial — a hang-up, a failed-join teardown, an
+  // autoLeave or a sign-out from an earlier call. Measured on wave 0b's
+  // reducer, which filtered `disconnect.preclear` over the WHOLE capture:
+  // exactly this flipped `M2: no-disconnect / C1` to `M2: both / no row`.
+  writeTrace("trace-c1-staleleave.log", [
+    ...c1Records,
+    makeRec("disconnect.entry", L.fiducial - 60000, { via: "user", connectGen: 0, connectGenPhase: "pre-bump" }),
+    makeRec("disconnect.preclear", L.fiducial - 59990, { via: "user", connectGen: 1, connectGenPhase: "post-bump" }),
   ]);
   generated += 1;
 
-  // C6 — publication PRESENT at the leak, livekit's pause flag stale-true over
-  // a live sender track.
-  const c6 = [
-    makeRec("disconnect.preclear", L.fiducial - 400, { via: "user" }),
-    makeRec("resumeGate", L.fiducial),
-    makeRec("localSenderCreated", L.from - 20, { subjectSidPresent: true, publicationCount: 1, upstreamPaused: true, senderHasTrack: true }),
-    makeRec("localTrackPublished.entry", L.to + 200, { subjectSidPresent: true, publicationCount: 1, publications: [makePubEntry({ upstreamPaused: true, upstream: "live", op: "repause" })] }),
-  ];
-  writeTrace("trace-c6.log", c6);
-  generated += 1;
-
-  // C4 — flag false, UpstreamResumed INSIDE the bounded window before the mute.
-  const c4Base = [
-    makeRec("disconnect.preclear", L.fiducial - 400, { via: "user" }),
-    makeRec("resumeGate", L.fiducial),
-    makeRec("localSenderCreated", L.from - 20, { subjectSidPresent: true, publicationCount: 1, upstreamPaused: false }),
-    makeRec("localTrackPublished.entry", L.to + 200, { subjectSidPresent: true, publicationCount: 1, publications: [makePubEntry({ upstreamPaused: false })] }),
-  ];
-  writeTrace("trace-c4.log", [...c4Base, makeRec("track.upstreamResumed", L.to - 200)]);
-  generated += 1;
-  // 🔴 H3's control: the SAME run with the resume 30 s earlier. "Immediately
-  // before the mute" is a bounded window, and wave 0's `resumedNear` was the
-  // WHOLE CAPTURE, so this run also read C4.
-  writeTrace("trace-c4-farresumed.log", [...c4Base, makeRec("track.upstreamResumed", L.to - 30000)]);
-  generated += 1;
-
   // 🔴 H1's control: a resumeGate at exactly the fiducial that does NOT
-  // qualify (the stale-room drop), plus the real edge 900 ms off. Wave 0 took
-  // ANY resumeGate, so this stale record rescued a genuinely unaligned run.
+  // qualify (the stale-room drop), plus the real edge 900 ms off.
   writeTrace("trace-h1-stale-resume.log", [
-    makeRec("disconnect.preclear", L.fiducial - 400, { via: "user" }),
+    ...userLeave(L.fiducial),
     makeRec("resumeGate", L.fiducial, { staleRoom: true, emptied: false, reason: "mixed" }),
     makeRec("resumeGate", L.fiducial + 900),
-    makeRec("localSenderCreated", L.from - 20, { subjectSidPresent: false, publicationCount: 0 }),
-    makeRec("localTrackPublished.entry", L.to + 200, { subjectSidPresent: true, publicationCount: 1 }),
+    makeRec("localSenderCreated", L.from - 20),
+    makeRec("localTrackPublished.entry", L.to + 200),
   ]);
   generated += 1;
 
   // 🔴 H2's control: the C0 shape, but every record belongs to an ABANDONED
   // Room. None of it may reach a verdict.
   writeTrace("trace-h2-abandoned.log", [
-    makeRec("disconnect.preclear", L.fiducial - 400, { via: "user" }),
+    ...userLeave(L.fiducial),
     makeRec("resumeGate", L.fiducial, { currentRoom: false }),
-    makeRec("localSenderCreated", L.from - 20, { subjectSidPresent: false, publicationCount: 0, currentRoom: false }),
-    makeRec("localTrackPublished.entry", L.to + 200, { subjectSidPresent: true, publicationCount: 1, currentRoom: false }),
+    makeRec("localSenderCreated", L.from - 20, { currentRoom: false }),
+    makeRec("localTrackPublished.entry", L.to + 200, { currentRoom: false }),
   ]);
   generated += 1;
 
@@ -714,33 +1124,30 @@ try {
     makeRec("rejoinFresh", L.fiducial - 400, { phase: "enter", seq: 7 }),
     makeRec("rejoinFresh", L.fiducial - 380, { phase: "enter", seq: 8 }),
     makeRec("resumeGate", L.fiducial),
-    makeRec("localSenderCreated", L.from - 20, { gate: [], gateSize: 0, gateHeld: false, subjectSidPresent: true, publicationCount: 1 }),
+    makeRec("localSenderCreated", L.from - 20, { ...EMPTY_GATE }),
   ]);
   generated += 1;
 
   // The fiducial moved off the ssrc change: the run must be UNALIGNED.
   writeTrace("trace-unaligned.log", [
-    makeRec("disconnect.preclear", L.fiducial - 400, { via: "user" }),
+    ...userLeave(L.fiducial),
     makeRec("resumeGate", L.fiducial + 900),
-    makeRec("localSenderCreated", L.from - 20, { subjectSidPresent: false, publicationCount: 0 }),
-    makeRec("localTrackPublished.entry", L.to + 200, { subjectSidPresent: true, publicationCount: 1 }),
+    makeRec("localSenderCreated", L.from - 20),
+    makeRec("localTrackPublished.entry", L.to + 200),
   ]);
   generated += 1;
 
   // 🔴 The DEGRADED control: an object ARGUMENT reached Chromium's serializer.
   // The lines ARE there; the fields are not.
   {
-    const recs = [
-      makeRec("disconnect.preclear", L.fiducial - 400, { via: "user" }),
-      makeRec("localSenderCreated", L.from - 20, { subjectSidPresent: false, publicationCount: 0 }),
-    ];
+    const recs = [...userLeave(L.fiducial), makeRec("localSenderCreated", L.from - 20)];
     writeAtomic(path.join(outdir, "trace-objectobject.log"), recs.map((r) => chromiumLine(r.t, r).replace(/\{.*\}/, "[object Object]")).join("\n") + "\n");
     generated += 1;
   }
 
   // A TRUNCATED capture: the last record's payload is cut mid-object.
   {
-    const full = [makeRec("disconnect.preclear", L.fiducial - 400, { via: "user" }), makeRec("localSenderCreated", L.from - 20)].map((r) => chromiumLine(r.t, r)).join("\n");
+    const full = [...userLeave(L.fiducial), makeRec("localSenderCreated", L.from - 20)].map((r) => chromiumLine(r.t, r)).join("\n");
     writeAtomic(path.join(outdir, "trace-truncated.log"), full.slice(0, full.length - 120) + "\n");
     generated += 1;
   }
@@ -750,10 +1157,9 @@ try {
   generated += 1;
 
   // A CDP capture whose object argument came back as a LOSSY 5-property
-  // PREVIEW (L1). Only reachable from the OLD two-argument form; the counter
-  // exists so a truncated CDP capture is never read as an unexplained gap.
+  // PREVIEW (L1).
   {
-    const rec = makeRec("localSenderCreated", L.from - 20, { subjectSidPresent: false, publicationCount: 0 });
+    const rec = makeRec("localSenderCreated", L.from - 20);
     const props = Object.entries(rec).slice(0, 5).map(([name, value]) => ({ name, type: typeof value === "number" ? "number" : typeof value === "boolean" ? "boolean" : "string", value: String(value) }));
     const ev = { method: "Runtime.consoleAPICalled", params: { type: "error", args: [{ type: "string", value: "[gate-trace]" }, { type: "object", preview: { properties: props } }] } };
     writeAtomic(path.join(outdir, "trace-cdp-lossy.jsonl"), JSON.stringify(ev) + "\n");
@@ -764,10 +1170,63 @@ try {
   writeAtomic(path.join(outdir, "preflight-good.log"), chromiumLine(L.fiducial, makeRec("connect.add", L.fiducial)) + "\n");
   writeAtomic(path.join(outdir, "preflight-objectobject.log"), chromiumLine(L.fiducial, makeRec("connect.add", L.fiducial)).replace(/\{.*\}/, "[object Object]") + "\n");
   generated += 2;
+
+  // 🔴 MIXED stays reachable. Once a row must be about the LEAKING publication
+  // (item 10), a census entry for another track is skipped rather than allowed
+  // to select a row about the leak — so two rows can only "genuinely both
+  // hold" when the sampler could NOT correlate a trackSid at all. That is a
+  // real capture shape (a stream id the observer could not parse into
+  // `${participantSid}|${trackSid}`), so it is produced and tested rather than
+  // left as an untested branch.
+  {
+    const d = JSON.parse(JSON.stringify(results.plaintext));
+    for (const tk of d.ticks) for (const s of tk.samples) if (s.role === "subject") s.trackSid = null;
+    writeAtomic(path.join(outdir, "sampler-uncorrelated.json"), JSON.stringify(d));
+    writeTrace("trace-mixed.log", [
+      ...base(),
+      makeRec("localSenderCreated", L.from - 20, { ...SENDER_NO_SID }),
+      makeRec("localTrackPublished.entry", L.to + 200, {
+        publicationCount: 2,
+        publicationKeys: ["TR_subject_post", "TR_camera"],
+        publications: [
+          makePubEntry({ upstreamPaused: true, upstream: "live", op: "repause" }),
+          makePubEntry({ name: "camera/TR_camera", source: "camera", trackSid: "TR_camera", upstreamPaused: false }),
+        ],
+      }),
+      makeRec("track.upstreamResumed", L.to - 200, { subject: "camera/TR_camera", subjectSource: "camera", subjectSid: "TR_camera" }),
+    ]);
+    generated += 1;
+  }
+
+  writeAtomic(path.join(outdir, "row-matrix.json"), JSON.stringify(rowMatrix, null, 2) + "\n");
 } catch (e) {
-  check("F0 every trace fixture was generated from the extracted key sets", false, e.message);
+  check("F0 every trace fixture was generated from the extracted key sets and reachable values", false, e.message);
 }
 if (generated) process.stdout.write(`  generated ${generated} trace fixture(s)\n`);
+
+// 🔴 EVERY §2.5 ROW MUST BE REACHABLE FROM A FIXTURE WHOSE FIELDS ARE ALL
+// REACHABLE — and each row must have a fixture with its discriminator NEGATED.
+// (That the fixtures SELECT those rows is asserted by selftest.sh, which runs
+// the reducer; this half asserts the matrix is COMPLETE, so a row cannot go
+// untested by simply not being listed.)
+{
+  const wanted = ["C0", "C1", "C3", "C4", "C6"];
+  const missing = wanted.filter((r) => !rowMatrix[r]);
+  check(
+    "F1 every §2.5 row has a positive AND a negated fixture, all built from reachable values",
+    missing.length === 0,
+    `no fixture pair for: ${missing.join(", ")}`,
+  );
+  for (const r of wanted) {
+    if (!rowMatrix[r]) continue;
+    for (const half of ["positive", "negated"]) {
+      const f = path.join(outdir, rowMatrix[r][half]);
+      if (!fs.existsSync(f)) check(`F1-${r}-${half} the ${half} fixture exists`, false, `${f} was not written`);
+    }
+  }
+  const same = wanted.filter((r) => rowMatrix[r] && fs.existsSync(path.join(outdir, rowMatrix[r].positive)) && fs.existsSync(path.join(outdir, rowMatrix[r].negated)) && fs.readFileSync(path.join(outdir, rowMatrix[r].positive), "utf8") === fs.readFileSync(path.join(outdir, rowMatrix[r].negated), "utf8"));
+  check("F2 no row's negated fixture is byte-identical to its positive one", same.length === 0, `identical pairs: ${same.join(", ")}`);
+}
 
 // Corrupted sampler inputs.
 const good = fs.readFileSync(path.join(outdir, "sampler-plaintext.json"), "utf8");

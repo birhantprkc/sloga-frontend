@@ -88,11 +88,15 @@ fi
 echo
 
 echo "=== stage 2: prove each control DIFFERS from the good input ==="
-for f in sampler-truncated.json sampler-empty.json sampler-wrongschema.json sampler-zeroticks.json sampler-deadcarrier.json sampler-bytesonly.json sampler-plaintextcall1.json; do
+for f in sampler-truncated.json sampler-empty.json sampler-wrongschema.json sampler-zeroticks.json \
+  sampler-deadcarrier.json sampler-bytesonly.json sampler-plaintextcall1.json sampler-lingering.json \
+  sampler-boundary.json sampler-uncorrelated.json; do
   differs "$f" "sampler-plaintext.json"
 done
-for f in trace-c0-staledrop.log trace-c3.log trace-c6.log trace-c4.log trace-c4-farresumed.log \
-  trace-h1-stale-resume.log trace-h2-abandoned.log trace-unaligned.log trace-c1.log \
+for f in trace-c0-staledrop.log trace-c0-negated.log trace-c0-emptymap.log trace-c3.log \
+  trace-c6.log trace-c6-negated.log trace-c4.log trace-c4-negated.log trace-c4-farresumed.log \
+  trace-c4-noroom.log trace-h1-stale-resume.log trace-h2-abandoned.log trace-unaligned.log \
+  trace-c1.log trace-c1-negated.log trace-c1-staleleave.log trace-mixed.log \
   trace-m4-twoseq.log trace-objectobject.log trace-truncated.log; do
   differs "$f" "trace-c0.log"
 done
@@ -203,7 +207,10 @@ case_run "G1 plaintext + C0 trace => plaintext" 0 "M1 (plaintext?)   : plaintext
 case_run "G2 plaintext + C0 trace => C0 selected, on the REAL emitted key names" 0 "DECISION (§2.5)   : C0" -- \
   node "$REDUCE" --sampler "$WORK/sampler-plaintext.json" --shape b --consent yes --audible-subject yes \
   --log "$WORK/trace-c0.log"
-case_run "G2b B5: the C0 pair is read from TWO seams and REPORTED" 0 "C0 pair (B5): absent-half from localSenderCreated = false, present-half from localTrackPublished.entry = true" -- \
+case_run "G2b B5: the C0 pair is read from TWO seams and its ABSENT half is POSITIVE evidence, with its class named" 0 "C0 absent half (localSenderCreated): ESTABLISHED [absent-from-populated-map]" -- \
+  node "$REDUCE" --sampler "$WORK/sampler-plaintext.json" --shape b --consent yes --audible-subject yes \
+  --log "$WORK/trace-c0.log"
+case_run "G2c and the PRESENT half is read from the mute seam that NAMES the leaking publication" 0 "C0 present half (localTrackPublished.entry): subjectSidInPublications = true" -- \
   node "$REDUCE" --sampler "$WORK/sampler-plaintext.json" --shape b --consent yes --audible-subject yes \
   --log "$WORK/trace-c0.log"
 case_run "G3 M2 positively witnessed as a real (via=user) disconnect" 0 "M2 (real leave?)  : disconnect-ran" -- \
@@ -362,6 +369,172 @@ rc=$?
 case_run "M1e a report that does not name its arm is REFUSED, not defaulted" 3 "does not name its consent arm" -- \
   node "$REDUCE" --aggregate "$WORK/report-noarm.json"
 
+# 🔴 B2 — THE MIRROR GUARD. `runAggregate` guarded `usable("yes").length === 0`
+# and had NO guard for the no-consent arm, so an aggregate with the no-consent
+# arm ABSENT, DISCARDED or shape (a) printed "the row accounts for the polarity
+# as well as the window" and exited 0. Measured all three ways.
+case_run "B2 an aggregate with NO no-consent arm at all is POLARITY UNMEASURED, not a confirmation" 7 "the no-consent arm contributed 0 usable runs, so polarity is UNMEASURED" -- \
+  node "$REDUCE" --aggregate "$WORK/report-consent-c0.json"
+node -e '
+const fs = require("fs");
+const r = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+r.discarded = true;
+fs.writeFileSync(process.argv[2], JSON.stringify(r));
+const s = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+s.inputs.shape = "a";
+fs.writeFileSync(process.argv[3], JSON.stringify(s));
+const m = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+m.decision.windowRow = "MIXED";
+fs.writeFileSync(process.argv[4], JSON.stringify(m));
+' "$WORK/report-noconsent-c1.json" "$WORK/report-noconsent-discarded.json" "$WORK/report-noconsent-shapea.json" "$WORK/report-noconsent-mixed.json"
+rc=$?
+[ $rc -eq 0 ] || note_fail "could not build the no-consent arm controls (exit $rc)"
+for f in report-noconsent-discarded.json report-noconsent-shapea.json report-noconsent-mixed.json; do
+  if [ ! -s "$WORK/$f" ]; then note_fail "the control $f was not produced"; fi
+  if cmp -s "$WORK/$f" "$WORK/report-noconsent-c1.json"; then note_fail "$f is BYTE-IDENTICAL to the report it was derived from"; else echo "  CONTROL PASS  $f differs from report-noconsent-c1.json"; fi
+done
+case_run "B2b a DISCARDED no-consent arm is POLARITY UNMEASURED" 7 "the no-consent arm contributed 0 usable runs, so polarity is UNMEASURED" -- \
+  node "$REDUCE" --aggregate "$WORK/report-consent-c0.json" "$WORK/report-noconsent-discarded.json"
+case_run "B2c a shape-(a) no-consent arm is POLARITY UNMEASURED (§2.5 is evaluated on shape b)" 7 "the no-consent arm contributed 0 usable runs, so polarity is UNMEASURED" -- \
+  node "$REDUCE" --aggregate "$WORK/report-consent-c0.json" "$WORK/report-noconsent-shapea.json"
+case_run "B2d a MIXED no-consent run is NOT evidence that the row did not fire there" 6 "MIXED run(s)" -- \
+  node "$REDUCE" --aggregate "$WORK/report-consent-c0.json" "$WORK/report-noconsent-mixed.json"
+case_run "B2e the minimum run count is ENFORCED and stated (§2.4 specifies five per arm)" 7 "polarity is UNMEASURED" -- \
+  node "$REDUCE" --min-arm-runs 5 --aggregate "$WORK/report-consent-c0.json" "$WORK/report-noconsent-c1.json"
+case_run "B2f and the run that DOES have both arms still confirms, naming the arm sizes it compared" 0 "arms compared: 1 usable consent run(s) vs 1 usable no-consent run(s)" -- \
+  node "$REDUCE" --aggregate "$WORK/report-consent-c0.json" "$WORK/report-noconsent-c1.json"
+
+echo
+echo "=== stage 9i: B1 — C0 needs POSITIVE evidence of an absence, never an unassigned sid ==="
+# 🔴 MEASURED on wave 0b's reducer: `subjectSidPresent` at localSenderCreated is
+# `false` BY CONSTRUCTION (the emit precedes `track.sid = ti.sid` and, on a
+# republish, `unpublishTrack` deleted the map entry), so setting ONLY that field
+# to its reachable value flipped the C6 and C4 fixtures to C0 — and because
+# §2.5 is first-match-wins, C6 and C4 were unreachable.
+case_run "B1 an ASSIGNED (stale) sid absent from a POPULATED map selects C0" 0 "DECISION (§2.5)   : C0" -- \
+  node "$REDUCE" --sampler "$WORK/sampler-plaintext.json" --shape b --consent yes --audible-subject yes \
+  --log "$WORK/trace-c0.log"
+case_run "B1b the same absence over an EMPTY map still selects C0, but is REPORTED as the weaker class" 0 "ESTABLISHED [absent-with-stale-sid]" -- \
+  node "$REDUCE" --sampler "$WORK/sampler-plaintext.json" --shape b --consent yes --audible-subject yes \
+  --log "$WORK/trace-c0-emptymap.log"
+case_run "B1c an UNASSIGNED sid (a first publish) does NOT select C0" 0 "DECISION (§2.5)   : no row" -- \
+  node "$REDUCE" --sampler "$WORK/sampler-plaintext.json" --shape b --consent yes --audible-subject yes \
+  --log "$WORK/trace-c0-negated.log"
+case_run "B1d and it says WHY, naming the sid-not-yet-assigned case" 0 "NOT evidence of an absence" -- \
+  node "$REDUCE" --sampler "$WORK/sampler-plaintext.json" --shape b --consent yes --audible-subject yes \
+  --log "$WORK/trace-c0-negated.log"
+
+echo
+echo "=== stage 9j: the §2.5 ROW MATRIX — every row reachable, every discriminator load-bearing ==="
+# Data-driven from row-matrix.json, which selftest-sampler.mjs writes from the
+# fixtures it generated: a row cannot go untested by simply not being listed
+# here, because the generator asserts the matrix is complete.
+matrix_rows=0
+ROWS_TXT="$WORK/row-matrix.txt"
+node -e '
+const fs = require("fs");
+const m = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+const lines = Object.entries(m).map(([r, v]) => r + " " + v.positive + " " + v.negated);
+fs.writeFileSync(process.argv[2], lines.join("\n") + "\n");
+' "$WORK/row-matrix.json" "$ROWS_TXT"
+rc=$?
+[ $rc -eq 0 ] || note_fail "could not read the row matrix (exit $rc)"
+while read -r row pos neg; do
+  [ -n "$row" ] || continue
+  matrix_rows=$((matrix_rows + 1))
+  case_run "MX $row is SELECTED by its positive fixture" 0 "DECISION (§2.5)   : $row" -- \
+    node "$REDUCE" --sampler "$WORK/sampler-plaintext.json" --shape b --consent yes --audible-subject yes \
+    --log "$WORK/$pos"
+  out="$WORK/mx_${row}_negated.out"
+  node "$REDUCE" --sampler "$WORK/sampler-plaintext.json" --shape b --consent yes --audible-subject yes \
+    --log "$WORK/$neg" >"$out" 2>&1
+  rc=$?
+  dec=$(sed -n 's/^DECISION (§2.5)   : //p' "$out" | head -1)
+  if [ $rc -ne 0 ]; then
+    note_fail "MX $row negated: the reducer exited $rc on $neg"
+  elif [ "$dec" = "$row" ]; then
+    note_fail "MX $row negated ($neg) STILL selected $row — its discriminator does not discriminate"
+  else
+    echo "  CONTROL PASS  MX $row negated ($neg) selects '$dec', not $row"
+  fi
+done <"$ROWS_TXT"
+if [ "$matrix_rows" -lt 5 ]; then
+  note_fail "the row matrix covered only $matrix_rows row(s); C0/C1/C3/C4/C6 must all be covered"
+else
+  echo "  CONTROL PASS  MX the matrix covered $matrix_rows rows, positive AND negated"
+fi
+
+echo
+echo "=== stage 9k: B4 — C4 must MATCH the publication under test ==="
+# 🔴 MEASURED: `evaluateWindow` tested `m3.upstreamResumed.length > 0` — every
+# resume in the window, for ANY track — so retargeting the fixture's resume to
+# screen_share/TR_TOTALLY_OTHER still read C4.
+case_run "B4S a resume naming ANOTHER track does not select C4" 0 "DECISION (§2.5)   : no row" -- \
+  node "$REDUCE" --sampler "$WORK/sampler-plaintext.json" --shape b --consent yes --audible-subject yes \
+  --log "$WORK/trace-c4-negated.log"
+case_run "B4Sb and it says which subjects it saw instead" 0 "NONE names" -- \
+  node "$REDUCE" --sampler "$WORK/sampler-plaintext.json" --shape b --consent yes --audible-subject yes \
+  --log "$WORK/trace-c4-negated.log"
+case_run "B4Sc a resume that cannot be attributed to the live Room may not select a row" 0 "may not select a row" -- \
+  node "$REDUCE" --sampler "$WORK/sampler-plaintext.json" --shape b --consent yes --audible-subject yes \
+  --log "$WORK/trace-c4-noroom.log"
+case_run "B4Sd MIXED is still reachable when the sampler could not correlate a trackSid" 0 "DECISION (§2.5)   : MIXED" -- \
+  node "$REDUCE" --sampler "$WORK/sampler-uncorrelated.json" --shape b --consent yes --audible-subject yes \
+  --log "$WORK/trace-mixed.log"
+case_run "B4Se and the uncorrelated capture SAYS it could not correlate" 0 "trackSid=UNCORRELATED" -- \
+  node "$REDUCE" --sampler "$WORK/sampler-uncorrelated.json" --shape b --consent yes --audible-subject yes \
+  --log "$WORK/trace-mixed.log"
+
+echo
+echo "=== stage 9l: B5 — M2 is scoped to THIS leg's transition ==="
+# 🔴 MEASURED on wave 0b's reducer, which filtered disconnect.preclear over the
+# WHOLE capture: injecting one via:"user" record 60 s before the window flipped
+# `M2: no-disconnect / DECISION: C1` to `M2: both / DECISION: no row`.
+case_run "B5 a via=user teardown 60 s before the fiducial does NOT flip the in-place arm" 0 "M2 (real leave?)  : no-disconnect" -- \
+  node "$REDUCE" --sampler "$WORK/sampler-plaintext.json" --shape b --consent yes --audible-subject yes \
+  --log "$WORK/trace-c1-staleleave.log"
+case_run "B5b and the row stays C1" 0 "DECISION (§2.5)   : C1" -- \
+  node "$REDUCE" --sampler "$WORK/sampler-plaintext.json" --shape b --consent yes --audible-subject yes \
+  --log "$WORK/trace-c1-staleleave.log"
+case_run "B5c and the exclusion is REPORTED with its reason, not silent" 0 "outside this leg's transition window" -- \
+  node "$REDUCE" --sampler "$WORK/sampler-plaintext.json" --shape b --consent yes --audible-subject yes \
+  --log "$WORK/trace-c1-staleleave.log"
+case_run "B5d a via=user teardown INSIDE the transition DOES witness a leave (the scope is not just 'ignore everything')" 0 "M2 (real leave?)  : both" -- \
+  node "$REDUCE" --sampler "$WORK/sampler-plaintext.json" --shape b --consent yes --audible-subject yes \
+  --log "$WORK/trace-c1-negated.log"
+case_run "B5e the disconnect.entry seam is CONSUMED, so a teardown that throws is still witnessed" 0 "disconnect.entry seam present" -- \
+  node "$REDUCE" --sampler "$WORK/sampler-plaintext.json" --shape b --consent yes --audible-subject yes \
+  --log "$WORK/trace-c0.log"
+case_run "B5f the entry/preclear pair of ONE teardown counts as ONE leave" 0 "=> 1 distinct via=\"user\" leave(s)" -- \
+  node "$REDUCE" --sampler "$WORK/sampler-plaintext.json" --shape b --consent yes --audible-subject yes \
+  --log "$WORK/trace-c0.log"
+
+echo
+echo "=== stage 9m: the leak window is on the FRESH ssrc, at or after the fiducial ==="
+# 🔴 The deleted tolerance only ever widened acceptance BACKWARDS; this capture
+# has a call-1 window opening INSIDE it, and a lingering old inbound-rtp row.
+case_run "W1 a call-1 window INSIDE the deleted tolerance is still rejected" 0 "DECISION (§2.5)   : C0" -- \
+  node "$REDUCE" --sampler "$WORK/sampler-boundary.json" --shape b --consent yes --audible-subject yes \
+  --log "$WORK/trace-c0.log"
+case_run "W1b and it is REPORTED as rejected, not silently skipped" 0 "REJECTED as pre-fiducial" -- \
+  node "$REDUCE" --sampler "$WORK/sampler-boundary.json" --shape b --consent yes --audible-subject yes \
+  --log "$WORK/trace-c0.log"
+case_run "W2 a LINGERING old inbound-rtp row does not move the fiducial or the window" 0 "DECISION (§2.5)   : C0" -- \
+  node "$REDUCE" --sampler "$WORK/sampler-lingering.json" --shape b --consent yes --audible-subject yes \
+  --log "$WORK/trace-c0.lingering.log"
+case_run "W2b and the run still reads ALIGNED for the right reason" 0 "aligned — fiducials agree" -- \
+  node "$REDUCE" --sampler "$WORK/sampler-lingering.json" --shape b --consent yes --audible-subject yes \
+  --log "$WORK/trace-c0.lingering.log"
+
+echo
+echo "=== stage 9n: the capture NAMES ITS ARM, and the cross-check bites ==="
+# 🔴 The dump carried no `consent`, so the reducer's cross-check was dead code
+# and the H3 polarity rule rested on a CLI flag alone.
+case_run "P1 a consent=yes capture reduced with --consent no is REFUSED" 3 "refusing to file a run into the wrong arm" -- \
+  node "$REDUCE" --sampler "$WORK/sampler-plaintext.json" --shape b --consent no --audible-subject yes
+case_run "P1b and a no-consent capture reduced as consent=yes is refused too" 3 "refusing to file a run into the wrong arm" -- \
+  node "$REDUCE" --sampler "$WORK/sampler-bytesonly.json" --shape b --consent yes --audible-subject unknown
+
 echo
 echo "=== stage 10: the launcher must FAIL LOUDLY on a broken rig ==="
 FAKESHELL="$WORK/fakeshell"
@@ -380,6 +553,80 @@ case_run "L5 steps never asks anyone to hand credentials to a script" 0 "All cre
   bash "$HERE/launch-seats.sh" steps
 case_run "L6 steps carries the polarity step and says it is not optional" 0 "Step 9 is not optional" -- \
   bash "$HERE/launch-seats.sh" steps
+case_run "L6b steps tells the operator to record the ARM on the capture itself" 0 'consent: "yes"|"no"' -- \
+  bash "$HERE/launch-seats.sh" steps
+case_run "L6c steps runs the aggregate with an enforced per-arm minimum" 0 "--min-arm-runs 5 --aggregate" -- \
+  bash "$HERE/launch-seats.sh" steps
+
+# 🔴 B7 — the frontend pin. It defaulted to a LITERAL commit that predates the
+# instrumentation, so `check_frontend_dist` and `check_bundle_serialization`
+# were guaranteed to disagree: before the mandatory re-stage the first passed
+# and the second failed; after it they INVERT. `check` could then never exit 0
+# and `require_ok` refuses every seat, so the leg was unrunnable either way.
+PINSHELL="$WORK/pinshell"
+mkdir -p "$PINSHELL/frontend-dist/assets" "$PINSHELL/src"
+printf 'frontend_commit=1111111111111111111111111111111111111111
+dirty=false
+shell_commit=fc4855e4c1b544b8bbaef6fe39317b127a1c95a4
+shell_dirty=false
+' >"$PINSHELL/frontend-dist/BUILD_INFO.txt"
+printf 'x=1;console.error("[gate-trace] "+JSON.stringify({a:1}));
+' >"$PINSHELL/frontend-dist/assets/index-abc.js"
+case_run "L7 a dist staged from ANOTHER commit is refused, and the message names BOTH halves of the pair" 1 "THIS IS ONE HALF OF A PAIR" -- \
+  env SLOGA_SHELL_DIR="$PINSHELL" SLOGA_APPIMAGE="$PINSHELL/nope.AppImage" \
+  bash "$HERE/launch-seats.sh" check
+case_run "L7b the pin is EXPLICITLY settable, and then that half passes" 1 "ok: frontend-dist staged from 1111111111111111111111111111111111111111" -- \
+  env SLOGA_SHELL_DIR="$PINSHELL" SLOGA_APPIMAGE="$PINSHELL/nope.AppImage" \
+  SLOGA_EXPECT_FRONTEND_COMMIT=1111111111111111111111111111111111111111 \
+  bash "$HERE/launch-seats.sh" check
+case_run "L7c and it says WHERE the expected commit came from" 1 "from SLOGA_EXPECT_FRONTEND_COMMIT" -- \
+  env SLOGA_SHELL_DIR="$PINSHELL" SLOGA_APPIMAGE="$PINSHELL/nope.AppImage" \
+  SLOGA_EXPECT_FRONTEND_COMMIT=1111111111111111111111111111111111111111 \
+  bash "$HERE/launch-seats.sh" check
+
+# 🔴 `shell_dirty` was read by NOBODY: the packaged seat's own provenance went
+# unchecked while the dist's was gated.
+DIRTYSHELL="$WORK/dirtyshell"
+mkdir -p "$DIRTYSHELL/frontend-dist/assets"
+printf 'frontend_commit=1111111111111111111111111111111111111111
+dirty=false
+shell_commit=fc4855e4c1b544b8bbaef6fe39317b127a1c95a4
+shell_dirty=true
+' >"$DIRTYSHELL/frontend-dist/BUILD_INFO.txt"
+printf 'x=1;console.error("[gate-trace] "+JSON.stringify({a:1}));
+' >"$DIRTYSHELL/frontend-dist/assets/index-abc.js"
+if cmp -s "$DIRTYSHELL/frontend-dist/BUILD_INFO.txt" "$PINSHELL/frontend-dist/BUILD_INFO.txt"; then
+  note_fail "the dirty-shell control is BYTE-IDENTICAL to the clean-shell one"
+else
+  echo "  CONTROL PASS  the dirty-shell BUILD_INFO differs from the clean-shell one"
+fi
+case_run "L8 a packaged seat built from a DIRTY shell tree is refused by default" 1 "built from a DIRTY shell tree" -- \
+  env SLOGA_SHELL_DIR="$DIRTYSHELL" SLOGA_APPIMAGE="$DIRTYSHELL/nope.AppImage" \
+  SLOGA_EXPECT_FRONTEND_COMMIT=1111111111111111111111111111111111111111 \
+  bash "$HERE/launch-seats.sh" check
+case_run "L8b it can be accepted DELIBERATELY, and then every result says the provenance is unproven" 1 "ACCEPTED because SLOGA_ALLOW_DIRTY_SHELL=1" -- \
+  env SLOGA_SHELL_DIR="$DIRTYSHELL" SLOGA_APPIMAGE="$DIRTYSHELL/nope.AppImage" \
+  SLOGA_EXPECT_FRONTEND_COMMIT=1111111111111111111111111111111111111111 \
+  SLOGA_ALLOW_DIRTY_SHELL=1 \
+  bash "$HERE/launch-seats.sh" check
+case_run "L8c and a clean shell tree passes that check" 1 "ok: packaged seat built from a clean shell tree" -- \
+  env SLOGA_SHELL_DIR="$PINSHELL" SLOGA_APPIMAGE="$PINSHELL/nope.AppImage" \
+  SLOGA_EXPECT_FRONTEND_COMMIT=1111111111111111111111111111111111111111 \
+  bash "$HERE/launch-seats.sh" check
+
+# 🔴 THE DEFAULT PIN ITSELF. Every case above passes an explicit override, so
+# none of them would notice the pin going back to a FROZEN LITERAL — which is
+# the defect: a literal that predates the instrumentation can never agree with
+# the bundle check, and `check` then cannot exit 0 at all.
+PIN_FRONTEND_DIR="${SLOGA_FRONTEND_DIR:-$(cd "$HERE/../.." && pwd)}"
+head_sha=$(git -C "$PIN_FRONTEND_DIR" rev-parse HEAD 2>/dev/null)
+if [ -z "$head_sha" ]; then
+  note_fail "could not read the frontend worktree HEAD ($PIN_FRONTEND_DIR) — the derived-pin control cannot run, and it is not skipped silently"
+else
+  case_run "L9 with no override, the expected frontend commit IS this worktree's HEAD (not a frozen literal)" 1 "expecting frontend commit $head_sha (from the worktree HEAD" -- \
+    env SLOGA_SHELL_DIR="$PINSHELL" SLOGA_APPIMAGE="$PINSHELL/nope.AppImage" \
+    bash "$HERE/launch-seats.sh" check
+fi
 
 echo
 echo "=== stage 11: B7 — the console-forwarding / serialization PRE-FLIGHT ==="
