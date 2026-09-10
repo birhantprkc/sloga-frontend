@@ -126,6 +126,22 @@ export function CreateForumPostModal(
               </TagRow>
             </Column>
           </Show>
+
+          {/* A forum can require a tag while offering this member none they
+              are allowed to apply — every tag moderated, or the last one
+              deleted. The block above then renders NOTHING, and `Create`
+              stays disabled for good with nothing on screen saying why, which
+              reads exactly as "the tags are missing" (report 2026-09-10, from
+              a member who could not post in a tag-required forum). Say it
+              instead of leaving a dead button. */}
+          <Show when={props.channel.requireTag && !availableTags().length}>
+            <small>
+              <Trans>
+                Every post in this forum needs a tag, but none of its tags are
+                ones you can apply. Ask someone who manages this channel.
+              </Trans>
+            </small>
+          </Show>
         </Column>
       </form>
     </Dialog>
