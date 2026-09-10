@@ -34,6 +34,41 @@ export type ActiveModal = {
 };
 
 /**
+ * Drop out of native fullscreen so that a modal about to open is actually on
+ * screen.
+ *
+ * `requestFullscreen()` promotes ONE element into the top layer and paints a
+ * `::backdrop` over the rest of the document. Modals are portalled into
+ * `#floating`, a SIBLING of `#root` and therefore not inside whatever went
+ * fullscreen, so while the call card is fullscreen (VoiceCallCard) every
+ * dialog opens invisibly underneath it. No `z-index` reaches past the top
+ * layer.
+ *
+ * Reported 2026-09-10: a user with the call fullscreen started a screen
+ * share, answered the browser's own source picker (browser chrome, so
+ * unaffected), and never saw the resolution/FPS dialog waiting behind the
+ * call — the share sits paused while that dialog is open, so it looked like
+ * the share had silently failed, and each retry left another dialog stacked
+ * up out of sight.
+ *
+ * Leaving fullscreen rather than promoting `#floating` into the top layer
+ * alongside it: measured in Chrome 2026-09-10, a `popover` host DOES paint
+ * above the fullscreen element but is NOT hit-tested there — its
+ * `position: fixed` children never receive the click. That trades an
+ * invisible dialog for a visible dead one, which is worse. Moving `#floating`
+ * into the fullscreen element does work, but it re-parents the live call PiP
+ * and its `<video>` elements mid-call.
+ *
+ * VoiceCallCard's own `fullscreenchange` listener clears `voice.fullscreen()`
+ * from here, so the call card's state follows without a second write.
+ */
+function leaveFullscreenForModal() {
+  if (typeof document === "undefined" || !document.fullscreenElement) return;
+  // Rejects when the document already left fullscreen by some other route.
+  void document.exitFullscreen?.().catch(() => undefined);
+}
+
+/**
  * Global modal controller for layering and displaying one or more modal to the user
  */
 export class ModalController {
@@ -63,6 +98,7 @@ export class ModalController {
     this.openModal = this.openModal.bind(this);
     this.pop = this.pop.bind(this);
     this.remove = this.remove.bind(this);
+    this.removeOfType = this.removeOfType.bind(this);
     this.isOpen = this.isOpen.bind(this);
     this.closeAll = this.closeAll.bind(this);
     this.lockDismiss = this.lockDismiss.bind(this);
@@ -74,6 +110,8 @@ export class ModalController {
    * @param props Modal parameters
    */
   openModal(props: Modals) {
+    leaveFullscreenForModal();
+
     //Unique ID from clock that can't run backwards
     const id = performance.now().toString();
     this.setModals((modals) => [
@@ -144,6 +182,27 @@ export class ModalController {
     batch(() => {
       for (const modal of this.modals) {
         this.remove(modal.id);
+      }
+    });
+  }
+
+  /**
+   * Close every open modal of the given types.
+   *
+   * For modals that stand for something outside themselves: when that thing
+   * is torn down by some OTHER path, the dialog asking about it is stale and
+   * has to go with it. Nothing here knows the modal's id — the owner asked
+   * for it by type and never got one back — and closing by type is the honest
+   * scope anyway, since a stale one is exactly the one whose id is lost.
+   *
+   * Named types only, never a blanket close: this must not reach past the
+   * feature that called it.
+   */
+  removeOfType(...types: Modals["type"][]) {
+    const wanted = new Set<string>(types);
+    batch(() => {
+      for (const modal of this.modals) {
+        if (modal.show && wanted.has(modal.props.type)) this.remove(modal.id);
       }
     });
   }

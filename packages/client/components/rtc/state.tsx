@@ -150,12 +150,14 @@ import {
   removeTurnRequest,
   retainPresentRequests,
 } from "./turnRequests";
+import { vadGateDecision } from "./vadGatePolicy";
 import {
   createNoiseFloorTracker,
   levelFromFrequencyData,
   VAD_AUDIO_CONSTRAINTS,
   VAD_FFT_SIZE,
-  VAD_OPEN_FRAMES,
+  VAD_FRAME_MS,
+  VAD_TICK_MS,
 } from "./vadLevel";
 import { VoiceAudioPipeline } from "./voiceAudioPipeline";
 import { voiceNodeForChannel } from "./voiceNode";
@@ -515,6 +517,10 @@ class Voice {
   private sound: SoundController;
 
   private openModal;
+  /** Dismiss stale dialogs whose subject this class just tore down. */
+  #closeModalsOfType: ModalControllerExtended["removeOfType"];
+  /** A web screen-share start is in flight (the user is in the OS picker). */
+  #screenshareStarting = false;
   private getClient;
   /** App MFA password prompt — reused to mint the MLS first-publish ticket
    * (slice 6.4); the password is entered natively and never reaches the store. */
@@ -541,7 +547,7 @@ class Voice {
   #pttNativeArming = false;
   #vadStream: MediaStream | undefined;
   #vadCtx: AudioContext | undefined;
-  #vadFrame: number | undefined;
+  #vadTimer: ReturnType<typeof setInterval> | undefined;
   #vadSilenceTimer: ReturnType<typeof setTimeout> | undefined;
   /**
    * Pending delayed re-check behind the autoplay-gate banner: set while a
@@ -1272,6 +1278,7 @@ class Voice {
     };
 
     this.openModal = modals.openModal;
+    this.#closeModalsOfType = modals.removeOfType;
     this.#mfaFlow = modals.mfaFlow;
 
     this.getClient = useClient();
@@ -3368,15 +3375,23 @@ class Voice {
     try {
       const room = this.room();
       if (!room) throw "invalid state";
-      await this.#setMicEnabled(
-        room,
-        (this.#settings.micOn || !!fromMute) &&
-          !room.localParticipant.isMicrophoneEnabled,
-      );
+      // Undeafening is the half that restores the microphone, and "are we
+      // deafened right now" is the persisted flag — NOT
+      // `!isMicrophoneEnabled`. In voice-activity mode that is merely whether
+      // the gate happens to be open this instant, so pressing DEAFEN during a
+      // pause between words used to switch the microphone on.
+      const undeafening = this.#settings.deafen;
+      const wantMic = undeafening && (this.#settings.micOn || !!fromMute);
+      await this.#setMicEnabled(room, wantMic);
 
-      this.#settings.deafen = !this.#settings.deafen;
+      this.#settings.deafen = !undeafening;
       if (fromMute) {
-        this.#settings.micOn = room.localParticipant.isMicrophoneEnabled;
+        // Only the ON direction is reconciled against the real track: an
+        // unmute that could not capture must not read as live, but a mute
+        // always takes.
+        this.#settings.micOn = wantMic
+          ? room.localParticipant.isMicrophoneEnabled
+          : false;
       }
       if (this.#settings.deafen) {
         this.sound.playSound("deafen");
@@ -3404,12 +3419,20 @@ class Voice {
     try {
       const room = this.room();
       if (!room) throw "invalid state";
-      await this.#setMicEnabled(
-        room,
-        !room.localParticipant.isMicrophoneEnabled,
-      );
+      // Toggle the user's INTENT, never the live track. Voice activity opens
+      // and closes the published microphone from tick to tick, so
+      // `!isMicrophoneEnabled` made this button mean whatever the gate
+      // happened to be doing at the moment of the press — hit MUTE during a
+      // pause between words and it turned the microphone ON.
+      const want = !this.#settings.micOn;
+      await this.#setMicEnabled(room, want);
 
-      this.#settings.micOn = room.localParticipant.isMicrophoneEnabled;
+      // Muting always takes. Unmuting can fail (permission denied, no
+      // capture device), and a microphone that never came up must not be
+      // shown as live — so only the ON direction is reconciled.
+      this.#settings.micOn = want
+        ? room.localParticipant.isMicrophoneEnabled
+        : false;
 
       if (this.#settings.micOn) {
         this.sound.playSound("unmute");
@@ -4697,6 +4720,21 @@ class Voice {
       void stopScreenAudio(this.#screenAudioSessionId);
       await room.localParticipant.setScreenShareEnabled(false);
 
+      // The quality dialog is asking about a share that no longer exists, so
+      // it goes with it. Without this it outlived every stop — including the
+      // `ended` stop when the shared window closes — and the next start
+      // opened another one on top of it. That is how a user who could not see
+      // the dialogs at all (they were behind a fullscreen call — see
+      // `leaveFullscreenForModal` in components/modal) stacked one per
+      // attempt, 2026-09-10.
+      //
+      // NOT the source picker: its `onClose` is what answers
+      // `window.native.screenPickerCallback`, and closing it from here would
+      // bypass that and leave the shell's picker waiting forever. It also
+      // cannot be open on this path — a share it has not answered yet has not
+      // published, so `screenshare()` is false and this branch is unreachable.
+      this.#closeModalsOfType("screen_share_settings");
+
       // The track's stop() already tore the processor down; just drop the
       // handle so the next share starts from a clean slate.
       this.#screenShield = undefined;
@@ -4705,6 +4743,17 @@ class Voice {
 
       this.sound.playSound("streamEnd");
     } else {
+      // A start is only observable in `screenshare()` once getDisplayMedia
+      // has resolved, and the user is staring at the OS picker for all of
+      // that. A second press inside that window used to land here again:
+      // livekit dedupes the PUBLICATION (a pending publish of the same source
+      // is awaited and returned), but everything this method does AROUND the
+      // publish then ran a second time against that one track — another
+      // privacy-shield processor, another `ended` handler, another quality
+      // dialog. Guarding the START only: a press that arrives after the track
+      // is up takes the stop branch above, which must stay reachable.
+      if (this.#screenshareStarting) return;
+
       // Mint the native screen-audio staleness token for this attempt (F2)
       // — a second toggle, cancel, or disconnect bumps it and dooms any
       // capture still in flight below.
@@ -4740,6 +4789,11 @@ class Voice {
       }
 
       try {
+        // Set inside the try so that a throw can never wedge screen share for
+        // the rest of the call; nothing can interleave between the check
+        // above and here, as there is no await in between.
+        this.#screenshareStarting = true;
+
         // Bitrate/framerate for the publish encoding come from the initial
         // (stored) quality. If the picker changes the quality afterwards, the
         // `callback` below re-applies the encoding to the new tier — a bare
@@ -5053,6 +5107,8 @@ class Voice {
         // Electron shell's AbortError "Error starting capture" — is not an
         // error to the user who just cancelled; everything else surfaces.
         if (!isScreenShareCancel(e)) this.onErr(e);
+      } finally {
+        this.#screenshareStarting = false;
       }
     }
   }
@@ -6494,43 +6550,65 @@ class Voice {
       // VAD_OPEN_FRAMES of sustained speech, but any single frame above it
       // keeps an already-open gate open (resets the silence countdown).
       let openStreak = 0;
+      let lastTick = performance.now();
 
       const tick = () => {
+        // Frames this tick stands in for. On a timer that a throttled window
+        // can stretch, "one tick" is no longer "one frame", and both the
+        // open streak and the noise floor are tuned in frames.
+        const now = performance.now();
+        const frames = Math.max(1, (now - lastTick) / VAD_FRAME_MS);
+        lastTick = now;
+
         analyser.getByteFrequencyData(buf);
         const level = levelFromFrequencyData(buf);
-        const autoThreshold = auto.update(level);
+        const autoThreshold = auto.update(level, frames);
         const threshold = this.#settings.vadAuto
           ? autoThreshold
           : this.#settings.vadThreshold;
 
-        if (level > threshold && !this.whisper.target()) {
+        const decision = vadGateDecision({
+          level,
+          threshold,
+          frames,
+          openStreak,
+          micLive: room.localParticipant.isMicrophoneEnabled,
+          // The user's own mute/deafen outranks voice activity — see
+          // `vadGatePolicy.ts` for why this gate cannot read it off the
+          // published track.
+          userMuted: !this.#settings.micOn || this.#settings.deafen,
           // Voice-activity must not open the room mic while whispering — the
           // aside would otherwise be spoken to the whole call.
+          whispering: !!this.whisper.target(),
+        });
+        openStreak = decision.openStreak;
+
+        if (decision.speaking) {
           clearTimeout(this.#vadSilenceTimer);
           this.#vadSilenceTimer = undefined;
-          openStreak++;
-          if (
-            openStreak >= VAD_OPEN_FRAMES &&
-            !room.localParticipant.isMicrophoneEnabled
-          ) {
+          if (decision.open) {
             void this.#setMicEnabled(room, true).catch(() => {});
           }
-        } else {
-          openStreak = 0;
-          if (
-            room.localParticipant.isMicrophoneEnabled &&
-            !this.#vadSilenceTimer
-          ) {
-            this.#vadSilenceTimer = setTimeout(() => {
-              room.localParticipant.setMicrophoneEnabled(false);
-              this.#vadSilenceTimer = undefined;
-            }, 600);
-          }
+        } else if (
+          room.localParticipant.isMicrophoneEnabled &&
+          !this.#vadSilenceTimer
+        ) {
+          this.#vadSilenceTimer = setTimeout(() => {
+            room.localParticipant.setMicrophoneEnabled(false);
+            this.#vadSilenceTimer = undefined;
+          }, 600);
         }
-
-        this.#vadFrame = requestAnimationFrame(tick);
       };
+
+      // A TIMER, not requestAnimationFrame: rAF does not fire at all while
+      // the window is hidden or minimized, which is most of a call for anyone
+      // who alt-tabs into a game. The gate froze in whichever state it last
+      // held — mic stuck shut so the user could not speak until they came
+      // back, or stuck open as a hot mic. A call keeps the page audible, so
+      // this timer is exempt from background throttling; if it is throttled
+      // anyway, `frames` above keeps the arithmetic honest.
       tick();
+      this.#vadTimer = setInterval(tick, VAD_TICK_MS);
     } catch {
       // mic access denied — VAD won't run
     }
@@ -6558,11 +6636,11 @@ class Voice {
 
   #stopVAD() {
     this.#vadGen++;
-    if (this.#vadFrame !== undefined) cancelAnimationFrame(this.#vadFrame);
+    if (this.#vadTimer !== undefined) clearInterval(this.#vadTimer);
     clearTimeout(this.#vadSilenceTimer);
     this.#vadStream?.getTracks().forEach((t) => t.stop());
     this.#vadCtx?.close();
-    this.#vadFrame = undefined;
+    this.#vadTimer = undefined;
     this.#vadStream = undefined;
     this.#vadCtx = undefined;
     this.#vadSilenceTimer = undefined;

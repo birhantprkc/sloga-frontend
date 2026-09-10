@@ -99,11 +99,13 @@ export default function ForumSettings(props: ChannelSettingsProps) {
           {(tag, index) => (
             <TagEditor>
               <TagInput
-                style={{ width: "56px", "flex-grow": "0" }}
+                emoji
                 placeholder="🏷️"
                 maxlength={32}
                 value={tag.emoji}
-                onInput={(e) => setTags(index(), "emoji", e.currentTarget.value)}
+                onInput={(e) =>
+                  setTags(index(), "emoji", e.currentTarget.value)
+                }
               />
               <TagInput
                 placeholder={t`Tag name`}
@@ -207,5 +209,18 @@ const TagInput = styled("input", {
     outline: "none",
     flexGrow: 1,
     minWidth: "120px",
+  },
+  variants: {
+    // The one-emoji box. This has to be a variant rather than an inline
+    // `width: 56px`, which is what it used to be: the base `min-width` beats
+    // a plain `width`, so the emoji box rendered at 120px (measured on a
+    // 400px-wide viewport, 2026-09-10) and ate a third of a phone's row.
+    emoji: {
+      true: {
+        width: "56px",
+        minWidth: "56px",
+        flexGrow: 0,
+      },
+    },
   },
 });
