@@ -36,6 +36,32 @@ export const VAD_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
  */
 export const VAD_OPEN_FRAMES = 3;
 
+/**
+ * Length of the nominal frame the constants above are expressed in.
+ *
+ * The gate no longer rides `requestAnimationFrame` (a hidden or minimized
+ * window stops it dead, freezing the gate in whatever state it was last in —
+ * see `#startVAD`), so it has to convert its own elapsed time back into the
+ * frame unit `VAD_OPEN_FRAMES` and the noise-floor rates are tuned in.
+ */
+export const VAD_FRAME_MS = 1000 / 60;
+
+/**
+ * How often the call gate samples the analyser. One nominal frame, so a
+ * foreground call behaves exactly as it did on `requestAnimationFrame`; a
+ * throttled window stretches it and the gate scales its arithmetic by the
+ * span it actually measured rather than assuming this one.
+ */
+export const VAD_TICK_MS = Math.round(VAD_FRAME_MS);
+
+/**
+ * Ceiling on how many frames one late `update()` may stand in for. Beyond
+ * about half a second of catch-up the floor has no useful history left, and
+ * an unbounded exponent lets a single resumed tick settle it straight onto
+ * one sample.
+ */
+const NOISE_FLOOR_MAX_CATCHUP_FRAMES = 30;
+
 /** 0–100 loudness from an analyser's byte-frequency snapshot. */
 export function levelFromFrequencyData(buf: Uint8Array): number {
   let sum = 0;
@@ -77,8 +103,25 @@ export function autoThresholdFor(noiseFloor: number): number {
 export function createNoiseFloorTracker() {
   let floor = 100;
   return {
-    update(level: number): number {
-      const rate = level < floor ? 0.03 : 0.003;
+    /**
+     * @param level Current 0-100 level.
+     * @param frames How many nominal 60 fps frames this update stands in for.
+     *   The settings meters tick once per animation frame and pass nothing;
+     *   the call gate runs on a timer whose cadence a hidden window can
+     *   stretch, and passes the span it actually measured so a late tick
+     *   settles the floor by as much as the frames it replaced would have.
+     */
+    update(level: number, frames = 1): number {
+      const perFrame = level < floor ? 0.03 : 0.003;
+      // Compounded over the span, never `perFrame * frames`: that overshoots
+      // for a long gap and crosses 1 outright at ~33 frames, which would slam
+      // the floor onto (or past) whatever single sample the late tick read.
+      const rate =
+        1 -
+        Math.pow(
+          1 - perFrame,
+          Math.min(Math.max(frames, 1), NOISE_FLOOR_MAX_CATCHUP_FRAMES),
+        );
       floor += (level - floor) * rate;
       return autoThresholdFor(floor);
     },
