@@ -8,6 +8,67 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // v0.58.1 (2026-09-11). Copy constraints, load-bearing:
+  // - 🔴 ANNOUNCED WITHOUT A LIVE LEG, deliberately. The standing rule in this
+  //   file — announce a fix only once it has been seen working — was WAIVED by
+  //   the operator for this entry on 2026-09-10, after the trade was put to
+  //   them: ship now and fix on report, rather than hold the release. Nothing
+  //   below has run on a real call. Everything below is covered by unit specs
+  //   (the mute gate has a negative-control regression test) and the fullscreen
+  //   dialog fix was reproduced and re-verified in a real browser, but that is
+  //   not the same thing and this comment exists so nobody later mistakes it
+  //   for one.
+  // - 🔴 If a report comes back on any of these, THIS entry is what to correct
+  //   first: an announced fix that does not work is worse than an unannounced
+  //   one, because the user has been told to stop looking for the bug.
+  // - The voice-activity items only reach users on the Voice Activity input
+  //   mode (Settings → Voice). Open Mic and Push to Talk were never affected,
+  //   so the copy names the mode rather than implying every muted user was
+  //   being broadcast.
+  // - This entry CLEARS the held-back list from the 0.58.0 entry: group-chat
+  //   calls, the cancelled-picker dialog, the shorter join banner, the
+  //   immediate pause when a plain browser joins, and the chip after people
+  //   churn. Those were held back for want of a live leg they never got; they
+  //   ship announced here under the same waiver as the rest of this entry.
+  // - Say "cannot be secured", never the exact banner sentence, and never
+  //   "turned off" / "starting capture" wording: those strings are build gate
+  //   markers and the notes must not collide with them.
+  // - NO new encryption claim. Media E2EE is a native-shell capability
+  //   (`nativeE2EEAvailable`: Tauri, the Electron shell, Capacitor Android) and
+  //   the web app cannot do it; the Android path has never been exercised live,
+  //   so it is not announced here. 0.58.0's entry already tells that story.
+  // - 0.58.1 is the first build on ONE version across web, Windows, macOS,
+  //   Linux and Android since 09-04. That is what resolves the closing lines in
+  //   both the 0.58.0 and the 09-05 sidebar-highlight entries, which promised
+  //   Windows and Android these changes "with their next update".
+  {
+    id: "sloga-2026-09-11",
+    title: "Patch Notes",
+    published_at: "2026-09-11T17:00:00.000Z",
+    web_version: "0.58.1",
+    markdown_content: `## v0.58.1 — Mute means mute
+
+### 🎙️ Your microphone does what the button says
+- **Muting yourself now holds.** On Voice Activity input mode, talking could re-open your microphone a moment after you started — while the button still read muted. If your audio interface has a mute of its own, that one always worked, which is the detail that gave the bug away.
+- **Your microphone no longer freezes while Sloga is in the background.** Minimising the window or alt-tabbing into a game stopped voice detection outright, leaving your microphone stuck however it was last set: unable to open until you came back, or still open when you thought you were quiet.
+- **Mute and deafen follow what you pressed.** They used to flip whatever your microphone happened to be doing at that instant, so pressing mute during a pause between words could switch it on.
+
+### 🖥️ Screen sharing
+- **The resolution and frame-rate options are visible when the call is full screen.** They were opening behind it, so the share sat paused waiting on a dialog you could not see.
+- **Retrying a share no longer stacks up dialogs** behind the first one.
+- **Cancelling the screen picker counts as cancelling**, instead of raising an error about it.
+
+### 💬 Forums
+- **A forum can no longer require a tag it does not have.** Turning on "every post needs a tag" without adding any tags left the New Post button dead with nothing on screen explaining why. Settings now says which of the two to change, and the composer says what is missing.
+
+### 👥 Group calls
+- **Group owners can turn calls on** for their group.
+- A call that **cannot be secured** says so before anything is sent, and the call chip settles correctly after people join and leave.
+
+### 🔢 Version
+- Web, Windows, macOS, Linux and Android are all on v0.58.1 — one version across the whole fleet.
+`,
+  },
   // Linux 0.58.0 (2026-09-07). Copy constraints, load-bearing:
   // - Linux-only release: encrypted calls switched on for the Linux app, proven
   //   on the wire (receiver-side ciphertext tap) and with a deliberate key
