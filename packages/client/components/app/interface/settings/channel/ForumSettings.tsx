@@ -1,4 +1,4 @@
-import { For, createSignal } from "solid-js";
+import { For, Show, createSignal } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
@@ -75,8 +75,19 @@ export default function ForumSettings(props: ChannelSettingsProps) {
     }
   }
 
+  /**
+   * "Require tags" and the tag list are separate controls on this one screen,
+   * and nothing used to stop them being saved in the one combination that
+   * cannot work: require a tag, define none. Every post in the forum is then
+   * refused, with no tag block in the composer to explain it — that is the
+   * state a 2026-09-10 report arrived in, from the person who had set it.
+   */
+  const namedTags = () => tags.filter((tag) => tag.name.trim().length >= 1);
+  const requiresTagsItHasNot = () => requireTag() && namedTags().length === 0;
+
   const canSave = () =>
     !saving() &&
+    !requiresTagsItHasNot() &&
     tags.every((tag) => {
       const name = tag.name.trim();
       return name.length >= 1 && name.length <= 32;
@@ -154,6 +165,14 @@ export default function ForumSettings(props: ChannelSettingsProps) {
         >
           <Trans>Every post must have at least one tag</Trans>
         </Checkbox>
+        <Show when={requiresTagsItHasNot()}>
+          <Text>
+            <Trans>
+              Add at least one tag, or turn this off — a forum that requires a
+              tag it does not have cannot accept any posts.
+            </Trans>
+          </Text>
+        </Show>
       </Column>
 
       <Column>

@@ -1,4 +1,4 @@
-import { For, Show, createSignal } from "solid-js";
+import { For, Match, Show, Switch, createSignal } from "solid-js";
 
 import { createFormControl, createFormGroup } from "solid-forms";
 
@@ -127,19 +127,45 @@ export function CreateForumPostModal(
             </Column>
           </Show>
 
-          {/* A forum can require a tag while offering this member none they
-              are allowed to apply — every tag moderated, or the last one
-              deleted. The block above then renders NOTHING, and `Create`
-              stays disabled for good with nothing on screen saying why, which
-              reads exactly as "the tags are missing" (report 2026-09-10, from
-              a member who could not post in a tag-required forum). Say it
-              instead of leaving a dead button. */}
+          {/* A forum can require a tag and still offer this member none to
+              apply. The block above then renders NOTHING and `Create` stays
+              disabled for good with nothing on screen saying why, which reads
+              exactly as "there is nowhere to add tags" — which is what was
+              reported on 2026-09-10, by the person who had turned Require
+              tags ON and never added any (they are separate controls on the
+              same settings screen).
+
+              The two ways to get here need different answers, and the
+              no-tags-at-all one is the common one: telling the channel's own
+              manager to go ask a manager is what made the first version of
+              this message useless to the reporter. */}
           <Show when={props.channel.requireTag && !availableTags().length}>
             <small>
-              <Trans>
-                Every post in this forum needs a tag, but none of its tags are
-                ones you can apply. Ask someone who manages this channel.
-              </Trans>
+              <Switch>
+                <Match when={!props.channel.tags.length}>
+                  <Show
+                    when={props.channel.havePermission("ManageChannel")}
+                    fallback={
+                      <Trans>
+                        Every post here needs a tag, but this forum has no tags
+                        yet. Ask someone who manages this channel to add some.
+                      </Trans>
+                    }
+                  >
+                    <Trans>
+                      Every post here needs a tag, but this forum has no tags
+                      yet. Add them in this channel's settings, under Forum.
+                    </Trans>
+                  </Show>
+                </Match>
+                <Match when={availableTags().length === 0}>
+                  <Trans>
+                    Every post here needs a tag, but none of this forum's tags
+                    are ones you can apply. Ask someone who manages this
+                    channel.
+                  </Trans>
+                </Match>
+              </Switch>
             </small>
           </Show>
         </Column>

@@ -2828,6 +2828,10 @@ msgstr "Every"
 msgid "Every post must have at least one tag"
 msgstr "Every post must have at least one tag"
 
+#: components/app/interface/settings/channel/ForumSettings.tsx
+msgid "Add at least one tag, or turn this off — a forum that requires a tag it does not have cannot accept any posts."
+msgstr "Add at least one tag, or turn this off — a forum that requires a tag it does not have cannot accept any posts."
+
 #: components/app/interface/settings/user/Privacy.tsx
 msgid "Everyone"
 msgstr "Everyone"
@@ -6789,8 +6793,16 @@ msgid "Tags (at least one required)"
 msgstr "Tags (at least one required)"
 
 #: components/modal/modals/CreateForumPost.tsx
-msgid "Every post in this forum needs a tag, but none of its tags are ones you can apply. Ask someone who manages this channel."
-msgstr "Every post in this forum needs a tag, but none of its tags are ones you can apply. Ask someone who manages this channel."
+msgid "Every post here needs a tag, but this forum has no tags yet. Ask someone who manages this channel to add some."
+msgstr "Every post here needs a tag, but this forum has no tags yet. Ask someone who manages this channel to add some."
+
+#: components/modal/modals/CreateForumPost.tsx
+msgid "Every post here needs a tag, but this forum has no tags yet. Add them in this channel's settings, under Forum."
+msgstr "Every post here needs a tag, but this forum has no tags yet. Add them in this channel's settings, under Forum."
+
+#: components/modal/modals/CreateForumPost.tsx
+msgid "Every post here needs a tag, but none of this forum's tags are ones you can apply. Ask someone who manages this channel."
+msgstr "Every post here needs a tag, but none of this forum's tags are ones you can apply. Ask someone who manages this channel."
 
 #: components/app/interface/settings/channel/ForumSettings.tsx
 msgid "Tags let members categorise posts. Moderated tags can only be applied by members who can manage this channel."
