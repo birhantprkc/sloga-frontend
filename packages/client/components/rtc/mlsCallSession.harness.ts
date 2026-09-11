@@ -185,6 +185,116 @@ export class World {
       release();
     };
   }
+  /**
+   * When set, the `mlsJoinIntent` stub awaits this AFTER `record` has counted
+   * the call — the join ladder suspended inside its intent broadcast, which is
+   * where a Welcome can land that the ladder never looks for.
+   */
+  joinIntentGate: Promise<void> | null = null;
+  /** The same window for the `callJoinIntent` stub (the native signing call). */
+  callJoinIntentGate: Promise<void> | null = null;
+  /**
+   * The same window for the `mlsReplenish` stub: `start()` suspended in its
+   * KeyPackage enrolment, BEFORE the first establish — `#establishGeneration`
+   * is still 0 and `callCreate` has not run.
+   */
+  replenishGate: Promise<void> | null = null;
+  /**
+   * The same window for the `reconcileCallRoster` stub: a joiner suspended in
+   * `#joinPath`'s pre-join roster pin, BEFORE its first intent.
+   */
+  reconcileRosterGate: Promise<void> | null = null;
+  /**
+   * One scripted rejection, taken by the first `callJoinIntent` to get PAST
+   * its hold (or to enter, when none is open). Boxed so that an `undefined`
+   * error still counts as set.
+   */
+  callJoinIntentFailure: { error: unknown } | null = null;
+  /**
+   * One scripted DS answer, taken by the first `mlsJoinIntent` to get PAST its
+   * hold (or to enter, when none is open) in place of `ok`.
+   */
+  joinIntentAnswer: MlsHttpResult<void> | null = null;
+  /**
+   * Suspend every `mlsJoinIntent` until the returned function runs. Each call
+   * is recorded in `bridgeCalls` BEFORE it waits, so `joinIntents()` already
+   * counts a suspended broadcast. Every call made while held waits on the same
+   * gate; one release resumes them all, and later calls run straight through.
+   */
+  holdJoinIntent(): () => void {
+    return this.#openGate("joinIntentGate");
+  }
+  /** `holdJoinIntent`, for the `callJoinIntent` stub. */
+  holdCallJoinIntent(): () => void {
+    return this.#openGate("callJoinIntentGate");
+  }
+  /**
+   * `holdJoinIntent`, for the `mlsReplenish` stub. Its answer stays `null`
+   * (above the low-water mark), so the hold delays the enrolment and publishes
+   * nothing when released.
+   */
+  holdReplenish(): () => void {
+    return this.#openGate("replenishGate");
+  }
+  /**
+   * `holdJoinIntent`, for the `reconcileCallRoster` stub. EVERY caller waits,
+   * not only the pre-join pin: the admit and rejoin-serve reconciles and the
+   * `fetch_identity` re-drive go through the same stub. The pin reaches it only
+   * when the SFU set holds someone other than SELF (`#reconcileRoster` returns
+   * early on an empty set).
+   */
+  holdReconcileRoster(): () => void {
+    return this.#openGate("reconcileRosterGate");
+  }
+  #openGate(
+    field:
+      | "joinIntentGate"
+      | "callJoinIntentGate"
+      | "replenishGate"
+      | "reconcileRosterGate",
+  ): () => void {
+    assert.equal(this[field], null, `${field} is already held`);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    this[field] = gate;
+    return () => {
+      // Idempotent, and never clears a LATER hold's gate.
+      if (this[field] === gate) this[field] = null;
+      release();
+    };
+  }
+  /**
+   * The next `callJoinIntent` rejects with `error` — AFTER any open hold is
+   * released, so "hold, deliver the Welcome, fail once, release" rejects a
+   * call whose Welcome was already adopted. Later calls answer normally.
+   */
+  failCallJoinIntentOnce(error: unknown): void {
+    assert.equal(
+      this.callJoinIntentFailure,
+      null,
+      "a callJoinIntent failure is already scripted",
+    );
+    this.callJoinIntentFailure = { error };
+  }
+  /**
+   * The next `mlsJoinIntent` answers `result` instead of `ok` — AFTER any open
+   * hold is released, so "hold, deliver the Welcome, answer once, release"
+   * hands a `not_found` / `call_full` / `feature_disabled` / other non-ok to a
+   * ladder whose Welcome was already adopted. The call is still counted by
+   * `record` first. Later calls answer `ok`.
+   */
+  answerJoinIntentOnce(result: MlsHttpResult<void>): void {
+    assert.equal(
+      this.joinIntentAnswer,
+      null,
+      "an mlsJoinIntent answer is already scripted",
+    );
+    this.joinIntentAnswer = result;
+  }
+  /** Every `mlsJoinIntent` recorded so far, suspended ones included. */
+  joinIntents(): number {
+    return this.bridgeCalls.filter((n) => n === "mlsJoinIntent").length;
+  }
   /** Declare one local publication to the SFU as NONE (the unmute shape). */
   declarePlaintext(trackSid = "TR_local"): void {
     this.localPublications = [{ trackSid, encryption: 0 }];
@@ -243,22 +353,33 @@ export class World {
     kind: MlsProcessOutcome["kind"],
     epoch: number,
     removed: MlsMemberDevice[],
+    {
+      removedSelf = false,
+      groupId = GROUP,
+    }: { removedSelf?: boolean; groupId?: string } = {},
   ): void {
+    // The default id is unchanged. Another group's envelope and a removed-self
+    // one get their own, so the session's `#seen` dedup never skips them
+    // against (and `outcomes` never overwrites) a same-epoch GROUP envelope.
+    let id = `env-${kind}-${epoch}`;
+    if (groupId !== GROUP) id += `@${groupId}`;
+    if (removedSelf) id += "-removed-self";
     const envelope: MlsEnvelope = {
-      id: `env-${kind}-${epoch}`,
+      id,
       content_type: contentType,
-      group_id: GROUP,
+      group_id: groupId,
       epoch,
       ciphertext: "",
     };
     this.outcomes.set(envelope.id, {
-      group_id: GROUP,
+      group_id: groupId,
       kind,
       epoch,
-      removed_self: false,
+      removed_self: removedSelf,
       removed,
     });
-    this.epoch = epoch;
+    // `epoch` is GROUP's; another group's envelope does not move it.
+    if (groupId === GROUP) this.epoch = epoch;
     assert.ok(this.sink, "the session registered no sink");
     this.sink({
       kind: "envelope",
@@ -267,9 +388,31 @@ export class World {
     });
   }
 
-  /** The admitter's Welcome lands (the joiner's ladder resolves on it). */
-  async welcome(epoch: number): Promise<void> {
-    this.#deliver("mls_welcome", "welcome_joined", epoch, []);
+  /**
+   * The admitter's Welcome lands (the joiner's ladder resolves on it). Safe at
+   * any moment, including while the ladder is suspended in a held
+   * `callJoinIntent` / `mlsJoinIntent`: the drain does not wait on the ladder,
+   * so it reaches the session as a Welcome arriving mid-broadcast would. A
+   * `groupId` other than `GROUP` is ANOTHER group's Welcome.
+   */
+  async welcome(epoch: number, groupId: string = GROUP): Promise<void> {
+    this.#deliver("mls_welcome", "welcome_joined", epoch, [], { groupId });
+    await flush();
+  }
+
+  /**
+   * A commit for `epoch` that removed THIS device lands: its outcome carries
+   * `removed_self: true`, so the drain takes `ack_removed_self` and schedules
+   * `#onRemovedSelf` as a group action. That action runs on a `setTimeout(0)`
+   * under the fake clock, so `advance(t, 1)` before asserting on it; and the
+   * session drops it while another group action (an establish, a join
+   * ladder) is still in flight. `sfu` and `roster` stay as the spec seated
+   * them — `#onRemovedSelf` branches on whether SELF is still in the SFU.
+   */
+  async removedSelf(epoch: number): Promise<void> {
+    this.#deliver("mls_commit", "commit_applied", epoch, [SELF], {
+      removedSelf: true,
+    });
     await flush();
   }
 
@@ -468,8 +611,13 @@ function bridgeFor(world: World): E2EEBridge {
         world.sink = null;
       };
     }),
-    // Above the low-water mark: nothing to publish, no MFA prompt.
-    mlsReplenish: record("mlsReplenish", async () => null),
+    // Above the low-water mark: nothing to publish, no MFA prompt. Counted by
+    // `record` BEFORE it waits on `holdReplenish`; with no hold open it
+    // settles exactly as a bare `async` return does.
+    mlsReplenish: record("mlsReplenish", async () => {
+      if (world.replenishGate) await world.replenishGate;
+      return null;
+    }),
     callCreate: record(
       "callCreate",
       async (channelId, _userId): Promise<MlsCallCreated> => {
@@ -507,21 +655,42 @@ function bridgeFor(world: World): E2EEBridge {
     callRosterIdentities: record("callRosterIdentities", async () => {
       throw new Error("mls_group_not_found");
     }),
-    reconcileCallRoster: record("reconcileCallRoster", async () => []),
+    // Counted by `record` BEFORE it waits on `holdReconcileRoster`.
+    reconcileCallRoster: record("reconcileCallRoster", async () => {
+      if (world.reconcileRosterGate) await world.reconcileRosterGate;
+      return [];
+    }),
+    // Both intent stubs are counted by `record` BEFORE they wait on a hold
+    // (`holdCallJoinIntent` / `holdJoinIntent`). With no hold open and nothing
+    // scripted (`failCallJoinIntentOnce` / `answerJoinIntentOnce`) they settle
+    // exactly as a bare `async` return does.
     callJoinIntent: record(
       "callJoinIntent",
-      async (): Promise<MlsJoinIntentPayload> => ({
-        device_id: SELF.device_id,
-        key_package_ref: "kp-ref",
-        signature: "sig",
-      }),
+      async (): Promise<MlsJoinIntentPayload> => {
+        if (world.callJoinIntentGate) await world.callJoinIntentGate;
+        const failure = world.callJoinIntentFailure;
+        if (failure) {
+          world.callJoinIntentFailure = null;
+          throw failure.error;
+        }
+        return {
+          device_id: SELF.device_id,
+          key_package_ref: "kp-ref",
+          signature: "sig",
+        };
+      },
     ),
     mlsJoinIntent: record(
       "mlsJoinIntent",
-      async (): Promise<MlsHttpResult<void>> => ({
-        kind: "ok",
-        body: undefined,
-      }),
+      async (): Promise<MlsHttpResult<void>> => {
+        if (world.joinIntentGate) await world.joinIntentGate;
+        const answer = world.joinIntentAnswer;
+        if (answer) {
+          world.joinIntentAnswer = null;
+          return answer;
+        }
+        return { kind: "ok", body: undefined };
+      },
     ),
     processEnvelope: record(
       "processEnvelope",

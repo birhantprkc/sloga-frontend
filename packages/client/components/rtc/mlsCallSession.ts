@@ -1522,6 +1522,16 @@ export class MlsCallSession {
   #enrolmentDeadline = 0;
   /** The single in-flight enrolment re-check tick (null when idle). */
   #enrolmentTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * The lifecycle re-securing backstop (`#armResecuringDeadline`): armed by
+   * the first `#toResecuring` of an episode, cancelled only by `#setState`
+   * leaving `resecuring` and by `dispose` (through `#timers`). Deliberately
+   * NOT a `#resecure` entry: those drive the media hold and a re-establish
+   * force-clears them, which is exactly when this bound must keep running.
+   */
+  #resecuringDeadline: ReturnType<typeof setTimeout> | null = null;
+  /** The `#toResecuring` reason the backstop was armed with (named in its loud). */
+  #resecuringDeadlineReason: string | null = null;
 
   constructor(deps: MlsCallSessionDeps) {
     this.#deps = deps;
@@ -1588,7 +1598,7 @@ export class MlsCallSession {
     // envelope draining into surviving local state mid-establish could
     // schedule `#onRemovedSelf` — single-flight (plus the §4.2 generation
     // guard) keeps that from starting a second concurrent establish.
-    this.#scheduleGroupAction(() => this.#establish());
+    this.#scheduleGroupAction(() => this.#establish(), "establish");
   }
 
   /**
@@ -2080,6 +2090,37 @@ export class MlsCallSession {
     }
   }
 
+  /**
+   * Whether `generation`'s join already completed. Sound as a stop condition
+   * because `#joinedGeneration` is written only by a natively processed
+   * Welcome for the live group (`#onEpochAdvanced`) or by our own DS-`Created`
+   * group.
+   */
+  #joinedIn(generation: number): boolean {
+    return this.#joinedGeneration === generation;
+  }
+
+  /**
+   * The join ladder recognising its own success. A Welcome adopted while the
+   * ladder sits in an await (signing or broadcasting an intent) resolves no
+   * wait — `welcomeVerdict` resolves only an INSTALLED one — so without this
+   * check the loop kept broadcasting intents AS A MEMBER and, once its
+   * retries ran out, ended in `join timed out after retries`: amber with no
+   * owner, because `#assertSelfEnrolled` then found enrolment proven and
+   * latched nothing. Returns true (and logs) when the ladder must stop: no
+   * broadcast, no re-securing, no enrolment assertion, no verdict.
+   */
+  #ladderJoined(generation: number, at: string): boolean {
+    if (!this.#joinedIn(generation)) return false;
+    console.info(
+      "[mls] join ladder: joined in generation",
+      generation,
+      "— no further intents",
+      { at },
+    );
+    return true;
+  }
+
   async #joinPath(
     groupId: string,
     dsChannelId: string,
@@ -2111,6 +2152,9 @@ export class MlsCallSession {
       // it made would re-trigger a peer's rejoin serve against the leaf the
       // LIVE loop is re-adding (the §1.5 oscillation).
       if (this.#terminal() || generation !== this.#establishGeneration) return;
+      // Joined during the previous Welcome wait's timer, or before the first
+      // broadcast: nothing is left to ask for.
+      if (this.#ladderJoined(generation, "loop head")) return;
 
       // The T-15 guard lives in callJoinIntent: it refuses (throws) unless the
       // DS-asserted channel equals the channel the user chose, and signs the
@@ -2124,12 +2168,38 @@ export class MlsCallSession {
           userId: this.#deps.userId,
         });
       } catch (error) {
+        // A member's failed intent signing is moot — never a false red.
+        if (this.#ladderJoined(generation, "intent signing threw")) return;
         this.#onLoud(error); // T-15 mismatch or native error — loud, never plaintext
         return;
       }
+      // Joined while the intent was being signed: broadcast nothing.
+      if (this.#ladderJoined(generation, "intent signed")) return;
 
+      let res: MlsHttpResult<void> | undefined;
       try {
-        const res = await this.#deps.bridge.mlsJoinIntent(groupId, intent);
+        res = await this.#deps.bridge.mlsJoinIntent(groupId, intent);
+      } catch (error) {
+        // A transient network error on the broadcast is not terminal, and the
+        // Welcome we need may already be in flight — fall through to the wait
+        // instead of throwing. (NOT because "the server 400s an already-member
+        // device": it never does — a same-device member intent fans out
+        // flagged `rejoin`; the only 400s are another device of the same
+        // user, slowmode, or a bad signature — `join_intent.rs`, pinned by
+        // the DS tests.) The bounded attempt loop (→ loud RE-SECURING below)
+        // is the backstop; never plaintext.
+        console.warn(
+          "[mls] join intent broadcast failed — awaiting Welcome",
+          error,
+        );
+      }
+      // Joined while the broadcast was in flight: whatever the DS answered is
+      // moot for a member, and acting on it would false-red (a 400 or
+      // slowmode), tear down the group just joined (`not_found`), refuse a
+      // member (`call_full`) or drop to plaintext (`feature_disabled` —
+      // ignoring it keeps the call encrypted, which fails closed).
+      if (this.#ladderJoined(generation, "intent answered")) return;
+      if (res !== undefined) {
         if (res.kind === "feature_disabled") {
           this.#toPlaintext();
           return;
@@ -2156,19 +2226,6 @@ export class MlsCallSession {
           this.#onLoud(new Error("join intent rejected"));
           return;
         }
-      } catch (error) {
-        // A transient network error on the broadcast is not terminal, and the
-        // Welcome we need may already be in flight — fall through to the wait
-        // instead of throwing. (NOT because "the server 400s an already-member
-        // device": it never does — a same-device member intent fans out
-        // flagged `rejoin`; the only 400s are another device of the same
-        // user, slowmode, or a bad signature — `join_intent.rs`, pinned by
-        // the DS tests.) The bounded attempt loop (→ loud RE-SECURING below)
-        // is the backstop; never plaintext.
-        console.warn(
-          "[mls] join intent broadcast failed — awaiting Welcome",
-          error,
-        );
       }
 
       // The admitter's winning Add fans a Welcome to us; the drain processes it
@@ -2177,6 +2234,8 @@ export class MlsCallSession {
       if (welcomed) return;
     }
     if (generation !== this.#establishGeneration) return; // superseded — not ours to report
+    // Joined during the last attempt: the ladder succeeded, it did not run out.
+    if (this.#ladderJoined(generation, "retries spent")) return;
 
     // Retries exhausted — loud RE-SECURING, never plaintext (§1.4). The
     // ladder is now definitively spent, so run the self-enrolment assertion
@@ -2834,7 +2893,10 @@ export class MlsCallSession {
         if (
           (error as { type?: string } | null)?.type === "mls_poisoned_epoch"
         ) {
-          this.#scheduleGroupAction(() => this.#poisonedSuccessor());
+          this.#scheduleGroupAction(
+            () => this.#poisonedSuccessor(),
+            "poisoned_successor:stage",
+          );
           return;
         }
         this.#onLoud(error);
@@ -2859,6 +2921,7 @@ export class MlsCallSession {
           SUBMIT_TIMEOUT_MS,
         );
       } catch {
+        if (this.#submitSuperseded(groupId)) return;
         // Timeout / network — clear pending, re-secure, never wedge the drain.
         await this.#safeCommitLost();
         this.#toResecuring("commit submit timed out");
@@ -2893,6 +2956,7 @@ export class MlsCallSession {
           break;
       }
     } catch (error) {
+      if (this.#submitSuperseded(groupId)) return;
       // Everything past the build is post-submit bookkeeping: `callCommitWon`,
       // the inline rebase and its gap refetch. Those fail for transient
       // reasons — an epoch mismatch we can re-derive, a network throw — and a
@@ -2902,7 +2966,10 @@ export class MlsCallSession {
       // escalation ladder still ends loud if it cannot converge.
       const type = (error as { type?: string } | null)?.type;
       if (type === "mls_poisoned_epoch") {
-        this.#scheduleGroupAction(() => this.#poisonedSuccessor());
+        this.#scheduleGroupAction(
+          () => this.#poisonedSuccessor(),
+          "poisoned_successor:post_submit",
+        );
       } else {
         console.error("[mls] commit staging failed, re-securing", error);
         await this.#safeCommitLost();
@@ -2923,6 +2990,30 @@ export class MlsCallSession {
   async #rebaseInline(winning: MlsCommitInfo): Promise<void> {
     await this.#consume(this.#synthEnvelope(winning));
     await this.#gapRefetchInline(winning.epoch + 1);
+  }
+
+  /**
+   * Whether a submit continuation's group was replaced while it ran — a
+   * re-establish swapped `#groupId` under the submit's await. Such a
+   * continuation acts on NOTHING: re-securing or re-establishing from it
+   * would hit the LIVE group (a successor that already went active torn
+   * down, or a healthy group migrated off a poisoned epoch it never had).
+   *
+   * Not even `#safeCommitLost`: it addresses the live `#groupId`, never the
+   * group this commit was staged on. That group needs no cleanup from here —
+   * the transition that replaced it either leave-cleaned it (`#rejoinFresh`,
+   * `#onRemovedSelf`, `dispose`) or abandoned it as poisoned and DS-closed
+   * (`#poisonedSuccessor`) — and its `#resetGroupBuffers` already dropped
+   * `#staged`, which nothing newer can have set while this still holds the
+   * lock.
+   */
+  #submitSuperseded(groupId: string): boolean {
+    if (groupId === this.#groupId) return false;
+    console.warn(
+      "[mls] stale submit continuation for a superseded group — ignored",
+      { submitted: groupId, live: this.#groupId },
+    );
+    return true;
   }
 
   async #safeCommitLost(): Promise<void> {
@@ -2991,10 +3082,12 @@ export class MlsCallSession {
               this.#pendingIdentityFetch = null;
               this.#parkedDuringFetch = [];
               this.#metrics.recordDesyncEscalation();
-              this.#scheduleGroupAction(() =>
-                this.#rejoinFresh(
-                  "identity fetch did not converge (park overflow)",
-                ),
+              this.#scheduleGroupAction(
+                () =>
+                  this.#rejoinFresh(
+                    "identity fetch did not converge (park overflow)",
+                  ),
+                "rejoin_fresh:park_overflow",
               );
               continue;
             }
@@ -3085,7 +3178,7 @@ export class MlsCallSession {
         // it, tear the group down, and suppress its keys-changed handling.
         this.#seen.add(envelope.id);
         this.#deps.bridge.ackEnvelopes([envelope.id]);
-        this.#scheduleGroupAction(() => this.#onRemovedSelf());
+        this.#scheduleGroupAction(() => this.#onRemovedSelf(), "removed_self");
         return;
       }
       case "gap_refetch": {
@@ -3103,14 +3196,18 @@ export class MlsCallSession {
         // plaintext. Detached (outside the lock) to avoid the NEW-2 deadlock.
         this.#metrics.recordPark();
         this.#metrics.recordDesyncEscalation();
-        this.#scheduleGroupAction(() =>
-          this.#rejoinFresh("epoch gap did not resolve"),
+        this.#scheduleGroupAction(
+          () => this.#rejoinFresh("epoch gap did not resolve"),
+          "rejoin_fresh:epoch_gap",
         );
         return;
       case "successor": {
         this.#seen.add(envelope.id);
         this.#deps.bridge.ackEnvelopes([envelope.id]);
-        this.#scheduleGroupAction(() => this.#poisonedSuccessor());
+        this.#scheduleGroupAction(
+          () => this.#poisonedSuccessor(),
+          "poisoned_successor:drain",
+        );
         return;
       }
       case "fetch_identity": {
@@ -3177,7 +3274,10 @@ export class MlsCallSession {
         // (we hold the lock). The un-acked envelope stays server-side; after
         // the rejoin its group is gone locally → reprocesses to a quiet
         // group-not-found ack+drop. Never plaintext.
-        this.#scheduleGroupAction(() => this.#rejoinFresh(action.reason));
+        this.#scheduleGroupAction(
+          () => this.#rejoinFresh(action.reason),
+          "rejoin_fresh:drain",
+        );
         return;
       case "retry": {
         // Transient — do NOT ack; bump the counter and re-drain after a
@@ -3233,8 +3333,9 @@ export class MlsCallSession {
     // and rejoin fresh (detached — we hold the lock; never plaintext).
     const lag = lagAction(res.body.current_epoch, fromEpoch);
     if (lag.do === "desync") {
-      this.#scheduleGroupAction(() =>
-        this.#rejoinFresh(`receiver lag ${lag.lag} ≥ desync threshold`),
+      this.#scheduleGroupAction(
+        () => this.#rejoinFresh(`receiver lag ${lag.lag} ≥ desync threshold`),
+        "rejoin_fresh:receiver_lag",
       );
       return;
     }
@@ -3276,9 +3377,26 @@ export class MlsCallSession {
    * Schedule a group-level transition to run OUTSIDE the lock + drain pump, so
    * its own inbound processing (e.g. a rejoin awaiting a Welcome) can pump
    * freely — running it inline would deadlock (NEW-2). At most one at a time.
+   *
+   * `kind` only names the action in the drop log. It defaults because
+   * `#scheduleReestablish` cannot pass one (that range is frozen for another
+   * branch's merge), so "unspecified" in the log means a re-establish.
    */
-  #scheduleGroupAction(fn: () => Promise<void>): void {
-    if (this.#groupActionPending) return;
+  #scheduleGroupAction(fn: () => Promise<void>, kind = "unspecified"): void {
+    if (this.#groupActionPending) {
+      // A drop is never silent — and never deferred. Nothing is queued or
+      // coalesced: a follow-up reads `#groupId` when it RUNS, not when it was
+      // scheduled, so a replayed `ack_removed_self` would tear down the group
+      // just joined, and "latest wins" could swap a successor migration for a
+      // rejoin. Any re-securing a drop leaves behind is ended by the
+      // lifecycle backstop (`#armResecuringDeadline`).
+      console.warn("[mls] group action dropped while another is in flight", {
+        kind,
+        groupId: this.#groupId,
+        generation: this.#establishGeneration,
+      });
+      return;
+    }
     this.#groupActionPending = true;
     const timer = setTimeout(async () => {
       this.#timers.delete(timer);
@@ -3413,11 +3531,16 @@ export class MlsCallSession {
       this.#admitRetryTimer = null;
     }
     // Enrolment is proven PER GROUP: a fresh group means we must prove our own
-    // leaf again, with a fresh deadline for the new ladder. The alarm RE-ARMS:
-    // a re-establish clears the loud latch (session and UI, see
-    // `#resetRotationState`) because the group is being replaced, and if the
-    // new group also fails to enrol us this assertion latches it loud again.
+    // leaf again, with a fresh deadline for the new ladder. The alarm re-arms
+    // with it: a re-establish clears the loud latch (session and UI, see
+    // `#resetRotationState`) because the group is being replaced, so its
+    // latch-once flag is reset here — BEFORE `#armEnrolmentAssertion()`,
+    // whose scheduler (and `#assertSelfEnrolled` itself) returns early while
+    // the flag is set; reset after it, the periodic check would stay dead for
+    // the rest of the call. If the new group also fails to enrol us, this
+    // assertion latches it loud again.
     this.#enrolmentProven = false;
+    this.#enrolmentAlarmed = false;
     this.#armEnrolmentAssertion();
     // A group re-establish is a fresh crypto context (new epoch-0 keys): drop
     // the rotation memos/timers so the next group's first key installs
@@ -3460,6 +3583,11 @@ export class MlsCallSession {
         );
         return;
       }
+      console.info("[mls] welcome adopted", {
+        group: outcome.group_id,
+        generation: this.#establishGeneration,
+        waitInstalled: verdict.resolveWait,
+      });
       this.#groupId = outcome.group_id;
       this.#joinedGeneration = this.#establishGeneration;
       this.#toActive();
@@ -5536,8 +5664,9 @@ export class MlsCallSession {
           this.#setMode({ kind: "negotiating" });
           this.#e2eeEnabled = false;
           this.#mixPaused = false;
-          this.#scheduleGroupAction(() =>
-            this.#rejoinFresh("re-upgrade after plaintext interlude"),
+          this.#scheduleGroupAction(
+            () => this.#rejoinFresh("re-upgrade after plaintext interlude"),
+            "rejoin_fresh:reupgrade",
           );
         } else if (!this.#e2eeEnabled) {
           // The mix was declared BEFORE the first enable (T0c): the plain
@@ -5946,6 +6075,108 @@ export class MlsCallSession {
   #toResecuring(reason: string): void {
     console.warn("[mls] re-securing:", reason);
     this.#setState("resecuring");
+    this.#armResecuringDeadline(reason);
+  }
+
+  /**
+   * The lifecycle backstop: "re-securing" always ends LOUD, or with an OWNER
+   * still working on it — and never in a green of its own making.
+   *
+   * `#toResecuring` only logs and sets the state; each caller trusts some
+   * other path to end it. When that path had already run (a join ladder that
+   * adopted its Welcome mid-await), was dropped (a group action behind
+   * another) or never existed (removed while no longer in the SFU), the chip
+   * sat amber for the rest of the call with no banner, while this device
+   * refused admits and heartbeats.
+   *
+   * Armed by the first entry of an episode; a repeat entry never walks it
+   * forward. At the deadline:
+   *  - the state already left `resecuring` → nothing (`#setState` normally
+   *    cancels it first);
+   *  - an owner is still working (`#resecuringHasOwner`) → one more bound;
+   *  - otherwise → latch loud as `control`: a stuck control plane is not
+   *    something media evidence may heal. `#latchLoud` de-duplicates under an
+   *    existing latch and folds `e2ee` to `negotiating`, so the publish gate
+   *    is held and the Leave / Stay-unencrypted banner renders.
+   *
+   * 🔴 No arm may produce green — no `#toActive`, no `#enrolmentProven`.
+   * `enrolmentVerdict` answers `enrolled` whenever the session is terminal,
+   * and roster presence cannot disprove why a session re-secured: a timer
+   * that promoted to green would be the "green by default" defect again.
+   *
+   * Bound: `RESECURE_ESCALATE_MS`, the time the design gives any re-securing
+   * to resolve before it goes loud. It cannot cut a live ladder short, since
+   * it re-arms for as long as an owner holds the state; it only has to cover
+   * the hand-off from one owner to the next, and every hand-off happens in
+   * the same task (`#toResecuring` then `#scheduleReestablish`, or inside a
+   * running group action).
+   */
+  #armResecuringDeadline(reason: string): void {
+    // A session that could not enter `resecuring` (closed) arms nothing.
+    if (this.#state !== "resecuring" || this.#resecuringDeadline) return;
+    this.#resecuringDeadlineReason = reason;
+    this.#scheduleResecuringDeadline();
+  }
+
+  #scheduleResecuringDeadline(): void {
+    const timer = setTimeout(() => {
+      this.#timers.delete(timer);
+      this.#resecuringDeadline = null;
+      this.#onResecuringDeadline();
+    }, RESECURE_ESCALATE_MS);
+    this.#resecuringDeadline = timer;
+    this.#timers.add(timer);
+  }
+
+  #onResecuringDeadline(): void {
+    const reason = this.#resecuringDeadlineReason;
+    if (this.#state !== "resecuring") {
+      this.#resecuringDeadlineReason = null;
+      return;
+    }
+    if (this.#resecuringHasOwner()) {
+      this.#scheduleResecuringDeadline(); // same bound, same reason
+      return;
+    }
+    this.#resecuringDeadlineReason = null;
+    const error = new Error(
+      `MLS call stayed re-securing with nothing left to end it (${reason}) — media may not be end-to-end encrypted`,
+    );
+    console.error("[mls] re-securing backstop fired", error);
+    this.#latchLoud(error, "control");
+  }
+
+  /**
+   * Whether something still holds a `resecuring` state that will end it on
+   * its own, each on its own bound:
+   *  - an establish: every DS request in it rides the transport's per-request
+   *    deadline (`MLS_REQUEST_DEADLINE_MS`, 45 s), every Welcome wait is a
+   *    timer, and the ladder is capped by `MAX_JOINER_RETRIES` and
+   *    `MAX_REESTABLISH`;
+   *  - a scheduled or running group action, which runs such an establish or
+   *    ends in the group-action catch's `#onLoud`;
+   *  - before the first establish (`#establishGeneration` still 0),
+   *    `start()`'s KeyPackage enrolment. The negotiating fail-safe shows a
+   *    slow enrolment (a 429 wait) as amber at 5 s, and a latch taken here
+   *    would outlive the create that follows and leave an encrypted call red
+   *    for good. Its requests ride the same deadline; a legacy MFA prompt is
+   *    user-driven, and the 240 s self-enrolment assertion ends that loud.
+   */
+  #resecuringHasOwner(): boolean {
+    return (
+      this.#establishInFlight ||
+      this.#groupActionPending ||
+      this.#establishGeneration === 0
+    );
+  }
+
+  #cancelResecuringDeadline(): void {
+    if (this.#resecuringDeadline) {
+      clearTimeout(this.#resecuringDeadline);
+      this.#timers.delete(this.#resecuringDeadline);
+      this.#resecuringDeadline = null;
+    }
+    this.#resecuringDeadlineReason = null;
   }
 
   #onLoud(error: unknown): void {
@@ -5964,6 +6195,9 @@ export class MlsCallSession {
   #setState(state: MlsSessionState): void {
     if (this.#state === "closed") return; // closed is terminal
     this.#state = state;
+    // Leaving `resecuring` (to active, failed, plaintext or closed) is the
+    // backstop's one canceller besides `dispose`, which clears `#timers`.
+    if (state !== "resecuring") this.#cancelResecuringDeadline();
     this.#deps.onStateChange?.(state);
   }
 }
