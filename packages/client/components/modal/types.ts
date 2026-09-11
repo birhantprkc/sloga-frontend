@@ -114,6 +114,11 @@ export type Modals =
       channel: Channel;
     }
   | {
+      type: "edit_forum_post_tags";
+      /** Forum post (a thread whose parent is a forum) to retag */
+      post: Channel;
+    }
+  | {
       type: "create_poll";
       /** Channel the poll will be posted to */
       channel: Channel;

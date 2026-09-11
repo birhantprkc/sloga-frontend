@@ -2796,6 +2796,23 @@ msgstr "Enter your current password."
 msgid "Enter your current password..."
 msgstr "Enter your current password..."
 
+#: components/modal/modals/EditForumPostTags.tsx
+#: src/interface/channels/ChannelHeader.tsx
+msgid "Edit tags"
+msgstr "Edit tags"
+
+#: components/modal/modals/EditForumPostTags.tsx
+msgid "This forum has no tags yet."
+msgstr "This forum has no tags yet."
+
+#: components/modal/modals/EditForumPostTags.tsx
+msgid "This post has a tag only moderators can change, so only a moderator can edit its tags."
+msgstr "This post has a tag only moderators can change, so only a moderator can edit its tags."
+
+#: components/modal/modals/EditForumPostTags.tsx
+msgid "Every post in this forum needs at least one tag."
+msgstr "Every post in this forum needs at least one tag."
+
 #: components/auth/src/flows/Form.tsx
 msgid "Enter your invite code."
 msgstr "Enter your invite code."
@@ -6805,8 +6822,22 @@ msgid "Every post here needs a tag, but none of this forum's tags are ones you c
 msgstr "Every post here needs a tag, but none of this forum's tags are ones you can apply. Ask someone who manages this channel."
 
 #: components/app/interface/settings/channel/ForumSettings.tsx
-msgid "Tags let members categorise posts. Moderated tags can only be applied by members who can manage this channel."
-msgstr "Tags let members categorise posts. Moderated tags can only be applied by members who can manage this channel."
+msgid "Tags let members categorize posts. Each tag can have an optional emoji, including this server's own. Moderated tags can only be applied by members who can manage this channel."
+msgstr "Tags let members categorize posts. Each tag can have an optional emoji, including this server's own. Moderated tags can only be applied by members who can manage this channel."
+
+#: components/app/interface/settings/channel/ForumSettings.tsx
+#: components/app/interface/settings/channel/ForumSettings.tsx
+msgid "Change tag emoji"
+msgstr "Change tag emoji"
+
+#: components/app/interface/settings/channel/ForumSettings.tsx
+#: components/app/interface/settings/channel/ForumSettings.tsx
+msgid "Add a tag emoji"
+msgstr "Add a tag emoji"
+
+#: components/app/interface/settings/channel/ForumSettings.tsx
+msgid "Remove tag emoji"
+msgstr "Remove tag emoji"
 
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx

@@ -65,6 +65,19 @@ export function ChannelHeader(props: Props) {
   const voice = useVoice();
   const { layout } = useDevice();
 
+  // Tags on a forum post can be changed after posting by its author or by
+  // anyone who manages the forum (the same rule delta's channel edit
+  // applies); until this button there was no way to reach that.
+  const canEditPostTags = () => {
+    const forum = props.channel.isForumPost ? props.channel.parent : undefined;
+    if (!forum?.tags.length) return false;
+
+    return (
+      props.channel.creatorId === client().user?.id ||
+      forum.havePermission("ManageChannel")
+    );
+  };
+
   const searchValue = () => {
     if (!props.sidebarState) return null;
 
@@ -203,6 +216,25 @@ export function ChannelHeader(props: Props) {
           </Show>
         </Match>
       </Switch>
+
+      <Show when={canEditPostTags()}>
+        <IconButton
+          onPress={() =>
+            openModal({
+              type: "edit_forum_post_tags",
+              post: props.channel,
+            })
+          }
+          use:floating={{
+            tooltip: {
+              placement: "bottom",
+              content: t`Edit tags`,
+            },
+          }}
+        >
+          <Symbol>sell</Symbol>
+        </IconButton>
+      </Show>
 
       <Show when={props.channel.isAnnouncement}>
         <IconButton

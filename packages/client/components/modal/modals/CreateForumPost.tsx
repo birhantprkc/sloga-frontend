@@ -1,15 +1,16 @@
-import { For, Match, Show, Switch, createSignal } from "solid-js";
+import { Match, Show, Switch, createSignal } from "solid-js";
 
 import { createFormControl, createFormGroup } from "solid-forms";
 
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
-import { styled } from "styled-system/jsx";
 
 import { useNavigate } from "@revolt/routing";
 import { Column, Dialog, DialogProps, Form2 } from "@revolt/ui";
 
 import { useModals } from "..";
 import { Modals } from "../types";
+
+import { ForumTagChips, MAX_APPLIED_TAGS } from "./ForumTagChips";
 
 /**
  * Modal to create a new post in a forum channel
@@ -22,9 +23,6 @@ export function CreateForumPostModal(
   const { showError } = useModals();
 
   const [selectedTags, setSelectedTags] = createSignal<string[]>([]);
-
-  /** Server-enforced cap on tags per post */
-  const MAX_APPLIED_TAGS = 5;
 
   const group = createFormGroup({
     title: createFormControl("", { required: true }),
@@ -48,6 +46,10 @@ export function CreateForumPostModal(
   }
 
   async function onSubmit() {
+    // Enter in the title submits the form directly, past the disabled
+    // Create button, so the required-tag rule has to be checked here too.
+    if (missingRequiredTag()) return;
+
     try {
       const { post } = await props.channel.createPost({
         title: group.controls.title.value.trim(),
@@ -96,7 +98,14 @@ export function CreateForumPostModal(
             label={t`Title`}
           />
 
+          {/* Multi-line, so Enter starts a new line the way the chat
+              composer does. As a single-line field, Enter (and Shift+Enter)
+              submitted the whole post from the first line, on every
+              platform; reported from Android 2026-09-11. */}
           <Form2.TextField
+            autosize
+            min-rows={3}
+            max-rows={12}
             name="content"
             control={group.controls.content}
             label={t`Message`}
@@ -110,20 +119,11 @@ export function CreateForumPostModal(
               >
                 <Trans>Tags (at least one required)</Trans>
               </Show>
-              <TagRow>
-                <For each={availableTags()}>
-                  {(tag) => (
-                    <TagChip
-                      type="button"
-                      selected={selectedTags().includes(tag.id)}
-                      onClick={() => toggleTag(tag.id)}
-                    >
-                      <Show when={tag.emoji}>{tag.emoji} </Show>
-                      {tag.name}
-                    </TagChip>
-                  )}
-                </For>
-              </TagRow>
+              <ForumTagChips
+                tags={availableTags()}
+                selected={selectedTags()}
+                onToggle={toggleTag}
+              />
             </Column>
           </Show>
 
@@ -173,31 +173,3 @@ export function CreateForumPostModal(
     </Dialog>
   );
 }
-
-const TagRow = styled("div", {
-  base: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: "var(--gap-sm)",
-  },
-});
-
-const TagChip = styled("button", {
-  base: {
-    padding: "var(--gap-sm) var(--gap-md)",
-    borderRadius: "var(--borderRadius-full)",
-    background: "var(--md-sys-color-surface-container-high)",
-    color: "var(--md-sys-color-on-surface)",
-    cursor: "pointer",
-    fontSize: "0.8125rem",
-    transition: "var(--transitions-fast) all",
-  },
-  variants: {
-    selected: {
-      true: {
-        background: "var(--md-sys-color-primary-container)",
-        color: "var(--md-sys-color-on-primary-container)",
-      },
-    },
-  },
-});
