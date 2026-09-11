@@ -23,10 +23,27 @@
 // enrolling, or let a late or foreign Welcome turn a red back into a green.
 // They are green at the base commit by construction; their evidence is the
 // mutation that reddens them.
+//
+// Group 6 pins the fix's own moving parts, which no spec above can see: the
+// backstop's re-arm (6a) and its `#groupActionPending` owner term (6e), and
+// the stale-submit guard `#submitSuperseded`. A submit whose group a
+// re-establish replaced acts on nothing, whatever settles it: the timeout
+// (6b) and a rejection (6c) stop in the submit's own catch, and every DS
+// answer stops right after `classifyArbitration`, before its arm — `won`
+// (6d), `lost` (6f) and `feature_disabled` (6g) alike. The fourth outcome,
+// `failed` (a DS body that contradicts its status), has no spec of its own.
+// A DS answer `classifyArbitration` cannot read throws before that check, so
+// the post-submit catch's own guard stops it (6h). 6e is a GUARD in the sense
+// above: the base has no backstop to fire, so only deleting the term reddens
+// it.
 import assert from "node:assert/strict";
 import { type TestContext, test } from "node:test";
 
-import type { MlsHttpResult } from "@revolt/client";
+import type {
+  MlsHttpResult,
+  MlsSubmitCommit,
+  ResponseSubmitMlsCommit,
+} from "@revolt/client";
 
 import {
   type World,
@@ -35,9 +52,14 @@ import {
   bringUpJoiner,
   flush,
   GROUP,
+  groupNotFound,
   newWorld,
+  PEER,
   PEER_ID,
+  SELF,
   SELF_ID,
+  SUBMIT_TIMEOUT_MS,
+  THIRD,
 } from "./mlsCallSession.harness.ts";
 
 // ---- The session's bounds, mirrored ---------------------------------------
@@ -568,4 +590,546 @@ test("5c GUARD — another group's Welcome during a held intent does not stop th
   assert.equal(world.joinIntents(), LADDER_INTENTS);
   assert.equal(world.chip(), "not_encrypted");
   assert.equal(world.terminalLoud(), true);
+});
+
+// ---- The backstop's owner terms, and the stale-submit guard -----------------
+
+test("6a — the backstop re-arms while the join ladder still holds re-securing, and goes red within one bound of it returning", async (t) => {
+  const world = newWorld(t, "joiner", "ch-resecure-6a");
+  const releaseIntent = world.holdJoinIntent();
+  await startJoiner(t, world);
+  assert.equal(world.joinIntents(), 1, "attempt 0's broadcast is not held");
+  // 1a's window: adopted while the ladder is suspended in its broadcast, so
+  // the ladder stays the group action in flight until the broadcast returns.
+  await world.welcome(1);
+  assert.equal(world.session.state(), "active");
+  await installKeys(world, 1);
+
+  // THIRD's admit submits and the DS never answers. The timeout arm
+  // re-secures and schedules a re-establish that is DROPPED behind the
+  // ladder: the ladder is the owner now, and it will end nothing.
+  world.holdSubmit();
+  await world.joinRequest(THIRD);
+  await advance(t, 1);
+  assert.equal(world.submits(), 1, "the admit never submitted");
+  await advance(t, SUBMIT_TIMEOUT_MS);
+  assert.equal(world.session.state(), "resecuring");
+  assert.deepEqual(world.commitLosts, [GROUP], "the timeout arm never ran");
+
+  // Not vacuous: the first bound comes due with the ladder still suspended.
+  const owned = 15_000;
+  assert.ok(RESECURE_BACKSTOP_MS < owned && owned < 2 * RESECURE_BACKSTOP_MS);
+  const seen = await watch(t, world, owned);
+  assert.deepEqual(seen.chips, ["resecuring"], "the chip left amber");
+  assert.equal(world.terminalLoud(), false, "a banner while an owner held it");
+  assert.deepEqual(
+    louds(world),
+    [],
+    "the backstop fired while the ladder held re-securing",
+  );
+  assert.equal(world.joinIntents(), 1);
+
+  // The ladder returns through P1's check, and nothing owns the state now.
+  releaseIntent();
+  await flush();
+  await advanceUntil(
+    t,
+    () => world.chip() === "not_encrypted" && world.terminalLoud(),
+    RESECURE_BACKSTOP_MS + 1_000,
+    "the backstop's red after the ladder returned",
+  );
+  assert.equal(
+    world.joinIntents(),
+    1,
+    "the ladder broadcast again as a member",
+  );
+  assert.equal(world.publishing(), false, "the banner's pause claim is false");
+  const latched = louds(world);
+  assert.equal(latched.length, 1);
+  const [error] = latched;
+  assert.ok(error instanceof Error, "the red latched no error");
+  // WHICH verdict latched: the backstop's own, not some later path's.
+  assert.match(error.message, /stayed re-securing with nothing left to end it/);
+});
+
+/** The group that replaces GROUP under a held submit (`createNextGroupOnce`). */
+const NEXT_GROUP = "group-2";
+
+/** `#submitSuperseded`'s log line, verbatim. */
+const STALE_LOG =
+  "[mls] stale submit continuation for a superseded group — ignored";
+
+/** `#safeLeave`'s log line for a leave-clean native refused, verbatim. */
+const LEAVE_FAILED_LOG = "[mls] leave-cleanup failed";
+
+/**
+ * The bridge methods a submit continuation can reach: every call its arms
+ * make (the merge, the clear, and the `lost` arm's replay, ack and refetch),
+ * and a re-establish or re-admit started from one. A stale continuation
+ * calls none of them.
+ */
+const CONTINUATION_CALLS = [
+  "callCommitWon",
+  "callCommitLost",
+  "processEnvelope",
+  "ackEnvelopes",
+  "mlsFetchCommits",
+  "callLeaveCleanup",
+  "callCreate",
+  "mlsCreateGroup",
+  "callAdmit",
+  "mlsSubmitCommit",
+] as const;
+
+/** How many times the session called each of `CONTINUATION_CALLS`. */
+function continuationCalls(world: World): Record<string, number> {
+  return Object.fromEntries(
+    CONTINUATION_CALLS.map((name) => [name, calls(world, name)]),
+  );
+}
+
+/** What a stale submit continuation must leave as the group swap left it. */
+interface AfterSwap {
+  leaveCleanups: string[];
+  calls: Record<string, number>;
+  mode: unknown;
+  chip: string;
+  /** `world.modes.length` at the swap: every mode edge past it is later. */
+  modesAt: number;
+  /** The epoch THIRD's admit staged on GROUP and submitted. */
+  submittedEpoch: number;
+  /** The commit THIRD's admit staged on GROUP, as `callAdmit` returned it. */
+  staged: MlsSubmitCommit;
+  /** GROUP's epoch at the swap. A merge of `staged` moves it to its epoch. */
+  epoch: number;
+}
+
+interface Swap {
+  releaseSubmit: () => void;
+  after: AfterSwap;
+  /** The payload of every `#submitSuperseded` log line so far, in order. */
+  staleLogs: () => unknown[];
+}
+
+/**
+ * The stale-submit shape, on the drain's receiver-lag desync
+ * (`World.receiverLag`): the one `#rejoinFresh` the drain schedules in this
+ * world that leaves GROUP buildable, so an admit can still submit on it. A
+ * removed-self commit cannot stand in: native marks GROUP evicted, refuses
+ * the admit `add-members`, and nothing is ever submitted.
+ *   1. A GROUP commit lands `LAG_DESYNC_THRESHOLD` epochs ahead, and its
+ *      `processEnvelope` is held: the drain holds the per-group lock.
+ *   2. THIRD's admit captures GROUP and waits on that lock, unbuilt.
+ *   3. Released, the drain parks the commit, gap-refetches, reads the lag as
+ *      a desync and schedules `rejoin_fresh:receiver_lag`. The admit then
+ *      stages on GROUP and submits, and the submit is held.
+ *   4. The rejoin runs: GROUP is leave-cleaned, staged commit and all, and
+ *      the re-establish lands on `NEXT_GROUP`.
+ * With `leaveFails`, native refuses step 4's leave-clean
+ * (`failLeaveCleanupOnce`) and `#safeLeave` swallows the refusal: the
+ * re-establish still lands on `NEXT_GROUP`, but native keeps GROUP and the
+ * staged commit, so a Won for it would take the merge path.
+ * Returns with the submit still held and the session `active` on
+ * `NEXT_GROUP`. Every `console.warn` and `console.error` is recorded (and
+ * still printed) from the start, so the stale log line is counted over the
+ * whole test.
+ */
+async function swapGroupUnderSubmit(
+  t: TestContext,
+  world: World,
+  { leaveFails = false }: { leaveFails?: boolean } = {},
+): Promise<Swap> {
+  const warn = t.mock.method(console, "warn");
+  const warns = () => warn.mock.calls.map((call) => call.arguments);
+  const staleLogs = () =>
+    warns().flatMap(([line, payload]) => (line === STALE_LOG ? [payload] : []));
+  const error = t.mock.method(console, "error");
+  const leaveFailures = () =>
+    error.mock.calls
+      .map((call) => call.arguments)
+      .filter(([line]) => line === LEAVE_FAILED_LOG);
+
+  await bringUpCreator(t, world);
+  const releaseSubmit = world.holdSubmit();
+  const releaseProcess = world.holdProcessEnvelope();
+
+  await world.receiverLag();
+  await world.joinRequest(THIRD);
+  await advance(t, 1); // the admit's 0 ms leaf stagger
+  assert.equal(
+    calls(world, "processEnvelope"),
+    1,
+    "the lag commit is not held",
+  );
+  assert.equal(calls(world, "callAdmit"), 0, "the admit built ahead of it");
+  assert.equal(world.submits(), 0, "the admit submitted ahead of it");
+
+  world.createNextGroupOnce(NEXT_GROUP);
+  if (leaveFails) world.failLeaveCleanupOnce(GROUP);
+  releaseProcess();
+  await flush();
+  // The refetch took `receiverLag`'s answer: the stub nulls it only once the
+  // range matched, and a failed stub assertion is a rejection the drain can
+  // swallow, so the count alone would not prove it.
+  assert.equal(calls(world, "mlsFetchCommits"), 1, "the drain never refetched");
+  assert.equal(world.fetchCommitsAnswer, null, "the refetch took no answer");
+  // GROUP is not evicted by a gap: the admit built and submitted on it.
+  assert.equal(calls(world, "callAdmit"), 1, "the admit never built");
+  assert.equal(world.submits(), 1, "the admit never submitted");
+  const staged = world.stagedCommits.get(GROUP);
+  assert.ok(staged !== undefined && staged !== "left", "nothing was staged");
+  assert.equal(world.session.groupId(), GROUP, "replaced before the submit");
+
+  await advance(t, 1); // `rejoin_fresh:receiver_lag` runs as a group action
+  if (leaveFails) {
+    // Refused, and swallowed: native wiped nothing, so GROUP and the commit
+    // staged on it survive the swap.
+    assert.deepEqual(
+      world.failedLeaveCleanups,
+      [GROUP],
+      "the rejoin's leave-clean of GROUP was not refused",
+    );
+    assert.deepEqual(world.leaveCleanups, [], "a leave-clean wiped a group");
+    assert.equal(
+      world.stagedCommits.get(GROUP),
+      staged,
+      "the refused leave-clean took the staged commit",
+    );
+    assert.equal(
+      leaveFailures().length,
+      1,
+      "`#safeLeave` did not log the refused leave-clean",
+    );
+  } else {
+    assert.deepEqual(
+      world.leaveCleanups,
+      [GROUP],
+      "the rejoin never leave-cleaned GROUP",
+    );
+    assert.equal(world.stagedCommits.get(GROUP), "left");
+    assert.deepEqual(leaveFailures(), [], "a leave-clean was refused");
+  }
+  assert.equal(world.session.groupId(), NEXT_GROUP, "GROUP was not replaced");
+  assert.equal(world.session.state(), "active");
+  // WHICH transition replaced it: the receiver-lag rejoin, not some other.
+  assert.ok(
+    warns().some(
+      ([line, reason]) =>
+        line === "[mls] re-securing:" && /^receiver lag/.test(String(reason)),
+    ),
+    "the swap was not the receiver-lag rejoin",
+  );
+  // Still in flight across the swap: the submit has not settled, and no
+  // catch has run. GROUP's staged commit is as the leave-clean left it.
+  assert.notEqual(world.submitGate, null, "the submit settled before the swap");
+  assert.deepEqual(world.commitLosts, []);
+  assert.equal(calls(world, "callCommitWon"), 0);
+  assert.deepEqual(louds(world), []);
+  assert.deepEqual(staleLogs(), [], "a continuation ran before it settled");
+  return {
+    releaseSubmit,
+    staleLogs,
+    after: {
+      leaveCleanups: [...world.leaveCleanups],
+      calls: continuationCalls(world),
+      mode: structuredClone(world.session.callMode()),
+      chip: world.chip(),
+      modesAt: world.modes.length,
+      submittedEpoch: staged.epoch,
+      staged,
+      epoch: world.epoch,
+    },
+  };
+}
+
+/**
+ * A stale continuation acts on NOTHING: the live group keeps its pending
+ * state, is not left or re-created, no arm's bridge call runs, and the
+ * session stays `active` on it with the chip and mode exactly as the swap
+ * left them — throughout, not only at the end. It stops at the stale check,
+ * once: `stale` is the one log payload expected, which also tells the sites
+ * apart (the submit's own catch and the post-submit catch log no `outcome`,
+ * the post-classify check logs the DS answer's).
+ */
+async function assertActedOnNothing(
+  t: TestContext,
+  world: World,
+  swap: Swap,
+  stale: Record<string, unknown>,
+  during: { states: string[]; chips: string[] } = { states: [], chips: [] },
+): Promise<void> {
+  const { after } = swap;
+  const seen = await watch(t, world, SETTLE_MS);
+  const states = [...new Set([...during.states, ...seen.states])];
+  const chips = [...new Set([...during.chips, ...seen.chips])];
+  assert.deepEqual(
+    world.commitLosts,
+    [],
+    "a stale continuation cleared the live group's pending commit",
+  );
+  assert.deepEqual(
+    world.leaveCleanups,
+    after.leaveCleanups,
+    "a stale continuation left the live group",
+  );
+  assert.deepEqual(
+    continuationCalls(world),
+    after.calls,
+    "a stale continuation reached the bridge",
+  );
+  assert.equal(
+    world.session.groupId(),
+    NEXT_GROUP,
+    "a stale continuation moved the session off the live group",
+  );
+  assert.deepEqual(states, ["active"], "a stale continuation re-secured");
+  assert.deepEqual(chips, [after.chip], "a stale continuation moved the chip");
+  assert.deepEqual(
+    world.modes.slice(after.modesAt),
+    [],
+    "a stale continuation changed the call mode",
+  );
+  assert.deepEqual(
+    world.session.callMode(),
+    after.mode,
+    "the call mode is not the one the swap left",
+  );
+  assert.deepEqual(louds(world), [], "a stale continuation went loud");
+  assert.deepEqual(
+    swap.staleLogs(),
+    [stale],
+    "the continuation did not stop at the stale check exactly once",
+  );
+}
+
+/**
+ * The stale log's payload for this swap, as the submit's own catch and the
+ * post-submit catch write it. The post-classify check adds the DS answer's
+ * `outcome`.
+ */
+const SWAPPED = { submitted: GROUP, live: NEXT_GROUP };
+
+test("6b — a submit that times out after its group was replaced acts on nothing", async (t) => {
+  const world = newWorld(t, "creator", "ch-resecure-6b");
+  const swap = await swapGroupUnderSubmit(t, world);
+
+  const during = await watch(t, world, SUBMIT_TIMEOUT_MS);
+  // The DS never answered, so only the session's own race can have settled
+  // the submit. Not vacuous: had the timeout not fired, the release below
+  // would deliver the stub's Won, whose stale log names `outcome: "won"`.
+  assert.notEqual(world.submitGate, null, "the submit was answered");
+  swap.releaseSubmit(); // a late answer nothing awaits any more
+  await flush();
+  await assertActedOnNothing(t, world, swap, SWAPPED, during);
+});
+
+test("6c — a submit rejected after its group was replaced acts on nothing", async (t) => {
+  const world = newWorld(t, "creator", "ch-resecure-6c");
+  const swap = await swapGroupUnderSubmit(t, world);
+
+  world.failSubmitOnce(new Error("network"));
+  swap.releaseSubmit();
+  await flush();
+  // Spent, and spent HERE: a rejection lands in the submit's own catch, so
+  // its stale log names no `outcome`. An unspent one would have let the
+  // stub's Won through, which logs `outcome: "won"`.
+  assert.equal(world.submitFailure, null, "the rejection was never delivered");
+  await assertActedOnNothing(t, world, swap, SWAPPED);
+});
+
+test("6d — a Won for a submit whose group was replaced is never merged, and acts on nothing", async (t) => {
+  // Under this trigger an honest DS answers Lost (6f). Under a trigger that
+  // leaves the DS at our epoch (`rejoin_fresh:drain`, the interlude
+  // re-upgrade), an honest Won is ordinary. The check must stop it BEFORE the
+  // merge: a swallowed leave-clean leaves native holding GROUP, and the merge
+  // would write `#lastOwnWon` onto the live session.
+  //
+  // So native refuses the swap's leave-clean here, and the merge is there to
+  // take: without the check, `callCommitWon` finds GROUP and the staged
+  // commit, merges it, moves GROUP's epoch and seats THIRD. Each assertion
+  // below is one of those, and fails on its own if the Won is let through.
+  const world = newWorld(t, "creator", "ch-resecure-6d");
+  const swap = await swapGroupUnderSubmit(t, world, { leaveFails: true });
+  // Not vacuous: a merge would move the epoch, since the admit staged the
+  // next one.
+  assert.notEqual(swap.after.staged.epoch, swap.after.epoch);
+
+  swap.releaseSubmit();
+  await flush();
+  assert.equal(calls(world, "callCommitWon"), 0, "the stale Won was merged");
+  assert.equal(
+    world.epoch,
+    swap.after.epoch,
+    "a stale Won moved GROUP's epoch",
+  );
+  assert.deepEqual(
+    world.roster.map((m) => m.device_id),
+    [SELF.device_id, PEER.device_id],
+    "a stale Won seated THIRD",
+  );
+  assert.equal(
+    world.stagedCommits.get(GROUP),
+    swap.after.staged,
+    "a stale Won's merge consumed the staged commit",
+  );
+  // Not vacuous: the Won reached `classifyArbitration`, and the post-classify
+  // check dropped it by name.
+  await assertActedOnNothing(t, world, swap, {
+    ...SWAPPED,
+    outcome: "won",
+  });
+});
+
+test("6e GUARD — a re-establish held in its leave-clean is an owner: the backstop waits, and the call ends green", async (t) => {
+  const world = newWorld(t, "creator", "ch-resecure-6e");
+  await bringUpCreator(t, world);
+  await advance(t, 3_000); // past the bring-up's rotation settle (2 s)
+  const creates = calls(world, "callCreate");
+  const releaseLeave = world.holdLeaveCleanup();
+
+  // THIRD's admit submit rejects: the submit catch re-secures (arming the
+  // backstop) and schedules the re-establish, which runs as a group action
+  // and suspends in `#rejoinFresh`'s leave-clean, BEFORE its establish.
+  world.failSubmitOnce(new Error("network"));
+  await world.joinRequest(THIRD);
+  await advance(t, 1);
+  assert.equal(world.submits(), 1, "the admit never submitted");
+  assert.equal(world.submitFailure, null, "the rejection was never delivered");
+  assert.equal(world.session.state(), "resecuring");
+  await advance(t, 1);
+  assert.equal(calls(world, "callLeaveCleanup"), 1, "no leave-clean started");
+  assert.deepEqual(world.leaveCleanups, [], "the leave-clean is not held");
+
+  // Not vacuous: the bound comes due twice over, and no establish is in
+  // flight — only the pending group action owns the state.
+  const held = 25_000;
+  assert.ok(2 * RESECURE_BACKSTOP_MS < held);
+  const seen = await watch(t, world, held);
+  assert.deepEqual(world.leaveCleanups, [], "the leave-clean was not held");
+  assert.equal(calls(world, "callCreate"), creates, "an establish started");
+  assert.deepEqual(seen.states, ["resecuring"]);
+  assert.deepEqual(seen.chips, ["resecuring"], "the chip left amber");
+  assert.deepEqual(louds(world), [], "the backstop fired on an owned state");
+  assert.equal(world.terminalLoud(), false);
+  assert.equal(world.publishing(), false, "a re-securing device published");
+
+  releaseLeave();
+  await flush();
+  await advance(t, 1);
+  assert.deepEqual(world.leaveCleanups, [GROUP]);
+  assert.equal(calls(world, "callCreate"), creates + 1, "no re-establish ran");
+  assert.equal(world.session.state(), "active");
+  await installKeys(world, world.epoch);
+  const settled = await watch(t, world, SETTLE_MS);
+  assertJoined(world, settled);
+});
+
+test("6f — an honest Lost for a submit whose group was replaced acts on nothing: no rebase, no refetch of the live group", async (t) => {
+  const world = newWorld(t, "creator", "ch-resecure-6f");
+  const swap = await swapGroupUnderSubmit(t, world);
+  // The honest answer: the DS stores `receiverLag`'s own first commit at the
+  // SUBMITTED epoch (1 here), and names that row as the winner.
+  const epoch = swap.after.submittedEpoch;
+  world.answerSubmitOnce({
+    kind: "conflict",
+    body: {
+      result: "Lost",
+      winning: {
+        group_id: GROUP,
+        epoch,
+        committer: PEER,
+        commit: `commit-${epoch}`,
+        added: [],
+        removed: [],
+      },
+    },
+  });
+  // What the `lost` arm would reach, scripted as native and the DS would
+  // answer: GROUP was wiped, and the live group is at epoch 0. Unscripted,
+  // a build without the check would stop partway through that arm on a
+  // stub's assertion (a rejection the post-submit catch can swallow), so the
+  // arm would never run as it does against native.
+  world.rejections.set(`mls-synth:${GROUP}:${epoch}`, groupNotFound(GROUP));
+  world.fetchCommitsAnswer = {
+    groupId: NEXT_GROUP,
+    fromEpoch: epoch + 1,
+    result: { kind: "ok", body: { commits: [], current_epoch: 0 } },
+  };
+
+  swap.releaseSubmit();
+  await flush();
+  assert.equal(world.submitAnswer, null, "the Lost was never delivered");
+  assert.deepEqual(
+    world.commitLosts,
+    [],
+    "a stale Lost cleared the live group's pending commit",
+  );
+  assert.equal(
+    calls(world, "processEnvelope"),
+    swap.after.calls.processEnvelope,
+    "a stale Lost replayed the winning commit",
+  );
+  assert.equal(
+    calls(world, "mlsFetchCommits"),
+    swap.after.calls.mlsFetchCommits,
+    "a stale Lost gap-refetched the live group",
+  );
+  assert.notEqual(world.fetchCommitsAnswer, null, "the refetch was answered");
+  // Not vacuous: the scripted Lost, not the stub's default Won, reached
+  // `classifyArbitration`, and the post-classify check dropped it by name.
+  await assertActedOnNothing(t, world, swap, { ...SWAPPED, outcome: "lost" });
+});
+
+test("6g — a feature_disabled for a submit whose group was replaced acts on nothing: the call does not drop to plaintext", async (t) => {
+  const world = newWorld(t, "creator", "ch-resecure-6g");
+  const swap = await swapGroupUnderSubmit(t, world);
+  world.answerSubmitOnce({ kind: "feature_disabled" });
+
+  swap.releaseSubmit();
+  await flush();
+  assert.equal(world.submitAnswer, null, "the answer was never delivered");
+  // Acted on, this is `#toPlaintext`: a quiet `off` on the live group, from
+  // an answer about a group this session already abandoned.
+  assert.ok(
+    !world.modes.slice(swap.after.modesAt).includes("off"),
+    "a stale feature_disabled dropped the call to plaintext",
+  );
+  assert.notEqual(world.session.callMode().kind, "off", "the mode is `off`");
+  assert.notEqual(world.session.state(), "plaintext", "the state is plaintext");
+  // Not vacuous: the scripted answer, not the stub's default Won, reached
+  // `classifyArbitration`, and the post-classify check dropped it by name.
+  await assertActedOnNothing(t, world, swap, {
+    ...SWAPPED,
+    outcome: "plaintext",
+  });
+});
+
+test("6h — a 2xx with no body for a submit whose group was replaced acts on nothing: `classifyArbitration` throws into the post-submit catch", async (t) => {
+  const world = newWorld(t, "creator", "ch-resecure-6h");
+  const swap = await swapGroupUnderSubmit(t, world);
+  // What the real bridge hands back for a 204: `#apiMls`
+  // (`components/client/e2ee.ts`) answers it `{ kind: "ok", body }` with
+  // `body` cast `undefined as T`, and a 2xx whose JSON is `null` passes
+  // through the same way. The type says `ResponseSubmitMlsCommit`, the value
+  // has none, and the cast below is that same cast. `classifyArbitration`
+  // reads `res.body.result` and throws, after the submit resolved and before
+  // the post-classify check.
+  world.answerSubmitOnce({
+    kind: "ok",
+    body: undefined as unknown as ResponseSubmitMlsCommit,
+  });
+
+  swap.releaseSubmit();
+  await flush();
+  assert.equal(world.submitAnswer, null, "the answer was never delivered");
+  // WHICH site stopped it. Not the submit's own catch: the answer resolved,
+  // and no clock has moved, so the timeout cannot have fired. Not the
+  // post-classify check: its payload names the DS answer's `outcome`, and
+  // this one has none. That leaves the post-submit catch's guard.
+  assert.deepEqual(
+    swap.staleLogs(),
+    [SWAPPED],
+    "the post-submit catch's guard did not stop the continuation",
+  );
+  await assertActedOnNothing(t, world, swap, SWAPPED);
 });

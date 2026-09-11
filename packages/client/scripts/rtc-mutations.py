@@ -1458,7 +1458,7 @@ MUTATIONS += [
 #
 # `mlsCallSession.ts` + `mlsCallSession.resecure.test.ts`: someone leaves and
 # rejoins an encrypted call and the chip loops on "Re-securing…" until the
-# client is quit. Three groups, mirroring the spec's:
+# client is quit. Three groups, mirroring the spec's, then A11:
 #
 #   P1 — the join ladder recognising its own success. A Welcome adopted while
 #     the ladder sits in an await resolves no wait, so without `#ladderJoined`
@@ -1473,17 +1473,25 @@ MUTATIONS += [
 #     of its own making. The owner term is wrong in both directions: too
 #     strong (always held), the wedge is back (4a); too weak, the backstop
 #     cuts a live ladder short (4b) or latches a `start()` still enrolling
-#     (4c).
+#     (4c). The re-arm and the pending-owner term are pinned by 6a and 6e.
+#   A11 — `#submitSuperseded`: a submit continuation whose group a
+#     re-establish replaced acts on nothing. `#stageAndSubmit` checks it at
+#     three sites: the submit's inner catch (a timeout or a reject, pinned by
+#     6b and 6c), the post-classify check (every DS answer
+#     `classifyArbitration` can read, pinned by 6d, 6f and 6g, its Won arm by
+#     6d alone), and the post-submit outer catch (a throw after the submit
+#     resolved, pinned by 6h).
 #
 # The last two entries mutate EXISTING code that wave 1 did not edit — the
 # Welcome-adopt block in `#onEpochAdvanced` — because the fix sits beside it
 # and its failure is the wedge's mirror image: a red that a late or foreign
 # Welcome turns back into a green.
 #
-# The spec's guards (4b, 4c, 5, 5b, 5c) are green at the base commit by
+# The spec's guards (4b, 4c, 5, 5b, 5c, 6e) are green at the base commit by
 # construction, so the entries in this block are their only evidence of being
 # live: 4b and 4c through the owner-term pair, 5 through the forced-true
-# predicate, 5b and 5c through the adopt-block pair.
+# predicate, 5b and 5c through the adopt-block pair, and 6e through
+# `backstop-groupaction-owner-dropped`.
 
 MUTATIONS += [
     # ---- P1: one entry per await the ladder can be suspended in ------------
@@ -1570,6 +1578,18 @@ MUTATIONS += [
     this.#toActive();""",
         specs=[RESECURE_SPEC],
     ),
+    Mutation(
+        id="backstop-rearm-dropped",
+        what="the backstop's owner arm returns WITHOUT re-arming, so a re-securing whose owner outlives the first bound is never looked at again — when that owner lets go without ending it, nothing latches it and the chip sits amber: the wedge, one bound later",
+        file=SESSION,
+        # The whole line, trailing comment included, so the deletion leaves no
+        # orphaned comment. `#armResecuringDeadline` makes the same call at
+        # four spaces, which this six-space window cannot match.
+        search="""      this.#scheduleResecuringDeadline(); // same bound, same reason
+""",
+        replace="""""",
+        specs=[RESECURE_SPEC],
+    ),
     # ---- the backstop: the owner term, in both directions ------------------
     Mutation(
         id="backstop-owner-always-held",
@@ -1605,6 +1625,101 @@ MUTATIONS += [
 """,
         specs=[RESECURE_SPEC],
     ),
+    Mutation(
+        id="backstop-groupaction-owner-dropped",
+        what="a scheduled or running group action is no longer an owner, so the backstop latches loud under a re-establish still suspended in its leave-clean, before its establish — `#establishInFlight` is still false there, so this is the one term that covers it",
+        file=SESSION,
+        # Three lines, starting one line ABOVE the term, so the window differs
+        # from both neighbours: `backstop-owner-always-held` starts at
+        # `return (` and `backstop-gen0-owner-dropped` at this very term.
+        search="""      this.#establishInFlight ||
+      this.#groupActionPending ||
+      this.#establishGeneration === 0
+""",
+        replace="""      this.#establishInFlight ||
+      this.#establishGeneration === 0
+""",
+        specs=[RESECURE_SPEC],
+    ),
+    # ---- A11: a superseded submit acts on nothing --------------------------
+    #
+    # `#submitSuperseded` guards `#stageAndSubmit` at three sites: a
+    # re-establish can replace `#groupId` while the submit is on the wire, and
+    # a continuation that re-secures, re-establishes, rebases or merges from
+    # there hits the LIVE group.
+    #
+    #   inner catch — the submit timed out or was rejected. Pinned by 6b and
+    #     6c through `a11-inner-guard-removed`.
+    #   post-classify — the DS answered, and every arm of the switch after it
+    #     acts on the live session. Pinned by 6d, 6f and 6g through
+    #     `a11-post-classify-check-removed`, and its Won arm on its own by 6d
+    #     through `a11-post-classify-won-exempt`. 6d's merge is there to take
+    #     because native refuses the swap's leave-clean and so still holds
+    #     GROUP and its staged commit; a stale Won let through would merge it.
+    #   outer catch — a throw after the submit resolved: an unreadable body in
+    #     `classifyArbitration`, `callCommitWon`, or the rebase. Pinned by 6h
+    #     through `a11-outer-guard-removed`. The post-classify check cannot
+    #     cover it: a 2xx with no body (`#apiMls` answers a 204
+    #     `{kind: "ok", body: undefined}`) makes `classifyArbitration` throw on
+    #     `res.body.result` BEFORE that check runs, so this guard is its only
+    #     stop.
+    #
+    # The inner window starts at the `catch` line ABOVE the guard, and the
+    # outer window runs on to the comment line BELOW it: the outer site's
+    # guard line (six spaces) is a substring of the inner one's (eight), so
+    # the six-space line alone matches twice and would hard-error. The
+    # post-classify line passes `outcome`, so it matches neither.
+    Mutation(
+        id="a11-inner-guard-removed",
+        what="a submit that timed out or was rejected after its group was replaced runs the timeout arm against the LIVE group: its pending commit is cleared, the session re-secured and a re-establish scheduled, all from a continuation that should act on nothing (6b the timeout, 6c the reject)",
+        file=SESSION,
+        search="""      } catch {
+        if (this.#submitSuperseded(groupId)) return;
+""",
+        replace="""      } catch {
+""",
+        specs=[RESECURE_SPEC],
+    ),
+    Mutation(
+        id="a11-post-classify-check-removed",
+        what="a DS answer for a submit whose group was replaced runs its arm against the LIVE group: a stale Won is merged onto the replaced group a failed leave-clean left in native (6d), a stale Lost clears the live group's pending commit, replays the winning commit and gap-refetches the live group (6f), and a stale `feature_disabled` drops an encrypted call to plaintext (6g)",
+        file=SESSION,
+        # The guard line alone, leaving the comment block above it in place,
+        # so an edit to that comment cannot break this entry.
+        search="""      if (this.#submitSuperseded(groupId, outcome.outcome)) return;
+""",
+        replace="""""",
+        specs=[RESECURE_SPEC],
+    ),
+    Mutation(
+        id="a11-post-classify-won-exempt",
+        what="the post-classify check lets a stale Won through, so a submit whose group was replaced still merges on it: `callCommitWon` runs for the replaced group, and when native still holds that group (a failed leave-clean is swallowed) `#lastOwnWon` is written onto the live session, where it outranks the inbound memo in `classifyLocalKeyInstall` (6d; the Lost and `feature_disabled` arms stay guarded)",
+        file=SESSION,
+        # Same window as `a11-post-classify-check-removed`, and a different
+        # defect: one exempts a single arm instead of dropping the check. The
+        # replacement is wrapped the way prettier would wrap it.
+        search="""      if (this.#submitSuperseded(groupId, outcome.outcome)) return;
+""",
+        replace="""      if (
+        outcome.outcome !== "won" &&
+        this.#submitSuperseded(groupId, outcome.outcome)
+      )
+        return;
+""",
+        specs=[RESECURE_SPEC],
+    ),
+    Mutation(
+        id="a11-outer-guard-removed",
+        what="a post-submit throw for a submit whose group was replaced runs the staging-failure arm against the LIVE group: pending commit cleared, re-secured, re-establish scheduled. A 2xx with no body makes `classifyArbitration` throw BEFORE the post-classify check, so this guard is its only stop (6h)",
+        file=SESSION,
+        # Unlike the post-classify entries, this window takes in the comment
+        # line below the guard (see the block note above), so rewording that
+        # comment hard-errors this entry. It fails loud, never silently.
+        search="""      if (this.#submitSuperseded(groupId)) return;
+      // Everything past the build""",
+        replace="""      // Everything past the build""",
+        specs=[RESECURE_SPEC],
+    ),
     # ---- the Welcome-adopt block: a red stays red --------------------------
     Mutation(
         id="late-welcome-resets-latch",
@@ -1631,7 +1746,11 @@ MUTATIONS += [
         specs=[RESECURE_SPEC],
     ),
     # 🔴 KNOWN NON-ENTRIES, recorded rather than silently absent. Each was
-    # ruled out by the wave-1 or wave-2 audit, and each would be wrong to add:
+    # ruled out by the wave-1, wave-2 or wave-3 audit, and each would be wrong
+    # to add. Entries for the backstop re-arm, its pending-owner term and the
+    # A11 guards now exist: the wave-2 audit's findings 1 and 2, plus wave 3's
+    # post-classify pair and outer-catch guard, covered by specs 6a–6h. Open
+    # submit-race edges are recorded as follow-ups in the plan's F6, not here.
     #
     #   (a) `p1-exhaustion-check-removed` — the `"retries spent"` check after
     #       the loop. It is unreachable defensive code, kept deliberately: no
@@ -1650,7 +1769,7 @@ MUTATIONS += [
     #       `failed`, which the committed order flips back to `resecuring` at the
     #       240 s deadline — pinning that would pin an accident, not a posture.
     #
-    #   (e) redundant or log-only lines, each surviving on its own by design:
+    #   (c) redundant or log-only lines, each surviving on its own by design:
     #       `#setState`'s deadline cancel and the backstop's own "left
     #       resecuring" guard are a redundant pair; the `#establishInFlight`
     #       owner term is redundant because every `#establish` runs inside a

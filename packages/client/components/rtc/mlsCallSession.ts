@@ -2930,6 +2930,18 @@ export class MlsCallSession {
       }
 
       const outcome = classifyArbitration(res);
+      // The DS answered for a group that was replaced while the submit was
+      // on the wire. Every arm below acts on the LIVE session: `lost`,
+      // `plaintext` and `failed` clear the live group's pending commit via
+      // `#safeCommitLost`, and `lost` then rebases and gap-refetches it.
+      // `won` stops here too, before the merge. The replaced group is not
+      // guaranteed gone: `#safeLeave` swallows a failed leave-clean, so native
+      // can still hold our pending commit and merge it. The arm would then
+      // write `#lastOwnWon` onto the live session, where it outranks the
+      // inbound memo in `classifyLocalKeyInstall` and can defer our send key
+      // past a Remove at that epoch. Nothing needs the merge: that group is
+      // abandoned either way.
+      if (this.#submitSuperseded(groupId, outcome.outcome)) return;
       switch (outcome.outcome) {
         case "won":
           await this.#deps.bridge.callCommitWon(groupId, commit.epoch);
@@ -3006,12 +3018,17 @@ export class MlsCallSession {
    * (`#poisonedSuccessor`) — and its `#resetGroupBuffers` already dropped
    * `#staged`, which nothing newer can have set while this still holds the
    * lock.
+   *
+   * `outcome` names the DS answer being dropped, when there is one.
    */
-  #submitSuperseded(groupId: string): boolean {
+  #submitSuperseded(
+    groupId: string,
+    outcome?: ArbitrationOutcome["outcome"],
+  ): boolean {
     if (groupId === this.#groupId) return false;
     console.warn(
       "[mls] stale submit continuation for a superseded group — ignored",
-      { submitted: groupId, live: this.#groupId },
+      { submitted: groupId, live: this.#groupId, ...(outcome && { outcome }) },
     );
     return true;
   }
