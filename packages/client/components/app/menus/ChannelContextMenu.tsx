@@ -15,7 +15,6 @@ import MdLogout from "@material-design-icons/svg/outlined/logout.svg?component-s
 import MdMarkChatRead from "@material-design-icons/svg/outlined/mark_chat_read.svg?component-solid";
 import MdSettings from "@material-design-icons/svg/outlined/settings.svg?component-solid";
 import MdShare from "@material-design-icons/svg/outlined/share.svg?component-solid";
-import MdShield from "@material-design-icons/svg/outlined/shield.svg?component-solid";
 
 import {
   ContextMenu,
@@ -88,16 +87,6 @@ export function ChannelContextMenu(props: { channel: Channel }) {
       type: "delete_channel",
       channel: props.channel,
     });
-  }
-
-  /**
-   * Open channel in Stoat Admin Panel
-   */
-  function openAdminPanel() {
-    window.open(
-      `https://old-admin.stoatinternal.com/panel/inspect/channel/${props.channel.id}`,
-      "_blank",
-    );
   }
 
   /**
@@ -178,11 +167,6 @@ export function ChannelContextMenu(props: { channel: Channel }) {
         <ContextMenuDivider />
       </Show>
 
-      <Show when={state.settings.getValue("advanced:admin_panel")}>
-        <ContextMenuButton icon={MdShield} onClick={openAdminPanel}>
-          <Trans>Admin Panel</Trans>
-        </ContextMenuButton>
-      </Show>
       <ContextMenuButton icon={MdShare} onClick={copyLink}>
         <Trans>Copy link</Trans>
       </ContextMenuButton>
