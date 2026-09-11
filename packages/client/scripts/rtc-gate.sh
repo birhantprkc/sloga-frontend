@@ -100,6 +100,7 @@ EXPECTED=(
   "components/rtc/mlsCallSession.falsered.test.ts 5 0"
   "components/rtc/mlsCallSession.heal.test.ts 7 0"
   "components/rtc/mlsCallSession.joinrace.test.ts 30 0"
+  "components/rtc/mlsCallSession.resecure.test.ts 15 0"
   "components/rtc/mlsDrainPolicy.test.ts 14 0"
   "components/rtc/mlsJoinRequestPolicy.test.ts 4 0"
   "components/rtc/mlsNegotiatingFailsafe.test.ts 13 0"
@@ -208,6 +209,7 @@ FILES=(components/rtc/mlsCallSession.ts components/rtc/mlsCallModePolicy.ts
   components/rtc/mlsCallSession.heal.test.ts
   components/rtc/mlsCallSession.joinrace.test.ts
   components/rtc/mlsCallSession.falsered.test.ts
+  components/rtc/mlsCallSession.resecure.test.ts
   components/rtc/publishGate.ts components/rtc/publishGate.test.ts
   components/rtc/publishGateEpisode.ts
   components/rtc/publishGateEpisode.test.ts

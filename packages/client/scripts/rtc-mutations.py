@@ -117,6 +117,7 @@ FALSERED_SPEC = "components/rtc/mlsCallSession.falsered.test.ts"
 GATE_SPEC = "components/rtc/publishGate.test.ts"
 EPISODE_SPEC = "components/rtc/publishGateEpisode.test.ts"
 VERDICT_SPEC = "components/rtc/pauseVerdict.test.ts"
+RESECURE_SPEC = "components/rtc/mlsCallSession.resecure.test.ts"
 ALL_SPECS = [POLICY_SPEC, HEAL_SPEC, JOINRACE_SPEC]
 
 
@@ -1451,6 +1452,212 @@ MUTATIONS += [
   };""",
         specs=[VERDICT_SPEC],
     ),
+]
+
+# --- The re-securing wedge (fix/mls-resecure-wedge, 2026-09-10) --------------
+#
+# `mlsCallSession.ts` + `mlsCallSession.resecure.test.ts`: someone leaves and
+# rejoins an encrypted call and the chip loops on "Re-securing…" until the
+# client is quit. Three groups, mirroring the spec's:
+#
+#   P1 — the join ladder recognising its own success. A Welcome adopted while
+#     the ladder sits in an await resolves no wait, so without `#ladderJoined`
+#     the ladder kept broadcasting intents AS A MEMBER and ended amber with no
+#     owner. Each await the ladder can be suspended in has its own check, and
+#     each check can be dropped alone, so each has its own entry. The
+#     predicate is pinned from the other side as well: forced TRUE, it stops
+#     an HONEST ladder, which only the guards can see.
+#   P3 — the enrolment alarm re-arms with a re-establish instead of being
+#     latch-once for the whole call.
+#   the backstop — "re-securing" ends LOUD or with an OWNER, never in a green
+#     of its own making. The owner term is wrong in both directions: too
+#     strong (always held), the wedge is back (4a); too weak, the backstop
+#     cuts a live ladder short (4b) or latches a `start()` still enrolling
+#     (4c).
+#
+# The last two entries mutate EXISTING code that wave 1 did not edit — the
+# Welcome-adopt block in `#onEpochAdvanced` — because the fix sits beside it
+# and its failure is the wedge's mirror image: a red that a late or foreign
+# Welcome turns back into a green.
+#
+# The spec's guards (4b, 4c, 5, 5b, 5c) are green at the base commit by
+# construction, so the entries in this block are their only evidence of being
+# live: 4b and 4c through the owner-term pair, 5 through the forced-true
+# predicate, 5b and 5c through the adopt-block pair.
+
+MUTATIONS += [
+    # ---- P1: one entry per await the ladder can be suspended in ------------
+    Mutation(
+        id="p1-loop-head-check-removed",
+        what="the ladder's loop-head check is dropped, so a Welcome adopted during the pre-join roster pin still has a MEMBER sign a join intent — the \"intent signed\" check still stops the broadcast, but only after the native signing call",
+        file=SESSION,
+        search="""      if (this.#ladderJoined(generation, "loop head")) return;
+""",
+        replace="""""",
+        specs=[RESECURE_SPEC],
+    ),
+    Mutation(
+        id="p1-catch-check-removed",
+        what="a MEMBER's failed intent signing reaches `#onLoud` again: a Welcome adopted while `callJoinIntent` was in flight, then a throw from it, is a false red on an encrypted call",
+        file=SESSION,
+        search="""        if (this.#ladderJoined(generation, "intent signing threw")) return;
+""",
+        replace="""""",
+        specs=[RESECURE_SPEC],
+    ),
+    Mutation(
+        id="p1-signed-check-removed",
+        what="a Welcome adopted during the signing call no longer stops the broadcast, so a MEMBER broadcasts the intent it signed before it joined",
+        file=SESSION,
+        search="""      if (this.#ladderJoined(generation, "intent signed")) return;
+""",
+        replace="""""",
+        specs=[RESECURE_SPEC],
+    ),
+    Mutation(
+        id="p1-post-intent-check-removed",
+        what="the DS's answer to an intent broadcast before the Welcome was adopted is acted on for a MEMBER: `not_found` tears down the group just joined, `feature_disabled` drops an encrypted call to plaintext, `call_full` refuses and auto-leaves a member",
+        file=SESSION,
+        search="""      if (this.#ladderJoined(generation, "intent answered")) return;
+""",
+        replace="""""",
+        specs=[RESECURE_SPEC],
+    ),
+    Mutation(
+        id="p1-predicate-forced-true",
+        what="`#joinedIn` answers true for every generation, so an UN-ADMITTED joiner's ladder stops at its loop head before its first intent: no admitter is ever asked, and the ladder's own red never comes",
+        file=SESSION,
+        search="""  #joinedIn(generation: number): boolean {
+    return this.#joinedGeneration === generation;
+  }""",
+        replace="""  #joinedIn(generation: number): boolean {
+    return true || this.#joinedGeneration === generation;
+  }""",
+        specs=[RESECURE_SPEC],
+    ),
+    # ---- P3: the alarm re-arms with the group ------------------------------
+    Mutation(
+        id="p3-reset-removed",
+        what="`#resetGroupBuffers` stops resetting the enrolment alarm's latch-once flag, so a SECOND exhausted ladder after a re-establish is not latched by the alarm — the first red was cleared with the old group, and the second is silent amber until something else ends it",
+        file=SESSION,
+        # The one line on its own, and deliberately not the three-line window
+        # around it: it occurs once in the file, and a window that included
+        # `#armEnrolmentAssertion()` would hard-error on the benign reorder
+        # recorded as known non-entry (b) below, instead of going on
+        # measuring this defect.
+        search="""    this.#enrolmentAlarmed = false;
+""",
+        replace="""""",
+        specs=[RESECURE_SPEC],
+    ),
+    # ---- the backstop: armed, and never green ------------------------------
+    Mutation(
+        id="backstop-not-armed",
+        what="`#toResecuring` no longer arms the backstop, so a re-securing nothing is left to end (removed while no longer in the SFU) stays amber until the 240 s enrolment deadline — the wedge",
+        file=SESSION,
+        search="""    this.#setState("resecuring");
+    this.#armResecuringDeadline(reason);""",
+        replace="""    this.#setState("resecuring");""",
+        specs=[RESECURE_SPEC],
+    ),
+    Mutation(
+        id="backstop-promotes-to-active",
+        what="the backstop resolves an ownerless re-securing to GREEN instead of latching loud — a timer-driven green is the \"green by default\" root cause, and `enrolmentVerdict` answers enrolled whenever the session is terminal",
+        file=SESSION,
+        search="""    console.error("[mls] re-securing backstop fired", error);
+    this.#latchLoud(error, "control");""",
+        replace="""    console.error("[mls] re-securing backstop fired", error);
+    this.#toActive();""",
+        specs=[RESECURE_SPEC],
+    ),
+    # ---- the backstop: the owner term, in both directions ------------------
+    Mutation(
+        id="backstop-owner-always-held",
+        what="the backstop treats every re-securing as owned and re-arms forever, so a re-securing nothing is left to end never goes loud — the wedge, behind a timer that looks armed",
+        file=SESSION,
+        search="""    return (
+      this.#establishInFlight ||
+      this.#groupActionPending ||
+""",
+        replace="""    return (
+      true ||
+      this.#establishInFlight ||
+      this.#groupActionPending ||
+""",
+        specs=[RESECURE_SPEC],
+    ),
+    Mutation(
+        id="backstop-ignores-live-owner",
+        what="the backstop latches even while an owner holds the state, so a live re-establish ladder is cut short to a red at the first bound — 10 s into a ladder that runs 40",
+        file=SESSION,
+        search="""    if (this.#resecuringHasOwner()) {""",
+        replace="""    if (false && this.#resecuringHasOwner()) {""",
+        specs=[RESECURE_SPEC],
+    ),
+    Mutation(
+        id="backstop-gen0-owner-dropped",
+        what="`start()`'s KeyPackage enrolment is no longer an owner, so a slow enrolment (a 429 wait) that the negotiating fail-safe shows amber latches loud before the first establish — a red that outlives the create that follows",
+        file=SESSION,
+        search="""      this.#groupActionPending ||
+      this.#establishGeneration === 0
+""",
+        replace="""      this.#groupActionPending
+""",
+        specs=[RESECURE_SPEC],
+    ),
+    # ---- the Welcome-adopt block: a red stays red --------------------------
+    Mutation(
+        id="late-welcome-resets-latch",
+        what="adopting a Welcome resets the rotation state, which clears the loud latch — so a Welcome arriving after the ladder already went red turns that red green",
+        file=SESSION,
+        # Placed in the adopt block rather than in `#toActive`. Both are a
+        # one-line insertion; this one re-introduces the defect exactly where
+        # a late Welcome enters, while one in `#toActive` would also run on the
+        # creator path and on every honest join, and so redden the suite for
+        # reasons that have nothing to do with a late Welcome.
+        search="""      this.#joinedGeneration = this.#establishGeneration;
+      this.#toActive();""",
+        replace="""      this.#joinedGeneration = this.#establishGeneration;
+      this.#resetRotationState();
+      this.#toActive();""",
+        specs=[RESECURE_SPEC],
+    ),
+    Mutation(
+        id="foreign-welcome-adopted",
+        what="`#onEpochAdvanced` adopts a Welcome `welcomeVerdict` refused — another group's, or a superseded generation's — so a foreign Welcome during a held intent stops a live ladder and reads as joined",
+        file=SESSION,
+        search="""      if (!verdict.adopt) {""",
+        replace="""      if (false && !verdict.adopt) {""",
+        specs=[RESECURE_SPEC],
+    ),
+    # 🔴 KNOWN NON-ENTRIES, recorded rather than silently absent. Each was
+    # ruled out by the wave-1 or wave-2 audit, and each would be wrong to add:
+    #
+    #   (a) `p1-exhaustion-check-removed` — the `"retries spent"` check after
+    #       the loop. It is unreachable defensive code, kept deliberately: no
+    #       schedule reaches it with the join complete. An entry deleting it
+    #       could only ever go green, and "fixing" that by widening it until it
+    #       reddens would measure some other check under this one's name.
+    #
+    #   (b) `p3-reset-after-arm` — moving `this.#enrolmentAlarmed = false;`
+    #       below `#armEnrolmentAssertion()` in `#resetGroupBuffers`. The
+    #       move only delays the periodic tick until the next direct
+    #       `#assertSelfEnrolled` call, and every path after the reset either
+    #       makes one (`#toActive`, the ladder's exhaustion), ends in `#onLoud`,
+    #       or is ended by the re-securing backstop. Measured: no spec in the bare
+    #       gate reddens, and the chip, the banner and the loud/clear stream are
+    #       identical. The one difference is `state()` of a session already
+    #       `failed`, which the committed order flips back to `resecuring` at the
+    #       240 s deadline — pinning that would pin an accident, not a posture.
+    #
+    #   (e) redundant or log-only lines, each surviving on its own by design:
+    #       `#setState`'s deadline cancel and the backstop's own "left
+    #       resecuring" guard are a redundant pair; the `#establishInFlight`
+    #       owner term is redundant because every `#establish` runs inside a
+    #       group action; `#armResecuringDeadline`'s no-walk-forward guard has
+    #       no caller that re-enters faster than the bound without an owner; and
+    #       the drop / `welcome adopted` / `join ladder: joined` logs are log-only
+    #       — the live leg's expected console lines are their check.
 ]
 
 

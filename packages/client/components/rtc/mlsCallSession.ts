@@ -3534,11 +3534,14 @@ export class MlsCallSession {
     // leaf again, with a fresh deadline for the new ladder. The alarm re-arms
     // with it: a re-establish clears the loud latch (session and UI, see
     // `#resetRotationState`) because the group is being replaced, so its
-    // latch-once flag is reset here — BEFORE `#armEnrolmentAssertion()`,
-    // whose scheduler (and `#assertSelfEnrolled` itself) returns early while
-    // the flag is set; reset after it, the periodic check would stay dead for
-    // the rest of the call. If the new group also fails to enrol us, this
-    // assertion latches it loud again.
+    // latch-once flag is reset here. Reset it BEFORE `#armEnrolmentAssertion()`:
+    // its scheduler returns early while the flag is set, so reset after it,
+    // no periodic tick would run for the new group until something called
+    // `#assertSelfEnrolled` directly (`#toActive`, or the join ladder's
+    // exhaustion). Every path out of a re-establish does one of those, ends in
+    // `#onLoud`, or is ended by the re-securing backstop, so the order is not
+    // visible on the chip; it is kept because it leaves the tick live. If the
+    // new group also fails to enrol us, this assertion latches it loud again.
     this.#enrolmentProven = false;
     this.#enrolmentAlarmed = false;
     this.#armEnrolmentAssertion();
