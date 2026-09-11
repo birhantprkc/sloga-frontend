@@ -8,6 +8,61 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // v0.59.0 (2026-09-11, second entry that day). Copy constraints,
+  // load-bearing:
+  // - The re-securing fix is the one item here seen working on a real call: a
+  //   live leg on 2026-09-11 reproduced the stuck chip on the base build and
+  //   saw the fixed build recover. Say it recovers; promise nothing wider.
+  // - The other encrypted-call changes riding this line (the join-race hold,
+  //   the heal-install work, the false-red pause fix, the banner wording) have
+  //   no live leg and are NOT announced, not even as "other reliability fixes".
+  // - Group calls: this entry CORRECTS the v0.58.1 line saying group owners
+  //   can turn calls on. The backend now treats every group as callable until
+  //   it is switched off; the client change is copy only, so this item is only
+  //   true once the backend deploy has landed. The v0.58.1 entry stays as
+  //   published. The switch is gated on ManageChannel, and this entry does not
+  //   assume only owners hold it, so the copy says "a group", never "owners".
+  // - The group-call, menu and badge items are copy and UI changes; no live
+  //   leg is claimed for them.
+  // - Forums (ebe459c1, merged in ec00f84e): its commit records a check in a
+  //   preview build against production on a test forum (Enter adds lines,
+  //   tag emoji pick and remove, a throwaway post retagged). That is a
+  //   browser check, not a live leg; nothing here claims more. The tag button
+  //   is shown only to the post's author or a forum manager, so the copy says
+  //   who can use it. Only server emoji went from text to an image, so the
+  //   copy claims that and nothing wider.
+  // - Never quote the group-settings sentence, the moderator badge tooltip,
+  //   the admin tool's address, or the forum strings (the retag dialog's
+  //   title and empty-state line, the tag-emoji button labels): those are
+  //   build gate markers. Say "switch off", never "turned off"; say "change a
+  //   post's tags" and "tag emoji are chosen", never the button wording.
+  // - No Version section: this entry makes no claim about which platforms
+  //   carry v0.59.0.
+  {
+    id: "sloga-2026-09-11-2",
+    title: "Patch Notes",
+    published_at: "2026-09-11T19:00:00.000Z",
+    web_version: "0.59.0",
+    markdown_content: `## v0.59.0 — Encrypted calls recover from a rejoin
+
+### 🔒 Encrypted calls
+- **Leaving and rejoining an encrypted call no longer leaves it stuck re-securing.** When someone left and came back, the call could stay on Re-securing until the app was restarted. It now recovers on its own.
+
+### 👥 Group calls
+- **Calls are now on by default in group chats**, so the call button is back. A group that would rather not have calls can switch them off in the group's settings.
+- This corrects the v0.58.1 notes, which said group owners had to turn calls on.
+
+### 🧹 Menus and badges
+- **The Admin Panel shortcut is gone from the right-click menus**, along with the Advanced setting that showed it. It was a leftover that pointed at another project's staff tool and never worked on Sloga.
+- **Sloga moderators' names now appear in the multicolor Sloga brand colors** in messages and replies, like the rest of the Sloga team, and their profile badge now names them as a Sloga moderator.
+
+### 💬 Forums
+- **Forum posts keep their line breaks.** When you write a new post, Enter now starts a new line in the message box instead of posting it.
+- **You can change a post's tags after posting**, from the tag button at the top of the post. It is there for whoever wrote the post and for anyone who manages the forum.
+- **Tag emoji are chosen with the emoji picker** in a forum's settings, custom server emoji included. A server emoji on a tag now shows as the emoji itself instead of as text.
+- **Channel and server descriptions no longer save when you press Enter.** Enter adds a new line there too.
+`,
+  },
   // v0.58.1 (2026-09-11). Copy constraints, load-bearing:
   // - 🔴 ANNOUNCED WITHOUT A LIVE LEG, deliberately. The standing rule in this
   //   file — announce a fix only once it has been seen working — was WAIVED by
