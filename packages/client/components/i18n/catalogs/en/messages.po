@@ -5024,10 +5024,6 @@ msgstr "Pixelate"
 msgid "Platform"
 msgstr "Platform"
 
-#: components/ui/components/features/profiles/ProfileBadges.tsx
-msgid "Platform Moderator"
-msgstr "Platform Moderator"
-
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Play server soundboard sounds in a voice call"
@@ -6414,6 +6410,10 @@ msgstr "Sloga Founder"
 #: components/auth/src/flows/FlowHome.tsx
 msgid "Sloga has the highest standard of voice quality, streaming and latency. Create a community that never stops."
 msgstr "Sloga has the highest standard of voice quality, streaming and latency. Create a community that never stops."
+
+#: components/ui/components/features/profiles/ProfileBadges.tsx
+msgid "Sloga Moderator"
+msgstr "Sloga Moderator"
 
 #: components/app/interface/settings/user/Native.tsx
 msgid "Sloga will start in the system tray."
