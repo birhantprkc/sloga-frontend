@@ -4,8 +4,21 @@ import { createStore, produce } from "solid-js/store";
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import { styled } from "styled-system/jsx";
 
+import { TextWithEmoji } from "@revolt/markdown";
+import { startsWithPackPUA } from "@revolt/markdown/emoji/UnicodeEmoji";
 import { useModals } from "@revolt/modal";
-import { Button, Checkbox, Column, Row, Text } from "@revolt/ui";
+// CompositionMediaPicker comes through the `@revolt/ui` index on purpose:
+// deep-importing its module pulled GifPicker (which calls `typography.raw()`
+// at module scope) ahead of `typography` itself, and the app died at boot
+// with a TDZ ReferenceError.
+import {
+  Button,
+  Checkbox,
+  Column,
+  CompositionMediaPicker,
+  Row,
+  Text,
+} from "@revolt/ui";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
 import { ChannelSettingsProps } from "../ChannelSettings";
@@ -19,6 +32,16 @@ interface EditableTag {
 }
 
 const MAX_TAGS = 20;
+
+/**
+ * What the emoji picker hands back, as a tag stores it. Server emoji come
+ * as `:id:` and are kept that way (that is what renders them as images).
+ * Unicode emoji come prefixed with the PICKER USER's pack marker, which is
+ * a per-reader appearance setting and must not be baked into a tag every
+ * member sees, so it is dropped.
+ */
+const tagEmojiFromPicker = (emoji: string) =>
+  startsWithPackPUA(emoji) ? emoji.slice(1) : emoji;
 
 /**
  * Forum settings: tag definitions, require-tag switch and default sort
@@ -101,7 +124,8 @@ export default function ForumSettings(props: ChannelSettingsProps) {
         </Text>
         <Text>
           <Trans>
-            Tags let members categorise posts. Moderated tags can only be
+            Tags let members categorize posts. Each tag can have an optional
+            emoji, including this server's own. Moderated tags can only be
             applied by members who can manage this channel.
           </Trans>
         </Text>
@@ -109,15 +133,54 @@ export default function ForumSettings(props: ChannelSettingsProps) {
         <For each={tags}>
           {(tag, index) => (
             <TagEditor>
-              <TagInput
-                emoji
-                placeholder="🏷️"
-                maxlength={32}
-                value={tag.emoji}
-                onInput={(e) =>
-                  setTags(index(), "emoji", e.currentTarget.value)
-                }
-              />
+              {/* A picker, not a text box. The old free-text box took
+                  anything, so `:custom_emoji:` was stored and shown as
+                  literal text, and its only label was a 🏷️ placeholder, so
+                  it read as a second name field (reported 2026-09-11). */}
+              <EmojiSlot>
+                <CompositionMediaPicker
+                  emojiOnly
+                  onMessage={() => {}}
+                  onTextReplacement={(emoji) =>
+                    setTags(index(), "emoji", tagEmojiFromPicker(emoji))
+                  }
+                >
+                  {(picker) => (
+                    <EmojiButton
+                      type="button"
+                      ref={picker.ref}
+                      onClick={(e) => picker.onClickEmoji(e)}
+                      aria-label={
+                        tag.emoji ? t`Change tag emoji` : t`Add a tag emoji`
+                      }
+                      use:floating={{
+                        tooltip: {
+                          placement: "top",
+                          content: tag.emoji
+                            ? t`Change tag emoji`
+                            : t`Add a tag emoji`,
+                        },
+                      }}
+                    >
+                      <Show
+                        when={tag.emoji}
+                        fallback={<Symbol size={20}>add_reaction</Symbol>}
+                      >
+                        <TextWithEmoji content={tag.emoji} />
+                      </Show>
+                    </EmojiButton>
+                  )}
+                </CompositionMediaPicker>
+                <Show when={tag.emoji}>
+                  <EmojiClear
+                    type="button"
+                    aria-label={t`Remove tag emoji`}
+                    onClick={() => setTags(index(), "emoji", "")}
+                  >
+                    <Symbol size={14}>close</Symbol>
+                  </EmojiClear>
+                </Show>
+              </EmojiSlot>
               <TagInput
                 placeholder={t`Tag name`}
                 maxlength={32}
@@ -229,17 +292,61 @@ const TagInput = styled("input", {
     flexGrow: 1,
     minWidth: "120px",
   },
-  variants: {
-    // The one-emoji box. This has to be a variant rather than an inline
-    // `width: 56px`, which is what it used to be: the base `min-width` beats
-    // a plain `width`, so the emoji box rendered at 120px (measured on a
-    // 400px-wide viewport, 2026-09-10) and ate a third of a phone's row.
-    emoji: {
-      true: {
-        width: "56px",
-        minWidth: "56px",
-        flexGrow: 0,
-      },
+});
+
+/**
+ * Emoji button plus its remove control, drawn as one box the height of the
+ * name input beside it
+ */
+const EmojiSlot = styled("div", {
+  base: {
+    display: "flex",
+    alignItems: "center",
+    flexShrink: 0,
+    height: "38px",
+    borderRadius: "8px",
+    border: "1.5px solid var(--md-sys-color-outline)",
+    background: "var(--md-sys-color-surface-container)",
+    overflow: "hidden",
+  },
+});
+
+const EmojiButton = styled("button", {
+  base: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "40px",
+    height: "100%",
+    cursor: "pointer",
+    color: "var(--md-sys-color-on-surface-variant)",
+    fill: "currentColor",
+    "--emoji-size": "22px",
+
+    "& img": {
+      margin: 0,
+      verticalAlign: "middle",
+    },
+
+    _hover: {
+      background: "var(--md-sys-color-surface-container-high)",
+    },
+  },
+});
+
+const EmojiClear = styled("button", {
+  base: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "22px",
+    height: "100%",
+    cursor: "pointer",
+    color: "var(--md-sys-color-on-surface-variant)",
+    fill: "currentColor",
+
+    _hover: {
+      background: "var(--md-sys-color-surface-container-high)",
     },
   },
 });

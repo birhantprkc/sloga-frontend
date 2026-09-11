@@ -48,6 +48,14 @@ interface Props {
    * Text replacement
    */
   onTextReplacement: (node: string) => void;
+
+  /**
+   * Offer only the emoji tab. For pickers that choose an emoji rather than
+   * compose a message (forum tag icons), where a GIF or sticker has nowhere
+   * to go. Also lifts the picker above the settings overlay (z-index 100),
+   * which it would otherwise open underneath.
+   */
+  emojiOnly?: boolean;
 }
 
 export const CompositionMediaPickerContext = createContext(
@@ -59,8 +67,18 @@ export function CompositionMediaPicker(props: Props) {
   const [show, setShow] = createSignal<"gif" | "emoji" | "sticker">();
   let altRef: HTMLDivElement | undefined;
 
+  const context: Pick<Props, "onMessage" | "onTextReplacement"> = {
+    onMessage: (content) => props.onMessage(content),
+    onTextReplacement: (node) => {
+      props.onTextReplacement(node);
+      // An emoji-only picker chooses one emoji, so it is done after a pick;
+      // the composer's picker stays open for inserting several.
+      if (props.emojiOnly) setShow();
+    },
+  };
+
   return (
-    <CompositionMediaPickerContext.Provider value={props}>
+    <CompositionMediaPickerContext.Provider value={context}>
       {props.children({
         ref: setAnchor,
         onClickGif: (_, ref) => {
@@ -89,8 +107,9 @@ export function CompositionMediaPicker(props: Props) {
                 anchor={() => altRef || anchor()}
                 show={show}
                 setShow={setShow}
-                onMessage={props.onMessage}
-                onTextReplacement={props.onTextReplacement}
+                onMessage={context.onMessage}
+                onTextReplacement={context.onTextReplacement}
+                emojiOnly={props.emojiOnly}
               />
             </Motion>
           </Portal>
@@ -101,7 +120,7 @@ export function CompositionMediaPicker(props: Props) {
 }
 
 function Picker(
-  props: Pick<Props, "onMessage" | "onTextReplacement"> & {
+  props: Pick<Props, "onMessage" | "onTextReplacement" | "emojiOnly"> & {
     anchor: Accessor<HTMLElement | undefined>;
     show: Accessor<"gif" | "emoji" | "sticker" | undefined>;
     setShow: Setter<"gif" | "emoji" | "sticker" | undefined>;
@@ -139,40 +158,43 @@ function Picker(
   return (
     <Base
       ref={setFloating}
-      style={
-        fixed()
+      style={{
+        ...(fixed()
           ? { position: "absolute", bottom: 0, right: 0 }
           : {
               position: position.strategy,
               top: `${position.y ?? 0}px`,
               left: `${position.x ?? 0}px`,
-            }
-      }
+            }),
+        ...(props.emojiOnly ? { "z-index": 101 } : {}),
+      }}
     >
       <Container>
-        <Row justify class="CompositionButton">
-          <Button
-            groupActive={props.show() === "gif"}
-            onPress={() => props.setShow("gif")}
-            group="connected-start"
-          >
-            GIFs
-          </Button>
-          <Button
-            groupActive={props.show() === "emoji"}
-            onPress={() => props.setShow("emoji")}
-            group="connected"
-          >
-            Emoji
-          </Button>
-          <Button
-            groupActive={props.show() === "sticker"}
-            onPress={() => props.setShow("sticker")}
-            group="connected-end"
-          >
-            Stickers
-          </Button>
-        </Row>
+        <Show when={!props.emojiOnly}>
+          <Row justify class="CompositionButton">
+            <Button
+              groupActive={props.show() === "gif"}
+              onPress={() => props.setShow("gif")}
+              group="connected-start"
+            >
+              GIFs
+            </Button>
+            <Button
+              groupActive={props.show() === "emoji"}
+              onPress={() => props.setShow("emoji")}
+              group="connected"
+            >
+              Emoji
+            </Button>
+            <Button
+              groupActive={props.show() === "sticker"}
+              onPress={() => props.setShow("sticker")}
+              group="connected-end"
+            >
+              Stickers
+            </Button>
+          </Row>
+        </Show>
 
         <Switch fallback={<span>Not available yet.</span>}>
           <Match when={props.show() === "gif"}>

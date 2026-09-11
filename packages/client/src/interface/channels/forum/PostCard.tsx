@@ -3,6 +3,7 @@ import { For, Show, createMemo } from "solid-js";
 import { Channel, Message } from "stoat.js";
 import { styled } from "styled-system/jsx";
 
+import { TextWithEmoji } from "@revolt/markdown";
 import { useNavigate } from "@revolt/routing";
 import { Avatar, Text } from "@revolt/ui";
 import { Time } from "@revolt/ui/components/utils";
@@ -47,8 +48,10 @@ export function PostCard(props: {
           <For each={tags()}>
             {(tag) => (
               <Tag>
-                <Show when={tag!.emoji}>{tag!.emoji} </Show>
-                {tag!.name}
+                <Show when={tag!.emoji}>
+                  <TextWithEmoji content={tag!.emoji} />{" "}
+                </Show>
+                <TextWithEmoji content={tag!.name} />
               </Tag>
             )}
           </For>
