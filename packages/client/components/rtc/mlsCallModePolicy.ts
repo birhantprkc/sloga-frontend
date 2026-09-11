@@ -614,6 +614,26 @@ export function modeUnderLoudLatch(
 export type LoudLatchOrigin = "media" | "control";
 
 /**
+ * The CANCEL TOKEN on a pending re-securing escalation: only a clearer that
+ * presents the same token may cancel it.
+ *
+ *  - `joiner` — raised before this device holds any key of the group, where
+ *    every index is missing by construction. Its genuine recovery is our own
+ *    first key.
+ *  - `media` — a decrypt failure after that. The key it names stays wrong
+ *    until the next epoch, so nothing cancels it: it escalates, and
+ *    `loudHealVerdict` — which has the witnesses — decides afterwards.
+ *  - `control` — the local-declaration seam, cleared by that declaration
+ *    being corrected.
+ *
+ * One timer serves the whole media plane and five sites used to clear it
+ * unconditionally; three successive reviews each found a silent green at a
+ * DIFFERENT one of them, because the structure could not say who was entitled
+ * to cancel (media-E2EE reviews, 2026-09-08).
+ */
+export type ResecureReason = "joiner" | "media" | "control";
+
+/**
  * What the session knows NOW about one device whose frames the latch could
  * have come from: the device the error named when the worker's message
  * carried one, else every remote device that was in the call at latch time
@@ -642,7 +662,12 @@ export interface LoudHealInputs {
   latchedInstallSeq: number;
   /** The same counter now — a strictly larger value means a new epoch's keys. */
   installSeq: number;
-  /** Any media-plane error (LiveKit or native key path) since that install. */
+  /**
+   * A media-plane error the install did not supersede: a hard error (the key
+   * itself wrong) at or after the reference taken BEFORE the installer ran,
+   * or a missing key for a pair no install has covered
+   * (`MediaErrorLedger.errorSince`).
+   */
   errorSinceInstall: boolean;
   /**
    * The settle has run since BOTH the last key install and the latest
@@ -660,6 +685,44 @@ export interface LoudHealInputs {
    * has no witness at all (no remote was present) and must hold.
    */
   peers: readonly LoudHealPeer[];
+  /**
+   * The latch's ORIGINATING error was a decode missing key, and this side has
+   * since pushed that exact pair to the worker in an install STRICTLY AFTER
+   * the latch (`pairFilledAtSeq > latchedInstallSeq`).
+   *
+   * That `setKey` calls `resetKeyStatus` for the index the failure named, so
+   * the index is live again and any surviving failure re-emits inside the
+   * settle — which `errorSinceInstall` catches above. It is the one witness a
+   * BYSTANDER latch can ever produce: a missing key names its participant, so
+   * `peers` is the device that raised it, and a bystander never leaves and
+   * never re-publishes, which is why leg 3a stayed red for the whole call.
+   *
+   * Strictly-after is what the reverted attempt got wrong: it asked whether
+   * the pair had EVER been pushed, which is true from the moment the install
+   * posts — and the worker raises a missing key precisely BECAUSE that
+   * `setKey` had not been processed yet, so the clause was already true at
+   * latch time and healed the latch it was meant to judge.
+   *
+   * It ALSO requires that the sender has no OTHER index still unfilled
+   * (`MediaErrorLedger.unfilledPairs`). Re-validating the index the latch
+   * named proves nothing if the sender has since moved on to another we never
+   * got: `errorSinceInstall` cannot see that peer, because the ledger's
+   * advance rule forgives the later pair, and the worker emits nothing more
+   * after silencing an index. Without that second half this clause substitutes
+   * for the peer witness in exactly the case the peer witness exists for
+   * (media-E2EE review, 2026-09-08).
+   */
+  originatingPairRefilled?: boolean;
+  /**
+   * Any sender PRESENT in the SFU still has an index this side failed at and
+   * has not filled. The refilled-pair witness answers a question about the
+   * latch's own sender; a different present peer silenced earlier is invisible
+   * to `errorSinceInstall`, because the ledger's advance rule forgives its
+   * pair once any install advances us for it — so the heal could clear while
+   * that peer's frames were still being dropped (media-E2EE review,
+   * 2026-09-08).
+   */
+  unfilledElsewhere?: boolean;
 }
 
 /**
@@ -716,11 +779,323 @@ export function loudHealVerdict(inputs: LoudHealInputs): "heal" | "hold" {
   if (!inputs.settleElapsed) return "hold";
   if (!inputs.rosterConsistent) return "hold";
   if (inputs.peers.length === 0) return "hold";
+  if (inputs.unfilledElsewhere) return "hold";
+  // Behind the empty-witness hold, never in front of it.
+  if (inputs.originatingPairRefilled) return "heal";
   return inputs.peers.every(
     (peer) => !peer.present || (peer.readdedAfterLatch && peer.sidsAllNew),
   )
     ? "heal"
     : "hold";
+}
+
+// ---- media-plane errors vs. the heal's install reference --------------------
+
+/**
+ * The key-pair id `<livekit identity>@<key index>` a frame key or a worker
+ * error refers to. A screen leg is its own pair: native emits a `:screen`
+ * entry for every member (`mlsCallKeys.ts`) and the worker keys a leg's
+ * cryptor under the leg's identity.
+ */
+export function keyPairId(identity: string, keyIndex: number): string {
+  return `${identity}@${keyIndex}`;
+}
+
+/** The worker's key ring (livekit-client default `keyringSize`). */
+export const WORKER_KEYRING_SIZE = 16;
+
+/**
+ * What a media-plane error says about the key it failed at. The worker posts
+ * `${reason}: ${message}` as a plain `Error` (`setupCryptorErrorEvents`); the
+ * decode path's MissingKey — `missing key at index N for participant X` — is
+ * the one shape that names both halves of the pair. The worker raises it only
+ * while it holds NO key at that index, and the pair's `setKey` resets the
+ * index's failure count (`resetKeyStatus`), so an install of that pair
+ * provably supersedes it. Everything else — InvalidKey (the key it holds is
+ * wrong), the encode path's missing key, a native key-path failure — reports
+ * a key that stays wrong until the next epoch: `hard`. An index outside the
+ * ring is not a key pair at all (a plaintext frame's last byte read as an
+ * index; the worker's failure count for it is `NaN`, so it re-emits every
+ * frame): `hard` too.
+ */
+export type MediaErrorClass =
+  | { kind: "missing_key"; identity: string; pair: string }
+  | { kind: "hard" };
+
+export function classifyMediaError(error: unknown): MediaErrorClass {
+  const message =
+    typeof error === "object" && error !== null
+      ? (error as { message?: unknown }).message
+      : undefined;
+  const missing =
+    typeof message === "string"
+      ? /^MissingKey: missing key at index (\d+) for participant (\S+)/.exec(
+          message,
+        )
+      : null;
+  if (!missing) return { kind: "hard" };
+  const index = Number(missing[1]);
+  if (index >= WORKER_KEYRING_SIZE) return { kind: "hard" };
+  return {
+    kind: "missing_key",
+    identity: missing[2],
+    pair: keyPairId(missing[2], index),
+  };
+}
+
+/**
+ * The media-plane error record the heal probe judges against its install
+ * reference (`errorSinceInstall`). Two ledgers, because the worker's two
+ * failure shapes mean different things after a re-key:
+ *
+ *  - A HARD error marks its key index invalid — one error, then silent drops
+ *    (failureTolerance 0) — until a `setKey` for that index re-validates it:
+ *    the next epoch's install, or LiveKit's own replay of every key it knows
+ *    on each worker `enable` ack (a remote publish, a reconnect). Either
+ *    way a peer still failing there re-emits on its next frame, which lands
+ *    after the reference and holds — fail-closed for this ledger, and a
+ *    re-set of an already-set pair changes no missing-key record (the slot
+ *    was never empty). Its stamp is compared against a reference taken
+ *    BEFORE the installer
+ *    runs. `MlsKeyProvider.#install` awaits `importKey` per entry after each
+ *    `onSetEncryptionKey` post, and an InvalidKey landing between those
+ *    awaits used to be stamped before a reference taken after the install
+ *    resolved: the index went silent and the probe healed over it 10 s later
+ *    (media-E2EE review of `9e5fa880`). With the reference ahead of the
+ *    install, every error during it counts — conservative by construction.
+ *    Stamps and reference come from one MONOTONIC clock (`performance.now`):
+ *    a wall clock stepping back between the two would re-open the window.
+ *  - A MISSING key names its sender and is superseded by the next install of
+ *    that SENDER that COMPLETES after it was observed: the worker processed
+ *    the frame before the `setKey` message or it would not have raised
+ *    MissingKey, and the `setKey` resets the index. Superseding by identity
+ *    rather than by exact pair is deliberate: a device joined by Welcome
+ *    hears the members' frames at epoch E before it holds any key and
+ *    installs E+1 first (native snapshots `previous` only across a commit it
+ *    applied itself), so `P@E` would never be covered and every later latch
+ *    on that device would hold for the life of the group — the R2 heal inert
+ *    on exactly the receiver role the live legs use (review of e2163ead,
+ *    H1). The install proves this side holds the sender's current index;
+ *    whether its older-index frames were lost is the SID witness's question.
+ *    Time-ordered, not "ever installed": a missing key that lands AFTER the
+ *    sender's install completed and names an index that install did NOT set
+ *    is an index this side never got — the one local sign that a commit was
+ *    withheld from it (re-review, M1) — and stands until an install of that
+ *    sender that ADVANCES us (fills a slot we did not hold) proves we caught
+ *    up. A replay of keys we already hold, which LiveKit performs on every
+ *    worker `enable` ack, is not catching up and supersedes nothing. One that names a pair the sender's
+ *    latest install DID set is the join race whenever it lands: the worker
+ *    raises MissingKey only while the slot is empty, `setKey` fills it and
+ *    no path ever empties a slot again for the life of the worker, so the
+ *    frame was judged before the worker processed that `setKey` — superseded
+ *    (second re-review, the exact discriminator). A missing key for a sender
+ *    never installed at all is one at an index this side does not hold, its
+ *    index silenced after the one error: it holds the heal while the sender
+ *    is still in the SFU (`errorSince`'s `present`), regardless of when it
+ *    landed, and stops mattering once the sender is gone.
+ *  - The worker holds no ack for `setKey`: a `deriveKeys` failure inside the
+ *    worker leaves the slot empty with nothing posted, and the one MissingKey
+ *    it would have answered is treated as superseded here. Only malformed key
+ *    material reaches that path (the §4.2 HKDF import guards it); a worker
+ *    that acknowledges `setKey` should gate `noteInstalled` on the ack.
+ */
+export class MediaErrorLedger {
+  /** `-Infinity` until an error lands: "no error yet" must never read as at-or-after a reference of 0. */
+  #hardErrorAt = -Infinity;
+  /** Missing-key pairs no install has covered yet, by the time observed. */
+  #missing = new Map<string, { identity: string; at: number }>();
+  /**
+   * Per sender since the last `reset`: every key pair this side has pushed to
+   * the worker (which mirrors the worker's FILLED ring slots — `setKeySet`
+   * only ever assigns, the auto-ratchet is off at `ratchetWindowSize: 0`, and
+   * nothing empties a slot), and when it last filled a slot it did not
+   * already hold.
+   */
+  #installed = new Map<
+    string,
+    { advancedAt: number; pairs: Map<string, number> }
+  >();
+  /**
+   * Every missing-key pair EVER observed, by sender — never swept by the
+   * advance rule, so `unfilledPairs` can answer "is this sender still sending
+   * at an index we do not hold?" exactly.
+   *
+   * `#missing` cannot answer it. Its supersession forgives a pair once an
+   * install ADVANCED us for that sender (`at <= advancedAt`), which exists for
+   * the Welcome joiner that heard `P@E` before holding any key and can never
+   * fill that slot (H1) — but it also forgives the index a sender is
+   * CURRENTLY using when we are two epochs behind it. Then `errorSince` reads
+   * clean while the worker drops that peer's every frame at an index it
+   * marked invalid, which is precisely the silent drop the heal's peer
+   * witness exists to catch (media-E2EE review, 2026-09-08).
+   */
+  #everMissing = new Map<string, Map<string, boolean>>();
+
+  /** Whether `pair` from `identity` is answered by an install since. */
+  #superseded(identity: string, pair: string, at: number): boolean {
+    const rec = this.#installed.get(identity);
+    if (!rec) return false;
+    // A pair we have pushed: that ring slot has been full ever since, and the
+    // worker raises MissingKey only for an EMPTY slot, so the frame was judged
+    // before it processed that setKey.
+    if (rec.pairs.has(pair)) return true;
+    // Otherwise only an install that ADVANCED us — filled a slot we did not
+    // hold — proves we caught up with the sender. LiveKit re-pushes every key
+    // it already knows on each worker `enable` ack; such a replay changes
+    // nothing about the index that was missing and must not supersede it.
+    return at <= rec.advancedAt;
+  }
+
+  /** Record a media-plane error observed at `now` (monotonic clock). */
+  noteError(
+    error: unknown,
+    now: number,
+    beforeFirstKey = false,
+  ): MediaErrorClass {
+    const cls = classifyMediaError(error);
+    if (cls.kind === "hard") this.#hardErrorAt = now;
+    else {
+      const seen =
+        this.#everMissing.get(cls.identity) ?? new Map<string, boolean>();
+      if (!seen.has(cls.pair)) seen.set(cls.pair, beforeFirstKey);
+      this.#everMissing.set(cls.identity, seen);
+      if (!this.#superseded(cls.identity, cls.pair, now)) {
+        this.#missing.set(cls.pair, { identity: cls.identity, at: now });
+      }
+    }
+    return cls;
+  }
+
+  /**
+   * Record the entries an install pushed to the worker, completing at
+   * `completedAt` (the same monotonic clock as the error stamps).
+   */
+  noteInstalled(
+    entries: readonly { livekit_identity: string; key_index: number }[],
+    completedAt: number,
+    installSeq = 0,
+  ): void {
+    const bySender = new Map<string, Set<string>>();
+    for (const entry of entries) {
+      const pairs = bySender.get(entry.livekit_identity) ?? new Set<string>();
+      pairs.add(keyPairId(entry.livekit_identity, entry.key_index));
+      bySender.set(entry.livekit_identity, pairs);
+    }
+    for (const [identity, pairs] of bySender) {
+      const rec = this.#installed.get(identity) ?? {
+        advancedAt: -Infinity,
+        pairs: new Map<string, number>(),
+      };
+      let advanced = false;
+      for (const pair of pairs) {
+        // `advanced` is a FIRST-fill fact (it dates the supersession rule);
+        // the sequence stamp is the LATEST fill, because the ring reuses an
+        // index every 16 epochs and a stamp frozen at the epoch-3 fill would
+        // make `pairFilledAtSeq > latchedInstallSeq` false forever from
+        // epoch 16 on — the bystander heal expiring silently on any long
+        // call (media-E2EE review, 2026-09-08).
+        if (!rec.pairs.has(pair)) advanced = true;
+        rec.pairs.set(pair, installSeq);
+      }
+      if (advanced) rec.advancedAt = completedAt;
+      this.#installed.set(identity, rec);
+    }
+    for (const [pair, record] of this.#missing) {
+      if (this.#superseded(record.identity, pair, record.at)) {
+        this.#missing.delete(pair);
+      }
+    }
+  }
+
+  /**
+   * Whether an error the install at `installRef` did not supersede stands: a
+   * hard error at or after the reference, or a missing key for a sender no
+   * install has covered that is still `present` in the SFU.
+   */
+  errorSince(
+    installRef: number,
+    present: (identity: string) => boolean = () => true,
+  ): boolean {
+    if (this.#hardErrorAt >= installRef) return true;
+    for (const record of this.#missing.values()) {
+      if (present(record.identity)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Whether this side has pushed this EXACT pair to the worker, and the
+   * install sequence at which it first did (`undefined` if never).
+   *
+   * This is the only fact that answers a missing key at that index, and it is
+   * deliberately narrower than `#superseded`: that rule also accepts an
+   * install which merely ADVANCED us past the index (`at <= advancedAt`),
+   * which is right for `errorSince` — where `loudHealVerdict`'s peer witness
+   * still has to clear — and WRONG anywhere it is the only test. The worker
+   * marks an index invalid after one failure (`failureTolerance: 0`) and
+   * drops every later frame at it SILENTLY; only a `setKey` for that exact
+   * index calls `resetKeyStatus` and re-validates it, and with the ring at 16
+   * slots nothing rewrites it for sixteen epochs. A sender two epochs ahead
+   * of us therefore satisfies `advancedAt` while its frames keep being
+   * dropped at an index we never filled (media-E2EE review, 2026-09-08).
+   */
+  pairFilledAtSeq(identity: string, pair: string): number | undefined {
+    return this.#installed.get(identity)?.pairs.get(pair);
+  }
+
+  /**
+   * Pairs this sender has failed at SINCE `sinceSeq` that this side has STILL
+   * not filled —
+   * indexes the worker marked invalid and that only a `setKey` for that exact
+   * index re-validates. Non-empty means the sender may be sending into one of
+   * them right now, silently dropped, with no further error to prove it.
+   *
+   * Deliberately not derived from `#missing`. Exactly one exemption: pairs
+   * heard BEFORE this device held any key of the group. A device joined by
+   * Welcome hears the members' frames first and native snapshots `previous`
+   * only across a commit it applied, so an index they were using at an epoch
+   * older than our admission can never be filled here and would otherwise read
+   * as a permanent failure for the life of the group (the H1 shape `#missing`
+   * exempts too).
+   *
+   * 🔴 The exemption is NOT sound in one case, and this is a blind spot `main`
+   * shares rather than one this branch introduces: if such a pair is an index
+   * the sender is STILL using — it advanced while we were joining and the
+   * commit that would give us that key is withheld — the exemption hides an
+   * invalid index for the life of the group. It cannot be told apart locally
+   * from the ordinary stale-index case, because the worker emits one error per
+   * index and then drops silently. Scoping it to "before the latch" instead
+   * was wider still, and giving those pairs a bounded verdict turns the
+   * ordinary Welcome into a guaranteed false red. It wants the worker `setKey`
+   * ack, or a per-index re-check that re-arms on the sender's next epoch —
+   * its own piece of work (media-E2EE reviews, 2026-09-08).
+   */
+  unfilledPairs(identity: string): string[] {
+    const seen = this.#everMissing.get(identity);
+    if (!seen) return [];
+    const filled = this.#installed.get(identity)?.pairs;
+    return [...seen]
+      .filter(([pair, beforeFirstKey]) => !beforeFirstKey && !filled?.has(pair))
+      .map(([pair]) => pair);
+  }
+
+  /** The missing-key pairs still uncovered by an install (diagnostics). */
+  uncoveredPairs(): string[] {
+    return [...this.#missing.keys()];
+  }
+
+  /** Forget the hard-error stamp (a healed latch). */
+  forgetHardError(): void {
+    this.#hardErrorAt = -Infinity;
+  }
+
+  /** Forget everything: the group, and with it every key index, is replaced. */
+  reset(): void {
+    this.#hardErrorAt = -Infinity;
+    this.#missing.clear();
+    this.#installed.clear();
+    this.#everMissing.clear();
+  }
 }
 
 /**
