@@ -335,16 +335,6 @@ export function UserContextMenu(props: {
   }
 
   /**
-   * Open user in Stoat Admin Panel
-   */
-  function openAdminPanel() {
-    window.open(
-      `https://old-admin.stoatinternal.com/panel/inspect/user/${props.user.id}`,
-      "_blank",
-    );
-  }
-
-  /**
    * Copy user id to clipboard
    */
   function copyId() {
@@ -754,20 +744,8 @@ export function UserContextMenu(props: {
       </Show>
 
       {/* Developer tools */}
-      <Show
-        when={
-          state.settings.getValue("advanced:admin_panel") ||
-          state.settings.getValue("advanced:copy_id")
-        }
-      >
-        <ContextMenuDivider />
-      </Show>
-      <Show when={state.settings.getValue("advanced:admin_panel")}>
-        <ContextMenuButton icon={MdAdminPanelSettings} onClick={openAdminPanel}>
-          <Trans>Admin Panel</Trans>
-        </ContextMenuButton>
-      </Show>
       <Show when={state.settings.getValue("advanced:copy_id")}>
+        <ContextMenuDivider />
         <ContextMenuButton icon={MdBadge} onClick={copyId}>
           <Trans>Copy user ID</Trans>
         </ContextMenuButton>
