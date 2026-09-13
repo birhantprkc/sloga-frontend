@@ -81,6 +81,9 @@ export class Device {
   private tMedia;
   private wMedia;
   private setLayout;
+  /** Last layout reported, kept as a plain field so `onLayout` never
+   * subscribes to its own signal from whatever scope constructed us. */
+  private lastLayout: Layout | undefined;
   private setUltrawideDisplay;
   private onResize;
 
@@ -108,13 +111,37 @@ export class Device {
   }
 
   onLayout() {
-    this.setLayout(
-      this.pMedia.matches
-        ? "phone"
-        : this.tMedia.matches
-          ? "tablet"
-          : "desktop",
-    );
+    const next: Layout = this.pMedia.matches
+      ? "phone"
+      : this.tMedia.matches
+        ? "tablet"
+        : "desktop";
+
+    // Instrumentation for the landscape-blanking investigation: we need to
+    // know whether a rotation (or a focused text field shrinking the visual
+    // viewport) flips this signal on a real device. A 411x915 phone matches
+    // both breakpoint queries in both orientations and so should never flip;
+    // a device whose landscape CSS height lands in 501-600 — DPR ~2.0, or a
+    // reduced Android Display Size — would flip phone<->tablet instead.
+    //
+    // Cheap on purpose: this only fires when a breakpoint actually crosses,
+    // which is rare, and the payload is built only in that case.
+    if (next !== this.lastLayout) {
+      console.info(
+        `[device] layout ${this.lastLayout ?? "(init)"} -> ${next}`,
+        {
+          innerWidth,
+          innerHeight,
+          devicePixelRatio,
+          phone: this.pMedia.matches,
+          tablet: this.tMedia.matches,
+          orientation: globalThis.screen?.orientation?.type,
+        },
+      );
+      this.lastLayout = next;
+    }
+
+    this.setLayout(next);
   }
 
   destroy() {

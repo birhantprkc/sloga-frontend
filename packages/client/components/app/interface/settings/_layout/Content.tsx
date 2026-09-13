@@ -102,7 +102,24 @@ const InnerContent = styled("div", {
     zIndex: 1,
 
     _tablet: { padding: "12px" },
-    _phone: { height: "100vh" },
+
+    /*
+      A *minimum* height, not a fixed one.
+
+      This was `height: 100vh`, which pins the pane to exactly one viewport
+      regardless of what is in it. (It does not collapse with the keyboard —
+      `vh` resolves against the large viewport and does not follow
+      `interactive-widget=resizes-content` — it simply cannot grow.)
+
+      `min-height` alone is not enough here: this is a stretch-aligned item of
+      the row scroller above, and under `align-items: stretch` the cross size
+      comes from the flex line rather than from the content, so the box would
+      still be one viewport tall with long content spilling out of it. Opting
+      out of stretch with `align-self` is what lets the height be content-based;
+      the `min-height` then keeps the pane filling the screen when the page is
+      short, which is all `height: 100vh` was ever doing.
+    */
+    _phone: { alignSelf: "flex-start", minHeight: "100vh" },
   },
 });
 
