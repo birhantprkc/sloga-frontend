@@ -88,6 +88,70 @@ export const ACTION_PRIORITY: KeybindAction[] = [
 ];
 
 /**
+ * Membership of the `'Escape' bindings` block of `ACTION_PRIORITY`.
+ *
+ * The block boundary above is a comment, which is not machine readable, so
+ * membership is listed explicitly here while the *order* is still taken from
+ * `ACTION_PRIORITY` (see `ESCAPE_GROUP`). Keep the two in sync: adding an
+ * Escape-driven action to `ACTION_PRIORITY` without adding it here silently
+ * leaves it out of `dismissTopmost()`.
+ */
+const ESCAPE_GROUP_MEMBERS: ReadonlySet<KeybindAction> = new Set([
+  KeybindAction.CLOSE_FLOATING,
+  KeybindAction.CLOSE_MODAL,
+  KeybindAction.CLOSE_SIDEBAR,
+  KeybindAction.CHAT_CANCEL_EDITING,
+  KeybindAction.CHAT_REMOVE_COMPOSITION_ELEMENT,
+  KeybindAction.CHAT_MARK_SERVER_AS_READ,
+  KeybindAction.CHAT_JUMP_END,
+]);
+
+/**
+ * The `'Escape' bindings` group of `ACTION_PRIORITY`, in priority order.
+ */
+export const ESCAPE_GROUP: KeybindAction[] = ACTION_PRIORITY.filter((keybind) =>
+  ESCAPE_GROUP_MEMBERS.has(keybind),
+);
+
+/**
+ * Escape-group actions that are NOT dismissals, and so must never be selected
+ * by a programmatic "close the topmost overlay" request.
+ *
+ * # Why this exclusion exists
+ *
+ * `dismissTopmost()` deliberately does not go through `firing()`, so it has no
+ * key sequence to filter on — priority order alone selects. That changes what
+ * these two actions mean:
+ *
+ * - `CHAT_MARK_SERVER_AS_READ` is `Shift+Escape`, and it is bound
+ *   **unconditionally** for the whole life of `ServerSidebar`. Under a real
+ *   Escape it is never selected, because the sequence filter rejects it unless
+ *   Shift is held. Without that filter it is the *highest priority bound
+ *   action in the group* any time a server is open — so a back press with
+ *   nothing open would ack the entire server. It also dismisses nothing.
+ * - `CHAT_JUMP_END` is bound unconditionally by both `TextChannel` and
+ *   `Composition`, so it is live in every text channel. It acks the channel,
+ *   clears the unread divider and scrolls to the bottom — again, not a
+ *   dismissal, and it would make `dismissTopmost()` return `true` in a plain
+ *   channel with nothing open, starving the caller's fallback (history back /
+ *   exit) of the `false` it needs.
+ *
+ * Both remain fully driven by Escape; only the programmatic path skips them.
+ */
+const NOT_A_DISMISSAL: ReadonlySet<KeybindAction> = new Set([
+  KeybindAction.CHAT_MARK_SERVER_AS_READ,
+  KeybindAction.CHAT_JUMP_END,
+]);
+
+/**
+ * Actions `dismissTopmost()` walks, in priority order: the Escape group minus
+ * the actions that do not dismiss anything.
+ */
+export const DISMISSAL_PRIORITY: KeybindAction[] = ESCAPE_GROUP.filter(
+  (keybind) => !NOT_A_DISMISSAL.has(keybind),
+);
+
+/**
  * Filter keybinds with special logic
  * @param keybind Keybind to filter
  * @param currentlyBound Other keybinds currently bound
