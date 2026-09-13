@@ -31,6 +31,7 @@ import {
   useLayoutSides,
 } from "@revolt/ui";
 import { VoiceChannelCallCardMount } from "@revolt/ui/components/features/voice/callCard/VoiceCallCard";
+import { SlideState } from "@revolt/ui/components/navigation/SlideDrawer";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
 import { ChannelHeader } from "../ChannelHeader";
@@ -206,6 +207,39 @@ export function TextChannel(props: ChannelPageProps) {
       () => setSidebarState({ state: "default" }),
     ),
   );
+
+  /**
+   * Close the side column once the phone slide drawer settles on the
+   * navigation column.
+   *
+   * The members button in `ChannelHeader` already does this reset by hand
+   * before its `setShown(false)`, for the layout reason stated there: pins,
+   * search and threads render at a hard 360px, which on a 412px phone is the
+   * entire channel, so returning from the navigation would land on a panel
+   * instead of the messages. Swiping to the navigation reached the same place
+   * with no reset at all, and so did the back key's own drawer rung.
+   *
+   * Leaving it set also swallowed the back press outright: the Android ladder
+   * asks `dismissTopmost()` before it touches the drawer, and the
+   * `CLOSE_SIDEBAR` keybind below stays bound for as long as the column is
+   * open — even while the column is parked off-screen. The press was reported
+   * handled, the drawer never moved, and nothing visible happened.
+   *
+   * `state.appDrawer()` is `undefined` unless the drawer is enabled —
+   * `Interface` publishes it as `en ? sDrawer : undefined` — so this is inert
+   * at tablet and desktop widths, where the column and its Escape binding
+   * behave exactly as before. `HIDDEN` is the settled navigation-visible
+   * state: the drawer is built over the *channel* pane, so `show` means
+   * "content shown". Only the settled state is matched, never `HIDING`, so
+   * the column is not yanked out from under the user while the pane it lives
+   * in is still partly on screen. Nothing here reads `sidebarState`, so the
+   * write cannot re-trigger it.
+   */
+  createEffect(() => {
+    if (state.appDrawer()?.state === SlideState.HIDDEN) {
+      setSidebarState({ state: "default" });
+    }
+  });
 
   return (
     <>
