@@ -12,11 +12,15 @@ const BRAND_COLOURS = ["#3BB8ED", "#F5870D", "#27A163", "#CF2A27", "#C05FC8"];
 
 /**
  * Whether this user's name should render in the Sloga brand colours
- * (staff accounts carrying the Developer or Founder badge)
+ * (staff accounts carrying the Developer, Founder or Platform Moderator badge)
  */
 export function isSlogaStaff(user?: User | null) {
   return (
-    ((user?.badges ?? 0) & (UserBadges.Developer | UserBadges.Founder)) !== 0
+    ((user?.badges ?? 0) &
+      (UserBadges.Developer |
+        UserBadges.Founder |
+        UserBadges.PlatformModeration)) !==
+    0
   );
 }
 

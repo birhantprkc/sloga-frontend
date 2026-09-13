@@ -211,6 +211,7 @@ import {
   type MlsMediaBinding,
   type MlsRosterMember,
   type MlsSessionState,
+  type PublishGateReason,
   MlsCallSession,
 } from "./mlsCallSession";
 import {
@@ -218,6 +219,13 @@ import {
   e2eeProvenOff,
   sessionSetupDecision,
 } from "./mlsSessionSetupPolicy";
+import { pauseVerdictReaders } from "./pauseVerdict";
+import { applyPublishGate, coalescingSweeper } from "./publishGate";
+import {
+  type PauseDisproofVerdict,
+  gatedPublicationsFrom,
+  PublishGateEpisode,
+} from "./publishGateEpisode";
 import {
   SCREEN_AUDIO_WATCH_MS,
   screenAudioDeviceGone,
@@ -785,6 +793,101 @@ class Voice {
   callEncryptionError: Accessor<unknown>;
   #setCallEncryptionError: Setter<unknown>;
   /**
+   * A media-plane join-race hold is open: the session has DEFERRED its verdict
+   * on a decode missing key while the install that would answer it is still
+   * expected (`MlsCallSession.#holdJoinRace`), and cannot vouch for one peer's
+   * frames until it resolves either way.
+   *
+   * The §4.4 chip's own `resecuring` input reads the session LIFECYCLE state,
+   * so a media-plane re-securing never reached it — an error suppressed on
+   * that plane read as a green chip while the worker dropped that peer's
+   * frames at an index it had marked invalid (the reverted 2026-09-08
+   * join-race attempt). A hold gets its own reactive signal so the chip goes
+   * AMBER for exactly as long as the verdict is open.
+   */
+  callMediaHold: Accessor<boolean>;
+  #setCallMediaHold: Setter<boolean>;
+  /**
+   * The ONLY writer of the one signal behind {@link callPauseDisproved} and
+   * {@link callPauseDisproofConfirmed}. The signal itself is a constructor
+   * local (`pauseVerdict`); both public readers are memos over it and neither
+   * has a setter of its own, so no code anywhere in this class can write one
+   * of them without the other.
+   *
+   * 🔴 That is a defect class, not tidiness. The alarm and its confidence
+   * used to be two `Setter<boolean>`s written from one positionally-typed dep
+   * call. Transposing them typechecked, linted, formatted and passed the whole
+   * suite — and this file cannot be imported under `node --test` and carries
+   * no mutation entries, so nothing in the repo would have caught it. A
+   * transposed pair makes a budget-exhausted verdict on a genuinely live wire
+   * present as a CONFIRMED disproof: chip green, media on the wire. One field
+   * per verdict, written whole, leaves nothing to transpose.
+   *
+   * Tearing was never the hazard — Solid's `writeSignal` assigns `node.value`
+   * synchronously and `batch` only defers the observer flush, so two adjacent
+   * setter calls were never observably half-applied. The hazard was the two
+   * values disagreeing about WHICH verdict they describe, which one object
+   * makes unrepresentable.
+   */
+  #setPauseVerdict: Setter<PauseDisproofVerdict>;
+  /**
+   * The publish gate is held and a sweep found local media still on the wire.
+   * Read by the downgrade banner, which otherwise asserts "your audio and video
+   * stay paused" — the sentence the 2026-09-08 legs disproved.
+   *
+   * 🔴 A ONE-DIRECTIONAL ALARM. TRUE is "a held gate could not prove the wire
+   * quiet". FALSE is "no live disproof" and NOTHING MORE: it is also what
+   * every episode start, every 1→0 transition and every empty gate leave
+   * behind. It never means "proven paused".
+   *
+   * It does NOT raise the banner on its own: that needs a chip precedence and
+   * an affordance this signal has no opinion about (the honest-visibility
+   * slice). It withdraws a claim the banner is already making.
+   *
+   * 🔴 Its CONFIDENCE is {@link callPauseDisproofConfirmed}, and this signal
+   * alone is not enough to act on. An earlier version of this comment said "a
+   * CONFIRMED sweep found local media still on the wire"; that was only ever
+   * true of one of the two paths that write TRUE here (W2-3).
+   *
+   * DERIVED off the one `pauseVerdict` signal — written only through
+   * `#setPauseVerdict` — and not a signal of its own: there is no setter here,
+   * and so no way to write this apart from its confidence.
+   */
+  callPauseDisproved: Accessor<boolean>;
+  /**
+   * How much evidence {@link callPauseDisproved}'s current TRUE rests on
+   * (W2-3). Read off the SAME signal as it, so there is no pair to tear and
+   * none to transpose.
+   *
+   *  - TRUE — the disproof was reached after a confirming re-sweep ACTUALLY
+   *    RAN: a second look at the same wire, a macrotask after the first.
+   *    `PublishGateEpisode` schedules that re-sweep precisely because a
+   *    livekit op in flight legitimately leaves the wire live for a few
+   *    microtasks, so one observation is not a verdict.
+   *  - FALSE — EITHER there is no live disproof at all, OR the episode's
+   *    consecutive-confirm budget was exhausted and a SINGLE unconfirmed
+   *    observation was promoted to the verdict.
+   *
+   * 🔴 READ IT ONLY WHERE {@link callPauseDisproved} IS TRUE, and never as a
+   * statement about the pause. FALSE here is NOT "the pause is confirmed" and
+   * NOT "the wire is confirmed quiet" — this grades a DISPROOF and has nothing
+   * to say when there is none. The name keeps `Disproof` in it for exactly
+   * that reason: `!callPauseDisproofConfirmed()` reads "the disproof is not
+   * confirmed", which is what it means, rather than "the pause is confirmed",
+   * which it never means.
+   *
+   * 🔴 It does NOT decide the chip. WHICH confidence may redden or downgrade,
+   * and at what precedence, is wave 2's rule and is audited on its own terms.
+   * All this seam owes wave 2 is that the distinction exists and travels with
+   * the value, instead of dying in a `console.error` `detail` field where the
+   * two verdicts are indistinguishable to any consumer.
+   *
+   * DERIVED off the same `pauseVerdict` signal as {@link callPauseDisproved}
+   * — not a signal of its own — so the two can never come to describe
+   * different verdicts.
+   */
+  callPauseDisproofConfirmed: Accessor<boolean>;
+  /**
    * Non-enrolled participant identities in the current call (slice 6.4 §3.4) —
    * empty ⇒ every SFU participant is in the MLS group. The state signal where
    * 6.4's roster-reconciliation DETECTION meets 6.5's mixed-call banner + the
@@ -996,7 +1099,204 @@ class Voice {
    * UpstreamResumed/TrackProcessorUpdate re-asserts the gate so a late
    * publication or livekit's unconditional resumes can never bypass it.
    */
-  #publishGate = new Set<string>();
+  #publishGate = new Set<PublishGateReason>();
+  /**
+   * Serializes gate sweeps and collapses the re-entrant triggers a sweep's own
+   * livekit ops produce (`coalescingSweeper` explains why nesting there is a
+   * live-lock). Rebuilt per connect, so an episode's state never crosses calls.
+   */
+  #gateSweeper: { sweep(): Promise<void> } | undefined;
+  /**
+   * The Room `#gateSweeper` was built for. Its ONE consumer is
+   * `scheduleConfirm`, which has to capture a Room when a confirm is ARMED
+   * rather than read one when it fires.
+   *
+   * 🔴 NOT the stale-writer guard, and it cannot be one: it is a mutable
+   * field, so a sweep for call N parked on an awaited `pauseUpstream()`
+   * resumes after the user hung up and joined call N+1 — by which point this
+   * field names call N+1's Room and `this.room() === this.#gateRoom` answers
+   * TRUE for a sweep that belongs to a disposed call. The guard is `#gateGen`
+   * plus the `room` each sweeper captures in its own closure; see
+   * `#applyPublishGate`.
+   */
+  #gateRoom: Room | undefined;
+  /**
+   * Monotonic sweeper-ownership token — the `#connectGen` idiom (see there)
+   * applied to the gate. Bumped when a sweeper is BUILT, and again at both
+   * sites that drop one (connect and disconnect), so the `gen` a sweeper
+   * captured can only equal this while that sweeper is the live one.
+   *
+   * The token and the captured Room are checked together: the token alone
+   * would not survive a call that never builds a sweeper, and the Room alone
+   * would not survive livekit handing out the same object twice.
+   */
+  #gateGen = 0;
+  /**
+   * The LIVE sweeper's own `stillCurrent`, for the one consumer that has no
+   * sweep to ask with. `EpisodeDeps.stillCurrent` is called from the deferred
+   * confirm as well as from `consume`, and the episode is per-Voice — it
+   * outlives every sweeper, so it cannot capture one. This field answers the
+   * weaker question it can answer: "is there a live gate sweeper for the
+   * current call at all". Every call site that HAS a sweep passes that sweep's
+   * own captured closure instead.
+   */
+  #gateStillCurrent: (() => boolean) | undefined;
+  /**
+   * "Publishing must not leave this device." ONE closure, handed both to
+   * `applyPublishGate` as its thunk and to the episode as
+   * `EpisodeDeps.gateHeld` — the 6.5 breakdown's wave-1 replacement for the
+   * inline `() => this.#publishGate.size > 0`, so the sweep and the episode
+   * can never disagree about whether the gate is held.
+   */
+  #gateHeld = (): boolean => this.#publishGate.size > 0;
+  /**
+   * Every flag a held-gate episode carries — the permanent spend set, the
+   * DRIVE-scoped pending set, the confirm dedupe, the confirming-pass phase
+   * and the dropped pass — and every rule over them.
+   *
+   * They live in `publishGateEpisode.ts` rather than here because this file
+   * cannot be imported under `node --test`, so a rule left in it is a rule no
+   * spec and no mutation can reach. `wiring-upstream-always-quiet` CARRIED an
+   * `expect="green"` admission for exactly that reason, while the adapter it
+   * mutates still lived in this file; wave 1's extraction is what let it
+   * become an ordinary red-expecting entry against `publishGateEpisode.ts`,
+   * and two reviewed defects had lived inside the region it used to declare
+   * uncovered (D6).
+   */
+  #gateEpisode = new PublishGateEpisode({
+    gateHeld: this.#gateHeld,
+    /**
+     * The stale-writer guard, in the only form the EPISODE can ask for it:
+     * "is there a live gate sweeper for the current call at all". It is what
+     * the deferred confirm needs, and it is a correct SECOND layer under
+     * `consume` — but it is not, and cannot be, the guard that stops a
+     * disposed call's sweep, because this object outlives every sweeper and
+     * has no way to know which sweep is asking.
+     *
+     * 🔴 That is why `#sweepPublishGate` re-checks the CALLING sweep's own
+     * captured predicate before `consume`, and why `beginPass`/`noteDropped`
+     * are guarded at their call sites. A previous comment here claimed this
+     * was "the same `this.room() === room` predicate the sweep used to apply
+     * inline"; it was not — it read the mutable `#gateRoom`, which by the time
+     * a stale sweep resumes already names the CURRENT call, so the predicate
+     * returned TRUE exactly in the case it exists to refuse.
+     */
+    stillCurrent: () => this.#gateStillCurrent?.() ?? false,
+    /**
+     * ONE bounded re-sweep, on a macrotask so every queued `replaceTrack` task
+     * has run. A livekit op in flight legitimately leaves the wire live for a
+     * few microtasks, so a single observation is not a verdict.
+     *
+     * A BARE deferral, deliberately: the dedupe, the flag clear, the
+     * `stillCurrent() && gateHeld()` precondition and the confirming-pass flag
+     * are all inside `run`, where a spec can drive them.
+     *
+     * 🔴 The sweep KICK cannot move with them — `EpisodeDeps` has no seam
+     * that starts a sweep — so this file re-applies `gateHeld()` to decide
+     * whether to issue one. It is the same predicate `run` just applied, so
+     * the behaviour is what it was, but it IS a duplicated rule and the only
+     * gate rule still living in an unloadable file. A 6th dep would remove it.
+     *
+     * The Room is captured HERE, not read when the timer fires, exactly as the
+     * `#scheduleGateConfirm` this replaces did: a confirm armed for a call
+     * that has since been torn down must die on `#applyPublishGate`'s room
+     * guard, not kick a sweep on whatever Room `#gateRoom` names by then.
+     */
+    scheduleConfirm: (run) => {
+      const room = this.#gateRoom;
+      setTimeout(() => {
+        run();
+        // `#applyPublishGate` re-checks room identity itself.
+        if (room && this.#gateHeld()) void this.#applyPublishGate(room);
+      }, 0);
+    },
+    /**
+     * The PRODUCER side of `callPauseDisproved` and of its confidence sibling
+     * `callPauseDisproofConfirmed`. The signal stays here — the chip and the
+     * banner read it — and both accessors keep their names and their shapes;
+     * only who writes them moved.
+     *
+     * 🔴 ONE object into ONE signal, and that is the whole point. The alarm
+     * and its confidence are not two things that have to be kept in step;
+     * they are one verdict, and `PauseDisproofVerdict` carries them across the
+     * module boundary as one. A previous version took them as two positional
+     * `boolean`s and fanned them out to two setters: transposing the pair
+     * typechecked, linted, formatted and passed every spec, and this file
+     * cannot be imported under `node --test`, so no gate in the repo could
+     * have caught it. A transposed pair presents a budget-exhausted guess as a
+     * CONFIRMED disproof — the silent downgrade this slice exists to kill,
+     * sitting at the one seam with no coverage.
+     *
+     * Fanning the object out to two signals HERE would move that seam one
+     * layer down rather than close it, so there is exactly one signal behind
+     * both readers and no pair to write apart.
+     *
+     * That also retires the `batch()` this replaces, whose justification named
+     * a residual that does not exist: Solid's `writeSignal` assigns
+     * `node.value` synchronously and `batch` only defers the observer FLUSH,
+     * and no user code ran between the two setter calls, so the pair was never
+     * observably torn. What `batch` never guarded was the swap.
+     */
+    setPauseDisproved: (verdict) => this.#setPauseVerdict(verdict),
+    /**
+     * The two console reports, and the only part of the verdict this file
+     * still owns.
+     */
+    report: (kind, detail) => {
+      // A resume that threw, or left the sender detached, is the OPPOSITE
+      // failure — a call that should be publishing and may be stuck muted
+      // upstream, which only a device switch recovers. Nothing fixes it
+      // automatically, so at least make it findable.
+      if (kind === "failed") {
+        console.error("[mls] publish gate could not resume publishing", detail);
+        return;
+      }
+      // The gate is held and the wire is still live. Publishing is escaping a
+      // gate every layer above believes is closed.
+      //
+      // 🔴 Deliberately LOG-ONLY — this does not touch the chip or the
+      // banner, and that is a scoping decision, not an oversight. Every
+      // user-facing arm reachable from here today is either wrong or inert:
+      //
+      //  - ME-10's sentence is "Your audio and video stay paused", which is the
+      //    exact OPPOSITE of what this sweep just proved. Showing it here tells
+      //    a user their mic is off at the moment we established it is on.
+      //  - Latching through the session (`#latchLoud`) makes that banner
+      //    render, but `confirmPlaintext` returns early while `#groupId` is
+      //    null — the whole 409-join stretch, which is when the first mic
+      //    publishes — so the only escape it offers is inert.
+      //  - Writing `callEncryptionError` directly reddens the chip without
+      //    `#loudLatched`, so the banner never renders at all when the mode is
+      //    `e2ee`, and it MASKS a later store-owner error (`prev ?? error`),
+      //    removing the only in-call "Reset encryption" control.
+      //  - It can fire BEFORE `#mlsSession` exists (the connect sweep, with an
+      //    `await room.switchActiveDevice` before the session is assigned), so
+      //    there is no session to latch through. NOTE this one is NOT a dead
+      //    end on the UI side, contrary to an earlier version of this comment:
+      //    `latchedError` sits in `chipState`'s highest-precedence block, so a
+      //    direct write does redden the chip; pre-session `callMode()` is
+      //    `undefined`, which is `isTerminalLoud`'s second arm, so the banner
+      //    renders; and `canConfirmNoSessionPlaintext` is satisfied, so the
+      //    escape works. What rules it out is the copy, not the machinery.
+      //
+      // `callPauseDisproved` — which the episode has already set by the time
+      // this runs — withdraws the false claim wherever the banner is ALREADY
+      // up, which needs none of that. But note the scope honestly: the banner
+      // renders only for `mixed` / `interlude` / terminal-loud, so through
+      // plain `negotiating` — the R2-5 pre-connect gate, the enable window, a
+      // stuck `#assertLocalDeclarations` — there is no banner to correct and
+      // this is log-only for the MAJORITY of held-gate time, not just the
+      // ME-10 corner. RAISING a surface there needs its own slice: a chip
+      // precedence, an affordance that works with no session and no group, and
+      // a path around the banner's 3 s debounce. Until then a wrong or inert
+      // signal would be worse than the log (media-E2EE reviews,
+      // 2026-09-08/09).
+      console.error("[mls] publish gate could not prove the wire quiet", {
+        ...detail,
+        reasons: [...this.#publishGate],
+      });
+    },
+  });
   /**
    * Open-group probe lifecycle for the CURRENT call, read by the session via
    * `channelHasOpenGroup`. It no longer decides anything about the publish
@@ -1151,6 +1451,49 @@ class Voice {
       createSignal<unknown>();
     this.callEncryptionError = callEncryptionError;
     this.#setCallEncryptionError = setCallEncryptionError;
+
+    const [callMediaHold, setCallMediaHold] = createSignal(false);
+    this.callMediaHold = callMediaHold;
+    this.#setCallMediaHold = setCallMediaHold;
+    // ONE signal for the whole verdict. Both public readers are derived off
+    // it, so the alarm and its confidence are written together or not at all.
+    const [pauseVerdict, setPauseVerdict] = createSignal<PauseDisproofVerdict>({
+      value: false,
+      confirmed: false,
+    });
+    this.#setPauseVerdict = setPauseVerdict;
+    // The DERIVATION lives in `pauseVerdict.ts`, where a spec and a mutation
+    // entry can reach it. This file cannot be imported under `node --test`
+    // (Solid, livekit, `@revolt/client`) and carries no mutation entries, so
+    // for as long as the two reader bodies were written out here, swapping
+    // them was checked by nothing: a completion audit transposed them and
+    // `tsc`, `prettier`, `eslint`, every spec and both scripts stayed green,
+    // while in production that swap turns a budget-exhausted single
+    // observation on a genuinely live wire into `callPauseDisproved() ===
+    // false` and leaves the banner promising "your audio and video stay
+    // paused".
+    //
+    // 🔴 That is NOT now a compile error, and nothing here should say it
+    // is. `disproved` and `disproofConfirmed` are two same-typed accessors and
+    // transpose exactly as silently as the two positional booleans they
+    // replaced. What moving the derivation buys is COVERAGE, not enforcement:
+    // the uncovered surface shrinks from the derivation to the two assignment
+    // lines below, which are still two same-typed `Accessor<boolean>` writes
+    // that would swap without complaint from any check in this repo.
+    //
+    // The memo wrapping STAYS here, for two reasons. `createMemo`'s `===`
+    // equality preserves the notification shape the two original boolean
+    // signals had, so a fresh verdict object whose `.value` did not change
+    // does not churn the banner's `<Show>`; and `pauseVerdict.ts` has to stay
+    // free of Solid to remain loadable under `node --test`. Both memos are
+    // created in this constructor, which `VoiceContext` runs inside its own
+    // component owner, so they are disposed with it.
+    //
+    // Names, types and arity are unchanged — `VoiceCallDowngradeBanner` reads
+    // `callPauseDisproved()` as a live `<Show>` discriminator.
+    const readers = pauseVerdictReaders(pauseVerdict);
+    this.callPauseDisproved = createMemo(readers.disproved);
+    this.callPauseDisproofConfirmed = createMemo(readers.disproofConfirmed);
 
     const [recording, setRecording] = createSignal(false);
     this.recording = recording;
@@ -2317,24 +2660,49 @@ class Voice {
       this.#setCallParticipantsVersion((v) => v + 1);
     });
 
-    // Publish-gate hardening (R2-1): a NEW local publication, or livekit's
-    // two unconditional resume paths, must never bypass a held gate:
+    // Publish-gate hardening (R2-1): a NEW local publication, or any of
+    // livekit's paths that move a sender underneath the gate, must never
+    // bypass it. The sweep no longer has to enumerate them — it observes
+    // whether the sender can still send (`publishGate.ts`) — but they are
+    // worth naming, because they are why the flag alone cannot be trusted:
     //  (a) `setMediaStreamTrack` (device switch / unmute-restart / reconnect)
     //      ends in an unconditional `resumeUpstream()` — `_isUpstreamPaused`
-    //      goes false and `UpstreamResumed` fires, so a bare `pauseUpstream()`
-    //      re-asserts cleanly.
+    //      goes false and `UpstreamResumed` fires.
     //  (b) `setProcessor` (denoise/gain/camera-effects attach) calls
     //      `sender.replaceTrack(processedTrack)` DIRECTLY without touching
     //      `_isUpstreamPaused` and emits only `TrackProcessorUpdate` — the
     //      flag stays stale-true, so a bare `pauseUpstream()` would no-op on
     //      its own idempotency guard while real RTP flows. The re-assert for
     //      this path is resume-then-pause (the resume resets the flag; its
-    //      nested `UpstreamResumed` triggers arm (a), whose bare pause
-    //      serializes behind livekit's per-track lock and early-returns —
-    //      bounded, no loop; verified against the pinned 2.15.13 source).
+    //      nested `UpstreamResumed` re-enters the sweep, which by then reads
+    //      a CLEARED flag over a live wire and issues a plain pause that
+    //      serializes behind livekit's per-track lock — bounded at two levels,
+    //      no recursion, and convergent because the later-reserved lock slot is
+    //      always the pause. Verified against the pinned 2.15.13 source.)
+    //  (c) `republishAllTracks` — `unpublishTrack` then
+    //      `publishOrRepublishTrack` onto a NEW sender carrying the live
+    //      track, with `_isUpstreamPaused` untouched: the same stale-true flag
+    //      as (b), reached through `localTrackPublished` instead. Not an edge
+    //      case — `setE2EEEnabled()` IS this call, so the session's own
+    //      enable flip performs it INSIDE its `enable-window` pause, and the
+    //      signal-reconnect republish performs it for every track it skips
+    //      `restartTrack()` on (muted, screen-share, screen-share-audio).
+    //      Missing it is what let a seat show ME-10 ("your audio and video
+    //      stay paused") while the other seat decrypted its frames throughout
+    //      (join-race legs, 2026-09-08).
+    // All three share one remedy: `#applyPublishGate` sees a sender that is
+    // still on the wire and re-pauses it, whichever path put it there — plus
+    // a fourth that is not a path at all, a `replaceTrack(null)` that rejects
+    // or is skipped over a closing transport, which no enumeration could have
+    // caught.
     room.addListener("localTrackPublished", (pub) => {
       this.#setCallParticipantsVersion((v) => v + 1);
-      if (this.#publishGate.size > 0) void this.#applyPublishGate(room);
+      // A republish (the E2EE flip, the signal-reconnect republish, the
+      // declaration seam) lands here on a brand-new sender with livekit's
+      // pause flag left stale-true. The sweep observes the wire, so it needs
+      // no hint about which track that was.
+      if (this.#publishGate.size > 0 && this.room() === room)
+        void this.#applyPublishGate(room);
       // A publish that was in flight across the session's E2EE flip lands
       // here declared NONE (livekit stamps the type when it builds the
       // request, and the flip republishes only what was registered). The
@@ -2344,30 +2712,16 @@ class Voice {
         this.#mlsSession?.noteLocalPublicationsChanged();
       const track = pub.track;
       if (!track) return;
-      track.on(TrackEvent.UpstreamResumed, () => {
-        if (this.#publishGate.size > 0) void this.#applyPublishGate(room);
-      });
-      track.on(TrackEvent.TrackProcessorUpdate, () => {
-        if (this.#publishGate.size === 0) return;
-        void (async () => {
-          try {
-            await track.resumeUpstream(); // reset the stale pause flag
-          } catch {
-            /* unsupported/edge — the pause below still applies */
-          }
-          // The gate may have EMPTIED while we serialized behind livekit's
-          // per-track lock (e.g. the session settled plaintext and released
-          // `negotiating` mid-sequence) — re-check before the trailing pause,
-          // or a healthy call ends silently muted with nothing left to resume
-          // it (re-verify MED-A).
-          if (this.#publishGate.size === 0) return;
-          try {
-            await track.pauseUpstream();
-          } catch {
-            /* torn-down track */
-          }
-        })();
-      });
+      // `off` BEFORE `on`: `republishAllTracks` reuses the SAME `LocalTrack`
+      // instance and `unpublishTrack` removes only livekit's own handlers, so
+      // without this a pair accumulates per republish — every enable flip,
+      // re-secure and signal reconnect — and one event then fans out into k
+      // concurrent sweeps. `Track`'s own `setMaxListeners(100)` keeps that
+      // silent — the listeners are on the track, not the Room.
+      track.off(TrackEvent.UpstreamResumed, this.#reassertPublishGate);
+      track.off(TrackEvent.TrackProcessorUpdate, this.#reassertPublishGate);
+      track.on(TrackEvent.UpstreamResumed, this.#reassertPublishGate);
+      track.on(TrackEvent.TrackProcessorUpdate, this.#reassertPublishGate);
     });
 
     // Set only by the `join_call` step below, so the catch can tell the
@@ -2486,6 +2840,22 @@ class Voice {
         room.addListener("encryptionError", (error) => {
           this.#mlsSession?.noteEncryptionError(error);
         });
+        // A full reconnect empties the remote set until the new join
+        // response; a heal probe that fired inside that window could not
+        // judge, so give it a fresh settle once the Room is back.
+        room.addListener("reconnected", () => {
+          this.#mlsSession?.noteSfuReconnected();
+          // And re-assert the gate. NOT because a closed transport reopens —
+          // `closed` is terminal in `RTCDtlsTransportState`. The two real
+          // cases: a FULL reconnect whose `republishAllTracks` threw (livekit
+          // catches and logs it, leaving some tracks unrepublished, and still
+          // emits `reconnected`), and a mic that muted/unmuted across the
+          // outage. A RESUMED reconnect republishes nothing, so neither
+          // `localTrackPublished` nor `UpstreamResumed` fires and this is the
+          // only sweep that window gets.
+          if (this.#publishGate.size > 0 && this.room() === room)
+            void this.#applyPublishGate(room);
+        });
       }
 
       if (!auth) {
@@ -2523,6 +2893,19 @@ class Voice {
       // this reason once bound (releases it on its verdict). Only for E2EE-
       // capable shells (an unsupported shell is a normal plaintext call).
       if (e2eeCapable) this.#publishGate.add("negotiating");
+      // Fresh sweeper per call: its in-flight/pending state must never cross
+      // from a disposed Room to this one. The gen bump is what KILLS the old
+      // sweeper — a sweep of it still parked on an awaited livekit op resumes
+      // holding the previous token, so it is refused whatever the Room fields
+      // say by then.
+      this.#gateSweeper = undefined;
+      this.#gateRoom = undefined;
+      this.#gateStillCurrent = undefined;
+      this.#gateGen++;
+      // The call boundary clears EVERYTHING the episode holds, including
+      // `callPauseDisproved` and the dropped-pass flag that survives the two
+      // narrower episode boundaries.
+      this.#gateEpisode.resetForCall();
 
       await room.connect(auth.url, auth.token, {
         autoSubscribe: false,
@@ -2873,8 +3256,20 @@ class Voice {
       this.#clearDiceToasts();
       this.callEncryption.clear();
       this.#publishGate.clear();
+      // Same gen bump as at connect: every sweep of the sweeper being dropped
+      // here is refused from now on, including the ones still parked on an
+      // awaited `pauseUpstream()` that resume inside the NEXT call.
+      this.#gateSweeper = undefined;
+      this.#gateRoom = undefined;
+      this.#gateStillCurrent = undefined;
+      this.#gateGen++;
+      // The call boundary clears EVERYTHING the episode holds, including
+      // `callPauseDisproved` and the dropped-pass flag that survives the two
+      // narrower episode boundaries.
+      this.#gateEpisode.resetForCall();
       this.#pinnedMicId = undefined;
       this.#setCallEncryptionError(undefined);
+      this.#setCallMediaHold(false);
       this.#setCallNonEnrolled([]);
       // Reset the 6.5 signals so the next call's card never flashes this
       // call's latched mode/roster/attribution (FE-9a).
@@ -3069,6 +3464,9 @@ class Voice {
           ? [...p.trackPublications.values()].map((pub) => pub.trackSid)
           : [];
       },
+      // A full reconnect empties `remoteParticipants` until the new join
+      // response; the heal probe must not read that as "everyone left".
+      sfuConnected: () => room.state === ConnectionState.Connected,
       onEncryptionState: (state, error) => {
         // Latch a loud media-plane failure into the existing structured signal
         // (6.5 classifies RE-SECURING vs NOT-ENCRYPTED from callEncryption +
@@ -3090,6 +3488,9 @@ class Voice {
           );
         }
       },
+      // A deferred missing-key verdict is open (or has just closed): the chip
+      // must read amber throughout, never green.
+      onMediaHold: (active) => this.#setCallMediaHold(active),
       onRosterReconciled: (result) => {
         // 6.4 DETECTION → the state signal where 6.5's mixed-call banner + pause
         // UX plug in. The session has ALREADY paused local publishing whenever
@@ -3167,12 +3568,15 @@ class Voice {
    * the gate, so a device switch, unmute-restart, or processor attach can never
    * bypass it while a reason is held.
    */
-  async #pauseGate(room: Room, reason: string): Promise<void> {
+  async #pauseGate(room: Room, reason: PublishGateReason): Promise<void> {
     // Stale-writer guard: a binding built for a PREVIOUS call must not add
     // reasons to the gate it shares with the current one — its session is
     // disposed, so nothing would ever release them and every new publication
     // would be swept paused (publishing silence with no UI cause).
     if (this.room() !== room) return;
+    // A gate going from empty to held starts a new episode: whatever failed
+    // last time is not evidence about this one.
+    if (this.#publishGate.size === 0) this.#gateEpisode.beginEpisode();
     this.#publishGate.add(reason);
     // The Android leg STOPS (never pauses) the instant the primary pauses
     // (§0.4) — on reason ADD, before awaiting the WebView pause ops, and
@@ -3188,26 +3592,172 @@ class Voice {
     await this.#applyPublishGate(room);
   }
 
-  async #resumeGate(room: Room, reason: string): Promise<void> {
+  async #resumeGate(room: Room, reason: PublishGateReason): Promise<void> {
     // Same stale-writer guard, for the inverse hazard: a stale resume must
     // not release a reason the CURRENT call's session is still relying on.
     if (this.room() !== room) return;
     this.#publishGate.delete(reason);
+    // Nothing promises a pause any more, so there is no claim to withdraw:
+    // `endEpisode` clears `callPauseDisproved` along with the spend sets, and
+    // deliberately NOT the dropped-pass flag.
+    if (this.#publishGate.size === 0) this.#gateEpisode.endEpisode();
     await this.#applyPublishGate(room);
   }
 
-  /** Sweep every local publication to match the gate (empty ⇒ resume all). */
+  /**
+   * Sweep once, through the coalescing sweeper so a sweep's own
+   * `UpstreamResumed` / `TrackProcessorUpdate` cannot nest. Callers await the
+   * work in flight — `#enable()` awaits its pause before flipping E2EE on.
+   */
   async #applyPublishGate(room: Room): Promise<void> {
-    const paused = this.#publishGate.size > 0;
-    const ops: Promise<void>[] = [];
-    for (const pub of room.localParticipant.trackPublications.values()) {
-      if (!pub.track) continue;
-      // Re-assert unconditionally: `pauseUpstream` is idempotent, and a
-      // resume must only happen when the gate is truly empty.
-      ops.push(paused ? pub.pauseUpstream() : pub.resumeUpstream());
+    if (this.room() !== room) return;
+    if (!this.#gateSweeper) {
+      // 🔴 The stale-writer guard, bound PER SWEEPER rather than per field.
+      // `gen` and `room` are captured HERE and never re-read, so this closure
+      // keeps answering for THIS call however long one of its sweeps is parked
+      // on an awaited livekit op — which is exactly the
+      // `if (this.room() !== room) return;` the sweep used to apply inline.
+      // Read out of a field instead, the guard says TRUE for a call-N sweep
+      // resuming inside call N+1 (the field has been reassigned by then), and
+      // that disposed sweep then spends publications in the LIVE episode,
+      // re-arms its confirm chain, latches `callPauseDisproved` in a fresh
+      // call and reports the new call's gate reasons against the old call's
+      // publication names.
+      const gen = ++this.#gateGen;
+      this.#gateRoom = room;
+      const stillCurrent = (): boolean =>
+        gen === this.#gateGen && this.room() === room;
+      this.#gateStillCurrent = stillCurrent;
+      this.#gateSweeper = coalescingSweeper(
+        () => {
+          // The confirming pass goes through the SAME serialized path, so it
+          // can never nest with a sweep a livekit event started in the
+          // meantime. `beginPass` consumes the phase flag and any pending
+          // confirm request together (P9) — a MUTATION of the live episode, so
+          // a pass this sweeper runs after its own call ended must not make
+          // it: it would eat the current call's confirming pass.
+          if (stillCurrent()) this.#gateEpisode.beginPass();
+          return this.#sweepPublishGate(room, stillCurrent);
+        },
+        undefined,
+        // A dropped trailing pass is a sweep something asked for and did not
+        // get. Recorded so the pass that observes it does not report a clean
+        // bill — `#enable()` awaits its pause and then flips E2EE on.
+        //
+        // Guarded for the same reason as `beginPass`, and it is the hook that
+        // most needs it: it fires at the END of a drive, after the loop, so it
+        // is the one that most easily lands past a teardown. Unguarded, a
+        // disposed call marks the live episode's next clean sweep unclean and
+        // re-arms its confirm.
+        () => {
+          if (stillCurrent()) this.#gateEpisode.noteDropped();
+        },
+        // 🔴 The DRIVE boundary, and the reason this argument may not be
+        // left off: `repausePending` is scoped by being cleared HERE, and the
+        // three-argument call is source-compatible, so omitting it compiles
+        // and silently degrades the suppression to no scope at all. That is
+        // the rejected episode-scoped design, measured to leave the mic live
+        // and the name latched through the mirror window for the rest of the
+        // call (D1 (A), D6). It is a FOURTH scope, not one of the three
+        // lifecycle boundaries.
+        //
+        // Deliberately NOT wrapped in `stillCurrent()` like the two hooks
+        // above, and NOT because a stale call here is impossible. What the
+        // code actually establishes is narrower: `onDriveStart` runs
+        // synchronously as `drive()`'s first statement, `drive()` is invoked
+        // synchronously by `sweep()`, and the only `sweep()` call is at the
+        // tail of `#applyPublishGate` — the same synchronous turn as its
+        // `this.room() !== room` re-check, so no teardown can interleave
+        // between that check and this hook. Every `#gateGen` bump nulls
+        // `#gateSweeper` in the same breath, so the live field never carries a
+        // superseded gen either.
+        //
+        // What it does NOT establish is the sweeper's CAPTURED room: the
+        // re-check reads the ARGUMENT room, and the two coincide only while
+        // every path that reassigns `this.room()` also drops the sweeper — an
+        // invariant spread over three sites with awaits between them, not
+        // something this hook verifies.
+        //
+        // 🔴 It is unguarded because a stale call is HARMLESS here, which is
+        // the real reason and the one that does not depend on that invariant:
+        // `beginDrive` clears the drive-scoped pending set and nothing else,
+        // so a spurious one RE-ARMS repauses — the fail-closed direction. The
+        // two hooks above mutate spend and confirm state, where a stale call
+        // corrupts the LIVE episode. Putting a predicate in front of the one
+        // call that DEFINES drive scope trades that harmless clear for a
+        // false negative that collapses the scope — the measured mic-live
+        // regression the paragraph above is about.
+        () => this.#gateEpisode.beginDrive(),
+      );
     }
-    await Promise.allSettled(ops);
+    await this.#gateSweeper.sweep();
   }
+
+  /**
+   * Sweep every local publication to match the gate (empty ⇒ resume all) and
+   * hand the verdict to the episode.
+   *
+   * The decision, the op-to-call mapping and the post-condition live in
+   * `publishGate.ts`; the livekit adapter lives in `gatedPublicationsFrom`;
+   * and every rule over the RESULT — the stale-room guard, the `proven`
+   * un-spend, the confirming re-sweep, the spend, `callPauseDisproved` —
+   * lives in `PublishGateEpisode`, because none of them can be reached by a
+   * spec or a mutation while they live in this file.
+   *
+   * A publication still on the wire after a held-gate sweep — a
+   * `replaceTrack(null)` that rejected, a stale pause flag over a rebuilt
+   * sender — is confirmed with one re-sweep and then LOGGED. Not latched, not
+   * shown: see the block at the report site for the four user-facing dead ends
+   * that rules out, and why making it visible is its own slice. What it must
+   * never be is DROPPED, which `Promise.allSettled` used to do silently — that
+   * is what turns one failed pause into a permanent false "your audio and video
+   * stay paused".
+   */
+  async #sweepPublishGate(
+    room: Room,
+    stillCurrent: () => boolean,
+  ): Promise<void> {
+    const sweep = await applyPublishGate(
+      // UNFILTERED on purpose: the no-track skip belongs to
+      // `gatedPublicationsFrom`, where a spec reaches it. Pre-filtering here
+      // would put that line back in the file nothing can load.
+      gatedPublicationsFrom(room.localParticipant.trackPublications.values()),
+      this.#gateHeld,
+      // Re-supplied by reference on every pass, so the episode can arm the
+      // next pass from this one's report. `repauseSpent` is PERMANENT for the
+      // episode and fed only from `sweep.repauseThrew`; `repausePending` is
+      // DRIVE-scoped and cleared by `beginDrive`.
+      {
+        repauseSpent: this.#gateEpisode.repauseSpent(),
+        repausePending: this.#gateEpisode.repausePending(),
+      },
+    );
+    // 🔴 THIS sweep's own captured identity, re-checked after the await that
+    // is what makes staleness possible at all. `PublishGateEpisode.consume`
+    // re-checks `EpisodeDeps.stillCurrent` first thing and that check stays —
+    // but that dep can only answer "some sweeper is current", so it cannot
+    // tell a resumed call-N sweep from a call-N+1 one, and this call site can.
+    // Without it the disposed call reaches the live episode's `#spent`,
+    // `#pending` and `callPauseDisproved`.
+    if (!stillCurrent()) return;
+    this.#gateEpisode.consume(sweep);
+  }
+
+  /**
+   * Re-assert the gate after livekit moved a sender underneath it. ONE stable
+   * reference, so `localTrackPublished` can `off` before `on` (see there), and
+   * both events it serves now want exactly the same thing: another sweep,
+   * which observes the wire rather than trusting what the event implies.
+   * Reads the room from the SIGNAL, not a captured one, so a handler left on a
+   * previous call's track sweeps the CURRENT room — which is the safe
+   * direction: the sweep is idempotent and judges each publication on its own
+   * wire, whereas capturing the old room would sweep a disposed one.
+   */
+  #reassertPublishGate = (): void => {
+    const room = this.room();
+    if (!room || this.#publishGate.size === 0) return;
+    void this.#applyPublishGate(room);
+  };
 
   /**
    * Every mic enable goes through here: `setMicrophoneEnabled` plus the
@@ -6138,7 +6688,7 @@ class Voice {
       mode,
       e2eeEnabled: mode?.kind === "e2ee",
       hasLocalKey: mode?.kind === "e2ee",
-      resecuring: sessionState === "resecuring",
+      resecuring: sessionState === "resecuring" || this.callMediaHold(),
       latchedError: this.callEncryptionError() !== undefined,
       publishingIdentities: publishing,
       observedEncrypted: observed,

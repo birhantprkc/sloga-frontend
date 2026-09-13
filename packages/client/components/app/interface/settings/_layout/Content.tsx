@@ -102,7 +102,34 @@ const InnerContent = styled("div", {
     zIndex: 1,
 
     _tablet: { padding: "12px" },
-    _phone: { height: "100vh" },
+
+    /*
+      A *minimum* height, not a fixed one.
+
+      This was `height: 100vh`, which pins the pane to exactly one viewport
+      regardless of what is in it — it simply cannot grow.
+
+      🔴 An earlier version of this comment also asserted that `vh` resolves
+      against the large viewport and so does not follow the keyboard under
+      `interactive-widget=resizes-content` (set in `index.html`). That was
+      never verified and is not load-bearing here: this change is correct
+      either way, because the defect being fixed is a height that cannot
+      grow, not one that collapses. Do not repeat the claim as fact until
+      someone has measured a `100vh` box against `innerHeight` on a real
+      Android device with the keyboard up — it is one of the open questions
+      behind the landscape-blanking report, whose phone/tablet breakpoint
+      mechanism is now confirmed on the operator's device but which is still
+      not fully accounted for. See the v0.59.0 block in changelogData.ts.
+
+      `min-height` alone is not enough here: this is a stretch-aligned item of
+      the row scroller above, and under `align-items: stretch` the cross size
+      comes from the flex line rather than from the content, so the box would
+      still be one viewport tall with long content spilling out of it. Opting
+      out of stretch with `align-self` is what lets the height be content-based;
+      the `min-height` then keeps the pane filling the screen when the page is
+      short, which is all `height: 100vh` was ever doing.
+    */
+    _phone: { alignSelf: "flex-start", minHeight: "100vh" },
   },
 });
 

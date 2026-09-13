@@ -90,7 +90,7 @@ export function ProfileBadges(props: { user: User }) {
               use:floating={{
                 tooltip: {
                   placement: "top",
-                  content: t`Platform Moderator`,
+                  content: t`Sloga Moderator`,
                 },
               }}
             >

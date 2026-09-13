@@ -90,10 +90,33 @@ const field = cva({
  * @specification https://m3.material.io/components/text-fields
  */
 export function TextField(props: Props) {
+  /**
+   * mdui submits the surrounding form on a plain Enter, and it binds that
+   * handler to its multi-line `<textarea>` as well as to `<input>`. So a
+   * multi-line field could never take a line break: the newline went in and
+   * the form submitted on the next tick (the forum post composer, reported
+   * 2026-09-11; the channel and server description fields did it too).
+   *
+   * Stopping the event in the CAPTURE phase at the host keeps it from ever
+   * reaching mdui's listener inside the shadow root, while its default
+   * action, inserting the line break, still happens. Never `preventDefault`
+   * here: that would cancel the line break itself.
+   */
+  function keepEnterInMultiline(event: KeyboardEvent) {
+    const multiline = props.autosize || (props.rows ?? 1) > 1;
+    const modified =
+      event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
+
+    if (multiline && event.key === "Enter" && !modified) {
+      event.stopPropagation();
+    }
+  }
+
   return (
     <mdui-text-field
       {...props}
       class={field()}
+      oncapture:keydown={keepEnterInMultiline}
       // @codegen directives props=props include=autoComplete
     />
   );

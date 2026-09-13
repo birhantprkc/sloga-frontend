@@ -11,10 +11,13 @@ import {
   type CallMode,
   type ChipInputs,
   type LoudHealInputs,
+  MediaErrorLedger,
   callModeTransition,
   chipState,
   classifyEncryptionError,
+  classifyMediaError,
   isTerminalLoud,
+  keyPairId,
   latestPresentAddedAt,
   loudHealVerdict,
   loudModeFallback,
@@ -737,6 +740,63 @@ test("🔴 with no named device EVERY remote present at the latch must be gone o
   );
 });
 
+test("a bystander latch heals once this side installed the exact index it named", () => {
+  // A missing key NAMES its participant, so the witness set is the bystander
+  // that raised it — and a bystander never leaves and never re-publishes,
+  // which is why leg 3a (2026-09-07) stayed red for the whole call. Filling
+  // that index is the one witness such a latch can produce: `setKey` calls
+  // `resetKeyStatus` for it, so a surviving failure re-emits inside the
+  // settle and `errorSinceInstall` catches it.
+  const stuck = { present: true, readdedAfterLatch: false, sidsAllNew: false };
+  assert.equal(loudHealVerdict({ ...HEAL_OK, peers: [stuck] }), "hold");
+  assert.equal(
+    loudHealVerdict({
+      ...HEAL_OK,
+      peers: [stuck],
+      originatingPairRefilled: true,
+    }),
+    "heal",
+  );
+});
+
+test("🔴 the refilled-pair witness sits BEHIND the empty-witness hold, never in front", () => {
+  // No device the failure could have come from means no witness at all, and
+  // the latch holds whatever else is true. Ordering the refill clause ahead
+  // of that check would let a latch with nothing to judge heal itself.
+  assert.equal(
+    loudHealVerdict({
+      ...HEAL_OK,
+      peers: [],
+      originatingPairRefilled: true,
+    }),
+    "hold",
+  );
+});
+
+test("🔴 the refilled-pair witness never substitutes for the other gates", () => {
+  // It answers "was the failing index re-validated", nothing else: a hard
+  // error since the install, an unsettled probe, a divergent roster and a
+  // control-plane latch all still hold with it set.
+  const holds: Partial<LoudHealInputs>[] = [
+    { origin: "control" },
+    { installSeq: 3 },
+    { errorSinceInstall: true },
+    { settleElapsed: false },
+    { rosterConsistent: false },
+  ];
+  for (const over of holds)
+    assert.equal(
+      loudHealVerdict({
+        ...HEAL_OK,
+        peers: [{ present: true, readdedAfterLatch: false, sidsAllNew: false }],
+        originatingPairRefilled: true,
+        ...over,
+      }),
+      "hold",
+      JSON.stringify(over),
+    );
+});
+
 test("🔴 every other missing witness holds", () => {
   const holds: Partial<LoudHealInputs>[] = [
     { origin: "control" },
@@ -776,6 +836,206 @@ test("the heal settle runs from the latest re-Add of a PRESENT witness only", ()
   // Never re-added / no witness: nothing later than the install.
   assert.equal(latestPresentAddedAt([{ present: true }]), 0);
   assert.equal(latestPresentAddedAt([]), 0);
+});
+
+// ---- media-plane errors vs. the install reference ---------------------------
+
+const PEER = "01KWZ8SEDB282BE0ZS0H3TQA61:f5e41432ff82e08c83176f57c4a80a78";
+const MISSING = (index: number, identity = PEER) =>
+  new Error(
+    `MissingKey: missing key at index ${index} for participant ${identity}`,
+  );
+const INVALID = new Error(
+  "InvalidKey: Decryption failed: The operation failed for an operation-specific reason",
+);
+const entry = (index: number, identity = PEER) => ({
+  livekit_identity: identity,
+  key_index: index,
+});
+
+test("only the decode path's MissingKey names a key pair; everything else is hard", () => {
+  assert.deepEqual(classifyMediaError(MISSING(13)), {
+    kind: "missing_key",
+    identity: PEER,
+    pair: keyPairId(PEER, 13),
+  });
+  assert.deepEqual(classifyMediaError(MISSING(2, `${PEER}:screen`)), {
+    kind: "missing_key",
+    identity: `${PEER}:screen`,
+    pair: `${PEER}:screen@2`,
+  });
+  // An index outside the worker's ring is a plaintext frame's last byte, not
+  // a key pair (its failure count is NaN and it re-emits every frame).
+  assert.deepEqual(classifyMediaError(MISSING(16)), { kind: "hard" });
+  assert.deepEqual(classifyMediaError(MISSING(200)), { kind: "hard" });
+  // The decoy / withheld key (leg 9): the key it holds is wrong.
+  assert.deepEqual(classifyMediaError(INVALID), { kind: "hard" });
+  // The encode path's missing key names no decode pair.
+  assert.deepEqual(
+    classifyMediaError(
+      new Error(`MissingKey: key set not found for ${PEER} at index 3`),
+    ),
+    { kind: "hard" },
+  );
+  assert.deepEqual(classifyMediaError("not an error"), { kind: "hard" });
+  assert.deepEqual(classifyMediaError(undefined), { kind: "hard" });
+});
+
+test("🔴 a hard error landing DURING the install counts against a reference taken before it", () => {
+  // Review of 9e5fa880 (MED): the installer awaits importKey per entry after
+  // each post; an InvalidKey between those awaits used to be stamped before a
+  // reference taken after the install resolved, and the probe healed over the
+  // silenced index 10 s later.
+  const ledger = new MediaErrorLedger();
+  const installRef = 1_000;
+  ledger.noteError(INVALID, 1_005); // between the installer's awaits
+  ledger.noteInstalled([entry(13)], 1_010); // the install resolves
+  assert.equal(ledger.errorSince(installRef), true);
+  // An error strictly before the reference is the latch's own, not since.
+  const older = new MediaErrorLedger();
+  older.noteError(INVALID, 999);
+  older.noteInstalled([entry(13)], 1_010);
+  assert.equal(older.errorSince(installRef), false);
+  // At the reference itself: since (conservative).
+  const same = new MediaErrorLedger();
+  same.noteError(INVALID, installRef);
+  assert.equal(same.errorSince(installRef), true);
+  // No error ever: not "since" even a reference of 0.
+  assert.equal(new MediaErrorLedger().errorSince(0), false);
+});
+
+test("a missing key for a pair the install covers is superseded, whichever lands first", () => {
+  // The join-race MissingKey: the worker judged the frame before the setKey
+  // message reached it, so the setKey resets the index afterwards.
+  const before = new MediaErrorLedger();
+  before.noteError(MISSING(13), 1_005);
+  before.noteInstalled([entry(13)], 1_010);
+  assert.equal(before.errorSince(1_000), false);
+  assert.deepEqual(before.uncoveredPairs(), []);
+  // Previous-epoch entries count as installed too.
+  const prev = new MediaErrorLedger();
+  prev.noteError(MISSING(12), 900);
+  prev.noteInstalled([entry(12), entry(13)], 1_010);
+  assert.equal(prev.errorSince(1_000), false);
+});
+
+test("🔴 a missing key that lands AFTER the sender's install completed is a withheld commit, and stands until the next install (M1)", () => {
+  // Re-review of de4879c2: the DS withholds a roster-neutral Remove + re-Add
+  // of P from this member only; P's new session sends at an index this side
+  // never got. The one MissingKey is the only local sign — it must hold.
+  const ledger = new MediaErrorLedger();
+  ledger.noteInstalled([entry(2)], 1_010); // P installed at epoch 2
+  ledger.noteError(MISSING(4), 5_000); // P sends at 4; this side never got 3, 4
+  assert.equal(ledger.errorSince(1_000), true);
+  assert.deepEqual(ledger.uncoveredPairs(), [keyPairId(PEER, 4)]);
+  // A later install of P (any index) proves this side caught up.
+  ledger.noteInstalled([entry(5)], 9_000);
+  assert.equal(ledger.errorSince(1_000), false);
+  // The join race whose error merely reached the main thread after the
+  // install completed: the pair that install SET can only have been judged
+  // before the worker processed the setKey (no path empties a slot), so it
+  // is superseded whenever it lands — not a hold.
+  const late = new MediaErrorLedger();
+  late.noteInstalled([entry(13)], 1_010);
+  late.noteError(MISSING(13), 1_020);
+  assert.equal(late.errorSince(1_000), false);
+  // ...while a pair that install did NOT set, landing after it, holds.
+  late.noteError(MISSING(14), 1_030);
+  assert.equal(late.errorSince(1_000), true);
+  assert.deepEqual(late.uncoveredPairs(), [keyPairId(PEER, 14)]);
+  // The sender's next install supersedes it whatever indexes it sets.
+  late.noteInstalled([entry(15)], 2_000);
+  assert.equal(late.errorSince(1_000), false);
+  // LiveKit re-sets every known pair on each worker enable ack: a re-set of
+  // an already-set pair records nothing and changes no verdict.
+  const reset = new MediaErrorLedger();
+  reset.noteInstalled([entry(13)], 1_010);
+  reset.noteError(MISSING(14), 1_030); // foreign index: holds
+  reset.noteInstalled([entry(13)], 1_500); // the replay, same pair
+  assert.equal(reset.errorSince(1_000), true);
+  assert.deepEqual(reset.uncoveredPairs(), [keyPairId(PEER, 14)]);
+});
+
+test("🔴 a missing key for a sender NO install covers holds while that sender is present, regardless of when it landed", () => {
+  // A sender at an index this side does not hold: its index is silenced after
+  // the one error (failureTolerance 0), so silence proves nothing.
+  const OTHER = "01KWHY6P2RPHWNJADM59F97JGE:bee76df73dbf46725e328509842750b4";
+  const ledger = new MediaErrorLedger();
+  ledger.noteError(MISSING(14, OTHER), 500); // before the reference
+  ledger.noteInstalled([entry(13)], 1_010); // PEER installed, OTHER never
+  assert.equal(ledger.errorSince(1_000), true);
+  assert.deepEqual(ledger.uncoveredPairs(), [keyPairId(OTHER, 14)]);
+  // Gone from the SFU: its frames are gone with it (review of e2163ead, H1a).
+  assert.equal(
+    ledger.errorSince(1_000, (identity) => identity !== OTHER),
+    false,
+  );
+  // Back, still uncovered: holds again. An install of that sender answers it.
+  assert.equal(ledger.errorSince(1_000), true);
+  ledger.noteInstalled([entry(14, OTHER)], 2_000);
+  assert.equal(ledger.errorSince(1_000), false);
+});
+
+test("🔴 a Welcome joiner's pre-Welcome missing key is superseded by the sender's FIRST install (H1)", () => {
+  // Review of e2163ead: a device joined by Welcome hears P's frames at epoch
+  // E before it holds any key, then installs E+1 with `previous: []` (native
+  // snapshots previous only across a commit it applied). P@E is never
+  // installed; superseding by sender keeps the heal alive for the joiner.
+  const ledger = new MediaErrorLedger();
+  ledger.noteError(MISSING(4), 100); // P@4, before the Welcome
+  ledger.noteInstalled([entry(5)], 1_010); // first install: P@5 only
+  assert.equal(ledger.errorSince(1_000), false);
+  assert.deepEqual(ledger.uncoveredPairs(), []);
+});
+
+test("forgetHardError keeps the uncovered senders; reset forgets the replaced group", () => {
+  const OTHER = "01KWHY6P2RPHWNJADM59F97JGE:bee76df73dbf46725e328509842750b4";
+  const ledger = new MediaErrorLedger();
+  ledger.noteError(INVALID, 1_005);
+  ledger.noteError(MISSING(14, OTHER), 1_006);
+  ledger.forgetHardError(); // a healed latch
+  assert.equal(ledger.errorSince(1_000), true); // OTHER still uncovered
+  ledger.reset(); // group re-established
+  assert.equal(ledger.errorSince(1_000), false);
+  // After a reset a sender installed under the old group is unknown again, so
+  // a missing key for it is a real hold until the new group installs it.
+  ledger.noteError(MISSING(0), 2_000);
+  assert.equal(ledger.errorSince(1_500), true);
+  ledger.noteInstalled([entry(0)], 2_500);
+  assert.equal(ledger.errorSince(1_500), false);
+});
+
+test("🔴 leg 9 ordering: the rejoiner's first new-key frame fails inside the settle → hold; leg 7: decrypts → heal", () => {
+  // The session-level sequence, composed from the pure parts: the latch at
+  // install seq 3, the Remove epoch (seq 4, ref 1_000), the Add epoch (seq 5,
+  // ref 2_000), the peer re-added and publishing all-new SIDs.
+  const witness = { present: true, readdedAfterLatch: true, sidsAllNew: true };
+  const judge = (ledger: MediaErrorLedger, installRef: number) =>
+    loudHealVerdict({
+      origin: "media",
+      latchedInstallSeq: 3,
+      installSeq: 5,
+      errorSinceInstall: ledger.errorSince(installRef),
+      settleElapsed: true,
+      rosterConsistent: true,
+      peers: [witness],
+    });
+  // Leg 9: the key withheld and never released.
+  const leg9 = new MediaErrorLedger();
+  leg9.noteError(INVALID, 100); // the latch's own error
+  leg9.noteInstalled([entry(12)], 1_010); // Remove epoch at 1_000
+  leg9.noteError(MISSING(13), 2_005); // join-race frame during the Add install
+  leg9.noteInstalled([entry(13)], 2_010); // Add epoch at 2_000, supersedes it
+  assert.equal(judge(leg9, 2_000), "heal"); // nothing since — so far
+  leg9.noteError(INVALID, 2_400); // first frame under the new key fails
+  assert.equal(judge(leg9, 2_000), "hold");
+  // Leg 7: released before the rejoin; the new-key frames decrypt.
+  const leg7 = new MediaErrorLedger();
+  leg7.noteError(INVALID, 100);
+  leg7.noteInstalled([entry(12)], 1_010);
+  leg7.noteError(MISSING(13), 2_005);
+  leg7.noteInstalled([entry(13)], 2_010);
+  assert.equal(judge(leg7, 2_000), "heal");
 });
 
 // ---- mix detected: what the session does, by mode ---------------------------

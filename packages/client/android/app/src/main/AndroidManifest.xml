@@ -1,7 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- enableOnBackInvokedCallback is already the default at
+         targetSdkVersion 36, but MainActivity's back handling DEPENDS on it:
+         the API 33+ branch registers with OnBackInvokedDispatcher, which only
+         receives anything while predictive back is opted in. Stated here so
+         that a future targetSdk change cannot silently turn the back key back
+         into "closes the whole app". -->
     <application
+        android:enableOnBackInvokedCallback="true"
         android:allowBackup="true"
         android:fullBackupContent="@xml/backup_rules"
         android:dataExtractionRules="@xml/data_extraction_rules"

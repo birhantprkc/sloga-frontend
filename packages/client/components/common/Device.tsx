@@ -81,6 +81,9 @@ export class Device {
   private tMedia;
   private wMedia;
   private setLayout;
+  /** Last layout reported, kept as a plain field so `onLayout` never
+   * subscribes to its own signal from whatever scope constructed us. */
+  private lastLayout: Layout | undefined;
   private setUltrawideDisplay;
   private onResize;
 
@@ -108,13 +111,42 @@ export class Device {
   }
 
   onLayout() {
-    this.setLayout(
-      this.pMedia.matches
-        ? "phone"
-        : this.tMedia.matches
-          ? "tablet"
-          : "desktop",
-    );
+    const next: Layout = this.pMedia.matches
+      ? "phone"
+      : this.tMedia.matches
+        ? "tablet"
+        : "desktop";
+
+    // Instrumentation for the landscape-blanking investigation. The flip this
+    // was written to detect is now confirmed: the operator's device reads a
+    // 540 CSS px short side, phone false and tablet true, so a rotation does
+    // cross phone<->tablet. A 411x915 phone matches both breakpoint queries
+    // in both orientations and never flips, which is why that hardware ruled
+    // nothing out. What is still open is whether this fully explains the
+    // report, and whether a focused text field shrinking the visual viewport
+    // can cross the same 501-600 band (DPR ~2.0, or a reduced Android Display
+    // Size). The log stays unguarded until the device leg has run — the leg
+    // reads it — so a76b5348's "remove it once report 5 is root-caused" is
+    // deliberately not discharged yet.
+    //
+    // Cheap on purpose: this only fires when a breakpoint actually crosses,
+    // which is rare, and the payload is built only in that case.
+    if (next !== this.lastLayout) {
+      console.info(
+        `[device] layout ${this.lastLayout ?? "(init)"} -> ${next}`,
+        {
+          innerWidth,
+          innerHeight,
+          devicePixelRatio,
+          phone: this.pMedia.matches,
+          tablet: this.tMedia.matches,
+          orientation: globalThis.screen?.orientation?.type,
+        },
+      );
+      this.lastLayout = next;
+    }
+
+    this.setLayout(next);
   }
 
   destroy() {

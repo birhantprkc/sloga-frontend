@@ -20,7 +20,6 @@ import MdGroupAdd from "@material-design-icons/svg/outlined/group_add.svg?compon
 import MdPersonAdd from "@material-design-icons/svg/outlined/person_add.svg?component-solid";
 import MdReport from "@material-design-icons/svg/outlined/report.svg?component-solid";
 import MdSettings from "@material-design-icons/svg/outlined/settings.svg?component-solid";
-import MdShield from "@material-design-icons/svg/outlined/shield.svg?component-solid";
 
 import MdDoNotDisturbOff from "@material-symbols/svg-400/outlined/do_not_disturb_off.svg?component-solid";
 import MdDoNotDisturbOn from "@material-symbols/svg-400/outlined/do_not_disturb_on.svg?component-solid";
@@ -119,16 +118,6 @@ export function ServerContextMenu(props: { server: Server }) {
       type: "leave_server",
       server: props.server,
     });
-  }
-
-  /**
-   * Open server in Stoat Admin Panel
-   */
-  function openAdminPanel() {
-    window.open(
-      `https://old-admin.stoatinternal.com/panel/inspect/server/${props.server.id}`,
-      "_blank",
-    );
   }
 
   /**
@@ -329,21 +318,8 @@ export function ServerContextMenu(props: { server: Server }) {
         </ContextMenuButton>
       </Show>
 
-      <Show
-        when={
-          state.settings.getValue("advanced:admin_panel") &&
-          state.settings.getValue("advanced:copy_id")
-        }
-      >
-        <ContextMenuDivider />
-      </Show>
-
-      <Show when={state.settings.getValue("advanced:admin_panel")}>
-        <ContextMenuButton icon={MdShield} onClick={openAdminPanel}>
-          <Trans>Admin Panel</Trans>
-        </ContextMenuButton>
-      </Show>
       <Show when={state.settings.getValue("advanced:copy_id")}>
+        <ContextMenuDivider />
         <ContextMenuButton icon={MdBadge} onClick={copyId}>
           <Trans>Copy server ID</Trans>
         </ContextMenuButton>

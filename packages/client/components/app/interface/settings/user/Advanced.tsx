@@ -34,17 +34,6 @@ export default function AdvancedSettings() {
         >
           <Trans>Show 'copy ID' in context menus</Trans>
         </Checkbox>
-        <Checkbox
-          checked={state.settings.getValue("advanced:admin_panel")}
-          onChange={(e) =>
-            state.settings.setValue(
-              "advanced:admin_panel",
-              e.currentTarget.checked,
-            )
-          }
-        >
-          <Trans>Show admin panel shortcuts in context menus</Trans>
-        </Checkbox>
       </Column>
       {/* Only rendered when an experiment actually exists — an empty group
           used to draw two placeholder rows that toggled nothing. */}

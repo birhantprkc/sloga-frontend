@@ -8,6 +8,108 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // v0.59.0 (2026-09-13). Copy constraints, load-bearing:
+  // - The re-securing fix is the one item here seen working on a real call: a
+  //   live leg on 2026-09-11 reproduced the stuck chip on the base build and
+  //   saw the fixed build recover. Say it recovers; promise nothing wider.
+  // - The other encrypted-call changes riding this line (the join-race hold,
+  //   the heal-install work, the false-red pause fix, the banner wording) have
+  //   no live leg and are NOT announced, not even as "other reliability fixes".
+  // - Group calls: this entry CORRECTS the v0.58.1 line saying group owners
+  //   can turn calls on. The backend now treats every group as callable until
+  //   it is switched off; the client change is copy only, so this item is only
+  //   true once the backend deploy has landed. The v0.58.1 entry stays as
+  //   published. The switch is gated on ManageChannel, and this entry does not
+  //   assume only owners hold it, so the copy says "a group", never "owners".
+  // - The group-call, menu and badge items are copy and UI changes; no live
+  //   leg is claimed for them.
+  // - Forums (ebe459c1, merged in ec00f84e): its commit records a check in a
+  //   preview build against production on a test forum (Enter adds lines,
+  //   tag emoji pick and remove, a throwaway post retagged). That is a
+  //   browser check, not a live leg; nothing here claims more. The tag button
+  //   is shown only to the post's author or a forum manager, so the copy says
+  //   who can use it. Only server emoji went from text to an image, so the
+  //   copy claims that and nothing wider.
+  // - Never quote the group-settings sentence, the moderator badge tooltip,
+  //   the admin tool's address, or the forum strings (the retag dialog's
+  //   title and empty-state line, the tag-emoji button labels): those are
+  //   build gate markers. Say "switch off", never "turned off"; say "change a
+  //   post's tags" and "tag emoji are chosen", never the button wording.
+  // - The eight reported bugs merged in a76b5348 (09-13): six from the
+  //   09-11/09-12 reports, the Android back key, and a drawer/side-panel
+  //   reset found by that session's audit. None of them has a device leg;
+  //   they are source fixes under the existing specs, so each line says what
+  //   the fix does and claims nothing about devices it ran on.
+  // - 🔴 The landscape-blanking report (edit a profile on Android, rotate,
+  //   everything disappears) gets NO line here, by operator decision. A
+  //   mechanism is now confirmed, but it does not account for the whole
+  //   report, so this is not a closed root cause. The operator's own device
+  //   reads 540 CSS px on the short side, with the phone media query false
+  //   and the tablet query true: that is inside the 501-600 dead band, so
+  //   rotating crosses the phone/tablet boundary, which drops BackAction
+  //   (_phone only) and hides CloseAction (_tablet) — both exit controls at
+  //   once. That explains controls changing places, not a screen going blank;
+  //   the residual is unexplained. 4bb58da9 hardened four other real defects
+  //   found while chasing it. The dialog-scrim candidate was reported
+  //   disproved by a peer session on 09-13, with a control page that is NOT
+  //   in this repo — second-hand, so do not treat it as closed: Dialog.tsx is
+  //   still grid + place-items center + overflow-y auto, untouched by this
+  //   release, and a76b5348's message describes it as a live source-level
+  //   defect affecting every Dialog.
+  //   v0.59.0 changes nothing about the boundary — Breakpoint.ts is untouched
+  //   — so the entry claims nothing. Note that 92da0bbb does restore a
+  //   back-key exit from that state on Android, which may mask the symptom
+  //   without addressing the cause: another reason to claim nothing.
+  //   Two candidate fixes, neither a release-week change: the boundary in
+  //   components/common/Breakpoint.ts (it drives the JS layout signal AND
+  //   every Panda _phone/_tablet rule), or narrower local gating in
+  //   settings/_layout/Content.tsx so one exit control always survives.
+  //   The Device.tsx layout log stays unguarded on purpose until the device
+  //   leg has run — the leg reads it — so a76b5348's "remove it once report 5
+  //   is root-caused" is deliberately NOT discharged by this comment.
+  // - The phone member-list button is now ONE-WAY (it shows the list and no
+  //   longer hides it) and this entry says so on purpose. Nobody reported it;
+  //   it fell out of the fix. A user who used that button to hide the list
+  //   will notice, and an unannounced behavior change reads as a new bug.
+  // - No Version section: this entry makes no claim about which platforms
+  //   carry v0.59.0.
+  {
+    id: "sloga-2026-09-13",
+    title: "Patch Notes",
+    published_at: "2026-09-13T19:00:00.000Z",
+    web_version: "0.59.0",
+    markdown_content: `## v0.59.0 — Encrypted calls recover from a rejoin
+
+### 🔒 Encrypted calls
+- **Leaving and rejoining an encrypted call no longer leaves it stuck re-securing.** When someone left and came back, the call could stay on Re-securing until the app was restarted. It now recovers on its own.
+
+### 👥 Group calls
+- **Calls are now on by default in group chats**, so the call button is back. A group that would rather not have calls can switch them off in the group's settings.
+- This corrects the v0.58.1 notes, which said group owners had to turn calls on.
+
+### 📱 Android and phones
+- **Viewing a photo on Android keeps its buttons on screen.** The zoom, copy, download and close buttons were being pushed off the right edge, so you had to turn the phone sideways to reach them. They stay put in portrait now, and a long file name is shortened instead of shoving them off.
+- **The member list button works in text channels on Android.** It previously did nothing at all; it now slides the member list in.
+- **The back key closes what is open, instead of closing Sloga.** Pressing back with a profile, a dialog or a search panel open used to quit the app outright. It now closes them one at a time, and only leaves the app when there is nothing left to close.
+- **On a phone the member list button is now one way**: it shows the member list, but it no longer hides it. Hiding it that way took the list away from the only place a phone can reach it. Press back, or swipe across, to get back to the conversation — and you can still drag the divider to give the list less room.
+
+### 🧭 Around the app
+- **Channels marked 18+ ask you to confirm your age once**, rather than once per channel. Joining a server with thirty of them no longer means thirty prompts.
+- **The channel list no longer jumps back to the top** when you click a channel.
+- **Long text on your profile no longer cuts off mid-word.** A long status line and the Joined panel used to shear through a letter at the edge of the tile. They now fade out at the cut, and Joined scrolls when there is more than fits.
+
+### 🧹 Menus and badges
+- **The Admin Panel shortcut is gone from the right-click menus**, along with the Advanced setting that showed it. It was a leftover that pointed at another project's staff tool and never worked on Sloga.
+- **Sloga moderators' names now appear in the multicolor Sloga brand colors** in messages and replies, like the rest of the Sloga team, and their profile badge now names them as a Sloga moderator.
+
+### 💬 Forums
+- **Forum posts keep their line breaks.** When you write a new post, Enter now starts a new line in the message box instead of posting it.
+- **You can change a post's tags after posting**, from the tag button at the top of the post. It is there for whoever wrote the post and for anyone who manages the forum.
+- **Tag emoji are chosen with the emoji picker** in a forum's settings, custom server emoji included. A server emoji on a tag now shows as the emoji itself instead of as text.
+- **Channel and server descriptions no longer save when you press Enter.** Enter adds a new line there too.
+- **Opening a forum post no longer opens the member list with it.** The post gets the full width, and the member list follows whatever the channel it sits in was set to.
+`,
+  },
   // v0.58.1 (2026-09-11). Copy constraints, load-bearing:
   // - 🔴 ANNOUNCED WITHOUT A LIVE LEG, deliberately. The standing rule in this
   //   file — announce a fix only once it has been seen working — was WAIVED by

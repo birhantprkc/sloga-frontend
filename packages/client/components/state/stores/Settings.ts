@@ -191,11 +191,6 @@ interface SettingsDefinition {
   "advanced:copy_id": boolean;
 
   /**
-   * Whether to include admin panel links in context menus
-   */
-  "advanced:admin_panel": boolean;
-
-  /**
    * Which message received sound variant to use (1–5)
    */
   "sounds:message_variant": number;
@@ -333,7 +328,6 @@ const EXPECTED_TYPES: { [K in keyof SettingsDefinition]: ValueType<K> } = {
   "appearance:layout_nav_side": "string",
   "appearance:layout_members_side": "string",
   "advanced:copy_id": "boolean",
-  "advanced:admin_panel": "boolean",
   "sounds:message_variant": "number",
   "sounds:ringtone_variant": "number",
   "sounds:disconnect_variant": "number",
@@ -455,7 +449,6 @@ export class Settings extends AbstractStore<"settings", TypeSettings> {
       "appearance:layout_nav_side": "left",
       "appearance:layout_members_side": "auto",
       "advanced:copy_id": false,
-      "advanced:admin_panel": false,
       "sounds:message_variant": 4,
       "sounds:ringtone_variant": 8,
       "sounds:disconnect_variant": 3,

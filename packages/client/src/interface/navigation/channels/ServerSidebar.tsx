@@ -187,10 +187,165 @@ export const ServerSidebar = (props: Props) => {
   // localStorage entry are left alone, so the user's split comes back intact
   // when the layout turns off, including when it turns itself off because the
   // window got too narrow.
+  //
+  // Threads (forum posts included) are hosted here too. `TextChannel` used to
+  // plant a member column beside every thread unconditionally; now that it
+  // defers to the layout setting like a text channel does, this column has to
+  // pick a thread up or a forum post would have no member list anywhere.
   const showMemberList = () =>
-    selectedChannel()?.type === "TextChannel" &&
+    (selectedChannel()?.type === "TextChannel" ||
+      !!selectedChannel()?.isThread) &&
     !sides().membersOwnColumn &&
     state.layout.getSectionState(LAYOUT_SECTIONS.MEMBER_SIDEBAR, true);
+
+  // Last scroll position the user actually chose.
+  //
+  // Deliberately *not* updated while the list has no overflow: the scroller is
+  // content-sized under a 60% cap, and at the one transition where the content
+  // falls below that cap `scrollHeight - clientHeight` is 0, so the browser
+  // pins `scrollTop` to 0 and emits a scroll event carrying no intent. Letting
+  // that event overwrite this — or clamping this into it on restore — is
+  // exactly how the position is lost; instead it is kept until the list
+  // overflows again and can hold it.
+  let savedChannelScroll = 0;
+  // The value our own restore wrote. Its echo scroll event must not be read
+  // back as the user scrolling, or a partial shrink would ratchet the saved
+  // position down.
+  let writtenChannelScroll: number | null = null;
+  // Largest offset the list could hold the last time either path looked at it.
+  //
+  // When the list gets shorter the browser clamps `scrollTop` onto the new
+  // maximum by itself and queues a scroll event for it. That event can reach
+  // us *before* the restore below does — scroll events are dispatched earlier
+  // in a frame than resize-observer callbacks, and any layout read elsewhere
+  // in the tick is enough to apply the clamp that early — so the save path
+  // cannot rely on the restore having gone first and has to recognise a clamp
+  // on its own.
+  let lastChannelScrollMax = 0;
+
+  function onChannelScroll() {
+    const el = channelScrollTarget;
+    if (!el) return;
+    if (
+      writtenChannelScroll !== null &&
+      el.scrollTop === writtenChannelScroll
+    ) {
+      writtenChannelScroll = null;
+      return;
+    }
+    const max = el.scrollHeight - el.clientHeight;
+    const shrunk = max < lastChannelScrollMax;
+    lastChannelScrollMax = max > 0 ? max : 0;
+    // No overflow: this event carries no intent (see above).
+    if (max <= 0) return;
+    // The maximum just dropped and this event sits on it: that is the
+    // browser's clamp, not a position the user chose. Saving it is precisely
+    // the ratchet — the saved offset would be lowered by the height of the row
+    // that vanished, and the restore would land short once it comes back. Only
+    // the first event after the shrink is suppressed; `lastChannelScrollMax`
+    // has caught up by the next one, so a genuine scroll to the bottom saves.
+    //
+    // Compared with a pixel of slack rather than for equality: `scrollHeight`
+    // and `clientHeight` are rounded integers while `scrollTop` is a double,
+    // so on a fractional layout (a non-integer device pixel ratio, a sub-pixel
+    // row height) the real maximum the browser clamps onto is a fraction below
+    // the integer `max` computed here and never compares equal to it. Strict
+    // equality let exactly the clamp this line exists to suppress through.
+    if (shrunk && el.scrollTop >= max - 1) return;
+    savedChannelScroll = el.scrollTop;
+  }
+
+  // Puts the user back where they were after the scroller's content or its
+  // viewport changed size.
+  //
+  // Driven by a `ResizeObserver` rather than by enumerating what can add a
+  // row, because that enumeration was incomplete: besides the collapsed-
+  // category filter, unread/ack churn and entering a thread, rows also come
+  // from joined threads nested under a text channel or forum (a Join on a
+  // forum post, a remote join/leave, an archive flip) and from
+  // `VoiceChannelPreview` participant rows (anyone joining or leaving a voice
+  // channel). None of those changed the old signature, so none of them
+  // restored. A size change is the thing we actually care about, so observe
+  // that directly.
+  function restoreChannelScroll() {
+    const el = channelScrollTarget;
+    if (!el) return;
+    // `ResizeObserver` callbacks run after layout, so these reads already see
+    // the post-mutation heights.
+    const max = el.scrollHeight - el.clientHeight;
+    lastChannelScrollMax = max > 0 ? max : 0;
+    // Content fits: 0 is the only position there is, and forcing it here would
+    // be the same jump. Leave `savedChannelScroll` alone so it comes back when
+    // the list overflows again.
+    if (max <= 0) return;
+    const target = Math.min(savedChannelScroll, max);
+    const before = el.scrollTop;
+    if (before !== target) el.scrollTop = target;
+    const after = el.scrollTop;
+
+    if (after !== before) {
+      // We moved it; the scroll event that follows carries this value.
+      writtenChannelScroll = after;
+    } else if (savedChannelScroll > max) {
+      // We wrote nothing, but the saved position no longer fits: the rows that
+      // vanished took `max` below it, so the browser clamped `scrollTop` down
+      // to `max` itself (the read above forces the layout that applies the
+      // clamp) and has already queued the scroll event for that clamp. Arm the
+      // guard on the clamped value so that event is not read back as the user
+      // choosing a lower position — that is exactly how `savedChannelScroll`
+      // gets ratcheted down by the height of the missing row, and the restore
+      // then lands short once the row comes back.
+      //
+      // The cost is a guard that can sit armed when no echo was in fact coming
+      // (the element already sat at `max` for another reason). It then
+      // swallows at most one later scroll event landing on exactly this
+      // offset, clearing itself as it does, and the next resize overwrites it
+      // — strictly less drift than the ratchet it prevents.
+      writtenChannelScroll = after;
+    } else {
+      // Nothing moved and nothing was clamped, so no echo is coming; a guard
+      // left armed here would sit stale and swallow a real scroll.
+      writtenChannelScroll = null;
+    }
+  }
+
+  let channelScrollObserver: ResizeObserver | undefined;
+
+  onMount(() => {
+    channelScrollTarget?.addEventListener("scroll", onChannelScroll, {
+      passive: true,
+    });
+
+    const el = channelScrollTarget;
+    if (!el) return;
+
+    // Two boxes matter. The `Draggable` wrapper is the only element child of
+    // the scroller and holds every row, so its height is the content height.
+    // The scroller itself is the viewport, which `showMemberList()` and a
+    // divider drag both resize — that moves `max` without touching content.
+    channelScrollObserver = new ResizeObserver(() => restoreChannelScroll());
+    channelScrollObserver.observe(el);
+    if (el.firstElementChild)
+      channelScrollObserver.observe(el.firstElementChild);
+  });
+
+  onCleanup(() => {
+    channelScrollTarget?.removeEventListener("scroll", onChannelScroll);
+    channelScrollObserver?.disconnect();
+  });
+
+  // A different server is a different list; nothing to carry over.
+  createEffect(
+    on(
+      () => props.server.id,
+      () => {
+        savedChannelScroll = 0;
+        writtenChannelScroll = null;
+        lastChannelScrollMax = 0;
+      },
+      { defer: true },
+    ),
+  );
 
   // Users can manage certain parts of the server individually, regardless of their ManageServer Permission
   const canManageServer = () =>

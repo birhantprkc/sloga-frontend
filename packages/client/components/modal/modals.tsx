@@ -45,6 +45,7 @@ import { E2EEReenrollModal } from "./modals/E2EEReenroll";
 import { E2EEVerifyModal } from "./modals/E2EEVerify";
 import { EditCategoryModal } from "./modals/EditCategory";
 import { EditEmailModal } from "./modals/EditEmail";
+import { EditForumPostTagsModal } from "./modals/EditForumPostTags";
 import { EditPasswordModal } from "./modals/EditPassword";
 import { EditUsernameModal } from "./modals/EditUsername";
 import { EmojiPreviewModal } from "./modals/EmojiPreview";
@@ -151,6 +152,8 @@ export function RenderModal(props: ActiveModal & { onClose: () => void }) {
       return <CreateThreadModal {...modalProps} />;
     case "create_forum_post":
       return <CreateForumPostModal {...modalProps} />;
+    case "edit_forum_post_tags":
+      return <EditForumPostTagsModal {...modalProps} />;
     case "create_poll":
       return <CreatePollModal {...modalProps} />;
     case "poll_voters":

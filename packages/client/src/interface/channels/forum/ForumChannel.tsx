@@ -15,6 +15,7 @@ import { Channel, HydratedChannel, Message } from "stoat.js";
 import { styled } from "styled-system/jsx";
 
 import { useClient } from "@revolt/client";
+import { TextWithEmoji } from "@revolt/markdown";
 import { useModals } from "@revolt/modal";
 import { Button, CircularProgress, Header, Row, Text } from "@revolt/ui";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
@@ -261,8 +262,10 @@ export function ForumChannel(props: ChannelPageProps) {
                     )
                   }
                 >
-                  <Show when={forumTag.emoji}>{forumTag.emoji} </Show>
-                  {forumTag.name}
+                  <Show when={forumTag.emoji}>
+                    <TextWithEmoji content={forumTag.emoji} />{" "}
+                  </Show>
+                  <TextWithEmoji content={forumTag.name} />
                 </TagChip>
               )}
             </For>

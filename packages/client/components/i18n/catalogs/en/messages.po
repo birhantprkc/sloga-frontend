@@ -2796,6 +2796,23 @@ msgstr "Enter your current password."
 msgid "Enter your current password..."
 msgstr "Enter your current password..."
 
+#: components/modal/modals/EditForumPostTags.tsx
+#: src/interface/channels/ChannelHeader.tsx
+msgid "Edit tags"
+msgstr "Edit tags"
+
+#: components/modal/modals/EditForumPostTags.tsx
+msgid "This forum has no tags yet."
+msgstr "This forum has no tags yet."
+
+#: components/modal/modals/EditForumPostTags.tsx
+msgid "This post has a tag only moderators can change, so only a moderator can edit its tags."
+msgstr "This post has a tag only moderators can change, so only a moderator can edit its tags."
+
+#: components/modal/modals/EditForumPostTags.tsx
+msgid "Every post in this forum needs at least one tag."
+msgstr "Every post in this forum needs at least one tag."
+
 #: components/auth/src/flows/Form.tsx
 msgid "Enter your invite code."
 msgstr "Enter your invite code."
@@ -3237,8 +3254,8 @@ msgid "Grants {0} permissions and denies {1} permissions"
 msgstr "Grants {0} permissions and denies {1} permissions"
 
 #: components/app/interface/settings/channel/Overview.tsx
-msgid "Group calls are off by default. Turn them on to let members start and join voice and video calls here."
-msgstr "Group calls are off by default. Turn them on to let members start and join voice and video calls here."
+msgid "Group calls are on by default. Turn them off to stop anyone from starting or joining voice and video calls here."
+msgstr "Group calls are on by default. Turn them off to stop anyone from starting or joining voice and video calls here."
 
 #: components/modal/modals/CreateGroup.tsx
 msgid "Group Name"
@@ -5024,10 +5041,6 @@ msgstr "Pixelate"
 msgid "Platform"
 msgstr "Platform"
 
-#: components/ui/components/features/profiles/ProfileBadges.tsx
-msgid "Platform Moderator"
-msgstr "Platform Moderator"
-
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Play server soundboard sounds in a voice call"
@@ -6415,6 +6428,10 @@ msgstr "Sloga Founder"
 msgid "Sloga has the highest standard of voice quality, streaming and latency. Create a community that never stops."
 msgstr "Sloga has the highest standard of voice quality, streaming and latency. Create a community that never stops."
 
+#: components/ui/components/features/profiles/ProfileBadges.tsx
+msgid "Sloga Moderator"
+msgstr "Sloga Moderator"
+
 #: components/app/interface/settings/user/Native.tsx
 msgid "Sloga will start in the system tray."
 msgstr "Sloga will start in the system tray."
@@ -6805,8 +6822,22 @@ msgid "Every post here needs a tag, but none of this forum's tags are ones you c
 msgstr "Every post here needs a tag, but none of this forum's tags are ones you can apply. Ask someone who manages this channel."
 
 #: components/app/interface/settings/channel/ForumSettings.tsx
-msgid "Tags let members categorise posts. Moderated tags can only be applied by members who can manage this channel."
-msgstr "Tags let members categorise posts. Moderated tags can only be applied by members who can manage this channel."
+msgid "Tags let members categorize posts. Each tag can have an optional emoji, including this server's own. Moderated tags can only be applied by members who can manage this channel."
+msgstr "Tags let members categorize posts. Each tag can have an optional emoji, including this server's own. Moderated tags can only be applied by members who can manage this channel."
+
+#: components/app/interface/settings/channel/ForumSettings.tsx
+#: components/app/interface/settings/channel/ForumSettings.tsx
+msgid "Change tag emoji"
+msgstr "Change tag emoji"
+
+#: components/app/interface/settings/channel/ForumSettings.tsx
+#: components/app/interface/settings/channel/ForumSettings.tsx
+msgid "Add a tag emoji"
+msgstr "Add a tag emoji"
+
+#: components/app/interface/settings/channel/ForumSettings.tsx
+msgid "Remove tag emoji"
+msgstr "Remove tag emoji"
 
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
@@ -7002,6 +7033,10 @@ msgstr "This attachment failed verification and was discarded (it may have been 
 #: components/i18n/errors.ts
 msgid "This bot is private and can only be added by the creator."
 msgstr "This bot is private and can only be added by the creator."
+
+#: components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
+msgid "This call could not be secured, and your audio and video may still be sending. Leave the call to stop them."
+msgstr "This call could not be secured, and your audio and video may still be sending. Leave the call to stop them."
 
 #: components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
 msgid "This call could not be secured. Your audio and video stay paused — leave, or continue without encryption."

@@ -55,9 +55,12 @@ export class SlideDrawer {
   ) {
     this.start = this.start.bind(this);
     this.move = this.move.bind(this);
+    this.resize = this.resize.bind(this);
     root.addEventListener("touchstart", this.start);
     root.addEventListener("touchmove", this.move);
     root.addEventListener("touchend", this.move);
+    addEventListener("resize", this.resize);
+    addEventListener("orientationchange", this.resize);
 
     createRoot((dispose) => {
       this.dispose = dispose;
@@ -167,6 +170,27 @@ export class SlideDrawer {
     }
   }
 
+  /**
+   * Re-derive the shown offset after the viewport changes size.
+   *
+   * `ofs` is the drawer's translate for the shown state, baked from
+   * `innerWidth` at the moment it was shown and never recomputed — so after a
+   * rotation a portrait offset is being applied to a landscape viewport. Both
+   * readers then disagree with reality: `move` clamps the drag against a live
+   * `-innerWidth` while starting from the stale `ofs`, and `setShown` paints
+   * `translateX(ofs)` as the first frame of its animation. The settled states
+   * are safe on their own (`setElState` is in `vw`), which is why this only
+   * repairs the cached number and leaves the element alone.
+   *
+   * `ofs === 0` is hidden or disabled — nothing cached to repair. Mid-gesture
+   * is skipped so the drawer is not yanked out from under the finger; the
+   * gesture ends in `tfTimer`, which rewrites `ofs` from a live `innerWidth`.
+   */
+  private resize() {
+    if (!this.ofs || this.touch?.trig) return;
+    this.ofs = -innerWidth;
+  }
+
   private velTimer() {
     if (this.vTmr) return;
     this.vTmr = setInterval(this.addVel.bind(this), VEL_MS);
@@ -237,6 +261,8 @@ export class SlideDrawer {
     this.root.removeEventListener("touchstart", this.start);
     this.root.removeEventListener("touchmove", this.move);
     this.root.removeEventListener("touchend", this.move);
+    removeEventListener("resize", this.resize);
+    removeEventListener("orientationchange", this.resize);
     this.dispose();
   }
 
