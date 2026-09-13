@@ -8,8 +8,7 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
-  // v0.59.0 (2026-09-11, second entry that day). Copy constraints,
-  // load-bearing:
+  // v0.59.0 (2026-09-13). Copy constraints, load-bearing:
   // - The re-securing fix is the one item here seen working on a real call: a
   //   live leg on 2026-09-11 reproduced the stuck chip on the base build and
   //   saw the fixed build recover. Say it recovers; promise nothing wider.
@@ -36,12 +35,30 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //   title and empty-state line, the tag-emoji button labels): those are
   //   build gate markers. Say "switch off", never "turned off"; say "change a
   //   post's tags" and "tag emoji are chosen", never the button wording.
+  // - The eight reported bugs merged in 3405c359 (09-13): six from the
+  //   09-11/09-12 reports, the Android back key, and a drawer/side-panel
+  //   reset found by that session's audit. None of them has a device leg;
+  //   they are source fixes under the existing specs, so each line says what
+  //   the fix does and claims nothing about devices it ran on.
+  // - 🔴 The landscape-blanking report (edit a profile on Android, rotate,
+  //   everything disappears) gets NO line here, by operator decision. Its root
+  //   cause is NOT established: 4bb58da9 hardened four real defects found
+  //   while chasing it, and the two most likely causes — a phone/tablet
+  //   breakpoint flip in the 501-600 dead band, and the dialog scrim's
+  //   centering putting the top of a tall dialog out of scroll reach — are
+  //   NOT among those four, verified at source. Announcing a fix that may not
+  //   fix it tells the reporter to stop looking. It rides a later entry once
+  //   a device leg names a cause.
+  // - The phone member-list button is now ONE-WAY (it shows the list and no
+  //   longer hides it) and this entry says so on purpose. Nobody reported it;
+  //   it fell out of the fix. A user who used that button to hide the list
+  //   will notice, and an unannounced behavior change reads as a new bug.
   // - No Version section: this entry makes no claim about which platforms
   //   carry v0.59.0.
   {
-    id: "sloga-2026-09-11-2",
+    id: "sloga-2026-09-13",
     title: "Patch Notes",
-    published_at: "2026-09-11T19:00:00.000Z",
+    published_at: "2026-09-13T19:00:00.000Z",
     web_version: "0.59.0",
     markdown_content: `## v0.59.0 — Encrypted calls recover from a rejoin
 
@@ -52,6 +69,17 @@ export const CHANGELOGS: ChangelogResponse[] = [
 - **Calls are now on by default in group chats**, so the call button is back. A group that would rather not have calls can switch them off in the group's settings.
 - This corrects the v0.58.1 notes, which said group owners had to turn calls on.
 
+### 📱 Android and phones
+- **Viewing a photo on Android keeps its buttons on screen.** The zoom, copy, download and close buttons were being pushed off the right edge, so you had to turn the phone sideways to reach them. They stay put in portrait now, and a long file name is shortened instead of shoving them off.
+- **The member list button works in text channels on Android.** It previously did nothing at all; it now slides the member list in.
+- **The back key closes what is open, instead of closing Sloga.** Pressing back with a profile, a dialog or a search panel open used to quit the app outright. It now closes them one at a time, and only leaves the app when there is nothing left to close.
+- **On a phone the member list button is now one way**: it shows the member list, but it no longer hides it. Hiding it that way took the list away from the only place a phone can reach it. Press back, or swipe across, to get back to the conversation — and you can still drag the divider to give the list less room.
+
+### 🧭 Around the app
+- **Channels marked 18+ ask you to confirm your age once**, rather than once per channel. Joining a server with thirty of them no longer means thirty prompts.
+- **The channel list no longer jumps back to the top** when you click a channel.
+- **Long text on your profile no longer cuts off mid-word.** A long status line and the Joined panel used to shear through a letter at the edge of the tile. They now fade out at the cut, and Joined scrolls when there is more than fits.
+
 ### 🧹 Menus and badges
 - **The Admin Panel shortcut is gone from the right-click menus**, along with the Advanced setting that showed it. It was a leftover that pointed at another project's staff tool and never worked on Sloga.
 - **Sloga moderators' names now appear in the multicolor Sloga brand colors** in messages and replies, like the rest of the Sloga team, and their profile badge now names them as a Sloga moderator.
@@ -61,6 +89,7 @@ export const CHANGELOGS: ChangelogResponse[] = [
 - **You can change a post's tags after posting**, from the tag button at the top of the post. It is there for whoever wrote the post and for anyone who manages the forum.
 - **Tag emoji are chosen with the emoji picker** in a forum's settings, custom server emoji included. A server emoji on a tag now shows as the emoji itself instead of as text.
 - **Channel and server descriptions no longer save when you press Enter.** Enter adds a new line there too.
+- **Opening a forum post no longer opens the member list with it.** The post gets the full width, and the member list follows whatever the channel it sits in was set to.
 `,
   },
   // v0.58.1 (2026-09-11). Copy constraints, load-bearing:
