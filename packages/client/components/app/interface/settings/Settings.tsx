@@ -5,7 +5,6 @@ import {
   createMemo,
   createSignal,
   Setter,
-  untrack,
   useContext,
 } from "solid-js";
 import { Motion, Presence } from "solid-motionone";
@@ -109,16 +108,31 @@ export function Settings(props: SettingsProps & SettingsConfiguration<never>) {
             >
               <Presence exitBeforeEnter>
                 <Rerun on={page}>
+                  {/*
+                    No `visibility` manipulation here, deliberately.
+
+                    A `to-child` / `to-parent` page used to render with
+                    `visibility: hidden` and be revealed by a bare 250ms
+                    `setTimeout` holding the ref. That timeout wrote to the
+                    node it captured, so anything that replaced the element
+                    inside the window revealed a node that was no longer on
+                    screen and left the live pane present-but-invisible — a
+                    blank settings page with the DOM fully intact. It is the
+                    only mechanism in this surface that produces a blank
+                    rather than a misplacement, so it is removed rather than
+                    rescheduled.
+
+                    Nothing is lost by removing it: `Presence exitBeforeEnter`
+                    runs `createSwitchTransition` in "out-in" mode, which
+                    *creates* the incoming element in a computed but only
+                    inserts it once the outgoing element's exit animation has
+                    finished — so there is no window in which this element is
+                    in the document and unstyled. At insertion it already
+                    carries its `initial` transform inline (motionone writes
+                    `initial` into the style prop at creation), exactly as the
+                    `normal` transition has always relied on.
+                  */}
                   <Motion.div
-                    style={
-                      untrack(transition) === "normal"
-                        ? {}
-                        : { visibility: "hidden" }
-                    }
-                    ref={(el) =>
-                      untrack(transition) !== "normal" &&
-                      setTimeout(() => (el.style.visibility = "visible"), 250)
-                    }
                     initial={
                       transition() === "normal"
                         ? { opacity: 0, y: 50 }

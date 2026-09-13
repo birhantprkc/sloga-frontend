@@ -70,5 +70,16 @@ const Status = styled("span", {
   base: {
     ...typography.raw(),
     userSelect: "text",
+
+    // These two tiles take ProfileCard's default `width: 1` variant, which is
+    // a hard square (`overflow: hidden` + `aspect-ratio: 1/1`). A long status
+    // used to run past the bottom edge and get sheared mid-line with no
+    // visual signal at all, which reads as a rendering bug rather than as
+    // truncation. Two lines is what fits the narrowest tile the 3-column
+    // profile grid produces (~116px square on a 412px phone, leaving ~54px
+    // under the 28px title), so the clamp engages before the square does and
+    // the ellipsis carries the cut. This is width-driven, not breakpoint-
+    // driven — a narrow desktop window gets the same tile and the same clamp.
+    lineClamp: 2,
   },
 });

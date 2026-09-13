@@ -26,6 +26,7 @@ import FlowResend from "@revolt/auth/src/flows/FlowResend";
 import FlowReset from "@revolt/auth/src/flows/FlowReset";
 import FlowVerify from "@revolt/auth/src/flows/FlowVerify";
 import { ClientContext, SoundContext, useClient } from "@revolt/client";
+import { AndroidBackWorker } from "@revolt/client/AndroidBackWorker";
 import { IS_OVERLAY_WINDOW } from "@revolt/client/popout";
 import { completeStreamLink } from "@revolt/client/streamConnections";
 import { DeviceContext } from "@revolt/common";
@@ -247,6 +248,25 @@ function MountContext(props: { children?: JSX.Element }) {
                     {props.children}
                     <ModalRenderer />
                     <FloatingManager />
+                    {/* Android back key. Mounted exactly once, HERE rather
+                        than inside `Interface`: it is a single window
+                        listener walking the app-wide dismissal ladder
+                        (fullscreen → the Escape keybind group → the phone
+                        slide drawer → history), and `Interface` is only the
+                        component for `<Route path="/">`. Mounted there, the
+                        listener did not exist on `/login` — first install and
+                        every sign-out — while the Android shell still
+                        consumed every press unconditionally, so the back key
+                        did nothing at all on the auth screen until the
+                        native wedge hatch fired.
+                        Inside the router root it covers every top-level
+                        route, and the rungs self-disable where they do not
+                        apply: `state.appDrawer()` is `undefined` off
+                        `Interface`, and with nothing left to dismiss the
+                        ladder asks native to exit — which is what back on
+                        the login screen did before any of this existed.
+                        Inert everywhere but the Android shell. */}
+                    <AndroidBackWorker />
                     <AndroidNag />
                     <FileDropGuard />
                     <ContextMenuGuard />

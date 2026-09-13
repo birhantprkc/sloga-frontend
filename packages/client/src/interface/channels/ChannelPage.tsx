@@ -80,9 +80,7 @@ export const ChannelPage: Component = () => {
         <Match when={TEXT_CHANNEL_TYPES.includes(channel()!.type)}>
           <AgeGate
             enabled={channel()!.mature}
-            contentId={channel()!.id}
             contentName={"#" + channel()!.name}
-            contentType="channel"
           >
             <PasswordGate
               passwordHash={
@@ -104,9 +102,7 @@ export const ChannelPage: Component = () => {
         <Match when={channel()!.type === "Forum"}>
           <AgeGate
             enabled={channel()!.mature}
-            contentId={channel()!.id}
             contentName={"#" + channel()!.name}
-            contentType="channel"
           >
             <PasswordGate
               passwordHash={
