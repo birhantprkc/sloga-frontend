@@ -148,6 +148,20 @@ export function ProfileRespect(props: { user: User }) {
   );
 }
 
+/**
+ * The wall itself, capped so it cannot push the composer off the card.
+ *
+ * The cap is a scroll box, not a clip — but Android only paints its overlay
+ * scrollbar while a scroll is actually in progress, so a capped wall looked
+ * exactly like text that had been cut off. The bottom edge fades instead, so
+ * there is something to see at rest.
+ *
+ * The trailing padding is what keeps the fade honest: a wall shorter than the
+ * cap sizes to its content plus that padding, so the faded strip lands on the
+ * padding and nothing appears faded. Only once the wall is taller than the cap
+ * does the strip fall on real text, and scrolling to the end brings the last
+ * entry clear of it again.
+ */
 const Entries = styled("div", {
   base: {
     display: "flex",
@@ -155,6 +169,13 @@ const Entries = styled("div", {
     gap: "var(--gap-md)",
     maxHeight: "220px",
     overflowY: "auto",
+    overscrollBehavior: "contain",
+
+    paddingBottom: "16px",
+    WebkitMaskImage:
+      "linear-gradient(to bottom, black calc(100% - 16px), transparent)",
+    maskImage:
+      "linear-gradient(to bottom, black calc(100% - 16px), transparent)",
   },
 });
 

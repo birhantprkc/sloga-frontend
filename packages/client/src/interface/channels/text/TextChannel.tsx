@@ -82,9 +82,16 @@ export function TextChannel(props: ChannelPageProps) {
    * neither list has to give up rows for the other. Group DMs have no channel
    * column and always use this one. `ServerSidebar` reads the same condition
    * and stands down when this is true.
+   *
+   * Threads (forum posts included) follow their parent text channel rather
+   * than forcing the column open: this used to be `type !== "TextChannel"`,
+   * which is true for every thread, so opening a forum post always planted a
+   * member column beside it — on default desktop windows too, not just phones.
+   * `ServerSidebar` now hosts a thread's member list as well, so the two
+   * conditions still partition cleanly and exactly one of them renders it.
    */
   const membersInOwnColumn = () =>
-    props.channel.type !== "TextChannel" || sides().membersOwnColumn;
+    props.channel.type === "Group" || sides().membersOwnColumn;
 
   /**
    * Whether the side column (members / search / pins / threads) renders

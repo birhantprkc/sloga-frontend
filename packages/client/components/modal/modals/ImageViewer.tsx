@@ -142,9 +142,11 @@ export function ImageViewerModal(
                 <Bar>
                   <Switch fallback={<div />}>
                     <Match when={props.file}>
-                      <Card onClick={(e) => e.stopPropagation()}>
-                        <Column>
-                          <Text class="title">{props.file!.filename}</Text>
+                      <Card shrink onClick={(e) => e.stopPropagation()}>
+                        <Column class={css({ minWidth: 0 })}>
+                          <Filename>
+                            <Text class="title">{props.file!.filename}</Text>
+                          </Filename>
                           <Text class="label">
                             {props.file!.humanReadableSize}
                           </Text>
@@ -152,9 +154,13 @@ export function ImageViewerModal(
                       </Card>
                     </Match>
                     <Match when={props.encrypted}>
-                      <Card onClick={(e) => e.stopPropagation()}>
-                        <Column>
-                          <Text class="title">{props.encrypted!.filename}</Text>
+                      <Card shrink onClick={(e) => e.stopPropagation()}>
+                        <Column class={css({ minWidth: 0 })}>
+                          <Filename>
+                            <Text class="title">
+                              {props.encrypted!.filename}
+                            </Text>
+                          </Filename>
                           <Text class="label">
                             {props.encrypted!.humanReadableSize}
                           </Text>
@@ -318,5 +324,42 @@ const Card = styled("div", {
     borderRadius: "var(--borderRadius-lg)",
     background: "var(--md-sys-color-surface)",
     color: "var(--md-sys-color-on-surface)",
+  },
+  variants: {
+    /**
+     * Allow the card to shrink past its min-content width.
+     *
+     * Without this the filename sets the card's automatic minimum, the flex
+     * line overflows and the button card on the other end walks off screen.
+     *
+     * `overflow: hidden` clips whatever the shrink leaves too wide. The
+     * filename line ellipsises itself, but the size line under it is a plain
+     * `Text class="label"` — only the `body` typography recipes carry
+     * `overflowWrap`, so at the narrowest widths that line would otherwise
+     * paint outside the card's rounded background. Only the two filename
+     * cards take this variant; the button card on the other end does not.
+     */
+    shrink: {
+      true: {
+        minWidth: 0,
+        overflow: "hidden",
+      },
+    },
+  },
+});
+
+/**
+ * Single line that ellipsises instead of setting a width floor.
+ *
+ * Text renders a span, and overflow / text-overflow do not apply to an inline
+ * box, so the filename needs a block wrapper of its own.
+ */
+const Filename = styled("div", {
+  base: {
+    display: "block",
+    minWidth: 0,
+    overflow: "hidden",
+    whiteSpace: "nowrap",
+    textOverflow: "ellipsis",
   },
 });

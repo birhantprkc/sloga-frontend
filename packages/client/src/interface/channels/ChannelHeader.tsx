@@ -387,6 +387,48 @@ export function ChannelHeader(props: Props) {
       <Show when={props.sidebarState && canIHasSidebar(props.channel)}>
         <IconButton
           onPress={() => {
+            // At phone layout `useLayoutSides()` short-circuits, so the
+            // channel view never renders a member column and the only member
+            // list is `ServerSidebar`'s — which the slide drawer parks
+            // off-screen while a channel is open. Toggling the section state
+            // here would govern a subtree the user cannot see, and turning it
+            // off would take away the one member list a phone has. So turn it
+            // on and bring the navigation column in instead.
+            //
+            // `setShown(false)` really does *show* the navigation: the drawer
+            // is constructed over the channel pane, so `show` means "content
+            // shown" and pushing the content off leaves the absolutely
+            // positioned nav visible. `CommonHeader`'s phone back arrow makes
+            // the identical call. It early-returns `false` mid-animation;
+            // every call site ignores that, as here.
+            //
+            // Gated to the channel types `ServerSidebar` hosts a member list
+            // for. A Group DM keeps its own inline member column in this view
+            // (working and toggleable on a phone), and at phone layout the
+            // navigation column mounts `HomeSidebar`, which has no member list
+            // at all — so a Group falls through to the toggle below.
+            const ad = state.appDrawer();
+            if (
+              ad &&
+              (props.channel.type === "TextChannel" || props.channel.isThread)
+            ) {
+              state.layout.setSectionState(
+                LAYOUT_SECTIONS.MEMBER_SIDEBAR,
+                true,
+                true,
+              );
+              // Same reset the non-phone `else` arm below does, and for the
+              // same reason: pins/search/threads render into the sidebar slot
+              // at a hard 360px, which on a 412px phone is the whole channel.
+              // Without this the user taps members, slides to the navigation,
+              // slides back and lands on a pins column instead of the channel.
+              props.setSidebarState!({
+                state: "default",
+              });
+              ad.setShown(false);
+              return;
+            }
+
             if (props.sidebarState!().state === "default") {
               state.layout.toggleSectionState(
                 LAYOUT_SECTIONS.MEMBER_SIDEBAR,
