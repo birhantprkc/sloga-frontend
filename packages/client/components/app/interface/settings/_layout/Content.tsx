@@ -107,9 +107,17 @@ const InnerContent = styled("div", {
       A *minimum* height, not a fixed one.
 
       This was `height: 100vh`, which pins the pane to exactly one viewport
-      regardless of what is in it. (It does not collapse with the keyboard —
-      `vh` resolves against the large viewport and does not follow
-      `interactive-widget=resizes-content` — it simply cannot grow.)
+      regardless of what is in it — it simply cannot grow.
+
+      🔴 An earlier version of this comment also asserted that `vh` resolves
+      against the large viewport and so does not follow the keyboard under
+      `interactive-widget=resizes-content` (set in `index.html`). That was
+      never verified and is not load-bearing here: this change is correct
+      either way, because the defect being fixed is a height that cannot
+      grow, not one that collapses. Do not repeat the claim as fact until
+      someone has measured a `100vh` box against `innerHeight` on a real
+      Android device with the keyboard up — it is one of the open questions
+      behind the unresolved landscape-blanking report.
 
       `min-height` alone is not enough here: this is a stretch-aligned item of
       the row scroller above, and under `align-items: stretch` the cross size
