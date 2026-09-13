@@ -117,7 +117,9 @@ const InnerContent = styled("div", {
       grow, not one that collapses. Do not repeat the claim as fact until
       someone has measured a `100vh` box against `innerHeight` on a real
       Android device with the keyboard up — it is one of the open questions
-      behind the unresolved landscape-blanking report.
+      behind the landscape-blanking report, whose phone/tablet breakpoint
+      mechanism is now confirmed on the operator's device but which is still
+      not fully accounted for. See the v0.59.0 block in changelogData.ts.
 
       `min-height` alone is not enough here: this is a stretch-aligned item of
       the row scroller above, and under `align-items: stretch` the cross size

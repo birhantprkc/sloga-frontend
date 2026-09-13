@@ -41,19 +41,32 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //   they are source fixes under the existing specs, so each line says what
   //   the fix does and claims nothing about devices it ran on.
   // - 🔴 The landscape-blanking report (edit a profile on Android, rotate,
-  //   everything disappears) gets NO line here, by operator decision — and the
-  //   reason is now stronger than when this entry was drafted. The cause IS
-  //   established and v0.59.0 does NOT fix it. The operator's own device reads
-  //   540 CSS px on the short side, with the phone media query false and the
-  //   tablet query true: that is inside the 501-600 dead band, so rotating
-  //   crosses the phone/tablet boundary, which drops BackAction (_phone only)
-  //   and hides CloseAction (_tablet). Nothing actually blanks; the controls
-  //   change places. 4bb58da9 hardened four other real defects found while
-  //   chasing it, and the dialog-scrim centering candidate was DISPROVED with
-  //   a negative control. The fix is a boundary change in
-  //   components/common/Breakpoint.ts — deliberately not a release-week
-  //   change, because that file drives both the JS layout signal and every
-  //   Panda _phone/_tablet rule. It rides the entry that ships that slice.
+  //   everything disappears) gets NO line here, by operator decision. A
+  //   mechanism is now confirmed, but it does not account for the whole
+  //   report, so this is not a closed root cause. The operator's own device
+  //   reads 540 CSS px on the short side, with the phone media query false
+  //   and the tablet query true: that is inside the 501-600 dead band, so
+  //   rotating crosses the phone/tablet boundary, which drops BackAction
+  //   (_phone only) and hides CloseAction (_tablet) — both exit controls at
+  //   once. That explains controls changing places, not a screen going blank;
+  //   the residual is unexplained. 4bb58da9 hardened four other real defects
+  //   found while chasing it. The dialog-scrim candidate was reported
+  //   disproved by a peer session on 09-13, with a control page that is NOT
+  //   in this repo — second-hand, so do not treat it as closed: Dialog.tsx is
+  //   still grid + place-items center + overflow-y auto, untouched by this
+  //   release, and a76b5348's message describes it as a live source-level
+  //   defect affecting every Dialog.
+  //   v0.59.0 changes nothing about the boundary — Breakpoint.ts is untouched
+  //   — so the entry claims nothing. Note that 92da0bbb does restore a
+  //   back-key exit from that state on Android, which may mask the symptom
+  //   without addressing the cause: another reason to claim nothing.
+  //   Two candidate fixes, neither a release-week change: the boundary in
+  //   components/common/Breakpoint.ts (it drives the JS layout signal AND
+  //   every Panda _phone/_tablet rule), or narrower local gating in
+  //   settings/_layout/Content.tsx so one exit control always survives.
+  //   The Device.tsx layout log stays unguarded on purpose until the device
+  //   leg has run — the leg reads it — so a76b5348's "remove it once report 5
+  //   is root-caused" is deliberately NOT discharged by this comment.
   // - The phone member-list button is now ONE-WAY (it shows the list and no
   //   longer hides it) and this entry says so on purpose. Nobody reported it;
   //   it fell out of the fix. A user who used that button to hide the list

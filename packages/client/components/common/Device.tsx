@@ -117,12 +117,17 @@ export class Device {
         ? "tablet"
         : "desktop";
 
-    // Instrumentation for the landscape-blanking investigation: we need to
-    // know whether a rotation (or a focused text field shrinking the visual
-    // viewport) flips this signal on a real device. A 411x915 phone matches
-    // both breakpoint queries in both orientations and so should never flip;
-    // a device whose landscape CSS height lands in 501-600 — DPR ~2.0, or a
-    // reduced Android Display Size — would flip phone<->tablet instead.
+    // Instrumentation for the landscape-blanking investigation. The flip this
+    // was written to detect is now confirmed: the operator's device reads a
+    // 540 CSS px short side, phone false and tablet true, so a rotation does
+    // cross phone<->tablet. A 411x915 phone matches both breakpoint queries
+    // in both orientations and never flips, which is why that hardware ruled
+    // nothing out. What is still open is whether this fully explains the
+    // report, and whether a focused text field shrinking the visual viewport
+    // can cross the same 501-600 band (DPR ~2.0, or a reduced Android Display
+    // Size). The log stays unguarded until the device leg has run — the leg
+    // reads it — so a76b5348's "remove it once report 5 is root-caused" is
+    // deliberately not discharged yet.
     //
     // Cheap on purpose: this only fires when a breakpoint actually crosses,
     // which is rare, and the payload is built only in that case.
