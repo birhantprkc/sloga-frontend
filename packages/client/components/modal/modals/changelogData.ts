@@ -35,20 +35,25 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //   title and empty-state line, the tag-emoji button labels): those are
   //   build gate markers. Say "switch off", never "turned off"; say "change a
   //   post's tags" and "tag emoji are chosen", never the button wording.
-  // - The eight reported bugs merged in 3405c359 (09-13): six from the
+  // - The eight reported bugs merged in a76b5348 (09-13): six from the
   //   09-11/09-12 reports, the Android back key, and a drawer/side-panel
   //   reset found by that session's audit. None of them has a device leg;
   //   they are source fixes under the existing specs, so each line says what
   //   the fix does and claims nothing about devices it ran on.
   // - 🔴 The landscape-blanking report (edit a profile on Android, rotate,
-  //   everything disappears) gets NO line here, by operator decision. Its root
-  //   cause is NOT established: 4bb58da9 hardened four real defects found
-  //   while chasing it, and the two most likely causes — a phone/tablet
-  //   breakpoint flip in the 501-600 dead band, and the dialog scrim's
-  //   centering putting the top of a tall dialog out of scroll reach — are
-  //   NOT among those four, verified at source. Announcing a fix that may not
-  //   fix it tells the reporter to stop looking. It rides a later entry once
-  //   a device leg names a cause.
+  //   everything disappears) gets NO line here, by operator decision — and the
+  //   reason is now stronger than when this entry was drafted. The cause IS
+  //   established and v0.59.0 does NOT fix it. The operator's own device reads
+  //   540 CSS px on the short side, with the phone media query false and the
+  //   tablet query true: that is inside the 501-600 dead band, so rotating
+  //   crosses the phone/tablet boundary, which drops BackAction (_phone only)
+  //   and hides CloseAction (_tablet). Nothing actually blanks; the controls
+  //   change places. 4bb58da9 hardened four other real defects found while
+  //   chasing it, and the dialog-scrim centering candidate was DISPROVED with
+  //   a negative control. The fix is a boundary change in
+  //   components/common/Breakpoint.ts — deliberately not a release-week
+  //   change, because that file drives both the JS layout signal and every
+  //   Panda _phone/_tablet rule. It rides the entry that ships that slice.
   // - The phone member-list button is now ONE-WAY (it shows the list and no
   //   longer hides it) and this entry says so on purpose. Nobody reported it;
   //   it fell out of the fix. A user who used that button to hide the list
