@@ -57,17 +57,32 @@
  *    injects no blanks for a downtrack that never bound (live pass A: 0
  *    frames on any new ssrc for episodes 1 and 3, `packetsSent` 0). What
  *    remains provable is that the receiver for that sid was attached and
- *    that the transform on that receiver demonstrably delivers. An episode
+ *    that the transform on that receiver demonstrably delivers — so the arm
+ *    is named `transformDelivers`, and the trackEvent must sit (on the
+ *    subject clock) BEFORE the episode's temporal bound: `end` for a
+ *    gate-empty / disconnect close, the next S.t otherwise (F3). An episode
  *    with neither is `untapped`, not clean.
+ *  - It NEVER claims the tap COVERED the D0 window (F1). On this SFU the
+ *    downtrack forwards only after the observer's answer binds, which is
+ *    after `localTrackPublished.entry` — so the tap cannot cover S..P+~80 ms
+ *    at all. `windowCoverage` says so per episode (`none` / `marginal` /
+ *    `partial` / `late`, from the receiver-attach time vs publishedAt). D0
+ *    itself is proven by the SUBJECT-side counters (packetsSent 0 through the
+ *    hold); the tap proves that no leak PERSISTED past coverage and supplies
+ *    the post-resume positive control. Informational, no verdict change.
  *  - It NEVER reads the legitimate resume as a grey frame when the trace
  *    says otherwise (R2). The gate's resume follows the gate-empty by
  *    microseconds BY DESIGN, so a plain "150 ms after end" always catches
  *    the resumed audio. The first `track.upstreamResumed` for the landed sid
- *    at or after `end` is the fiducial: a grey-zone frame at or after
- *    resume.t + U is `postResume` (informational, never a reason), where U
- *    is the clock uncertainty — `clockDriftMs` with >= 2 valid probes, else
- *    rttMs/2 of the probe used, else 0 with a WARNING. Frames before
- *    resume.t + U stay grey; with no resume record nothing is reclassified.
+ *    at or after `end` is the fiducial — but ONLY when the episode closed by
+ *    a gate-empty AND that record carries `gateHeld === false` (F2): under a
+ *    held gate a "resume" is the repause's resume-then-pause beat, not the
+ *    resume (pass A ep1 picked exactly that record, on the stale sid). A
+ *    grey-zone frame at or after resume.t + U is `postResume` (informational,
+ *    never a reason), where U is the clock uncertainty — `clockDriftMs` with
+ *    >= 2 valid probes, else rttMs/2 of the probe used, else 0 with a
+ *    WARNING. Frames before resume.t + U stay grey; with no valid fiducial
+ *    nothing is reclassified.
  *  - It NEVER reads an empty gate as a clean publish (F5). An episode whose
  *    `localSenderCreated` carries `gateHeld !== true` proves nothing about
  *    D0 and FAILS `gateNotHeld`.
@@ -109,7 +124,7 @@
  *   "disconnect.entry"          (t only)
  *   "connect.add"               (t only; a window-start lower bound)
  *   "track.processorUpdate"     subjectSource, subjectSid (F5)
- *   "track.upstreamResumed"     subjectSid (R2: the resume fiducial)
+ *   "track.upstreamResumed"     subjectSid, gateHeld (R2/F2: the resume fiducial)
  *
  * Tap dump:
  *   --tap      { schema: "sloga-leg-toc/1", label, armedAtWall, savedAtWall,
@@ -160,12 +175,20 @@
  *         distinguishable from a publish that never landed at all.
  *  tapped a positive control (F3 + R1): `positiveControl: { kind: "frames",
  *         ssrc, t }` when some non-carrier ssrc's FIRST frame lies in
- *         [S.t, nextS.t); else `{ kind: "receiver", receiverIndex, t }` when a
- *         trackEvent for the landed sid exists and some frame carries that
- *         `rx`; else null → `untapped`.
+ *         [S.t, nextS.t); else `{ kind: "transformDelivers", receiverIndex,
+ *         t }` when a trackEvent for the landed sid exists with skewed t
+ *         before the episode's bound and some frame carries that `rx`; else
+ *         null → `untapped`. Every trackEvent time is emitted on the SUBJECT
+ *         clock (t + skew), like every other number here (F4).
+ *  cover  `windowCoverage: { receiverAt, publishedAt, offsetFromPublishMs,
+ *         covered }` and `rxFramesInWindow` (frames on that receiver inside
+ *         [start, end)). covered: "none" (no trackEvent before the bound),
+ *         "partial" (receiverAt < publishedAt − 100), "marginal" (within
+ *         100 ms either side), "late" (> 100 ms after publishedAt).
  *  resume the first `track.upstreamResumed` whose subjectSid === newSid and
- *         t >= end (R2). `postResume: { n, list(cap 5), resumeAt,
- *         uncertaintyMs }` — grey-zone frames at or after resumeAt + U.
+ *         t >= end, valid only with closedBy gateEmpty and gateHeld === false
+ *         (R2/F2). `postResume: { n, list(cap 5), resumeAt, uncertaintyMs }`
+ *         — grey-zone frames at or after resumeAt + U.
  *  F5     gateHeldAtS (S.gateHeld), processorUpdateAt (first microphone
  *         `track.processorUpdate` after S and before the next S),
  *         processorAfterGateEmpty (that t > the first gate-empty after S;
@@ -209,6 +232,8 @@ export const BLANK_MIN_RUN = 3;
 export const LIST_CAP = 20;
 /** R2: postResume.list is capped here. */
 export const POST_RESUME_LIST_CAP = 5;
+/** F1: |receiverAt − publishedAt| within this is "marginal" coverage. */
+export const COVERAGE_MARGIN_MS = 100;
 /** F1: default grey-zone width after the closing record. */
 export const DEFAULT_END_MARGIN_MS = 150;
 /** F2: probe-to-probe skew drift above this prints a WARNING. */
@@ -723,27 +748,54 @@ export function reduce(
     // F1: the grey zone after the close.
     const greyAll = closeIdx >= 0 ? subj.filter((s) => !s.blank && s.t >= end && s.t < end + endMarginMs) : [];
 
-    // R2: the resume fiducial — first track.upstreamResumed for the landed
-    // sid at or after end. Grey frames at/after resumeAt + U are postResume.
+    // R2/F2: the resume fiducial — first track.upstreamResumed for the landed
+    // sid at or after end, valid only for a gate-empty close and only when
+    // that record itself reads gateHeld === false (a held-gate "resume" is
+    // the repause beat). Grey frames at/after resumeAt + U are postResume.
     let resumeAt = null;
-    if (closeIdx >= 0 && pubRec) {
+    if (closedBy === "gateEmpty" && pubRec) {
       for (let j = si + 1; j < records.length; j++) {
         const r = records[j];
-        if (r.at === POINTS.upstreamResumed && r.subjectSid === pubRec.subjectSid && r.t >= end) { resumeAt = r.t; break; }
+        if (r.at !== POINTS.upstreamResumed || r.subjectSid !== pubRec.subjectSid || r.t < end) continue;
+        if (r.gateHeld === false) resumeAt = r.t;
+        break;
       }
     }
     const postResumeFrames = resumeAt === null ? [] : greyAll.filter((s) => s.t >= resumeAt + resumeUncertaintyMs);
     const greyFrames = resumeAt === null ? greyAll : greyAll.filter((s) => s.t < resumeAt + resumeUncertaintyMs);
 
+    // F1 / F3 / F4: the receiver attached for the landed sid, on the SUBJECT
+    // clock, before the episode's temporal bound (end for a gate-empty or
+    // disconnect close, the next S.t otherwise).
+    const evT = (e) => e.t + skewMs;
+    const rxBound = closedBy === "gateEmpty" || closedBy === "disconnect" ? end : nextST;
+    let coverageEv = null;
+    if (pubRec && Array.isArray(trackEvents)) {
+      coverageEv = trackEvents.find((e) => e && e.trackSid === pubRec.subjectSid && Number.isFinite(e.receiverIndex) && Number.isFinite(e.t) && evT(e) < rxBound) || null;
+    }
+    const receiverAt = coverageEv ? evT(coverageEv) : null;
+    const rxFramesInWindow = coverageEv
+      ? frames.filter((f) => f.rx === coverageEv.receiverIndex && f.t + skewMs >= start && f.t + skewMs < end).length
+      : null;
+    const publishedAt = pubRec ? pubRec.t : null;
+    const offsetFromPublishMs = receiverAt !== null && publishedAt !== null ? receiverAt - publishedAt : null;
+    let covered = "none";
+    if (offsetFromPublishMs !== null) {
+      if (offsetFromPublishMs <= -COVERAGE_MARGIN_MS) covered = "partial";
+      else if (offsetFromPublishMs <= COVERAGE_MARGIN_MS) covered = "marginal";
+      else covered = "late";
+    }
+    const windowCoverage = { receiverAt, publishedAt, offsetFromPublishMs, covered };
+
     // F3 + R1: positive control — an ssrc first seen in [S.t, nextS.t), else
-    // a receiver attached for the landed sid that delivered frames somewhere.
+    // the receiver attached for the landed sid (before the bound) whose
+    // transform delivered frames somewhere in the dump.
     let positiveControl = null;
     for (const [ssrc, s] of firstBySsrc) {
       if (s.t >= S.t && s.t < nextST) { positiveControl = { kind: "frames", ssrc, t: s.t }; break; }
     }
-    if (!positiveControl && pubRec && Array.isArray(trackEvents)) {
-      const ev = trackEvents.find((e) => e && e.trackSid === pubRec.subjectSid && Number.isFinite(e.receiverIndex));
-      if (ev && rxWithFrames.has(ev.receiverIndex)) positiveControl = { kind: "receiver", receiverIndex: ev.receiverIndex, t: ev.t };
+    if (!positiveControl && coverageEv && rxWithFrames.has(coverageEv.receiverIndex)) {
+      positiveControl = { kind: "transformDelivers", receiverIndex: coverageEv.receiverIndex, t: receiverAt };
     }
 
     // F3 informational: which receiver carried the landed sid.
@@ -762,7 +814,7 @@ export function reduce(
     if (!landed && !landedAfterClose) reasons.push("landed: no microphone localTrackPublished.entry before the close");
     if (op !== "none") reasons.push(`op: ${op === null ? "null" : JSON.stringify(op)} (want "none")`);
     if (gateHeldAtS !== true) reasons.push(`gateNotHeld: localSenderCreated.gateHeld is ${JSON.stringify(gateHeldAtS)} — an empty gate proves nothing about D0`);
-    if (!positiveControl) reasons.push(`untapped: no non-carrier ssrc first seen in [${S.t}, ${nextST === Infinity ? "end of dump" : nextST}) and no trackEvent for ${pubRec ? JSON.stringify(pubRec.subjectSid) : "an unlanded sid"} on a receiver that delivered frames — the tap never saw this publish`);
+    if (!positiveControl) reasons.push(`untapped: no non-carrier ssrc first seen in [${S.t}, ${nextST === Infinity ? "end of dump" : nextST}) and no trackEvent for ${pubRec ? JSON.stringify(pubRec.subjectSid) : "an unlanded sid"} before ${rxBound === Infinity ? "end of dump" : rxBound} on a receiver that delivered frames — the tap never saw this publish`);
     if (requireProcessorAfterEmpty && processorUpdateAt !== null && processorAfterGateEmpty === false) reasons.push(`processorInsideHold: track.processorUpdate at ${processorUpdateAt} ran before the first gate-empty${firstGateEmptyAfterS === null ? " (none ever followed)" : ` at ${firstGateEmptyAfterS}`}`);
     if (greyFrames.length > 0) reasons.push(`greyZone: ${greyFrames.length} non-blank frame(s) in [end, end + ${endMarginMs} ms) — transit/skew may have pushed a leaked frame past the close; read them`);
 
@@ -801,6 +853,8 @@ export function reduce(
         uncertaintyMs: resumeUncertaintyMs,
       },
       positiveControl,
+      windowCoverage,
+      rxFramesInWindow,
       subjectRx,
       subjectFramesOnOtherRx,
       processorUpdateAt,
@@ -876,7 +930,8 @@ function printHuman(report) {
       pad("blanks", 7),
       pad("grey", 5),
       pad("postR", 6),
-      pad("tapped", 16),
+      pad("tapped", 22),
+      pad("coverage", 18),
       pad("processor", 22),
       "firstOff",
     ].join(" "),
@@ -898,9 +953,15 @@ function printHuman(report) {
           e.positiveControl
             ? e.positiveControl.kind === "frames"
               ? `ssrc ${e.positiveControl.ssrc}`
-              : `rx${e.positiveControl.receiverIndex}@${fmtOffset(e.positiveControl.t - e.senderCreatedAt)}`
+              : `xform rx${e.positiveControl.receiverIndex}@${fmtOffset(e.positiveControl.t - e.senderCreatedAt)}`
             : "NONE",
-          16,
+          22,
+        ),
+        pad(
+          e.windowCoverage.covered === "none"
+            ? "none"
+            : `${e.windowCoverage.covered}(${fmtOffset(e.windowCoverage.offsetFromPublishMs)} rxfr=${e.rxFramesInWindow})`,
+          18,
         ),
         pad(e.processorUpdateAt === null ? "none" : `${fmtOffset(e.processorUpdateAt - e.senderCreatedAt)} afterEmpty=${e.processorAfterGateEmpty}`, 22),
         e.firstFrameOffsetMs === null ? "-" : fmtOffset(e.firstFrameOffsetMs),
@@ -970,7 +1031,7 @@ const fx = {
   D: (t) => ({ t, p: t, at: POINTS.disconnect, via: "user", connectGenPhase: "pre-bump" }),
   C: (t) => ({ t, p: t, at: POINTS.connectAdd, e2eeCapable: true, gate: ["negotiating"], gateHeld: true }),
   PU: (t, sid = "TR_A") => ({ t, p: t, at: POINTS.processorUpdate, subject: `microphone/${sid}`, subjectSource: "microphone", subjectSid: sid }),
-  UR: (t, sid = "TR_A") => ({ t, p: t, at: POINTS.upstreamResumed, subject: `microphone/${sid}`, subjectSource: "microphone", subjectSid: sid }),
+  UR: (t, sid = "TR_A", gateHeld = false) => ({ t, p: t, at: POINTS.upstreamResumed, subject: `microphone/${sid}`, subjectSource: "microphone", subjectSid: sid, gateHeld, gate: gateHeld ? ["mixed"] : [] }),
   carrier: (from, to, step = 20) => {
     const out = [];
     for (let t = from; t <= to; t += step) {
@@ -1351,7 +1412,7 @@ const CONTROLS = [
     },
   },
   {
-    name: "24. R1 receiver positive control: no frame on any new ssrc, but a trackEvent for the landed sid on a receiver that delivered frames → tapped (kind receiver), PASS; no delivering rx / wrong sid → untapped; frames arm wins when present",
+    name: "24. R1 receiver positive control: no frame on any new ssrc, but a trackEvent for the landed sid on a receiver that delivered frames → tapped (kind transformDelivers), PASS; no delivering rx / wrong sid → untapped; frames arm wins when present",
     check: () => {
       const trace = [fx.C(950), fx.S(1000), fx.P(1300, "TR_A", "none"), fx.G(2000), fx.D(5000)];
       const evOk = [{ t: 1390, kind: "audio", trackSid: "TR_A", participantSid: "PA", receiverIndex: 1 }];
@@ -1366,7 +1427,7 @@ const CONTROLS = [
       const d = run(trace, dump([rx1Frame, { ...fx.post(), rx: 1 }]), { trackEvents: evOk });
       const e = run(trace, dump([rx1Frame]));
       const pa = a.episodes[0].positiveControl;
-      return a.verdict === "PASS" && pa && pa.kind === "receiver" && pa.receiverIndex === 1 && pa.t === 1390 && a.episodes[0].subjectFrames.n === 0 &&
+      return a.verdict === "PASS" && pa && pa.kind === "transformDelivers" && pa.receiverIndex === 1 && pa.t === 1390 && a.episodes[0].subjectFrames.n === 0 && a.episodes[0].rxFramesInWindow === 0 &&
         b.verdict === "FAIL" && has(b.episodes[0], "untapped") && b.episodes[0].positiveControl === null &&
         c.verdict === "FAIL" && has(c.episodes[0], "untapped") &&
         d.verdict === "PASS" && d.episodes[0].positiveControl.kind === "frames" && d.episodes[0].positiveControl.ssrc === 2 &&
@@ -1410,6 +1471,67 @@ const CONTROLS = [
         d.resumeUncertaintyMs === 0 && d.warnings.some((w) => /resume uncertainty unmeasured/.test(w))
         ? null
         : JSON.stringify({ a, b, c, d });
+    },
+  },
+  {
+    name: "27. F2 fiducial under a held gate: a resume record with gateHeld true (or an episode not closed by gateEmpty) reclassifies nothing → grey stays grey; gateHeld false on a gateEmpty close does",
+    check: () => {
+      const frames = dump([fx.post(), fx.speech(2050), fx.speech(2100)]);
+      const held = run([fx.S(1000), fx.P(1300, "TR_A", "none"), fx.G(2000), fx.UR(2003, "TR_A", true), fx.D(5000)], frames);
+      const ok = run([fx.S(1000), fx.P(1300, "TR_A", "none"), fx.G(2000), fx.UR(2003, "TR_A", false), fx.D(5000)], frames);
+      // Closed by senderCreated: the held resume-then-pause beat at end+3 must not be a fiducial.
+      const sc = run([fx.S(1000), fx.P(1300, "TR_A", "none"), fx.S(2000, "TR_A"), fx.UR(2003, "TR_A", true), fx.P(2200, "TR_B", "none"), fx.G(2500), fx.D(5000)], dump([fx.post(), fx.speech(2050)]));
+      // Closed by disconnect with an unheld resume after it: still not a fiducial (not a gate-empty close).
+      const dc = run([fx.S(1000), fx.P(1300, "TR_A", "none"), fx.D(2000), fx.UR(2003, "TR_A", false)], dump([fx.post(), fx.speech(2050)]));
+      return held.verdict === "PASS-WITH-GREY" && held.episodes[0].greyZone.n === 2 && held.episodes[0].postResume.n === 0 && held.episodes[0].postResume.resumeAt === null &&
+        ok.verdict === "PASS" && ok.episodes[0].greyZone.n === 0 && ok.episodes[0].postResume.n === 2 &&
+        sc.episodes[0].greyZone.n === 1 && sc.episodes[0].postResume.resumeAt === null &&
+        dc.episodes[0].greyZone.n === 1 && dc.episodes[0].postResume.resumeAt === null
+        ? null
+        : JSON.stringify({ held: held.episodes[0], ok: ok.episodes[0], sc: sc.episodes[0], dc: dc.episodes[0] });
+    },
+  },
+  {
+    name: "28. F3/F4 receiver arm temporal check on the SUBJECT clock: trackEvent after the close → untapped; before it → transformDelivers; a skew that pushes it past end flips the answer; rxFramesInWindow counted",
+    check: () => {
+      const trace = [fx.C(950), fx.S(1000), fx.P(1300, "TR_A", "none"), fx.G(2000), fx.D(5000)];
+      const rx1Frame = { ...fx.speech(920, 3), rx: 1 };
+      const ev = (t) => [{ t, kind: "audio", trackSid: "TR_A", participantSid: "PA", receiverIndex: 1 }];
+      const late = run(trace, dump([rx1Frame]), { trackEvents: ev(2500) });
+      const early = run(trace, dump([rx1Frame]), { trackEvents: ev(1390) });
+      // Observer clock 1990; skew +30 → 2020 on the subject clock, past end 2000.
+      const pushedOut = run(trace, dump([{ ...rx1Frame, t: 890 }]), { trackEvents: ev(1990), skewMs: 30 });
+      // Observer clock 1990; skew −30 → 1960, inside; positiveControl.t is the skewed value.
+      const pulledIn = run(trace, dump([{ ...rx1Frame, t: 950 }]), { trackEvents: ev(1990), skewMs: -30 });
+      // A frame on that receiver inside the window is counted (and, being on a new ssrc, is a subject frame).
+      const inWin = run(trace, dump([rx1Frame, { ...fx.speech(1500, 4), rx: 1 }]), { trackEvents: ev(1390) });
+      return late.verdict === "FAIL" && has(late.episodes[0], "untapped") && late.episodes[0].positiveControl === null && late.episodes[0].windowCoverage.covered === "none" &&
+        early.verdict === "PASS" && early.episodes[0].positiveControl.kind === "transformDelivers" && early.episodes[0].positiveControl.t === 1390 &&
+        pushedOut.verdict === "FAIL" && has(pushedOut.episodes[0], "untapped") &&
+        pulledIn.verdict === "PASS" && pulledIn.episodes[0].positiveControl.t === 1960 && pulledIn.episodes[0].windowCoverage.receiverAt === 1960 &&
+        inWin.episodes[0].rxFramesInWindow === 1 && inWin.episodes[0].positiveControl.kind === "frames" && inWin.episodes[0].subjectFrames.n === 1
+        ? null
+        : JSON.stringify({ late: late.episodes[0], early: early.episodes[0], pushedOut: pushedOut.episodes[0].reasons, pulledIn: pulledIn.episodes[0].positiveControl, inWin: inWin.episodes[0] });
+    },
+  },
+  {
+    name: "29. F1 windowCoverage: none without a trackEvent before the bound; partial at −150 ms; marginal at −50 / +90 ms; late at +150 ms; offsetFromPublishMs reported",
+    check: () => {
+      const trace = [fx.C(950), fx.S(1000), fx.P(1300, "TR_A", "none"), fx.G(2000), fx.D(5000)];
+      const rx1Frame = { ...fx.speech(920, 3), rx: 1 };
+      const at = (t) => run(trace, dump([rx1Frame]), { trackEvents: [{ t, kind: "audio", trackSid: "TR_A", participantSid: "PA", receiverIndex: 1 }] }).episodes[0].windowCoverage;
+      const none = run(trace, dump([rx1Frame])).episodes[0].windowCoverage;
+      const partial = at(1150);
+      const m1 = at(1250);
+      const m2 = at(1390);
+      const late = at(1450);
+      return none.covered === "none" && none.receiverAt === null && none.publishedAt === 1300 && none.offsetFromPublishMs === null &&
+        partial.covered === "partial" && partial.offsetFromPublishMs === -150 &&
+        m1.covered === "marginal" && m1.offsetFromPublishMs === -50 &&
+        m2.covered === "marginal" && m2.offsetFromPublishMs === 90 &&
+        late.covered === "late" && late.offsetFromPublishMs === 150 && late.receiverAt === 1450
+        ? null
+        : JSON.stringify({ none, partial, m1, m2, late });
     },
   },
 ];
@@ -1465,7 +1587,10 @@ function main() {
       resumeUncertaintyMs: skew.resumeUncertaintyMs,
       resumeUncertaintySource: skew.resumeUncertaintySource,
       receiversTapped: tapInfo.receiversTapped,
-      trackEvents: tapInfo.trackEvents,
+      // F4: every trackEvent time also on the subject clock.
+      trackEvents: tapInfo.trackEvents
+        ? tapInfo.trackEvents.map((e) => ({ ...e, tSubject: e && Number.isFinite(e.t) ? e.t + skew.skewMs : null }))
+        : null,
       warnings: skew.warnings,
     };
   } catch (e) {
