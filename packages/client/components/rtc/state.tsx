@@ -234,6 +234,7 @@ import {
   PublishGateEpisode,
   upstreamOf,
 } from "./publishGateEpisode";
+import { publishKickAction } from "./publishKickPolicy";
 import {
   SCREEN_AUDIO_WATCH_MS,
   screenAudioDeviceGone,
@@ -1173,6 +1174,25 @@ class Voice {
    * can never disagree about whether the gate is held.
    */
   #gateHeld = (): boolean => this.#publishGate.size > 0;
+  /**
+   * The tracks the `LocalSenderCreated` hook RAN THE GATE OP over
+   * (`pauseAtBirth` returned a sweep: the gate was held at the emit).
+   * Tagged whenever the hook ran the op, NOT only when a pause was actually
+   * issued: `publishGateOp` answers `none` over a sender whose transport is
+   * already closed (the publication reads `unpublished`), and that track is
+   * tagged all the same. Harmless -- the `resumeLanded` arm's op re-reads
+   * the wire at the landing and is a no-op over a live sender.
+   * Consumed -- deleted -- at that track's next `LocalTrackPublished`
+   * whatever the gate state is by then, so the tag can never outlive one
+   * publish; a republish creates a new sender, re-runs the hook and re-tags.
+   * The `LocalTrackPublished` handler reads it to tell the one born-paused
+   * publication an emptied gate still owes a resume apart from every other
+   * `{flag: true, quiet}` publication in the map -- the screen-share
+   * consent-pending pause -- which an empty-gate map sweep would wrongly
+   * resume (final audit F1). A WeakSet so a track dropped by livekit is
+   * never held here.
+   */
+  #bornPaused = new WeakSet<object>();
   /**
    * [gate-trace] wave-0 (rejoin-leak plan 2.3, B6). WHICH caller is running
    * `disconnect()`: `"connect-leading"` only for the teardown `connect()`
@@ -2793,9 +2813,10 @@ class Voice {
       // nothing of ours re-enters. The stale-sid pair a republish's repause
       // emitted is harmless server-side -- recorded so a log reader does not
       // chase it. One more thing not to chase: if the gate emptied during
-      // the offer/answer, this re-emit (mute) is followed one sweep later
-      // by the unconditional kick's `resume` (unmute) -- a one-RTT mute
-      // flicker for peers, ending in the right state.
+      // the offer/answer, this re-emit (mute) is followed one op later by
+      // the landed publication's own `resume` (unmute) -- the `resumeLanded`
+      // arm below, scoped to this one publication -- a one-RTT mute flicker
+      // for peers, ending in the right state.
       if (
         isLocalTrack(pub.track) &&
         pub.track.isUpstreamPaused &&
@@ -2807,14 +2828,74 @@ class Voice {
       // pause flag left stale-true. The sweep observes the wire, so it needs
       // no hint about which track that was.
       //
-      // UNCONDITIONAL on the gate, on purpose. A born-paused publication
+      // The kick is DECIDED by `publishKickAction` (publishKickPolicy.ts),
+      // no longer unconditional on the gate. HELD gate: the pre-wave sweep
+      // over the whole map, whose `pause`/`repause` arms never resume, so it
+      // is safe over every publication there. EMPTY gate: NO map sweep --
+      // `publishGateOp` answers `resume` for EVERY `{flag: true, quiet}`
+      // publication under an empty gate, and the map holds pauses the gate
+      // does not own: the screen-share consent-pending pause
+      // (`if (consentPending) localTrack.pauseUpstream()` below), which an
+      // empty-gate map sweep resumed on ANY later publish -- the share's own
+      // native audio landing, a camera toggle while the ask-modal was open
+      // -- on every shell, plain web included (final audit F1). What an
+      // empty gate still owes is the F1 strand: a born-paused publication
       // whose gate emptied DURING its offer/answer lands here as
-      // `{flag: true, sender.track: null}` under an EMPTY gate: the 1->0
-      // resume sweep and `#reassertPublishGate` read `trackPublications`,
-      // which did not contain it yet, so this sweep is the only thing left
-      // that can resume it. On a live sender under an empty gate the
-      // `resume` arm no-ops, so the unconditional kick costs nothing.
-      if (this.room() === room) void this.#applyPublishGate(room);
+      // `{flag: true, sender.track: null}`, and the 1->0 resume sweep and
+      // `#reassertPublishGate` read `trackPublications`, which did not
+      // contain it yet. That publication is exactly the one `#bornPaused`
+      // tagged at `LocalSenderCreated`, so the empty-gate arm resumes THAT
+      // publication alone, through the same `applyPublishGate` op over a
+      // publication built from the track (`resume`: no-op on a live sender,
+      // `failed` if the attach threw) -- nothing is lost. The tag is
+      // consumed here whichever arm runs, so it cannot outlive one publish.
+      // `failed` is the report key: `unproven` is filled by the op arms
+      // (`pause`/`repause`, which an empty gate never reaches; the resume
+      // arm's only route into it is the outer catch's `unreadable` path,
+      // unreachable over a livekit `LocalTrack` whose `isUpstreamPaused` and
+      // `sender` are plain reads), and `held` is read in this same
+      // microtask. Both arms that leave the gate empty then run the F4 mic
+      // re-sync (see `#syncMicPipelineIfLanded`); a held gate defers to its
+      // 1->0 edge.
+      const bornPaused =
+        isLocalTrack(pub.track) && this.#bornPaused.delete(pub.track);
+      const kick = publishKickAction({
+        gateHeld: this.#gateHeld(),
+        bornPaused,
+      });
+      if (kick === "sweep") {
+        if (this.room() === room) void this.#applyPublishGate(room);
+      } else if (
+        kick === "resumeLanded" &&
+        isLocalTrack(pub.track) &&
+        this.room() === room
+      ) {
+        void applyPublishGate(
+          [
+            gatedPublicationFromSender({
+              source: pub.source,
+              sid: pub.trackSid,
+              track: pub.track,
+            }),
+          ],
+          this.#gateHeld,
+          {},
+        ).then(
+          (s) => {
+            if (s.failed.length > 0)
+              console.error("[mls] publish gate could not resume publishing", {
+                publications: s.failed,
+                reasons: [...this.#publishGate],
+                bornPaused: true,
+                landed: true,
+              });
+            this.#syncMicPipelineIfLanded(room, pub);
+          },
+          () => this.#syncMicPipelineIfLanded(room, pub),
+        );
+      } else {
+        this.#syncMicPipelineIfLanded(room, pub);
+      }
       // A publish that was in flight across the session's E2EE flip lands
       // here declared NONE (livekit stamps the type when it builds the
       // request, and the flip republishes only what was registered). The
@@ -2939,9 +3020,13 @@ class Voice {
         // `pauseUpstream()` -- never a bare `replaceTrack(null)`, which the
         // gate's resume could never undo. The `LocalTrackPublished` sweep
         // stays as the backstop: the detach races the answer, so this
-        // narrows C0 rather than closing it, and the kick there is
-        // unconditional so a gate that empties during the offer/answer
-        // still resumes a born-paused publication. Nothing here is awaited.
+        // narrows C0 rather than closing it, and the `#bornPaused` tag
+        // added below is what lets the kick there resume THIS publication
+        // if the gate empties during the offer/answer. The tag says the hook
+        // RAN the gate op over this track (a sweep came back: the gate was
+        // held at the emit), not that a pause was issued -- `publishGateOp`
+        // answers `none` over a sender whose transport is already closed,
+        // and that track is tagged too. Nothing here is awaited.
         // `unproven` is the report key, not an empty `proven`: `runOne`
         // returns null when the gate empties mid-op, which is not a failure.
         if (this.room() !== room || !isLocalTrack(track)) return;
@@ -2953,6 +3038,7 @@ class Voice {
           }),
           this.#gateHeld,
         );
+        if (sweep) this.#bornPaused.add(track);
         if (sweep)
           void sweep.then(
             (s) => {
@@ -4014,8 +4100,21 @@ class Voice {
           currentRoom: this.room() === room,
         }),
     );
+    // The 1->0 resume sweep. PRE-EXISTING GAP, named by the wave-4
+    // completion audit (F3) and NOT fixed here: under an empty gate this
+    // sweep resumes EVERY `{flag: true, quiet}` publication in
+    // `trackPublications`, including pauses the gate never issued -- a
+    // screen share born-paused under a held gate whose consent-pending pause
+    // (`if (consentPending) localTrack.pauseUpstream()` below) then landed
+    // on an already-true flag is resumed here, ahead of its viewer-consent
+    // answer. It is the same ownership gap wave 4 closed at the publish-time
+    // kick (`publishKickAction`: an empty gate resumes only what the hook
+    // tagged), one edge over. Follow-up: an episode-scoped "paused by the
+    // gate" set, so this sweep's `resume` arm touches only publications the
+    // gate itself paused.
     await this.#applyPublishGate(room);
-    // The gate's single 1->0 edge. Re-run the mic pipeline sync AFTER the
+    // The gate's 1->0 edge (emitted on every resume that leaves the set
+    // empty, not only the first). Re-run the mic pipeline sync AFTER the
     // awaited resume sweep, never before, for two reasons: the `size === 0`
     // re-check is only meaningful once the drive has settled (a refill
     // during the sweep must suppress the attach), and an attach must not be
@@ -4368,6 +4467,50 @@ class Voice {
       gainPercent: this.#settings.microphoneGain ?? 100,
       tonePreset: this.#settings.voiceTonePreset,
     };
+  }
+
+  /**
+   * The mic re-sync at `LocalTrackPublished` (final audit F4, its trigger
+   * set stated in full by the wave-4 completion audit F2). It runs on EVERY
+   * microphone landing under an empty gate, not only the F4 case:
+   *  - the F4 case proper: `#resumeGate` re-runs `#syncMicPipeline` at the
+   *    gate's 1->0 edge, but if the mic was mid-republish at that edge --
+   *    unpublished, its new sender not yet in `trackPublications` -- that
+   *    re-run found no microphone publication, attached nothing, and no
+   *    later edge would come: the D6 attach was lost for the call. The
+   *    landing is the one place left that can run it;
+   *  - a plain non-E2EE join: the gate is never held, so the attach now
+   *    starts HERE, inside livekit's `LocalTrackPublished` emit (synchronous
+   *    in `publishOrRepublishTrack`, right after `addTrackPublication`),
+   *    ahead of the join `.then` in `connect()` that used to be the first
+   *    attach;
+   *  - a mic enabled after joining muted -- the born-paused handoff's open
+   *    question 5 ("may never get the pipeline"), resolved: the attach runs
+   *    at the landing, with no settings change or gate edge needed;
+   *  - a signal-reconnect republish (and any other republish that lands
+   *    under an empty gate: the E2EE flip, the declaration seam).
+   * Attach-at-publish on a plain call is INTENDED, not a side effect: an
+   * empty gate is exactly what D6 allows an attach under. Safe at this
+   * point of the emit for two reasons. livekit's `publishOrRepublishTrack`
+   * calls `track.setAudioContext(...)` before anything else it does, so
+   * `LocalAudioTrack.setProcessor` cannot throw for a missing context
+   * (2.15.13, its only synchronous guard). And `#syncMicPipeline` assigns
+   * `#micPipeline = created` synchronously, before its awaited
+   * `setProcessor`, so the join `.then` -- which resolves after this emit
+   * returns -- finds `hasPipeline` and takes the `tune` branch: one
+   * pipeline, never two. `micPipelineAction` still decides (tune in place
+   * / none / attach / defer), and a held gate still defers to its own 1->0
+   * edge.
+   *
+   * 🔴 NOT RUN LIVE. The banked leg's 6/6 landings were all under a HELD
+   * gate (the `sweep` arm), so the plain-call and enable-after-muted
+   * triggers above have been reasoned from the pinned source, not
+   * observed. A leg is owed.
+   */
+  #syncMicPipelineIfLanded(room: Room, pub: { source: Track.Source }) {
+    if (pub.source !== Track.Source.Microphone) return;
+    if (this.#gateHeld() || this.room() !== room) return;
+    this.#syncMicPipeline(room, this.#micPipelineWants());
   }
 
   /**

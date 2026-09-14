@@ -113,6 +113,7 @@ EXPECTED=(
   "components/rtc/publishGateEpisode.test.ts 67 0"
   "components/rtc/pauseVerdict.test.ts 10 0"
   "components/rtc/micPipelinePolicy.test.ts 4 0"
+  "components/rtc/publishKickPolicy.test.ts 4 0"
 )
 
 counter() { # counter <log> <name> — the runner's own summary counter, or ""
@@ -195,7 +196,8 @@ if [ ${#SPECS[@]} -eq 0 ]; then
     components/rtc/publishGate.test.ts
     components/rtc/publishGateEpisode.test.ts
     components/rtc/pauseVerdict.test.ts
-    components/rtc/micPipelinePolicy.test.ts)
+    components/rtc/micPipelinePolicy.test.ts
+    components/rtc/publishKickPolicy.test.ts)
 fi
 if [ ${#SPECS[@]} -eq 0 ]; then
   echo ">>> GATE FAIL: no spec files matched — refusing to report a pass"
@@ -216,6 +218,7 @@ FILES=(components/rtc/mlsCallSession.ts components/rtc/mlsCallModePolicy.ts
   components/rtc/publishGateEpisode.test.ts
   components/rtc/pauseVerdict.ts components/rtc/pauseVerdict.test.ts
   components/rtc/micPipelinePolicy.ts components/rtc/micPipelinePolicy.test.ts
+  components/rtc/publishKickPolicy.ts components/rtc/publishKickPolicy.test.ts
   components/rtc/mlsCallModePolicy.test.ts src/sentry.ts
   components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx)
 ran=0

@@ -22,16 +22,22 @@
  *  1. `LocalParticipant.setE2EEEnabled()` → `republishAllTracks(undefined,
  *     false)` → `unpublishTrack()` (which clears `sender` and leaves the flag)
  *     + `publishOrRepublishTrack()` onto a NEW sender carrying the live track.
- *     `restartTracks` is `false`, so the `restartTrack()` →
- *     `setMediaStreamTrack()` → `resumeUpstream()` path that WOULD have cleared
- *     the flag never runs. Not an edge case: the session's own `#enable()` calls
- *     it INSIDE its `enable-window` pause, so every E2EE call passes through it
- *     once, and it becomes unbounded whenever
- *     `#assertLocalDeclarations("enable")` fails and `#enable()` returns with
- *     the gate still held.
+ *     Nothing in between can clear the flag: `unpublishTrack` clears
+ *     `track.sender` FIRST, and `resumeUpstream()` returns at
+ *     `if (!this.sender)` BEFORE it reaches `_isUpstreamPaused = false`
+ *     (2.15.13 esm ~17937), so even the `restartTrack()` →
+ *     `setMediaStreamTrack()` → `resumeUpstream()` path — which this call
+ *     skips anyway, `restartTracks` being `false` — would leave it set. That
+ *     surviving flag is exactly why the `repause` arm exists. Not an edge
+ *     case: the session's own `#enable()` calls it INSIDE its `enable-window`
+ *     pause, so every E2EE call passes through it once, and it becomes
+ *     unbounded whenever `#assertLocalDeclarations("enable")` fails and
+ *     `#enable()` returns with the gate still held.
  *  2. The signal-reconnect republish (`republishAllTracks(undefined, true)`),
- *     for every track it skips `restartTrack()` on — a muted one, a
- *     screen-share, a screen-share-audio.
+ *     for EVERY track — not only the ones it skips `restartTrack()` on (a
+ *     muted one, a screen-share, a screen-share-audio): the restart's
+ *     `resumeUpstream()` runs after the same `unpublishTrack`, so it takes the
+ *     same `!this.sender` return.
  *  3. The app's own `republishLocalPublications` (`state.tsx`), the
  *     local-declaration seam's GCM re-declaration.
  *  4. `setProcessor()` (denoise / gain / camera effects), which calls
@@ -79,13 +85,23 @@
  * both emit (`TrackProcessorUpdate` / `UpstreamResumed`) after the attach lands,
  * and `#reassertPublishGate` sweeps on either.
  *
- * It is reachable on a normal join — `#syncMicPipeline` runs inside the
- * `negotiating` gate for anyone with denoise, non-unity gain or a tone preset —
- * and that reachability is itself an unimplemented contract clause, not a limit
- * of the observation. R2-1 in the 6.5 breakdown specifies TWO halves: re-assert
- * on the events (done), AND defer effect attachment while the gate is held
- * (never built — `#syncMicPipeline` has no gate check). Closing half (ii) would
- * remove the window rather than race it.
+ * It WAS reachable on every normal join — `#syncMicPipeline` attached the
+ * processor inside the `negotiating` gate for anyone with denoise, non-unity
+ * gain or a tone preset, measured live as 1.4–2.8 s of seat audio leaving
+ * under a held gate (rejoin-leak handoff §7.9) — and that reachability was an
+ * unimplemented contract clause, not a limit of the observation. R2-1 in the
+ * 6.5 breakdown specifies TWO halves: re-assert on the events, AND defer
+ * effect attachment while the gate is held. Both are built now (plan D6):
+ * `micPipelineAction` (`micPipelinePolicy.ts`) answers `defer` for an attach
+ * under a held gate, nothing is stored, and the sync is re-run at two sites:
+ * `#resumeGate` at the gate's 1→0 edge AFTER its awaited resume sweep, and
+ * the microphone's own `LocalTrackPublished` landing under an empty gate
+ * (`#syncMicPipelineIfLanded`), re-reading the wants then. What is left of
+ * the processor window is a gate REFILL during `processor.init` (the worklet
+ * + wasm load, 0.4–1.5 s): the attach then lands under a held gate and is
+ * bounded by the `TrackProcessorUpdate` repause — inferred to be about one
+ * packet (two `replaceTrack` round trips), not measured. The
+ * `setMediaStreamTrack` side of the mirror window is unchanged.
  *
  * Two residuals, stated rather than hidden:
  *
@@ -93,9 +109,18 @@
  *    `LocalTrackPublished` that triggers a sweep sits one offer/answer, and the
  *    publication is ABSENT from `localParticipant.trackPublications` for all of
  *    it (`unpublishTrack` deletes it; `addTrackPublication` re-adds it at the
- *    end). So no sweep can even see a survivor until the window closes — the
- *    observation bounds it, it does not close it. Closing it needs a
- *    `LocalSenderCreated` hook or a publish path that never publishes unpaused.
+ *    end). So no SWEEP can even see a survivor until the window closes — the
+ *    observation bounds it, it does not close it. That is why the gate now
+ *    acts at the emit itself (plan D0, born paused): `pauseAtBirth`
+ *    (`publishGateEpisode.ts`) runs this module's op over ONE publication
+ *    built by `gatedPublicationFromSender` from the track livekit just handed
+ *    us — `pause` on a first publish, `repause` on a republish — through
+ *    livekit's own `pauseUpstream()`, one microtask after the emit and before
+ *    the 20 ms-debounced offer. That NARROWS the window to the
+ *    `replaceTrack(null)`-vs-answer race rather than closing it, and the
+ *    `LocalTrackPublished` sweep stays as the backstop. Measured 2026-09-14
+ *    (rejoin-leak handoff §7.10): op `none` at publish on 6/6 live publishes
+ *    and `packetsSent 0` on every sender until its resume.
  *  - `repause`'s resume can re-attach a sender that a `pauseUpstream` already
  *    in flight was about to detach: a `debouncedTrackMuteHandler` pause (5 s
  *    debounce) sets the flag true BEFORE its await, so this policy reads

@@ -780,6 +780,11 @@ const drainMacro = async (rounds = 20) => {
  * (un-spend on `proven`, arm the drive-scoped pending set from `repauseFailed`
  * on ANY pass, confirm-then-report, spend only `repauseThrew`) and
  * `#scheduleGateConfirm` (a macrotask, at most one outstanding).
+ *
+ * HELD gate only, by construction: every caller of this shape in `state.tsx`
+ * runs under `#gateHeld()`. The empty-gate publish-time kick is NOT this shape
+ * since wave 4 — it is one `applyPublishGate` over the born adapter with `{}`
+ * options and no confirm chain; the F1 strand spec below drives that directly.
  */
 function productionCaller(
   track: FakeLocalTrack,
@@ -792,13 +797,6 @@ function productionCaller(
    * round read a number off this harness as a property of the design.
    */
   confirmCap = 8,
-  /**
-   * `state.tsx`'s `#gateHeld` thunk. Defaults to the module-level `held`, which
-   * is what every spec above this parameter was written against; the
-   * born-paused F1 spec passes a thunk that goes EMPTY, because the
-   * publish-time kick it models runs under an empty gate.
-   */
-  gateHeld: () => boolean = held,
 ) {
   const spent = new Set<string>();
   const pendingRepause = new Set<string>();
@@ -813,7 +811,7 @@ function productionCaller(
 
   const sweepOnce = async (confirming: boolean): Promise<void> => {
     const { unproven, repauseFailed, repauseThrew, proven } =
-      await applyPublishGate([gated(track, name)], gateHeld, {
+      await applyPublishGate([gated(track, name)], held, {
         repauseSpent: spent,
         repausePending: pendingRepause,
       });
@@ -950,11 +948,15 @@ for (const wire of WIRES) {
   });
 
   test(`the mirror window converges instead of latching (${wire} wire)`, async () => {
-    // The window the module comment calls reachable on EVERY normal join for
-    // anyone with denoise, non-unity gain or a tone preset: `#syncMicPipeline`
-    // runs `setProcessor` inside the `negotiating` gate, and `setProcessor`
-    // takes `trackChangeLock`, NOT `pauseUpstreamLock`, so its attach races the
-    // sweep's detach instead of queueing behind it.
+    // The window that was reachable on EVERY normal join before D6 for anyone
+    // with denoise, non-unity gain or a tone preset: `#syncMicPipeline` ran
+    // `setProcessor` inside the `negotiating` gate, and `setProcessor` takes
+    // `trackChangeLock`, NOT `pauseUpstreamLock`, so its attach races the
+    // sweep's detach instead of queueing behind it. D6 (`micPipelineAction`)
+    // now defers the attach while the gate is held, and `#resumeGate` / the
+    // mic landing re-run the sync; the race is still modelled as-is because
+    // the sweep must converge over it whenever an attach IS in flight as the
+    // gate refills.
     //
     // Here the in-flight attach is released BY the sweep's own detach, so it
     // writes last: the repause's `pauseUpstream()` RESOLVED and the
@@ -1026,7 +1028,10 @@ for (const wire of WIRES) {
     // is still a lie for as long as the attach takes. All that is asserted here
     // is that the window CONVERGES rather than latching. The fix is R2-1 half
     // (ii) — defer effect attachment while the gate is held — specified in the
-    // 6.5 breakdown and never built (`publishGate.ts`, module comment).
+    // 6.5 breakdown and built by D6 (`micPipelineAction` defers the attach
+    // under a held gate; `#resumeGate` and the mic landing re-run the sync).
+    // D6 narrows how often the window is ENTERED; it changes nothing about
+    // what the sweep reads once inside it, which is what this spec pins.
   });
 }
 
@@ -1827,10 +1832,13 @@ for (const wire of WIRES) {
     assert.equal(track.upstream(), "live");
     assert.equal(track.paused, false);
 
-    // Stale-true flag, empty gate: still not the hook's business. The
-    // publish-time sweep (unconditional since [F1]) resumes it once the
-    // publication lands; a hook that resumed here would be a second writer
-    // racing that sweep on the same sender.
+    // Stale-true flag, empty gate: still not the hook's business — and, since
+    // wave 4, not the publish-time kick's either: the hook issued nothing, so
+    // it tags nothing, and under an empty gate the kick resumes ONLY a tagged
+    // publication (`publishKickAction` → `"none"`). The wire is live already;
+    // the stale flag is livekit's bookkeeping, which the next HELD-gate sweep
+    // reads as `repause`. A hook that resumed here would be writing to a
+    // sender the gate never paused.
     const stale = new FakeLocalTrack("mic", wire);
     await stale.pauseUpstream();
     await drainMacro(1);
@@ -1847,14 +1855,17 @@ for (const wire of WIRES) {
   });
 
   /**
-   * [audit F1, BLOCKER]. No `rtc-mutations.py` entry: the unconditional
-   * publish-time kick is `state.tsx` wiring (live-only, header admission).
-   * What this pins is the seam the kick relies on — `applyPublishGate`'s
-   * `resume` arm over a born-paused publication under an EMPTY gate, driven
-   * through the production caller shape — and, first, the stranded state a
-   * held-only kick leaves behind.
+   * [audit F1, BLOCKER; narrowed by the wave-4 F1 fix]. No `rtc-mutations.py`
+   * entry: the publish-time kick is `state.tsx` wiring (live-only, header
+   * admission) and its decision is pinned in `publishKickPolicy.test.ts`.
+   * What this pins is the seam the empty-gate arm relies on —
+   * `applyPublishGate`'s `resume` arm over ONE born-paused publication,
+   * through the born adapter (`gatedPublicationFromSender`), `{}` options, no
+   * confirm chain: the production call shape, verbatim — and, first, the
+   * stranded state a held-only kick leaves behind; and that a pause the gate
+   * never issued is not touched by that resume.
    */
-  test(`born paused, gate empties before the publication lands: the empty-gate publish-time sweep resumes it (${wire} wire)`, async () => {
+  test(`born paused, gate empties before the publication lands: the empty-gate publish-time kick resumes THAT publication alone (${wire} wire)`, async () => {
     const track = new FakeLocalTrack("mic", wire);
     track.sender = undefined;
     let gateHeld = true;
@@ -1868,9 +1879,9 @@ for (const wire of WIRES) {
 
     // The gate empties DURING the offer/answer (a `resume` effect after
     // `set_e2ee(false)`; a camera enable resolving inside the `negotiating`
-    // hole). Nothing else observes this publication until it lands: a kick
-    // that runs only `if (this.#publishGate.size > 0)` never runs now, and
-    // `#reassertPublishGate` / the 1→0 resume sweep only read
+    // hole). Nothing else observes this publication until it lands: the
+    // pre-F1 kick, which ran only `if (this.#publishGate.size > 0)`, never
+    // runs now, and `#reassertPublishGate` / the 1→0 resume sweep only read
     // `trackPublications`, where it is not yet present. So this is the state
     // the call is left in — muted upstream, flag true, nothing left to resume
     // it: the NEW failure the hook alone would create.
@@ -1879,22 +1890,44 @@ for (const wire of WIRES) {
     assert.equal(
       track.upstream(),
       "quiet",
-      "(the stranded state: what the unconditional kick exists to prevent)",
+      "(the stranded state: what the empty-gate resume of the TAGGED publication exists to prevent)",
     );
     assert.equal(track.paused, true);
 
-    // The publication lands and the kick runs unconditionally, so the
-    // publish-time sweep runs under the EMPTY gate — the production shape,
-    // gate thunk and all.
-    const caller = productionCaller(
-      track,
-      "microphone/TR_1",
-      8,
+    // Lands under the EMPTY gate: the handler consumes the tag and resumes THIS
+    // publication alone — the production shape (`state.tsx`,
+    // `LocalTrackPublished`, the `"resumeLanded"` arm): the born adapter, `{}`
+    // options, no confirm chain, no map sweep. `share` is a pause the gate does
+    // NOT own — the screen-share consent-pending pause, issued after its own
+    // landing — and must be untouched: the wave-1 map sweep resumed it here,
+    // on every shell (final audit F1).
+    const share = new FakeLocalTrack("share", wire);
+    await share.pauseUpstream();
+    await drainMacro(1);
+    assert.equal(share.upstream(), "quiet");
+    const landed = await applyPublishGate(
+      [
+        gatedPublicationFromSender({
+          source: "microphone",
+          sid: "TR_1",
+          track,
+        }),
+      ],
       () => gateHeld,
+      {},
     );
-    wireReassert(track, caller);
-    await caller.sweep();
     await drainMacro(2);
+    assert.deepEqual(
+      landed,
+      {
+        unproven: [],
+        failed: [],
+        repauseFailed: [],
+        repauseThrew: [],
+        proven: [],
+      },
+      "an empty-gate resume that lands reports NOTHING (`runOne` returns null); `failed` is the only key the handler reads",
+    );
     assert.equal(
       track.upstream(),
       "live",
@@ -1907,8 +1940,12 @@ for (const wire of WIRES) {
       "mic",
       "the resume re-attached something other than the track",
     );
-    assert.equal(caller.disproved(), false);
-    assert.equal(caller.reports(), 0);
+    assert.equal(
+      share.upstream(),
+      "quiet",
+      "the landed resume touched a pause the gate never issued",
+    );
+    assert.equal(share.paused, true);
   });
 
   /**
@@ -1982,8 +2019,8 @@ for (const wire of WIRES) {
       { proven: [], unproven: [] },
     );
     // What the wire is left as: quiet under an empty gate — the F1 strand,
-    // resolved by the unconditional publish-time kick (previous spec), not by
-    // anything this sweep reports.
+    // resolved by the publish-time kick's empty-gate resume of the tagged
+    // publication (previous spec), not by anything this sweep reports.
     await drainMacro(1);
     assert.equal(midOp.upstream(), "quiet");
     assert.equal(midOp.paused, true);
