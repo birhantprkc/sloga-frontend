@@ -105,6 +105,34 @@ HARNESS = "mlsCallSession.harness.ts"
 #: `callPauseDisproofConfirmed` at runtime yet, so the swap's only observable
 #: effect is the harmful half. Closing it needs ONE write instead of two, not
 #: another entry here.
+#:
+#: 🔴 AND THE TWO BORN-PAUSED WIRINGS (plan D0, wave 1, 2026-09-14), which
+#: this table reaches no better than the rest of `state.tsx`:
+#:  (i)  the `ParticipantEvent.LocalSenderCreated` registration — the listener
+#:       body after the `[gate-trace]` `localSenderCreated` record — that
+#:       builds ONE `GatedPublication` over the new track with
+#:       `gatedPublicationFromSender` and hands it to `pauseAtBirth` under
+#:       `this.#gateHeld`, then reports on the sweep's `unproven`. The
+#:       `born-paused-*` entries below pin what `pauseAtBirth` and the adapter
+#:       DO; nothing here can pin that the listener is registered at all, that
+#:       it runs after the record, that its guard order is `room →
+#:       isLocalTrack`, or that it reports on `unproven` rather than on an
+#:       empty `proven`. Drop the registration and the hook is fully specified
+#:       and never called.
+#:  (ii) the publish-time kick in the `LocalTrackPublished` handler, now
+#:       UNCONDITIONAL on the gate (`if (this.room() === room) void
+#:       this.#applyPublishGate(room);`) so a born-paused publication whose
+#:       gate emptied DURING its offer/answer is resumed by the only sweep that
+#:       can see it — plus the `TrackEvent.UpstreamPaused` re-emit before it,
+#:       which is what carries the server-side mute for the sid the answer
+#:       just assigned. Restore the old `size > 0` condition and the strand
+#:       (`{flag: true, sender.track: null}` under an empty gate, nothing left
+#:       to resume it) is back with every spec green.
+#: Same rule as above: no `expect="green"` entry and no `grep -qF` over a file
+#: no runner can load. The live tier (wave 3: the receiver-side frame tap and
+#: its reducer, plus the subject's per-sender `getStats()` reads) is what
+#: covers both; until it has run they are admitted
+#: here, not measured.
 STATE = "state.tsx"
 GATE = "publishGate.ts"
 EPISODE = "publishGateEpisode.ts"
@@ -1025,10 +1053,16 @@ MUTATIONS += [
         id="wiring-upstream-always-quiet",
         what="the GatedPublication adapter reports every sender detached, which re-creates the 2026-09-08 defect AND disables the fail-closed report entirely (`upstream() === 'live'` becomes universally false, so the post-condition can never fire)",
         file=EPISODE,
-        search="""        if (!sender) return "unpublished";
-        if (!sender.track) return "quiet";""",
-        replace="""        if (!sender) return "unpublished";
-        return "quiet";""",
+        # Retargeted 2026-09-14 (born-paused wave 1): the three-valued read
+        # moved out of the adapter body into the exported `upstreamOf`, which
+        # BOTH adapters now call through one shared builder, so the old
+        # 8-space window matches nothing. Same defect, same two lines, at
+        # 2-space indent — and it now reaches the born-paused adapter as well,
+        # because there is exactly one body to reach.
+        search="""  if (!sender) return "unpublished";
+  if (!sender.track) return "quiet";""",
+        replace="""  if (!sender) return "unpublished";
+  return "quiet";""",
         specs=[EPISODE_SPEC],
     ),
 ]
@@ -1400,10 +1434,14 @@ MUTATIONS += [
         id="episode-adapter-snapshots-the-wire",
         what="`gatedPublicationsFrom` SNAPSHOTS the pause flag instead of exposing a getter, so the sweep's post-condition re-asserts its own pre-condition — deleting the only read in the stack that observes what the op actually did",
         file=EPISODE,
-        search="""      get upstreamPaused() {
-        return track.isUpstreamPaused;
-      },""",
-        replace="""      upstreamPaused: track.isUpstreamPaused,""",
+        # Retargeted 2026-09-14 (born-paused wave 1): the getter now exists
+        # ONCE, inside the non-exported builder `gatedPublicationOf` that both
+        # adapters call, at 4/6/4-space indentation; the old 6/8/6 window
+        # matches nothing. Same defect at the same — now single — site.
+        search="""    get upstreamPaused() {
+      return track.isUpstreamPaused;
+    },""",
+        replace="""    upstreamPaused: track.isUpstreamPaused,""",
         specs=[EPISODE_SPEC],
     ),
     Mutation(
@@ -1450,6 +1488,118 @@ MUTATIONS += [
     disproofConfirmed: () => snapshot.confirmed,
   };""",
         specs=[VERDICT_SPEC],
+    ),
+]
+
+# --- Born paused (plan D0, wave 1, 2026-09-14) -------------------------------
+#
+# `publishGateEpisode.ts`'s second adapter (`gatedPublicationFromSender`, over
+# the shared builder `gatedPublicationOf`) plus `pauseAtBirth`, the hook's only
+# entry into the gate. Run 3 of the rejoin-leak legs measured why they exist:
+# livekit creates the sender ALREADY carrying the live track and emits
+# `LocalSenderCreated` one statement later, so the earliest pause the ordinary
+# sweep could issue — at `LocalTrackPublished` — let the seat's first 1–4 RTP
+# packets leave as plaintext on every publish under a held gate, and a
+# republish inside the gate reopened the window for seconds.
+#
+# The specs are split across BOTH spec files: `publishGate.test.ts` drives the
+# hook through `FakeLocalTrack.republish(hook)`, which models livekit assigning
+# `track.sender` and emitting one statement later, on both wire models;
+# `publishGateEpisode.test.ts` pins the adapter's name rule, the lazy sender
+# read and the senderless input. Each entry lists the file(s) MEASURED to go
+# red under it and no other — a spec that cannot reach a mutation is how an
+# entry reports a vacuous green.
+#
+# Every entry targets `EPISODE`. The `state.tsx` half of D0 — the
+# `LocalSenderCreated` registration, the unconditional publish-time kick and
+# the `UpstreamPaused` re-emit — is wiring no runner can load, and is recorded
+# in the header admission above rather than as an entry.
+#
+# Where an entry lists BOTH files, both were measured red under it on
+# 2026-09-14 with every test executing; `judge()` walks them in order and the
+# first red decides, so the gate spec is the one that usually pays.
+
+MUTATIONS += [
+    Mutation(
+        id="born-paused-adapter-reports-unpublished",
+        what="the shared builder's `upstream` thunk reports every sender `unpublished`, so `publishGateOp` decides `none` for the born publication and nothing is issued at birth — the hook wired, silent, and the plaintext window back exactly as measured",
+        file=EPISODE,
+        search="""    upstream: (): UpstreamState => upstreamOf(track.sender),""",
+        replace="""    upstream: (): UpstreamState => "unpublished",""",
+        specs=[GATE_SPEC, EPISODE_SPEC],
+    ),
+    Mutation(
+        id="born-paused-bare-pause",
+        what="`pauseAtBirth` bypasses the per-publication policy with a bare `pauseUpstream()`, which early-returns on a republish's stale-true flag — so the republish inside a held gate, the seconds-long half of the measured window, is MISSED while the hook reports it proven",
+        file=EPISODE,
+        search="""  return applyPublishGate([pub], gateHeld, {});""",
+        replace="""  void pub.pauseUpstream();
+  return Promise.resolve({
+    unproven: [],
+    failed: [],
+    repauseFailed: [],
+    repauseThrew: [],
+    proven: [pub.name],
+  });""",
+        specs=[GATE_SPEC, EPISODE_SPEC],
+    ),
+    Mutation(
+        id="born-paused-flagless-detach",
+        what="the born adapter's `pause` detaches through the sender without `track.pauseUpstream()`, so livekit's `_isUpstreamPaused` never flips and the gate's later `resume` — which early-returns on a cleared flag — can never re-attach it: that sender is mute for the rest of the call",
+        file=EPISODE,
+        search="""    () => track.pauseUpstream(),""",
+        replace="""    () =>
+      Promise.resolve(
+        (
+          track.sender as unknown as
+            | { replaceTrack?(t: null): Promise<void> }
+            | null
+            | undefined
+        )?.replaceTrack?.(null),
+      ).then(() => undefined),""",
+        specs=[GATE_SPEC, EPISODE_SPEC],
+    ),
+    Mutation(
+        id="born-paused-ignores-the-gate",
+        what="`pauseAtBirth` drops its `gateHeld()` guard, so a track born under an EMPTY gate is swept anyway — a resume sweep over a publication nothing asked to pause, emitting `UpstreamResumed` into `#reassertPublishGate` for nothing",
+        file=EPISODE,
+        search="""  if (!gateHeld()) return null;
+  return applyPublishGate([pub], gateHeld, {});""",
+        replace="""  return applyPublishGate([pub], gateHeld, {});""",
+        specs=[GATE_SPEC, EPISODE_SPEC],
+    ),
+    Mutation(
+        id="born-paused-name-collides-with-episode-key",
+        what="the born publication takes the EPISODE KEY `${source}/${sid}` as its name instead of `${source}/${sid ?? 'no-sid'}#born`, so a first publish is named after a sid that does not exist yet and a republish after the publication the answer is about to REPLACE — and either collides with the key `consume` spends by",
+        file=EPISODE,
+        search="""    `${input.source}/${input.sid ?? "no-sid"}#born`,""",
+        replace="""    `${input.source}/${input.sid}`,""",
+        specs=[GATE_SPEC, EPISODE_SPEC],
+    ),
+    Mutation(
+        id="born-adapter-captures-the-sender",
+        what="the shared builder captures `track.sender` when the publication is BUILT and the thunk reads that constant, so once a republish swaps the sender the post-condition answers for a transceiver that no longer carries anything — `quiet` about a wire that is live on its successor",
+        file=EPISODE,
+        search="""  return {
+    name,
+    get upstreamPaused() {
+      return track.isUpstreamPaused;
+    },
+    upstream: (): UpstreamState => upstreamOf(track.sender),""",
+        replace="""  const sender = track.sender;
+  return {
+    name,
+    get upstreamPaused() {
+      return track.isUpstreamPaused;
+    },
+    upstream: (): UpstreamState => upstreamOf(sender),""",
+        # EPISODE_SPEC only: measured 2026-09-14, `publishGate.test.ts` stays
+        # green at its full count under this mutant (its fakes never swap the
+        # sender between construction and the post-condition), and only "the
+        # born adapter reads the CURRENT sender, never a captured one" catches
+        # it. Naming a spec that cannot reach a mutation is how an entry
+        # reports a vacuous green, so the list says where the evidence is.
+        specs=[EPISODE_SPEC],
     ),
 ]
 

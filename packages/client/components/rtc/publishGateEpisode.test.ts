@@ -38,13 +38,17 @@ import {
   type PublishGateSweep,
   applyPublishGate,
   coalescingSweeper,
+  publishGateOp,
 } from "./publishGate.ts";
 import {
   type LocalPublicationLike,
   type PauseDisproofVerdict,
   CONFIRM_BUDGET,
   PublishGateEpisode,
+  gatedPublicationFromSender,
   gatedPublicationsFrom,
+  pauseAtBirth,
+  upstreamOf,
 } from "./publishGateEpisode.ts";
 
 // ---- Fakes ------------------------------------------------------------------
@@ -62,6 +66,43 @@ class FakeSender {
 class FakeTrack {
   isUpstreamPaused = false;
   sender: FakeSender | undefined = new FakeSender();
+}
+
+/**
+ * A track that also carries livekit's `pauseUpstream` / `resumeUpstream`
+ * ITSELF, which is what the born-paused adapter is handed: at
+ * `LocalSenderCreated` there is no publication yet, only the `LocalTrack`.
+ *
+ * Reproduces livekit-client 2.15.13's order and nothing more: `pauseUpstream`
+ * early-returns on a true flag and on a missing sender, writes the flag, then
+ * detaches after a microtask; `resumeUpstream` early-returns on a false flag
+ * and on a missing sender (the F6 order — the sender guard sits BEFORE the
+ * flag is cleared), clears the flag, then re-attaches. {@link FakeTrack} and
+ * {@link FakePub} are unchanged; this is a sibling, not a rewrite.
+ */
+class FakeBornTrack extends FakeTrack {
+  pauseCalls = 0;
+  resumeCalls = 0;
+
+  async pauseUpstream(): Promise<void> {
+    this.pauseCalls++;
+    if (this.isUpstreamPaused) return;
+    const sender = this.sender;
+    if (!sender) return;
+    this.isUpstreamPaused = true;
+    await Promise.resolve();
+    sender.track = null;
+  }
+
+  async resumeUpstream(): Promise<void> {
+    this.resumeCalls++;
+    if (!this.isUpstreamPaused) return;
+    const sender = this.sender;
+    if (!sender) return;
+    this.isUpstreamPaused = false;
+    await Promise.resolve();
+    sender.track = "raw";
+  }
 }
 
 /**
@@ -274,6 +315,235 @@ test("the adapter drives the REAL sweep: a held gate pauses a live sender", asyn
   assert.equal(pub.pauseCalls, 1);
   assert.deepEqual(result.unproven, []);
   assert.equal(pub.track!.sender!.track, null, "the wire is not quiet");
+});
+
+// ---- The born-paused adapter (wave 1, D0) ----------------------------------
+//
+// `LocalSenderCreated` fires one statement after `track.sender = …` and before
+// the offer, when the publication is not yet in `trackPublications` — so the
+// map adapter above cannot see it. `gatedPublicationFromSender` builds ONE
+// `GatedPublication` straight over the `LocalTrack`, and `pauseAtBirth` runs
+// the real sweep over it. These specs pin the adapter's contract and the
+// entry's guard. Per the file header, the WINDOW — that the detach is issued
+// before the offer — belongs to `publishGate.test.ts`'s wire model, not here.
+
+test("upstreamOf is three-valued, and the map adapter agrees with it on every value", () => {
+  // Kills `wiring-upstream-always-quiet`, retargeted onto `upstreamOf`'s body:
+  // ONE shared read, so collapsing `live` into `quiet` reddens both adapters
+  // here instead of only the one the old inline body served. The pairing loop
+  // is what holds the two together — if either adapter grew its own read, the
+  // same fake would answer differently through each.
+  const detached = new FakeSender();
+  detached.track = null;
+  assert.equal(upstreamOf(undefined), "unpublished");
+  assert.equal(upstreamOf(null), "unpublished");
+  assert.equal(upstreamOf(detached), "quiet");
+  assert.equal(upstreamOf(new FakeSender("closed")), "quiet");
+  assert.equal(upstreamOf(new FakeSender()), "live");
+
+  const shapes: (FakeSender | undefined)[] = [
+    undefined,
+    detached,
+    new FakeSender("closed"),
+    new FakeSender(),
+  ];
+  // Anti-vacuity: the four shapes span all three values.
+  assert.deepEqual(
+    shapes.map((sender) => upstreamOf(sender)),
+    ["unpublished", "quiet", "quiet", "live"],
+  );
+  for (const sender of shapes) {
+    const pub = new FakePub();
+    pub.track!.sender = sender;
+    assert.equal(
+      gatedPublicationsFrom([pub])[0]!.upstream(),
+      upstreamOf(sender),
+      `the map adapter and upstreamOf disagree on ${JSON.stringify(sender)}`,
+    );
+  }
+});
+
+test("the born name is `source/sid#born`, and NEVER the episode key", () => {
+  // Kills `born-paused-name-collides-with-episode-key`. The hook never feeds
+  // `consume`, so a born sweep must not be nameable as the episode's own
+  // publication: under the episode key its `unproven` could spend, or arm the
+  // drive-scoped set for, a name that nothing in the born path ever lifts
+  // (plan F8/F16). `no-sid` is the first-publish case — `track.sid` is unset
+  // until the server answers.
+  const track = new FakeBornTrack();
+  assert.equal(
+    gatedPublicationFromSender({ source: "microphone", sid: null, track }).name,
+    "microphone/no-sid#born",
+  );
+  const born = gatedPublicationFromSender({
+    source: "microphone",
+    sid: "TR_1",
+    track,
+  });
+  assert.equal(born.name, "microphone/TR_1#born");
+
+  // The SAME track through the map adapter, as a republish would present it.
+  const pub = new FakePub("microphone", "TR_1");
+  pub.track = track;
+  const episode = gatedPublicationsFrom([pub])[0]!;
+  assert.equal(episode.name, "microphone/TR_1");
+  assert.notEqual(
+    born.name,
+    episode.name,
+    "the born publication is nameable as the episode's own",
+  );
+});
+
+test("the born adapter reads the CURRENT sender, never a captured one", () => {
+  // Kills `born-adapter-captures-the-sender`. A republish clears
+  // `track.sender` (`unpublishTrack`) and later assigns a new one; an adapter
+  // that closed over the sender it was built with would keep reporting the
+  // OLD wire — `live` over a sender that no longer exists — and the sweep's
+  // post-condition would be a read of nothing.
+  const track = new FakeBornTrack();
+  const born = gatedPublicationFromSender({
+    source: "microphone",
+    sid: null,
+    track,
+  });
+  assert.equal(born.upstream(), "live");
+  track.sender = undefined;
+  assert.equal(
+    born.upstream(),
+    "unpublished",
+    "a captured sender still reads live after the track lost it",
+  );
+  const next = new FakeSender();
+  next.track = null;
+  track.sender = next;
+  assert.equal(born.upstream(), "quiet", "the NEW sender is not what is read");
+});
+
+test("a senderless born input decides `none`, and the real sweep issues nothing", async () => {
+  // No mutation of its own. This is the positive half of the `unpublished`
+  // arm that `born-paused-adapter-reports-unpublished` inverts — the two hold
+  // the adapter from both sides, so neither a constant `unpublished` nor a
+  // constant `live` survives the pair. livekit's own `pauseUpstream` guard is
+  // `if (!this.sender)`, and a pause issued past it only logs "unable to pause
+  // upstream for an unpublished track".
+  const track = new FakeBornTrack();
+  track.sender = undefined;
+  const born = gatedPublicationFromSender({
+    source: "microphone",
+    sid: null,
+    track,
+  });
+  assert.equal(
+    publishGateOp({
+      gateHeld: true,
+      upstreamPaused: false,
+      upstream: born.upstream(),
+    }),
+    "none",
+  );
+  const sweep = pauseAtBirth(born, () => true);
+  assert.ok(sweep, "a held gate did not sweep");
+  await sweep;
+  assert.equal(track.pauseCalls, 0, "a pause was issued at a missing sender");
+  assert.equal(track.resumeCalls, 0);
+});
+
+test("pauseAtBirth under an EMPTY gate returns null and issues nothing", () => {
+  // Kills `born-paused-ignores-the-gate`. Without the guard the hook would run
+  // the sweep with `gateHeld() === false`, which is a `resume` op — issued at
+  // birth on every publish, gated or not. `resumeCalls === 0` is what sees
+  // that; `null` is the contract the `state.tsx` caller branches on.
+  const track = new FakeBornTrack();
+  const born = gatedPublicationFromSender({
+    source: "microphone",
+    sid: null,
+    track,
+  });
+  assert.equal(
+    pauseAtBirth(born, () => false),
+    null,
+  );
+  assert.equal(track.pauseCalls, 0, "an empty gate paused at birth");
+  assert.equal(track.resumeCalls, 0, "an empty gate issued a resume at birth");
+  assert.equal(track.isUpstreamPaused, false);
+  assert.equal(track.sender!.track, "raw", "the wire was touched");
+});
+
+test("pauseAtBirth under a HELD gate pauses a live, unpaused sender via the flag", async () => {
+  // Kills `born-paused-adapter-reports-unpublished` (an adapter that says
+  // `unpublished` decides `none`, issues nothing, and the wire stays live) and
+  // `born-paused-bare-pause` (a detach that bypasses `pauseUpstream()` leaves
+  // livekit's flag FALSE, so the gate's later resume early-returns and can
+  // never undo it). The `proven` name is the born key: the caller reports on
+  // `unproven`, so the name it would log is pinned here too.
+  const track = new FakeBornTrack();
+  const born = gatedPublicationFromSender({
+    source: "microphone",
+    sid: null,
+    track,
+  });
+  const sweep = pauseAtBirth(born, () => true);
+  assert.ok(sweep, "a held gate did not sweep");
+  // F5: the op is ISSUED before the sweep's first await — `runOne` runs to
+  // its `await publication.pauseUpstream()` synchronously — which is what puts
+  // it ahead of the 20 ms-debounced offer. Only the issue is synchronous: in
+  // livekit the flag lands one microtask later, behind `pauseUpstreamLock`,
+  // so the flag and the wire are asserted after the await, not here.
+  assert.equal(track.pauseCalls, 1, "the pause was not issued synchronously");
+
+  const result = await sweep;
+  assert.deepEqual(result.proven, ["microphone/no-sid#born"]);
+  assert.deepEqual(result.unproven, []);
+  assert.equal(track.isUpstreamPaused, true);
+  assert.equal(track.sender!.track, null, "the wire is not quiet");
+  assert.equal(track.resumeCalls, 0, "a first publish has nothing to resume");
+});
+
+test("pauseAtBirth on a republish's stale-true flag RESUMES, then pauses", async () => {
+  // Kills `born-paused-bare-pause`, second arm. `unpublishTrack` clears
+  // `track.sender` and never the flag, so the republished sender is live under
+  // a true flag — the `repause` shape — and `pauseUpstream()` alone would
+  // early-return on it. The control below shows the fake reproduces that
+  // guard, which is what gives `resumeCalls === 1` its teeth.
+  const bare = new FakeBornTrack();
+  bare.isUpstreamPaused = true;
+  await bare.pauseUpstream();
+  assert.equal(bare.sender!.track, "raw", "the fake lacks livekit's guard");
+
+  const track = new FakeBornTrack();
+  track.isUpstreamPaused = true; // the previous publication's pause, uncleared
+  const born = gatedPublicationFromSender({
+    source: "microphone",
+    sid: "TR_1",
+    track,
+  });
+  const sweep = pauseAtBirth(born, () => true);
+  assert.ok(sweep, "a held gate did not sweep");
+  const result = await sweep;
+  assert.equal(track.resumeCalls, 1, "the stale flag was not cleared first");
+  assert.equal(track.pauseCalls, 1);
+  assert.deepEqual(result.proven, ["microphone/TR_1#born"]);
+  assert.deepEqual(result.unproven, []);
+  assert.equal(track.isUpstreamPaused, true);
+  assert.equal(track.sender!.track, null, "the wire is not quiet");
+});
+
+test("the born publication's upstreamPaused is a LIVE read of the flag", () => {
+  // The born sibling of `episode-adapter-snapshots-the-wire`: the builder is
+  // shared, so the same mutation reaches both adapters — and this spec is what
+  // keeps it reaching this one if the builders ever diverge. A snapshot turns
+  // the sweep's post-condition into a re-assertion of its pre-condition.
+  const track = new FakeBornTrack();
+  const born = gatedPublicationFromSender({
+    source: "microphone",
+    sid: null,
+    track,
+  });
+  assert.equal(born.upstreamPaused, false);
+  track.isUpstreamPaused = true;
+  assert.equal(born.upstreamPaused, true, "the flag was snapshotted");
+  track.isUpstreamPaused = false;
+  assert.equal(born.upstreamPaused, false);
 });
 
 // ---- The confirm phase ------------------------------------------------------

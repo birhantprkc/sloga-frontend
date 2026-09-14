@@ -19,11 +19,16 @@ import test from "node:test";
 
 import {
   type GatedPublication,
+  type PublishGateSweep,
   type UpstreamState,
   applyPublishGate,
   coalescingSweeper,
   publishGateOp,
 } from "./publishGate.ts";
+import {
+  gatedPublicationFromSender,
+  pauseAtBirth,
+} from "./publishGateEpisode.ts";
 
 // ---- The pure table ---------------------------------------------------------
 
@@ -122,6 +127,16 @@ class FakeSender {
   constructor(track: string | null, wire: WireModel = "micro") {
     this.track = track;
     this.wire = wire;
+  }
+
+  /**
+   * `RTCRtpSender.transport`, as `publishGateEpisode.ts`'s `SenderLike` reads
+   * it — the same state {@link FakeLocalTrack.upstream} reads off
+   * `transportState`, so the born-paused adapter and the spec's own adapter
+   * see one wire. Additive: nothing in this file read `transport` before.
+   */
+  get transport(): { state: "connected" | "closed" | "failed" } {
+    return { state: this.transportState };
   }
 
   #tick(): Promise<void> {
@@ -261,10 +276,17 @@ class FakeLocalTrack {
    * `restartTracks` is false, so `restartTrack()` → `setMediaStreamTrack()` →
    * `resumeUpstream()` never runs and `paused` is left exactly as it was.
    */
-  republish(): void {
+  republish(hook?: (track: FakeLocalTrack, sender: FakeSender) => void): void {
     this.sender = undefined; // unpublishTrack
     // publishOrRepublish
     this.sender = new FakeSender(this.mediaStreamTrack, this.wire);
+    // 2.15.13 `publish`: `track.sender = yield this.engine.createSender(…)`
+    // (esm:23810) and, ONE statement later and synchronously,
+    // `this.emit(ParticipantEvent.LocalSenderCreated, track.sender, track)`
+    // (esm:23811) — before the awaited `engine.negotiate()`. The hook IS that
+    // emit: it runs with the new sender assigned and nothing else done yet.
+    // Without a hook this is exactly the republish it always was.
+    hook?.(this, this.sender);
   }
 
   /**
@@ -770,6 +792,13 @@ function productionCaller(
    * round read a number off this harness as a property of the design.
    */
   confirmCap = 8,
+  /**
+   * `state.tsx`'s `#gateHeld` thunk. Defaults to the module-level `held`, which
+   * is what every spec above this parameter was written against; the
+   * born-paused F1 spec passes a thunk that goes EMPTY, because the
+   * publish-time kick it models runs under an empty gate.
+   */
+  gateHeld: () => boolean = held,
 ) {
   const spent = new Set<string>();
   const pendingRepause = new Set<string>();
@@ -784,7 +813,7 @@ function productionCaller(
 
   const sweepOnce = async (confirming: boolean): Promise<void> => {
     const { unproven, repauseFailed, repauseThrew, proven } =
-      await applyPublishGate([gated(track, name)], held, {
+      await applyPublishGate([gated(track, name)], gateHeld, {
         repauseSpent: spent,
         repausePending: pendingRepause,
       });
@@ -1610,3 +1639,353 @@ test("a drive that settles reports no drop", async () => {
   await sweeper.sweep();
   assert.equal(dropped, 0);
 });
+
+// ---- Born paused (wave 1, D0) ----------------------------------------------
+//
+// The window run 3 measured (rejoin-leak-HANDOFF §7.9): livekit creates the
+// sender ALREADY carrying the live track and RTP starts when the answer is
+// applied, while the gate's first chance to act — `LocalTrackPublished` — comes
+// after it. `LocalSenderCreated` is emitted synchronously one statement after
+// `track.sender = …` (2.15.13 esm:23810–23811), and `state.tsx` turns that emit
+// into the gate's first action through `pauseAtBirth` (`publishGateEpisode.ts`)
+// over `gatedPublicationFromSender`. These specs drive THOSE two exports —
+// never a local substitute — from inside `FakeLocalTrack.republish`'s hook,
+// which is the fake's model of the emit.
+//
+// Every one of them runs on both {@link WireModel}s: the born pause is issued
+// on microtasks and LANDS on the wire's own tick, and a spec that asserts the
+// landing without saying which tick is asserting the fake.
+
+/**
+ * What `state.tsx`'s `LocalSenderCreated` listener does, minus the guards it
+ * runs first (`room`, `isLocalTrack`) and the reporter on `unproven`. The
+ * listener is synchronous and `void`s the sweep; `result()` hands a spec the
+ * same value the emit produced — a sweep, `null` for an empty gate, or
+ * `undefined` if the hook never ran — without anything being awaited inside
+ * the hook.
+ */
+function bornHook(gateHeld: () => boolean): {
+  hook: (track: FakeLocalTrack, sender: FakeSender) => void;
+  result: () => Promise<PublishGateSweep> | null | undefined;
+} {
+  let sweep: Promise<PublishGateSweep> | null | undefined;
+  return {
+    hook: (track) => {
+      sweep = pauseAtBirth(
+        gatedPublicationFromSender({ source: "microphone", sid: null, track }),
+        gateHeld,
+      );
+    },
+    result: () => sweep,
+  };
+}
+
+for (const wire of WIRES) {
+  /**
+   * Kills `born-paused-adapter-reports-unpublished`: an adapter whose
+   * `upstream` thunk reads the new sender as `unpublished` makes
+   * `publishGateOp` say `none`, so nothing is issued at birth and
+   * `pauseCalls` stays 0.
+   */
+  test(`born paused: a first publish under a held gate is detached before any caller sweep (${wire} wire)`, async () => {
+    const track = new FakeLocalTrack("mic", wire);
+    track.sender = undefined; // a FIRST publish: nothing on the wire yet
+    let detachIssued = false;
+    const born = bornHook(held);
+    track.republish((t, sender) => {
+      sender.onDetachCall = () => (detachIssued = true);
+      born.hook(t, sender);
+    });
+    assert.ok(born.result(), "a held gate must run a sweep at birth");
+    // [F5] The pause is issued a microtask after the emit — `pauseUpstream`
+    // takes livekit's `pauseUpstreamLock` before writing the flag — which is
+    // before the 20 ms-debounced offer, not "inside the emit". So the flag
+    // and the ISSUED detach are asserted after microtasks only …
+    await settle();
+    assert.equal(track.pauseCalls, 1, "the hook did not reach pauseUpstream()");
+    assert.equal(track.paused, true, "livekit's flag was not set at birth");
+    assert.equal(
+      detachIssued,
+      true,
+      "no replaceTrack(null) was issued at birth",
+    );
+    // … and, per axis: on the micro wire it has also LANDED by now; on the
+    // faithful macro wire landing costs a task.
+    if (wire === "micro") assert.equal(track.sender!.writes[0], null);
+    await drainMacro(1);
+    assert.deepEqual(
+      track.sender!.writes,
+      [null],
+      "the new sender's first write must be the detach, and its only one",
+    );
+    assert.equal(track.upstream(), "quiet");
+    // No `productionCaller` ran. The `LocalTrackPublished` sweep is the
+    // backstop; it is not what proved this quiet.
+  });
+
+  /**
+   * Kills `born-paused-flagless-detach` (and `born-paused-adapter-reports-
+   * unpublished`): a bare `sender.replaceTrack(null)`
+   * detaches without writing livekit's `_isUpstreamPaused`, so the flag reads
+   * false at the detach — and `resumeUpstream()` early-returns on a cleared
+   * flag, so the gate's own 1→0 resume could never undo it.
+   */
+  test(`born paused goes through livekit's pauseUpstream(), never a bare detach (${wire} wire)`, async () => {
+    const track = new FakeLocalTrack("mic", wire);
+    let pausedAtDetach: boolean | null = null;
+    const born = bornHook(held);
+    track.republish((t, sender) => {
+      sender.onDetachCall = () => (pausedAtDetach = t.paused);
+      born.hook(t, sender);
+    });
+    await settle();
+    assert.equal(
+      pausedAtDetach,
+      true,
+      "the flag was not set when the detach was issued — a bare replaceTrack(null)",
+    );
+    assert.equal(track.pauseCalls, 1);
+
+    // The contrast, so the constraint is a measured consequence and not
+    // prose: the same detach issued OUTSIDE the flag leaves a wire the gate
+    // cannot bring back.
+    const bare = new FakeLocalTrack("mic", wire);
+    let bareAtDetach: boolean | null = null;
+    bare.republish((t, sender) => {
+      sender.onDetachCall = () => (bareAtDetach = t.paused);
+      void sender.replaceTrack(null);
+    });
+    await drainMacro(1);
+    assert.equal(bareAtDetach, false);
+    assert.equal(bare.upstream(), "quiet");
+    await bare.resumeUpstream(); // the gate's 1→0 resume
+    await drainMacro(1);
+    assert.equal(
+      bare.upstream(),
+      "quiet",
+      "expected livekit's resume to early-return over a cleared flag",
+    );
+    assert.equal(bare.pauseCalls, 0);
+  });
+
+  /**
+   * Kills `born-paused-bare-pause` (second arm): on a republish the flag is
+   * stale-true over a live sender, so the op is `repause` — livekit's own
+   * resume-then-pause, whose attach is `mediaStreamTrack` and whose detach
+   * sets the flag. A bare detach here would end {flag: false, quiet}: a wire
+   * the gate's resume can never bring back.
+   */
+  test(`born paused: a republish under a stale-true flag is resumed then re-paused at birth (${wire} wire)`, async () => {
+    const track = new FakeLocalTrack("mic", wire);
+    await track.pauseUpstream(); // the gate's real pause, earlier in the call
+    await drainMacro(1);
+    assert.equal(track.upstream(), "quiet");
+    assert.equal(track.paused, true);
+    const pausesBefore = track.pauseCalls;
+
+    const born = bornHook(held);
+    track.republish(born.hook); // setE2EEEnabled / signal restart
+    assert.ok(born.result(), "a held gate must run a sweep at birth");
+    // On the macro wire the repause's attach costs a task and the detach
+    // that follows it costs another: the [F3] round trip. Drained fully, so
+    // the state read is the settled one on both axes.
+    await drainMacro();
+    assert.deepEqual(
+      track.sender!.writes,
+      ["mic", null],
+      "expected exactly livekit's resume-then-pause on the new sender",
+    );
+    assert.equal(track.upstream(), "quiet");
+    assert.equal(track.paused, true, "the flag was cleared by a bare detach");
+    assert.equal(
+      track.pauseCalls,
+      pausesBefore + 1,
+      "the repause's detach did not go through pauseUpstream()",
+    );
+  });
+
+  /**
+   * Kills `born-paused-ignores-the-gate` (`pauseAtBirth` without its
+   * `gateHeld()` guard): the guarded entry returns `null` and issues nothing;
+   * the mutant returns a sweep. On a fresh track that sweep's `resume` is a
+   * no-op — so the `null` IS the assertion that kills it — and on a
+   * stale-true republish it re-attaches, which the second arm pins.
+   */
+  test(`born paused: an empty gate at birth issues nothing (${wire} wire)`, async () => {
+    const track = new FakeLocalTrack("mic", wire);
+    track.sender = undefined;
+    const born = bornHook(empty);
+    track.republish(born.hook);
+    assert.equal(
+      born.result(),
+      null,
+      "an empty gate must not run a sweep at birth",
+    );
+    assert.equal(track.pauseCalls, 0);
+    await drainMacro(1);
+    assert.deepEqual(track.sender!.writes, []);
+    assert.equal(track.upstream(), "live");
+    assert.equal(track.paused, false);
+
+    // Stale-true flag, empty gate: still not the hook's business. The
+    // publish-time sweep (unconditional since [F1]) resumes it once the
+    // publication lands; a hook that resumed here would be a second writer
+    // racing that sweep on the same sender.
+    const stale = new FakeLocalTrack("mic", wire);
+    await stale.pauseUpstream();
+    await drainMacro(1);
+    const staleBorn = bornHook(empty);
+    stale.republish(staleBorn.hook);
+    assert.equal(staleBorn.result(), null);
+    await drainMacro(1);
+    assert.deepEqual(
+      stale.sender!.writes,
+      [],
+      "the hook wrote to the wire under an empty gate",
+    );
+    assert.equal(stale.paused, true, "the hook resumed under an empty gate");
+  });
+
+  /**
+   * [audit F1, BLOCKER]. No `rtc-mutations.py` entry: the unconditional
+   * publish-time kick is `state.tsx` wiring (live-only, header admission).
+   * What this pins is the seam the kick relies on — `applyPublishGate`'s
+   * `resume` arm over a born-paused publication under an EMPTY gate, driven
+   * through the production caller shape — and, first, the stranded state a
+   * held-only kick leaves behind.
+   */
+  test(`born paused, gate empties before the publication lands: the empty-gate publish-time sweep resumes it (${wire} wire)`, async () => {
+    const track = new FakeLocalTrack("mic", wire);
+    track.sender = undefined;
+    let gateHeld = true;
+    const born = bornHook(() => gateHeld);
+    track.republish(born.hook);
+    assert.ok(born.result(), "a held gate must run a sweep at birth");
+    await settle();
+    await drainMacro(1);
+    assert.equal(track.upstream(), "quiet");
+    assert.equal(track.paused, true);
+
+    // The gate empties DURING the offer/answer (a `resume` effect after
+    // `set_e2ee(false)`; a camera enable resolving inside the `negotiating`
+    // hole). Nothing else observes this publication until it lands: a kick
+    // that runs only `if (this.#publishGate.size > 0)` never runs now, and
+    // `#reassertPublishGate` / the 1→0 resume sweep only read
+    // `trackPublications`, where it is not yet present. So this is the state
+    // the call is left in — muted upstream, flag true, nothing left to resume
+    // it: the NEW failure the hook alone would create.
+    gateHeld = false;
+    await drainMacro(2);
+    assert.equal(
+      track.upstream(),
+      "quiet",
+      "(the stranded state: what the unconditional kick exists to prevent)",
+    );
+    assert.equal(track.paused, true);
+
+    // The publication lands and the kick runs unconditionally, so the
+    // publish-time sweep runs under the EMPTY gate — the production shape,
+    // gate thunk and all.
+    const caller = productionCaller(
+      track,
+      "microphone/TR_1",
+      8,
+      () => gateHeld,
+    );
+    wireReassert(track, caller);
+    await caller.sweep();
+    await drainMacro(2);
+    assert.equal(
+      track.upstream(),
+      "live",
+      "the born-paused publication stayed stranded under an empty gate",
+    );
+    assert.equal(track.paused, false);
+    const writes = track.sender!.writes;
+    assert.equal(
+      writes[writes.length - 1],
+      "mic",
+      "the resume re-attached something other than the track",
+    );
+    assert.equal(caller.disproved(), false);
+    assert.equal(caller.reports(), 0);
+  });
+
+  /**
+   * [audit F7]. Kills `born-paused-adapter-reports-unpublished` a second way
+   * (an `unpublished` read makes a rejected detach `proven`, never issued)
+   * and `born-paused-bare-pause` a third (a bare detach's rejection never
+   * reaches `runOne`'s pause arm, so nothing is `unproven`). No entry targets
+   * the reporter itself — it is `state.tsx` wiring; what is pinned is the
+   * field it must key on: `unproven`, never an empty `proven`.
+   */
+  test(`born paused: a detach that REJECTS at birth is unproven and the caller's later sweep repauses; a mid-op gate-empty is NEITHER proven nor unproven (${wire} wire)`, async () => {
+    const track = new FakeLocalTrack("mic", wire);
+    track.sender = undefined;
+    const born = bornHook(held);
+    track.republish((t, sender) => {
+      sender.rejectDetach = true; // a closing transport
+      born.hook(t, sender);
+    });
+    const sweep = born.result();
+    assert.ok(sweep, "a held gate must run a sweep at birth");
+    const result = await sweep;
+    assert.deepEqual(result.unproven, ["microphone/no-sid#born"]);
+    assert.deepEqual(result.proven, []);
+    // A first-publish PAUSE, not a repause: neither narrow set may carry it —
+    // a pause failure never spends (the fifth-review specs above).
+    assert.deepEqual(result.repauseFailed, []);
+    assert.deepEqual(result.repauseThrew, []);
+    // livekit set the flag before the detach rejected: {flag: true, live}.
+    assert.equal(track.paused, true);
+    assert.equal(track.upstream(), "live");
+
+    // The transport recovers and the publication lands; the caller's
+    // held-gate sweep reads {true, live} ⇒ repause, and this time the detach
+    // lands.
+    track.sender!.rejectDetach = false;
+    const caller = productionCaller(track);
+    wireReassert(track, caller);
+    await caller.sweep();
+    await drainMacro(2);
+    assert.equal(
+      track.upstream(),
+      "quiet",
+      "the caller's sweep did not repause",
+    );
+    assert.equal(track.paused, true);
+    assert.deepEqual(caller.spent(), []);
+    assert.equal(caller.reports(), 0);
+
+    // [F7] The gate empties while the born pause is mid-detach: `runOne`
+    // returns `null`, so the sweep reports NOTHING — neither a proof nor a
+    // failure. A reporter keyed on `proven.length === 0` would call this a
+    // failure; one keyed on `unproven.length > 0` says nothing, correctly.
+    const midOp = new FakeLocalTrack("mic", wire);
+    midOp.sender = undefined;
+    let gateHeld = true;
+    let release!: () => void;
+    const midBorn = bornHook(() => gateHeld);
+    midOp.republish((t, sender) => {
+      release = sender.holdDetach();
+      midBorn.hook(t, sender);
+    });
+    const midSweep = midBorn.result();
+    assert.ok(midSweep, "a held gate must run a sweep at birth");
+    await settle(); // parked inside replaceTrack(null), flag already true
+    assert.equal(midOp.paused, true);
+    gateHeld = false;
+    release();
+    const midResult = await midSweep;
+    assert.deepEqual(
+      { proven: midResult.proven, unproven: midResult.unproven },
+      { proven: [], unproven: [] },
+    );
+    // What the wire is left as: quiet under an empty gate — the F1 strand,
+    // resolved by the unconditional publish-time kick (previous spec), not by
+    // anything this sweep reports.
+    await drainMacro(1);
+    assert.equal(midOp.upstream(), "quiet");
+    assert.equal(midOp.paused, true);
+  });
+}

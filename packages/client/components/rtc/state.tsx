@@ -227,8 +227,11 @@ import {
 } from "./publishGate";
 import {
   type PauseDisproofVerdict,
+  gatedPublicationFromSender,
   gatedPublicationsFrom,
+  pauseAtBirth,
   PublishGateEpisode,
+  upstreamOf,
 } from "./publishGateEpisode";
 import {
   SCREEN_AUDIO_WATCH_MS,
@@ -2776,12 +2779,41 @@ class Voice {
           }),
       );
       this.#setCallParticipantsVersion((v) => v + 1);
+      // livekit's `onTrackUpstreamPaused -> onTrackMuted` sends the server
+      // its `MuteTrackRequest` only when `track.sid` is set. The born-paused
+      // pause issued at `LocalSenderCreated` (below) ran with NO sid on a
+      // first publish and a STALE one on a republish, so the server never
+      // marked THIS publication muted -- where the post-publish pause, which
+      // carried the sid, did. Re-emit now that the sid is assigned, so the
+      // peer-visible mute state (and the SFU's blank injection) stay
+      // identical to a post-publish pause. Only livekit's own handler
+      // listens to `UpstreamPaused`; `#reassertPublishGate` and the trace
+      // pair below listen to `UpstreamResumed` / `TrackProcessorUpdate`, so
+      // nothing of ours re-enters. The stale-sid pair a republish's repause
+      // emitted is harmless server-side -- recorded so a log reader does not
+      // chase it. One more thing not to chase: if the gate emptied during
+      // the offer/answer, this re-emit (mute) is followed one sweep later
+      // by the unconditional kick's `resume` (unmute) -- a one-RTT mute
+      // flicker for peers, ending in the right state.
+      if (
+        isLocalTrack(pub.track) &&
+        pub.track.isUpstreamPaused &&
+        upstreamOf(pub.track.sender) === "quiet"
+      )
+        pub.track.emit(TrackEvent.UpstreamPaused, pub.track);
       // A republish (the E2EE flip, the signal-reconnect republish, the
       // declaration seam) lands here on a brand-new sender with livekit's
       // pause flag left stale-true. The sweep observes the wire, so it needs
       // no hint about which track that was.
-      if (this.#publishGate.size > 0 && this.room() === room)
-        void this.#applyPublishGate(room);
+      //
+      // UNCONDITIONAL on the gate, on purpose. A born-paused publication
+      // whose gate emptied DURING its offer/answer lands here as
+      // `{flag: true, sender.track: null}` under an EMPTY gate: the 1->0
+      // resume sweep and `#reassertPublishGate` read `trackPublications`,
+      // which did not contain it yet, so this sweep is the only thing left
+      // that can resume it. On a live sender under an empty gate the
+      // `resume` arm no-ops, so the unconditional kick costs nothing.
+      if (this.room() === room) void this.#applyPublishGate(room);
       // A publish that was in flight across the session's E2EE flip lands
       // here declared NONE (livekit stamps the type when it builds the
       // request, and the flip republishes only what was registered). The
@@ -2824,9 +2856,24 @@ class Voice {
     // sender, and without the census HERE the plan's C0 row is inferred
     // rather than measured.
     //
-    // 🔴 OBSERVATION ONLY. This event is exactly where a wave-1 fix would
-    // land; wave 0 does not pause here, and a lane that 'just also pauses'
-    // here has run wave 1 inside wave 0.
+    // The record is still emitted FIRST and byte-for-byte as before (the
+    // leg tooling's emitter contract and the reducer's C0 classification key
+    // on it; the named [gate-trace] revert removes it with the rest). But
+    // this listener is no longer observation only: it is where the gate now
+    // acts FIRST (born paused) -- first among OUR listeners: livekit's own
+    // E2EE manager subscribed to this event at Room construction and runs
+    // before us, attaching the sender transform, which is independent of
+    // the track the sender carries. Run 3 (rejoin-leak handoff 7.9) measured why
+    // it must: livekit creates the sender ALREADY carrying the live track,
+    // emits this one statement later, then awaits the offer/answer, and RTP
+    // starts when the answer is applied -- so the earliest pause the sweep
+    // could issue, at `LocalTrackPublished`, let the seat's first 1-4 RTP
+    // packets (20-80 ms) leave as PLAINTEXT mic on every publish under a
+    // held gate, and a processor re-attach inside the window reopened it
+    // for seconds. Pausing here, one microtask after the emit and before
+    // the 20 ms-debounced offer, is the only place that can NARROW it -- to
+    // the detach-vs-answer race, which the `LocalTrackPublished` sweep still
+    // backstops; the plan claims narrowing, not closure.
     room.localParticipant.on(
       ParticipantEvent.LocalSenderCreated,
       (sender, track) => {
@@ -2881,6 +2928,45 @@ class Voice {
               currentRoom: this.room() === room,
             }),
         );
+        // Born paused (D0). `pauseAtBirth` is the ONLY entry from here:
+        // `#applyPublishGate` and the sweeper read `trackPublications`,
+        // which does not hold this sender until `LocalTrackPublished`, and
+        // the sweeper is per-drive. It runs the same `applyPublishGate` op
+        // over ONE publication built from the track itself, so it yields
+        // `pause` on a first publish and `repause` on a republish (the flag
+        // is stale-true and the sender live), issued through livekit's own
+        // `pauseUpstream()` -- never a bare `replaceTrack(null)`, which the
+        // gate's resume could never undo. The `LocalTrackPublished` sweep
+        // stays as the backstop: the detach races the answer, so this
+        // narrows C0 rather than closing it, and the kick there is
+        // unconditional so a gate that empties during the offer/answer
+        // still resumes a born-paused publication. Nothing here is awaited.
+        // `unproven` is the report key, not an empty `proven`: `runOne`
+        // returns null when the gate empties mid-op, which is not a failure.
+        if (this.room() !== room || !isLocalTrack(track)) return;
+        const sweep = pauseAtBirth(
+          gatedPublicationFromSender({
+            source: track.source,
+            sid: track.sid ?? null,
+            track,
+          }),
+          this.#gateHeld,
+        );
+        if (sweep)
+          void sweep.then(
+            (s) => {
+              if (s.unproven.length > 0)
+                console.error(
+                  "[mls] publish gate could not prove the wire quiet",
+                  {
+                    publications: s.unproven,
+                    reasons: [...this.#publishGate],
+                    bornPaused: true,
+                  },
+                );
+            },
+            () => undefined,
+          );
       },
     );
 

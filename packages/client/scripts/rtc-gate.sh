@@ -29,7 +29,8 @@
 # LOG FILE, never out of the 12-line tail, and never out of a `grep test(` of
 # the source (nested `t.test`, `describe` and loop-generated tests all break
 # that: `publishGate.test.ts` declares 42 top-level `test(`
-# — `grep -c '^test(' components/rtc/publishGate.test.ts` — and EXECUTES 50).
+# — `grep -c '^test(' components/rtc/publishGate.test.ts` — and EXECUTES 62;
+# the executed count moves with every loop-generated spec, EXPECTED is the truth).
 set -uo pipefail
 
 ARGC=$# # captured before anything can shift it
@@ -108,8 +109,8 @@ EXPECTED=(
   "components/rtc/rosterReconcile.test.ts 25 0"
   "components/rtc/localPublicationEncryption.test.ts 10 0"
   "components/rtc/plaintextCryptorPolicy.test.ts 12 0"
-  "components/rtc/publishGate.test.ts 50 0"
-  "components/rtc/publishGateEpisode.test.ts 59 0"
+  "components/rtc/publishGate.test.ts 62 0"
+  "components/rtc/publishGateEpisode.test.ts 67 0"
   "components/rtc/pauseVerdict.test.ts 10 0"
 )
 
