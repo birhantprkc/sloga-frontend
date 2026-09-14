@@ -29,7 +29,8 @@
 # LOG FILE, never out of the 12-line tail, and never out of a `grep test(` of
 # the source (nested `t.test`, `describe` and loop-generated tests all break
 # that: `publishGate.test.ts` declares 42 top-level `test(`
-# — `grep -c '^test(' components/rtc/publishGate.test.ts` — and EXECUTES 50).
+# — `grep -c '^test(' components/rtc/publishGate.test.ts` — and EXECUTES 62;
+# the executed count moves with every loop-generated spec, EXPECTED is the truth).
 set -uo pipefail
 
 ARGC=$# # captured before anything can shift it
@@ -109,9 +110,11 @@ EXPECTED=(
   "components/rtc/rosterReconcile.test.ts 25 0"
   "components/rtc/localPublicationEncryption.test.ts 10 0"
   "components/rtc/plaintextCryptorPolicy.test.ts 12 0"
-  "components/rtc/publishGate.test.ts 50 0"
-  "components/rtc/publishGateEpisode.test.ts 59 0"
+  "components/rtc/publishGate.test.ts 62 0"
+  "components/rtc/publishGateEpisode.test.ts 67 0"
   "components/rtc/pauseVerdict.test.ts 10 0"
+  "components/rtc/micPipelinePolicy.test.ts 4 0"
+  "components/rtc/publishKickPolicy.test.ts 4 0"
 )
 
 counter() { # counter <log> <name> — the runner's own summary counter, or ""
@@ -193,7 +196,9 @@ if [ ${#SPECS[@]} -eq 0 ]; then
     components/rtc/plaintextCryptorPolicy.test.ts
     components/rtc/publishGate.test.ts
     components/rtc/publishGateEpisode.test.ts
-    components/rtc/pauseVerdict.test.ts)
+    components/rtc/pauseVerdict.test.ts
+    components/rtc/micPipelinePolicy.test.ts
+    components/rtc/publishKickPolicy.test.ts)
 fi
 if [ ${#SPECS[@]} -eq 0 ]; then
   echo ">>> GATE FAIL: no spec files matched — refusing to report a pass"
@@ -214,6 +219,8 @@ FILES=(components/rtc/mlsCallSession.ts components/rtc/mlsCallModePolicy.ts
   components/rtc/publishGateEpisode.ts
   components/rtc/publishGateEpisode.test.ts
   components/rtc/pauseVerdict.ts components/rtc/pauseVerdict.test.ts
+  components/rtc/micPipelinePolicy.ts components/rtc/micPipelinePolicy.test.ts
+  components/rtc/publishKickPolicy.ts components/rtc/publishKickPolicy.test.ts
   components/rtc/mlsCallModePolicy.test.ts src/sentry.ts
   components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx)
 ran=0

@@ -20,6 +20,24 @@ if (import.meta.env.PROD && import.meta.env.VITE_SENTRY_DSN) {
       if (typeof message !== "string") return breadcrumb;
       // Our own lines...
       if (message.startsWith("[mls]")) return null;
+      // ...including the `[gate-trace]` publish-gate leg instrument
+      // (`Voice.#gateTrace` in `components/rtc/state.tsx`: seven fiducials —
+      // `connect.add`, `disconnect.entry`, `localSenderCreated`,
+      // `localTrackPublished.entry`, `resumeGate`, `track.upstreamResumed`,
+      // `track.processorUpdate` — carrying gate reasons, trackSids and gate
+      // generations). It emits only when a dist is built with
+      // `VITE_CFG_GATE_TRACE=true` (`CONFIGURATION.ENABLE_GATE_TRACE`, a
+      // runtime guard; default off), so in production this line sees
+      // nothing — it is PERMANENT all the same: it is the backstop that keeps
+      // an accidental flag-on build from shipping those records to Sentry,
+      // and `common/lib/env.ts` documents the flag as relying on it. The
+      // prefix catches both emission forms, because the console integration
+      // builds `message` as `safeJoin(args, " ")` — a two-argument
+      // `console.error("[gate-trace]", payload)` and the pre-stringified
+      // `console.error("[gate-trace] " + json)` alike — and it also keeps the
+      // raw objects in `data.arguments`, so dropping the whole crumb is what
+      // suppresses them.
+      if (message.startsWith("[gate-trace]")) return null;
       // ...and livekit-client's, which reach the console UNPREFIXED via
       // `E2eeManager.onWorkerMessage` → loglevel: "MissingKey: missing key at
       // index N for participant X" and "InvalidKey: valid key missing for

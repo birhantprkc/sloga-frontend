@@ -24,8 +24,10 @@ import {
   type VideoCaptureOptions,
   ConnectionState,
   isE2EESupported,
+  isLocalTrack,
   LocalAudioTrack,
   LocalVideoTrack,
+  ParticipantEvent,
   Room,
   RoomEvent,
   ScreenSharePresets,
@@ -200,6 +202,7 @@ import { RoomAudioManager } from "./components/RoomAudioManager";
 import { isDiceRollMessage, summariseDiceRoll } from "./diceRoll";
 import { faceSettingsActive } from "./faceFilterCatalog";
 import { localPublicationsEncrypted } from "./localPublicationEncryption";
+import { micPipelineAction } from "./micPipelinePolicy";
 import { MlsKeyProvider } from "./mlsCallKeys";
 import {
   type CallMode,
@@ -220,12 +223,20 @@ import {
   sessionSetupDecision,
 } from "./mlsSessionSetupPolicy";
 import { pauseVerdictReaders } from "./pauseVerdict";
-import { applyPublishGate, coalescingSweeper } from "./publishGate";
+import {
+  applyPublishGate,
+  coalescingSweeper,
+  publishGateOp,
+} from "./publishGate";
 import {
   type PauseDisproofVerdict,
+  gatedPublicationFromSender,
   gatedPublicationsFrom,
+  pauseAtBirth,
   PublishGateEpisode,
+  upstreamOf,
 } from "./publishGateEpisode";
+import { publishKickAction } from "./publishKickPolicy";
 import {
   SCREEN_AUDIO_WATCH_MS,
   screenAudioDeviceGone,
@@ -388,6 +399,24 @@ type ScreenShareQuality = {
    * the Game tier opts out.
    */
   simulcast?: boolean;
+};
+
+/**
+ * `[gate-trace]` census entry, one per local publication, shared by the
+ * `localSenderCreated` and `localTrackPublished.entry` records so the two are
+ * element-wise comparable (see `Voice.#gateTraceCensus`). Trace only: nothing
+ * but those two records constructs or reads one.
+ */
+type GateTraceCensusEntry = {
+  name: string;
+  source: string;
+  trackSid: string;
+  upstreamPaused: boolean | null;
+  hasSender: boolean;
+  senderHasTrack: boolean;
+  transportState: string | null;
+  upstream: string;
+  op: string;
 };
 
 class Voice {
@@ -1105,7 +1134,7 @@ class Voice {
    * livekit ops produce (`coalescingSweeper` explains why nesting there is a
    * live-lock). Rebuilt per connect, so an episode's state never crosses calls.
    */
-  #gateSweeper: { sweep(): Promise<void> } | undefined;
+  #gateSweeper: { sweep(): Promise<void>; passes(): number } | undefined;
   /**
    * The Room `#gateSweeper` was built for. Its ONE consumer is
    * `scheduleConfirm`, which has to capture a Room when a confirm is ARMED
@@ -1149,6 +1178,25 @@ class Voice {
    * can never disagree about whether the gate is held.
    */
   #gateHeld = (): boolean => this.#publishGate.size > 0;
+  /**
+   * The tracks the `LocalSenderCreated` hook RAN THE GATE OP over
+   * (`pauseAtBirth` returned a sweep: the gate was held at the emit).
+   * Tagged whenever the hook ran the op, NOT only when a pause was actually
+   * issued: `publishGateOp` answers `none` over a sender whose transport is
+   * already closed (the publication reads `unpublished`), and that track is
+   * tagged all the same. Harmless -- the `resumeLanded` arm's op re-reads
+   * the wire at the landing and is a no-op over a live sender.
+   * Consumed -- deleted -- at that track's next `LocalTrackPublished`
+   * whatever the gate state is by then, so the tag can never outlive one
+   * publish; a republish creates a new sender, re-runs the hook and re-tags.
+   * The `LocalTrackPublished` handler reads it to tell the one born-paused
+   * publication an emptied gate still owes a resume apart from every other
+   * `{flag: true, quiet}` publication in the map -- the screen-share
+   * consent-pending pause -- which an empty-gate map sweep would wrongly
+   * resume (final audit F1). A WeakSet so a track dropped by livekit is
+   * never held here.
+   */
+  #bornPaused = new WeakSet<object>();
   /**
    * Every flag a held-gate episode carries — the permanent spend set, the
    * DRIVE-scoped pending set, the confirm dedupe, the confirming-pass phase
@@ -2696,13 +2744,126 @@ class Voice {
     // or is skipped over a closing transport, which no enumeration could have
     // caught.
     room.addListener("localTrackPublished", (pub) => {
+      // [gate-trace] `localTrackPublished.entry`: the publication census at
+      // handler ENTRY, before the kick below (see `#gateTrace`). Reads only;
+      // the flag check here is what keeps the census off an off build.
+      if (CONFIGURATION.ENABLE_GATE_TRACE)
+        this.#gateTrace({
+          at: "localTrackPublished.entry",
+          subject: `${pub.source}/${pub.trackSid}`,
+          subjectSource: pub.source,
+          subjectSid: pub.trackSid,
+          subjectSidInPublications: room.localParticipant.trackPublications.has(
+            pub.trackSid,
+          ),
+          publicationCount: room.localParticipant.trackPublications.size,
+          publicationKeys: [...room.localParticipant.trackPublications.keys()],
+          publications: this.#gateTraceCensus(room),
+          gate: [...this.#publishGate],
+          gateSize: this.#publishGate.size,
+          gateHeld: this.#gateHeld(),
+          gateGen: this.#gateGen,
+          connectGen: this.#connectGen,
+          passes: this.#gateSweeper?.passes() ?? null,
+          currentRoom: this.room() === room,
+        });
       this.#setCallParticipantsVersion((v) => v + 1);
+      // livekit's `onTrackUpstreamPaused -> onTrackMuted` sends the server
+      // its `MuteTrackRequest` only when `track.sid` is set. The born-paused
+      // pause issued at `LocalSenderCreated` (below) ran with NO sid on a
+      // first publish and a STALE one on a republish, so the server never
+      // marked THIS publication muted -- where the post-publish pause, which
+      // carried the sid, did. Re-emit now that the sid is assigned, so the
+      // peer-visible mute state (and the SFU's blank injection) stay
+      // identical to a post-publish pause. Only livekit's own handler
+      // listens to `UpstreamPaused`; `#reassertPublishGate` and the trace
+      // pair below listen to `UpstreamResumed` / `TrackProcessorUpdate`, so
+      // nothing of ours re-enters. The stale-sid pair a republish's repause
+      // emitted is harmless server-side -- recorded so a log reader does not
+      // chase it. One more thing not to chase: if the gate emptied during
+      // the offer/answer, this re-emit (mute) is followed one op later by
+      // the landed publication's own `resume` (unmute) -- the `resumeLanded`
+      // arm below, scoped to this one publication -- a one-RTT mute flicker
+      // for peers, ending in the right state.
+      if (
+        isLocalTrack(pub.track) &&
+        pub.track.isUpstreamPaused &&
+        upstreamOf(pub.track.sender) === "quiet"
+      )
+        pub.track.emit(TrackEvent.UpstreamPaused, pub.track);
       // A republish (the E2EE flip, the signal-reconnect republish, the
       // declaration seam) lands here on a brand-new sender with livekit's
       // pause flag left stale-true. The sweep observes the wire, so it needs
       // no hint about which track that was.
-      if (this.#publishGate.size > 0 && this.room() === room)
-        void this.#applyPublishGate(room);
+      //
+      // The kick is DECIDED by `publishKickAction` (publishKickPolicy.ts),
+      // no longer unconditional on the gate. HELD gate: the pre-wave sweep
+      // over the whole map, whose `pause`/`repause` arms never resume, so it
+      // is safe over every publication there. EMPTY gate: NO map sweep --
+      // `publishGateOp` answers `resume` for EVERY `{flag: true, quiet}`
+      // publication under an empty gate, and the map holds pauses the gate
+      // does not own: the screen-share consent-pending pause
+      // (`if (consentPending) localTrack.pauseUpstream()` below), which an
+      // empty-gate map sweep resumed on ANY later publish -- the share's own
+      // native audio landing, a camera toggle while the ask-modal was open
+      // -- on every shell, plain web included (final audit F1). What an
+      // empty gate still owes is the F1 strand: a born-paused publication
+      // whose gate emptied DURING its offer/answer lands here as
+      // `{flag: true, sender.track: null}`, and the 1->0 resume sweep and
+      // `#reassertPublishGate` read `trackPublications`, which did not
+      // contain it yet. That publication is exactly the one `#bornPaused`
+      // tagged at `LocalSenderCreated`, so the empty-gate arm resumes THAT
+      // publication alone, through the same `applyPublishGate` op over a
+      // publication built from the track (`resume`: no-op on a live sender,
+      // `failed` if the attach threw) -- nothing is lost. The tag is
+      // consumed here whichever arm runs, so it cannot outlive one publish.
+      // `failed` is the report key: `unproven` is filled by the op arms
+      // (`pause`/`repause`, which an empty gate never reaches; the resume
+      // arm's only route into it is the outer catch's `unreadable` path,
+      // unreachable over a livekit `LocalTrack` whose `isUpstreamPaused` and
+      // `sender` are plain reads), and `held` is read in this same
+      // microtask. Both arms that leave the gate empty then run the F4 mic
+      // re-sync (see `#syncMicPipelineIfLanded`); a held gate defers to its
+      // 1->0 edge.
+      const bornPaused =
+        isLocalTrack(pub.track) && this.#bornPaused.delete(pub.track);
+      const kick = publishKickAction({
+        gateHeld: this.#gateHeld(),
+        bornPaused,
+      });
+      if (kick === "sweep") {
+        if (this.room() === room) void this.#applyPublishGate(room);
+      } else if (
+        kick === "resumeLanded" &&
+        isLocalTrack(pub.track) &&
+        this.room() === room
+      ) {
+        void applyPublishGate(
+          [
+            gatedPublicationFromSender({
+              source: pub.source,
+              sid: pub.trackSid,
+              track: pub.track,
+            }),
+          ],
+          this.#gateHeld,
+          {},
+        ).then(
+          (s) => {
+            if (s.failed.length > 0)
+              console.error("[mls] publish gate could not resume publishing", {
+                publications: s.failed,
+                reasons: [...this.#publishGate],
+                bornPaused: true,
+                landed: true,
+              });
+            this.#syncMicPipelineIfLanded(room, pub);
+          },
+          () => this.#syncMicPipelineIfLanded(room, pub),
+        );
+      } else {
+        this.#syncMicPipelineIfLanded(room, pub);
+      }
       // A publish that was in flight across the session's E2EE flip lands
       // here declared NONE (livekit stamps the type when it builds the
       // request, and the flip republishes only what was registered). The
@@ -2722,7 +2883,126 @@ class Voice {
       track.off(TrackEvent.TrackProcessorUpdate, this.#reassertPublishGate);
       track.on(TrackEvent.UpstreamResumed, this.#reassertPublishGate);
       track.on(TrackEvent.TrackProcessorUpdate, this.#reassertPublishGate);
+      // [gate-trace] `track.upstreamResumed` / `track.processorUpdate`: the
+      // memoized log-only pair (see `#gateTraceListenersFor`), same `off`
+      // BEFORE `on` idiom. Not registered at all on an off build.
+      if (CONFIGURATION.ENABLE_GATE_TRACE) {
+        const gtTrace = this.#gateTraceListenersFor(track, room);
+        track.off(TrackEvent.UpstreamResumed, gtTrace.resumed);
+        track.off(TrackEvent.TrackProcessorUpdate, gtTrace.processor);
+        track.on(TrackEvent.UpstreamResumed, gtTrace.resumed);
+        track.on(TrackEvent.TrackProcessorUpdate, gtTrace.processor);
+      }
     });
+
+    // Between `emit(LocalSenderCreated)` and the `LocalTrackPublished` that
+    // triggers a sweep sits one offer/answer, and the publication is ABSENT
+    // from `trackPublications` for all of it -- so no sweep can see the new
+    // sender. The `[gate-trace]` `localSenderCreated` record (see
+    // `#gateTrace`) is emitted FIRST, before the gate acts, so the leg
+    // reducer's episode opens on the pre-pause state. This listener is
+    // where the gate acts FIRST (born paused) -- first among OUR listeners:
+    // livekit's own E2EE manager subscribed to this event at Room
+    // construction and runs before us, attaching the sender transform, which
+    // is independent of the track the sender carries. Run 3 (rejoin-leak
+    // handoff 7.9) measured why
+    // it must: livekit creates the sender ALREADY carrying the live track,
+    // emits this one statement later, then awaits the offer/answer, and RTP
+    // starts when the answer is applied -- so the earliest pause the sweep
+    // could issue, at `LocalTrackPublished`, let the seat's first 1-4 RTP
+    // packets (20-80 ms) leave as PLAINTEXT mic on every publish under a
+    // held gate, and a processor re-attach inside the window reopened it
+    // for seconds. Pausing here, one microtask after the emit and before
+    // the 20 ms-debounced offer, is the only place that can NARROW it -- to
+    // the detach-vs-answer race, which the `LocalTrackPublished` sweep still
+    // backstops; the plan claims narrowing, not closure.
+    room.localParticipant.on(
+      ParticipantEvent.LocalSenderCreated,
+      (sender, track) => {
+        // [gate-trace] `localSenderCreated` (see `#gateTrace`). `track.sid`
+        // is UNASSIGNED on a first publish (`track.sid = ti.sid` runs after
+        // the awaited `negotiate()` this emit sits inside) and STALE on a
+        // republish (`unpublishTrack` deletes the map entry and never
+        // clears `track.sid`), so the record says which (`subjectSidAssigned`,
+        // `subjectSidInPublications`) and the census is what a reader
+        // compares against `localTrackPublished.entry`'s. Reads only; the
+        // flag check here keeps the census off an off build.
+        if (CONFIGURATION.ENABLE_GATE_TRACE) {
+          const gtSid = track.sid ?? null;
+          this.#gateTrace({
+            at: "localSenderCreated",
+            subject: `${track.source}/${gtSid ?? "no-sid"}`,
+            subjectSource: track.source,
+            subjectSid: gtSid,
+            subjectSidAssigned: gtSid !== null,
+            subjectSidInPublications:
+              gtSid === null
+                ? null
+                : room.localParticipant.trackPublications.has(gtSid),
+            publicationCount: room.localParticipant.trackPublications.size,
+            publicationKeys: [
+              ...room.localParticipant.trackPublications.keys(),
+            ],
+            publications: this.#gateTraceCensus(room),
+            upstreamPaused: isLocalTrack(track) ? track.isUpstreamPaused : null,
+            hasSender: !!sender,
+            senderHasTrack: !!sender.track,
+            transportState: sender.transport?.state ?? null,
+            gate: [...this.#publishGate],
+            gateSize: this.#publishGate.size,
+            gateHeld: this.#gateHeld(),
+            gateGen: this.#gateGen,
+            connectGen: this.#connectGen,
+            passes: this.#gateSweeper?.passes() ?? null,
+            currentRoom: this.room() === room,
+          });
+        }
+        // Born paused (D0). `pauseAtBirth` is the ONLY entry from here:
+        // `#applyPublishGate` and the sweeper read `trackPublications`,
+        // which does not hold this sender until `LocalTrackPublished`, and
+        // the sweeper is per-drive. It runs the same `applyPublishGate` op
+        // over ONE publication built from the track itself, so it yields
+        // `pause` on a first publish and `repause` on a republish (the flag
+        // is stale-true and the sender live), issued through livekit's own
+        // `pauseUpstream()` -- never a bare `replaceTrack(null)`, which the
+        // gate's resume could never undo. The `LocalTrackPublished` sweep
+        // stays as the backstop: the detach races the answer, so this
+        // narrows C0 rather than closing it, and the `#bornPaused` tag
+        // added below is what lets the kick there resume THIS publication
+        // if the gate empties during the offer/answer. The tag says the hook
+        // RAN the gate op over this track (a sweep came back: the gate was
+        // held at the emit), not that a pause was issued -- `publishGateOp`
+        // answers `none` over a sender whose transport is already closed,
+        // and that track is tagged too. Nothing here is awaited.
+        // `unproven` is the report key, not an empty `proven`: `runOne`
+        // returns null when the gate empties mid-op, which is not a failure.
+        if (this.room() !== room || !isLocalTrack(track)) return;
+        const sweep = pauseAtBirth(
+          gatedPublicationFromSender({
+            source: track.source,
+            sid: track.sid ?? null,
+            track,
+          }),
+          this.#gateHeld,
+        );
+        if (sweep) this.#bornPaused.add(track);
+        if (sweep)
+          void sweep.then(
+            (s) => {
+              if (s.unproven.length > 0)
+                console.error(
+                  "[mls] publish gate could not prove the wire quiet",
+                  {
+                    publications: s.unproven,
+                    reasons: [...this.#publishGate],
+                    bornPaused: true,
+                  },
+                );
+            },
+            () => undefined,
+          );
+      },
+    );
 
     // Set only by the `join_call` step below, so the catch can tell the
     // server's answer to THIS join apart from a same-typed error thrown by
@@ -2893,6 +3173,20 @@ class Voice {
       // this reason once bound (releases it on its verdict). Only for E2EE-
       // capable shells (an unsupported shell is a normal plaintext call).
       if (e2eeCapable) this.#publishGate.add("negotiating");
+      // [gate-trace] `connect.add` (see `#gateTrace`). Reads only; the
+      // record is built only when the instrument is on.
+      if (CONFIGURATION.ENABLE_GATE_TRACE)
+        this.#gateTrace({
+          at: "connect.add",
+          e2eeCapable,
+          gate: [...this.#publishGate],
+          gateSize: this.#publishGate.size,
+          gateHeld: this.#gateHeld(),
+          gateGen: this.#gateGen,
+          connectGen: this.#connectGen,
+          passes: this.#gateSweeper?.passes() ?? null,
+          currentRoom: this.room() === room,
+        });
       // Fresh sweeper per call: its in-flight/pending state must never cross
       // from a disposed Room to this one. The gen bump is what KILLS the old
       // sweeper — a sweep of it still parked on an awaited livekit op resumes
@@ -3176,6 +3470,22 @@ class Voice {
   }
 
   disconnect() {
+    // [gate-trace] `disconnect.entry` (see `#gateTrace`), ABOVE the try so a
+    // teardown that throws still leaves its witness. `connectGen` is the
+    // PRE-bump value (`this.#connectGen++` is the try's first statement), so
+    // it names the call being torn down. Reads only, throw-free, and built
+    // only when the instrument is on (a production teardown does no work here).
+    if (CONFIGURATION.ENABLE_GATE_TRACE)
+      this.#gateTrace({
+        at: "disconnect.entry",
+        gate: [...this.#publishGate],
+        gateSize: this.#publishGate.size,
+        gateHeld: this.#gateHeld(),
+        gateGen: this.#gateGen,
+        connectGen: this.#connectGen,
+        connectGenPhase: "pre-bump",
+        passes: this.#gateSweeper?.passes() ?? null,
+      });
     try {
       // Doom any in-flight connect() FIRST: every await in connect() re-checks
       // this token and bails with its own room teardown. Without the bump a
@@ -3593,6 +3903,23 @@ class Voice {
   }
 
   async #resumeGate(room: Room, reason: PublishGateReason): Promise<void> {
+    // [gate-trace] `resumeGate` (see `#gateTrace`): a resume the stale-writer
+    // guard below drops is recorded under the SAME `at`, `staleRoom: true`
+    // and never `emptied`. Reads only; built only when the instrument is on.
+    if (CONFIGURATION.ENABLE_GATE_TRACE && this.room() !== room)
+      this.#gateTrace({
+        at: "resumeGate",
+        reason,
+        emptied: false,
+        staleRoom: true,
+        gate: [...this.#publishGate],
+        gateSize: this.#publishGate.size,
+        gateHeld: this.#gateHeld(),
+        gateGen: this.#gateGen,
+        connectGen: this.#connectGen,
+        passes: this.#gateSweeper?.passes() ?? null,
+        currentRoom: this.room() === room,
+      });
     // Same stale-writer guard, for the inverse hazard: a stale resume must
     // not release a reason the CURRENT call's session is still relying on.
     if (this.room() !== room) return;
@@ -3601,7 +3928,52 @@ class Voice {
     // `endEpisode` clears `callPauseDisproved` along with the spend sets, and
     // deliberately NOT the dropped-pass flag.
     if (this.#publishGate.size === 0) this.#gateEpisode.endEpisode();
+    // [gate-trace] `resumeGate`: the resulting set and whether it emptied --
+    // `emptied: true` is the leg reducer's episode close. Built only when the
+    // instrument is on.
+    if (CONFIGURATION.ENABLE_GATE_TRACE)
+      this.#gateTrace({
+        at: "resumeGate",
+        reason,
+        emptied: this.#publishGate.size === 0,
+        staleRoom: false,
+        gate: [...this.#publishGate],
+        gateSize: this.#publishGate.size,
+        gateHeld: this.#gateHeld(),
+        gateGen: this.#gateGen,
+        connectGen: this.#connectGen,
+        passes: this.#gateSweeper?.passes() ?? null,
+        currentRoom: this.room() === room,
+      });
+    // The 1->0 resume sweep. PRE-EXISTING GAP, named by the wave-4
+    // completion audit (F3) and NOT fixed here: under an empty gate this
+    // sweep resumes EVERY `{flag: true, quiet}` publication in
+    // `trackPublications`, including pauses the gate never issued -- a
+    // screen share born-paused under a held gate whose consent-pending pause
+    // (`if (consentPending) localTrack.pauseUpstream()` below) then landed
+    // on an already-true flag is resumed here, ahead of its viewer-consent
+    // answer. It is the same ownership gap wave 4 closed at the publish-time
+    // kick (`publishKickAction`: an empty gate resumes only what the hook
+    // tagged), one edge over. Follow-up: an episode-scoped "paused by the
+    // gate" set, so this sweep's `resume` arm touches only publications the
+    // gate itself paused.
     await this.#applyPublishGate(room);
+    // The gate's 1->0 edge (emitted on every resume that leaves the set
+    // empty, not only the first). Re-run the mic pipeline sync AFTER the
+    // awaited resume sweep, never before, for two reasons: the `size === 0`
+    // re-check is only meaningful once the drive has settled (a refill
+    // during the sweep must suppress the attach), and an attach must not be
+    // issued while the sweep's own repause (resume-then-pause) may still be
+    // mid-flight on the same sender. It is NOT a last-writer-wins race over
+    // the raw track: livekit's `mediaStreamTrack` getter prefers
+    // `processor.processedTrack`, and `setProcessor` assigns `processor`
+    // before its `replaceTrack`, so a resume landing in either order
+    // converges on the processed track (2.15.13, corrected by the wave-2
+    // audit). Fire-and-forget: `#enable()` awaits `resumePublishing`, and
+    // the attach's `init` is the worklet + wasm load (0.4-1.5 s measured as
+    // the `track.processorUpdate` offset in rejoin-leak handoff 7.6/7.9).
+    if (this.#publishGate.size === 0 && this.room() === room)
+      this.#syncMicPipeline(room, this.#micPipelineWants());
   }
 
   /**
@@ -3760,6 +4132,156 @@ class Voice {
   };
 
   /**
+   * `[gate-trace]`: the publish-gate instrument the leg reducer
+   * (`scripts/leg/toc-reduce.mjs`, its PINNED KEYS header) reads. One JSON
+   * record per `console.error` line, serialized `{ t, p, at, ...record }`:
+   * `t` = `Date.now()`, the wall clock the observer's frame tap is joined
+   * on; `p` = `performance.now()`. Seven fiducials, and nothing else may
+   * emit under the prefix: `connect.add`, `disconnect.entry`,
+   * `localSenderCreated` and `localTrackPublished.entry` (both carrying the
+   * `#gateTraceCensus`), `resumeGate` (`emptied: true` closes a reducer
+   * episode), `track.upstreamResumed` and `track.processorUpdate` (the pair
+   * from `#gateTraceListenersFor`).
+   *
+   * Build-time flag `CONFIGURATION.ENABLE_GATE_TRACE` (`VITE_CFG_GATE_TRACE`,
+   * off by default, leg dists only). The guard is a RUNTIME early return --
+   * one property read per fiducial -- not dead-code elimination: the flag is
+   * a `.toLowerCase()` comparison on an object property, which no bundler
+   * folds, so this code and the `[gate-trace]` literal stay in every dist
+   * (the artifact discriminator is the inlined flag value in the entry
+   * chunk). Every emit goes through here; the sites that do work beyond
+   * plain reads -- the census and the listener registration -- also check
+   * the flag themselves, so an off build computes no census and registers
+   * no trace listener. OBSERVATION ONLY: no emit site pauses, resumes or
+   * writes gate state.
+   */
+  #gateTrace(record: Record<string, unknown>): void {
+    if (!CONFIGURATION.ENABLE_GATE_TRACE) return;
+    console.error(
+      "[gate-trace] " +
+        JSON.stringify({ t: Date.now(), p: performance.now(), ...record }),
+    );
+  }
+
+  /**
+   * `[gate-trace]` listener pair per `LocalTrack`, MEMOIZED so the
+   * `localTrackPublished` handler can `off` before `on` keyed on listener
+   * IDENTITY (`republishAllTracks` reuses the same track; an inline arrow
+   * would accumulate a pair per republish). Per TRACK because
+   * `TrackProcessorUpdate` carries only the processor, so the `subject` is
+   * read off the closed-over track at FIRE time. Separate from
+   * `#reassertPublishGate`, which returns early on an empty gate and cannot
+   * say which event fired. Trace only; see `#gateTrace`.
+   */
+  #gateTraceTrackListeners = new WeakMap<
+    Track,
+    { resumed: () => void; processor: () => void }
+  >();
+
+  /**
+   * `[gate-trace]` publication CENSUS, built the same way for
+   * `localTrackPublished.entry` and `localSenderCreated` so the two are
+   * element-wise comparable (see `#gateTrace`).
+   *
+   * 🔴 `upstream` is derived through the SAME `gatedPublicationsFrom`
+   * adapter the sweep uses, never from the two booleans: `UpstreamState` is
+   * three-valued and the live/quiet split reads the TRANSPORT, so a
+   * closed-transport sender would print `pause` where the sweep answers
+   * `none`. The adapter SKIPS a publication with no track, so `not-gated` for
+   * a present publication is itself a datum, and it names entries
+   * `${source}/${trackSid}` -- the key `repauseSpent` / `repausePending` are
+   * keyed by.
+   *
+   * OBSERVATION ONLY: every read is a getter, `gatedPublicationsFrom` and
+   * `publishGateOp` are pure, and nothing here pauses, resumes or writes.
+   */
+  #gateTraceCensus(room: Room): GateTraceCensusEntry[] {
+    const census: GateTraceCensusEntry[] = [];
+    for (const gtPub of room.localParticipant.trackPublications.values()) {
+      const gtGated = gatedPublicationsFrom([gtPub])[0];
+      const gtTrack = gtPub.track;
+      const gtUpstream = gtGated ? gtGated.upstream() : null;
+      const gtOp = gtGated
+        ? publishGateOp({
+            gateHeld: this.#gateHeld(),
+            upstreamPaused: gtGated.upstreamPaused,
+            upstream: gtGated.upstream(),
+          })
+        : null;
+      census.push({
+        name: `${gtPub.source}/${gtPub.trackSid}`,
+        source: gtPub.source,
+        trackSid: gtPub.trackSid,
+        upstreamPaused: gtTrack?.isUpstreamPaused ?? null,
+        hasSender: !!gtTrack?.sender,
+        senderHasTrack: !!gtTrack?.sender?.track,
+        transportState: gtTrack?.sender?.transport?.state ?? null,
+        upstream: gtUpstream ?? "not-gated",
+        op: gtOp ?? "not-gated",
+      });
+    }
+    return census;
+  }
+
+  /**
+   * See {@link Voice.#gateTraceTrackListeners}. `track.upstreamResumed` and
+   * `track.processorUpdate`, the former being the leg reducer's resume
+   * fiducial. OBSERVATION ONLY.
+   *
+   * 🔴 `room` is the Room this track was published INTO, captured at
+   * registration inside the `localTrackPublished` handler, and both records
+   * carry `currentRoom: this.room() === room`: without it a resume on a
+   * DOOMED Room's surviving `LocalTrack` is indistinguishable from one on the
+   * live call. The pair is memoized per TRACK, so the captured Room is the
+   * one that track was FIRST published into; across a real leave both the
+   * Room and the `LocalTrack` are new, so the capture cannot go stale.
+   */
+  #gateTraceListenersFor(
+    track: Track,
+    room: Room,
+  ): {
+    resumed: () => void;
+    processor: () => void;
+  } {
+    const existing = this.#gateTraceTrackListeners.get(track);
+    if (existing) return existing;
+    const made = {
+      resumed: (): void => {
+        this.#gateTrace({
+          at: "track.upstreamResumed",
+          subject: `${track.source}/${track.sid ?? "no-sid"}`,
+          subjectSource: track.source,
+          subjectSid: track.sid ?? null,
+          gate: [...this.#publishGate],
+          gateSize: this.#publishGate.size,
+          gateHeld: this.#gateHeld(),
+          gateGen: this.#gateGen,
+          connectGen: this.#connectGen,
+          passes: this.#gateSweeper?.passes() ?? null,
+          currentRoom: this.room() === room,
+        });
+      },
+      processor: (): void => {
+        this.#gateTrace({
+          at: "track.processorUpdate",
+          subject: `${track.source}/${track.sid ?? "no-sid"}`,
+          subjectSource: track.source,
+          subjectSid: track.sid ?? null,
+          gate: [...this.#publishGate],
+          gateSize: this.#publishGate.size,
+          gateHeld: this.#gateHeld(),
+          gateGen: this.#gateGen,
+          connectGen: this.#connectGen,
+          passes: this.#gateSweeper?.passes() ?? null,
+          currentRoom: this.room() === room,
+        });
+      },
+    };
+    this.#gateTraceTrackListeners.set(track, made);
+    return made;
+  }
+
+  /**
    * Every mic enable goes through here: `setMicrophoneEnabled` plus the
    * exact-pin rescue. When `connect()` pinned the saved mic `{ exact }` and
    * that device has since vanished while no live track existed (unplugged
@@ -3779,18 +4301,78 @@ class Voice {
   }
 
   /**
+   * The mic re-sync at `LocalTrackPublished` (final audit F4, its trigger
+   * set stated in full by the wave-4 completion audit F2). It runs on EVERY
+   * microphone landing under an empty gate, not only the F4 case:
+   *  - the F4 case proper: `#resumeGate` re-runs `#syncMicPipeline` at the
+   *    gate's 1->0 edge, but if the mic was mid-republish at that edge --
+   *    unpublished, its new sender not yet in `trackPublications` -- that
+   *    re-run found no microphone publication, attached nothing, and no
+   *    later edge would come: the D6 attach was lost for the call. The
+   *    landing is the one place left that can run it;
+   *  - a plain non-E2EE join: the gate is never held, so the attach now
+   *    starts HERE, inside livekit's `LocalTrackPublished` emit (synchronous
+   *    in `publishOrRepublishTrack`, right after `addTrackPublication`),
+   *    ahead of the join `.then` in `connect()` that used to be the first
+   *    attach;
+   *  - a mic enabled after joining muted -- the born-paused handoff's open
+   *    question 5 ("may never get the pipeline"), resolved: the attach runs
+   *    at the landing, with no settings change or gate edge needed;
+   *  - a signal-reconnect republish (and any other republish that lands
+   *    under an empty gate: the E2EE flip, the declaration seam).
+   * Attach-at-publish on a plain call is INTENDED, not a side effect: an
+   * empty gate is exactly what D6 allows an attach under. Safe at this
+   * point of the emit for two reasons. livekit's `publishOrRepublishTrack`
+   * calls `track.setAudioContext(...)` before anything else it does, so
+   * `LocalAudioTrack.setProcessor` cannot throw for a missing context
+   * (2.15.13, its only synchronous guard). And `#syncMicPipeline` assigns
+   * `#micPipeline = created` synchronously, before its awaited
+   * `setProcessor`, so the join `.then` -- which resolves after this emit
+   * returns -- finds `hasPipeline` and takes the `tune` branch: one
+   * pipeline, never two. `micPipelineAction` still decides (tune in place
+   * / none / attach / defer), and a held gate still defers to its own 1->0
+   * edge.
+   *
+   * 🔴 NOT RUN LIVE. The banked leg's 6/6 landings were all under a HELD
+   * gate (the `sweep` arm), so the plain-call and enable-after-muted
+   * triggers above have been reasoned from the pinned source, not
+   * observed. A leg is owed.
+   */
+  #syncMicPipelineIfLanded(room: Room, pub: { source: Track.Source }) {
+    if (pub.source !== Track.Source.Microphone) return;
+    if (this.#gateHeld() || this.room() !== room) return;
+    this.#syncMicPipeline(room, this.#micPipelineWants());
+  }
+
+  /**
    * Reconcile the mic processor with the settings. LiveKit gives a track
    * ONE processor slot, so every mic stage lives in the same
    * `VoiceAudioPipeline` and this is the only place that attaches one.
    * All-default settings (browser/no noise filter, unity gain, shaper off)
    * run the raw capture with no Web Audio hop at all; the pipeline is
-   * attached the first time any stage is wanted and then stays for the
-   * life of the track, tuned in place.
+   * attached the first time any stage is wanted WHILE THE PUBLISH GATE IS
+   * EMPTY, and then stays for the life of the track, tuned in place. Under
+   * a held gate the attach is deferred (plan D6) -- nothing is stored, and
+   * `#resumeGate` re-runs this sync at the gate's 1->0 edge, after its
+   * awaited resume sweep, re-reading `#micPipelineWants()` then. The
+   * decision is `micPipelineAction` (`micPipelinePolicy.ts`), pure so it is
+   * spec- and mutation-reachable; only the wiring lives here.
    */
   #syncMicPipeline(room: Room, want: MicPipelineWants) {
     if (this.room() !== room) return;
     const pipeline = this.#micPipeline;
-    if (pipeline) {
+    const action = micPipelineAction({
+      gateHeld: this.#gateHeld(),
+      hasPipeline: !!pipeline,
+      wantsDefault:
+        !want.denoise &&
+        want.gainPercent === 100 &&
+        want.tonePreset === VOICE_TONE_PRESET_DEFAULT,
+    });
+    if (action === "tune") {
+      // "tune" is the `hasPipeline` arm, so the slot is live here; the guard
+      // is for the type only and never falls through to a second attach.
+      if (!pipeline) return;
       pipeline.setGain(want.gainPercent);
       pipeline.setTonePreset(want.tonePreset).catch(() => undefined);
       // Asset load can fail (offline at first enable): denoise stays off and
@@ -3798,23 +4380,40 @@ class Voice {
       pipeline.setDenoiseEnabled(want.denoise).catch(() => undefined);
       return;
     }
-    if (
-      !want.denoise &&
-      want.gainPercent === 100 &&
-      want.tonePreset === VOICE_TONE_PRESET_DEFAULT
-    )
+    if (action === "none") return;
+    if (action === "defer") {
+      // The attach below would `replaceTrack(processedTrack)` inside a held
+      // gate -- the processor mirror window (plan D6). Nothing is stored:
+      // `#resumeGate` re-runs this sync at the gate's 1->0 edge, after the
+      // awaited resume sweep, re-reading `#micPipelineWants()` at fire time.
       return;
+    }
     const track = room.localParticipant.getTrackPublication(
       Track.Source.Microphone,
     )?.audioTrack;
     if (!(track instanceof LocalAudioTrack)) return;
     const created = new VoiceAudioPipeline(want);
     this.#micPipeline = created;
-    track.setProcessor(created).catch(() => {
-      // Attach threw post-publish: the raw track keeps flowing. Forget the
-      // pipeline so the next settings change can try again.
-      if (this.#micPipeline === created) this.#micPipeline = undefined;
-    });
+    // [F11] A `disconnect()` racing `init` bumps `#connectGen` and drops
+    // `#micPipeline`, so an attach that resolves for a dead call must not
+    // leave a processor on the stopped track: destroy what was built.
+    const gen = this.#connectGen;
+    track.setProcessor(created).then(
+      () => {
+        if (gen !== this.#connectGen) void created.destroy();
+      },
+      () => {
+        // Attach threw post-publish: the raw track keeps flowing. Forget the
+        // pipeline so the next settings change can try again.
+        // A rejection can arrive after `init` succeeded (`replaceTrack` on a
+        // closing transport), with the graph built; if the call is already
+        // gone, nothing else will ever destroy it (livekit's `stop()` only
+        // destroys a processor assigned at stop time). `#teardown` is
+        // idempotent, so a double destroy is safe.
+        if (gen !== this.#connectGen) void created.destroy();
+        if (this.#micPipeline === created) this.#micPipeline = undefined;
+      },
+    );
   }
 
   async #setMicEnabled(room: Room, enabled: boolean) {

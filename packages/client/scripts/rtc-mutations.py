@@ -105,10 +105,130 @@ HARNESS = "mlsCallSession.harness.ts"
 #: `callPauseDisproofConfirmed` at runtime yet, so the swap's only observable
 #: effect is the harmful half. Closing it needs ONE write instead of two, not
 #: another entry here.
+#:
+#: 🔴 AND THE TWO BORN-PAUSED WIRINGS (plan D0, wave 1, 2026-09-14), which
+#: this table reaches no better than the rest of `state.tsx`:
+#:  (i)  the `ParticipantEvent.LocalSenderCreated` registration — the listener
+#:       body at the `LocalSenderCreated` emit — that builds ONE
+#:       `GatedPublication` over the new track with
+#:       `gatedPublicationFromSender` and hands it to `pauseAtBirth` under
+#:       `this.#gateHeld`, then reports on the sweep's `unproven`. The
+#:       `born-paused-*` entries below pin what `pauseAtBirth` and the adapter
+#:       DO; nothing here can pin that the listener is registered at all, that
+#:       its guard order is `room → isLocalTrack`, or that it reports on
+#:       `unproven` rather than on an empty `proven`. Drop the registration
+#:       and the hook is fully specified and never called.
+#:  (ii) the publish-time kick in the `LocalTrackPublished` handler, which
+#:       since wave 4 (final audit F1) is no longer unconditional. Wave 1 had
+#:       made it a bare `#applyPublishGate(room)` on every publish so a
+#:       born-paused publication whose gate emptied DURING its offer/answer
+#:       (`{flag: true, sender.track: null}` under an empty gate, invisible to
+#:       the 1→0 sweep and to `#reassertPublishGate`) got resumed by the only
+#:       sweep that could see it; the audit found that empty-gate sweep also
+#:       resumed every OTHER `{flag: true, quiet}` publication, the
+#:       screen-share consent-pending pause included. Now: the
+#:       `LocalSenderCreated` hook adds the track to the `#bornPaused` WeakSet
+#:       ONLY when `pauseAtBirth` returned a sweep — the gate was HELD at the
+#:       emit — whatever op that sweep then chose: a `pause`, a `repause`, or
+#:       a `none` (`publishGateOp`: a sender whose transport had already
+#:       closed reads `unpublished`; a quiet sender already under a true flag
+#:       is left alone). The tag means "born under a held gate", not "a pause
+#:       was issued"; the handler
+#:       `delete`s the tag at `LocalTrackPublished` — consumed WHATEVER arm is
+#:       then chosen, so it cannot outlive its publication and fire on a later
+#:       republish of the same `LocalTrack` — and asks
+#:       `publishKickAction({gateHeld, bornPaused})`: `"sweep"` runs the full
+#:       `#applyPublishGate(room)` (held gate; pause/repause arms only, nothing
+#:       resumed), `"resumeLanded"` runs
+#:       `applyPublishGate([gatedPublicationFromSender({source, sid:
+#:       pub.trackSid, track})], this.#gateHeld, {})` over the landed
+#:       publication ALONE — the empty-gate arm resumes ONLY the tagged track;
+#:       a pause the hook did not issue (screen-share consent pending, a user
+#:       mute) is somebody else's decision and stays — and `"none"` touches
+#:       nothing. After it, `#syncMicPipelineIfLanded(room, pub)` re-runs
+#:       `#syncMicPipeline` when the landed track is the mic and the gate is
+#:       empty. That is the F4 re-run (the D6 attach for a mic whose gate
+#:       emptied mid-offer) but NOT only that: it fires on EVERY microphone
+#:       landing under an empty gate — from the `"none"` arm as much as from
+#:       `"resumeLanded"` — a plain non-E2EE join, a mic enabled after
+#:       joining muted, a signal-reconnect republish; attach-at-publish on a
+#:       plain call is intended, and `micPipelineAction` still decides (tune
+#:       in place / none / attach) so an attached pipeline is only tuned.
+#:       Before all of it, the `TrackEvent.UpstreamPaused` re-emit, which is
+#:       what carries the server-side mute for the sid the answer just
+#:       assigned. The `publish-kick-*` entries below pin what
+#:       `publishKickAction` DECIDES; nothing here can pin that the tag is set
+#:       only on a returned sweep (a held-gate emit), that it is deleted
+#:       before the decision rather than on one arm only, that the
+#:       `"resumeLanded"` op is built over `pub.track` with the landed
+#:       `trackSid` rather than swept over the room, or that the mic re-run
+#:       exists at all on either empty-gate arm. Restore the unconditional
+#:       sweep and the consent-pending share goes on the wire ahead of its
+#:       answer on every shell; restore the pre-wave-1 `size > 0` condition
+#:       and the strand is back — both with every spec green.
+#: AND THE TWO MIC-PIPELINE-DEFERRAL WIRINGS (plan D6, wave 2, 2026-09-14),
+#: the same shape one wave later:
+#:  (iii) the `micPipelineAction(...)` call inside `#syncMicPipeline`, after
+#:       its `this.room() !== room` early return, that turns the pure decision
+#:       into the branch taken — `"tune"` in place, `"none"` a plain return
+#:       (the raw capture IS what the settings ask for; nothing to tear down),
+#:       `"defer"` doing NOTHING (nothing stored; the wants are re-read when
+#:       the edge fires), `"attach"` building the `VoiceAudioPipeline` and
+#:       issuing `setProcessor` — plus the `gen = this.#connectGen` capture
+#:       whose continuation `destroy()`s the pipeline when a `disconnect()`
+#:       raced `init`. The `mic-pipeline-*` entries below pin what the
+#:       decision SAYS; nothing here can pin that `#syncMicPipeline` asks it,
+#:       that it feeds `this.#gateHeld()` rather than a constant, or that the
+#:       `"defer"` arm really falls through to no attach. Bypass the call and
+#:       the join-time RNNoise attach lands inside the held gate again, the
+#:       1.4–2.8 s mirror window `setProcessor → replaceTrack(processed)`
+#:       measured in rejoin-leak handoff §7.9, with every spec green.
+#:  (iv) the re-run at the gate's single 1→0 edge: in `#resumeGate`, AFTER
+#:       the awaited `#applyPublishGate(room)` sweep and only when
+#:       `this.#publishGate.size === 0 && this.room() === room`, the
+#:       fire-and-forget `this.#syncMicPipeline(room, this.#micPipelineWants())`
+#:       that performs the deferred attach. Two things live here that no
+#:       entry reaches: that the re-run EXISTS (drop it and a mic that joined
+#:       under a held gate never gets its pipeline — a quality regression the
+#:       user hears as "the noise filter is off", not a leak), and that it
+#:       sits AFTER the sweep (plan F12 as corrected by the wave-2 audit: the
+#:       `size === 0` re-check is only meaningful once the drive has settled,
+#:       and an attach must not be issued while the sweep's own repause may
+#:       still be mid-flight on the same sender; it is NOT a last-writer-wins
+#:       race over the raw track — livekit's `mediaStreamTrack` getter
+#:       prefers `processor.processedTrack` and `setProcessor` assigns
+#:       `processor` before its `replaceTrack`, so either order converges
+#:       on the processed track).
+#: Same rule as above: no `expect="green"` entry and no `grep -qF` over a file
+#: no runner can load. The live tier is what covers them, and on 2026-09-14 it
+#: RAN (rejoin-leak handoff §7.10): wave 3's receiver-side frame tap and
+#: reducer plus the subject's per-sender `getStats()` reads, in a `mixed` call,
+#: two passes (`enhanced`, `browser`), 6/6 mic publishes under a held gate.
+#: COVERED: (i) the hook — every sender read `packetsSent 0 / bytesSent 0` at
+#: `localTrackPublished.entry`, at `resumeGate emptied:true` and at the resume
+#: record itself, climbing only after the resume (subject-side counters; the
+#: observer tap bound 40–240 ms late and proves only that nothing PERSISTED);
+#: (iii)+(iv) D6 — `track.processorUpdate` +719 ms AFTER the gate-empty
+#: (pass A); the `UpstreamPaused` re-emit — the peer-visible `mic_off` during
+#: the hold (pass B, an operator DOM read). NOT covered: the empty-gate
+#: `"resumeLanded"` arm of (ii) — in every episode the gate emptied AFTER the
+#: publish had landed (the two consent republishes by ~55–64 ms, the other
+#: four held to disconnect), so the mid-offer empty that arm exists for never
+#: occurred and its resume never fired; the `"none"`-arm attach at publish
+#: of (ii)'s mic re-run — all 6/6 landings were under a held gate, so every
+#: kick read `"sweep"`, the one arm that never calls
+#: `#syncMicPipelineIfLanded`, and the pass-A attach came +719 ms after the
+#: gate-empty, from the 1→0 edge (iv), never from a landing (no
+#: plain-call join, muted-join mic enable or signal-reconnect republish was
+#: in the leg); and E2EE-on: the call was `mixed` throughout, so the seat
+#: never ran `set_e2ee(true)`. Those three remain admitted here, not
+#: measured, until an E2EE-on two-native-seat leg and a plain-call leg run.
 STATE = "state.tsx"
 GATE = "publishGate.ts"
 EPISODE = "publishGateEpisode.ts"
 VERDICT = "pauseVerdict.ts"
+MIC_POLICY = "micPipelinePolicy.ts"
+KICK_POLICY = "publishKickPolicy.ts"
 
 JOINRACE_SPEC = "components/rtc/mlsCallSession.joinrace.test.ts"
 HEAL_SPEC = "components/rtc/mlsCallSession.heal.test.ts"
@@ -118,6 +238,8 @@ GATE_SPEC = "components/rtc/publishGate.test.ts"
 EPISODE_SPEC = "components/rtc/publishGateEpisode.test.ts"
 VERDICT_SPEC = "components/rtc/pauseVerdict.test.ts"
 RESECURE_SPEC = "components/rtc/mlsCallSession.resecure.test.ts"
+MIC_POLICY_SPEC = "components/rtc/micPipelinePolicy.test.ts"
+KICK_POLICY_SPEC = "components/rtc/publishKickPolicy.test.ts"
 ALL_SPECS = [POLICY_SPEC, HEAL_SPEC, JOINRACE_SPEC]
 
 
@@ -1026,10 +1148,16 @@ MUTATIONS += [
         id="wiring-upstream-always-quiet",
         what="the GatedPublication adapter reports every sender detached, which re-creates the 2026-09-08 defect AND disables the fail-closed report entirely (`upstream() === 'live'` becomes universally false, so the post-condition can never fire)",
         file=EPISODE,
-        search="""        if (!sender) return "unpublished";
-        if (!sender.track) return "quiet";""",
-        replace="""        if (!sender) return "unpublished";
-        return "quiet";""",
+        # Retargeted 2026-09-14 (born-paused wave 1): the three-valued read
+        # moved out of the adapter body into the exported `upstreamOf`, which
+        # BOTH adapters now call through one shared builder, so the old
+        # 8-space window matches nothing. Same defect, same two lines, at
+        # 2-space indent — and it now reaches the born-paused adapter as well,
+        # because there is exactly one body to reach.
+        search="""  if (!sender) return "unpublished";
+  if (!sender.track) return "quiet";""",
+        replace="""  if (!sender) return "unpublished";
+  return "quiet";""",
         specs=[EPISODE_SPEC],
     ),
 ]
@@ -1401,10 +1529,14 @@ MUTATIONS += [
         id="episode-adapter-snapshots-the-wire",
         what="`gatedPublicationsFrom` SNAPSHOTS the pause flag instead of exposing a getter, so the sweep's post-condition re-asserts its own pre-condition — deleting the only read in the stack that observes what the op actually did",
         file=EPISODE,
-        search="""      get upstreamPaused() {
-        return track.isUpstreamPaused;
-      },""",
-        replace="""      upstreamPaused: track.isUpstreamPaused,""",
+        # Retargeted 2026-09-14 (born-paused wave 1): the getter now exists
+        # ONCE, inside the non-exported builder `gatedPublicationOf` that both
+        # adapters call, at 4/6/4-space indentation; the old 6/8/6 window
+        # matches nothing. Same defect at the same — now single — site.
+        search="""    get upstreamPaused() {
+      return track.isUpstreamPaused;
+    },""",
+        replace="""    upstreamPaused: track.isUpstreamPaused,""",
         specs=[EPISODE_SPEC],
     ),
     Mutation(
@@ -1777,6 +1909,212 @@ MUTATIONS += [
     #       no caller that re-enters faster than the bound without an owner; and
     #       the drop / `welcome adopted` / `join ladder: joined` logs are log-only
     #       — the live leg's expected console lines are their check.
+]
+
+# --- Born paused (plan D0, wave 1, 2026-09-14) -------------------------------
+#
+# `publishGateEpisode.ts`'s second adapter (`gatedPublicationFromSender`, over
+# the shared builder `gatedPublicationOf`) plus `pauseAtBirth`, the hook's only
+# entry into the gate. Run 3 of the rejoin-leak legs measured why they exist:
+# livekit creates the sender ALREADY carrying the live track and emits
+# `LocalSenderCreated` one statement later, so the earliest pause the ordinary
+# sweep could issue — at `LocalTrackPublished` — let the seat's first 1–4 RTP
+# packets leave as plaintext on every publish under a held gate, and a
+# republish inside the gate reopened the window for seconds.
+#
+# The specs are split across BOTH spec files: `publishGate.test.ts` drives the
+# hook through `FakeLocalTrack.republish(hook)`, which models livekit assigning
+# `track.sender` and emitting one statement later, on both wire models;
+# `publishGateEpisode.test.ts` pins the adapter's name rule, the lazy sender
+# read and the senderless input. Each entry lists the file(s) MEASURED to go
+# red under it and no other — a spec that cannot reach a mutation is how an
+# entry reports a vacuous green.
+#
+# Every entry targets `EPISODE`. The `state.tsx` half of D0 — the
+# `LocalSenderCreated` registration, the publish-time kick (scoped by wave 4;
+# its decision has its own section below) and the `UpstreamPaused` re-emit —
+# is wiring no runner can load, and is recorded in the header admission above
+# rather than as an entry.
+#
+# Where an entry lists BOTH files, both were measured red under it on
+# 2026-09-14 with every test executing; `judge()` walks them in order and the
+# first red decides, so the gate spec is the one that usually pays.
+
+MUTATIONS += [
+    Mutation(
+        id="born-paused-adapter-reports-unpublished",
+        what="the shared builder's `upstream` thunk reports every sender `unpublished`, so `publishGateOp` decides `none` for the born publication and nothing is issued at birth — the hook wired, silent, and the plaintext window back exactly as measured",
+        file=EPISODE,
+        search="""    upstream: (): UpstreamState => upstreamOf(track.sender),""",
+        replace="""    upstream: (): UpstreamState => "unpublished",""",
+        specs=[GATE_SPEC, EPISODE_SPEC],
+    ),
+    Mutation(
+        id="born-paused-bare-pause",
+        what="`pauseAtBirth` bypasses the per-publication policy with a bare `pauseUpstream()`, which early-returns on a republish's stale-true flag — so the republish inside a held gate, the seconds-long half of the measured window, is MISSED while the hook reports it proven",
+        file=EPISODE,
+        search="""  return applyPublishGate([pub], gateHeld, {});""",
+        replace="""  void pub.pauseUpstream();
+  return Promise.resolve({
+    unproven: [],
+    failed: [],
+    repauseFailed: [],
+    repauseThrew: [],
+    proven: [pub.name],
+  });""",
+        specs=[GATE_SPEC, EPISODE_SPEC],
+    ),
+    Mutation(
+        id="born-paused-flagless-detach",
+        what="the born adapter's `pause` detaches through the sender without `track.pauseUpstream()`, so livekit's `_isUpstreamPaused` never flips and the gate's later `resume` — which early-returns on a cleared flag — can never re-attach it: that sender is mute for the rest of the call",
+        file=EPISODE,
+        search="""    () => track.pauseUpstream(),""",
+        replace="""    () =>
+      Promise.resolve(
+        (
+          track.sender as unknown as
+            | { replaceTrack?(t: null): Promise<void> }
+            | null
+            | undefined
+        )?.replaceTrack?.(null),
+      ).then(() => undefined),""",
+        specs=[GATE_SPEC, EPISODE_SPEC],
+    ),
+    Mutation(
+        id="born-paused-ignores-the-gate",
+        what="`pauseAtBirth` drops its `gateHeld()` guard, so a track born under an EMPTY gate is swept anyway — a resume sweep over a publication nothing asked to pause, emitting `UpstreamResumed` into `#reassertPublishGate` for nothing",
+        file=EPISODE,
+        search="""  if (!gateHeld()) return null;
+  return applyPublishGate([pub], gateHeld, {});""",
+        replace="""  return applyPublishGate([pub], gateHeld, {});""",
+        specs=[GATE_SPEC, EPISODE_SPEC],
+    ),
+    Mutation(
+        id="born-paused-name-collides-with-episode-key",
+        what="the born publication takes the EPISODE KEY `${source}/${sid}` as its name instead of `${source}/${sid ?? 'no-sid'}#born`, so a first publish is named after a sid that does not exist yet and a republish after the publication the answer is about to REPLACE — and either collides with the key `consume` spends by",
+        file=EPISODE,
+        search="""    `${input.source}/${input.sid ?? "no-sid"}#born`,""",
+        replace="""    `${input.source}/${input.sid}`,""",
+        specs=[GATE_SPEC, EPISODE_SPEC],
+    ),
+    Mutation(
+        id="born-adapter-captures-the-sender",
+        what="the shared builder captures `track.sender` when the publication is BUILT and the thunk reads that constant, so once a republish swaps the sender the post-condition answers for a transceiver that no longer carries anything — `quiet` about a wire that is live on its successor",
+        file=EPISODE,
+        search="""  return {
+    name,
+    get upstreamPaused() {
+      return track.isUpstreamPaused;
+    },
+    upstream: (): UpstreamState => upstreamOf(track.sender),""",
+        replace="""  const sender = track.sender;
+  return {
+    name,
+    get upstreamPaused() {
+      return track.isUpstreamPaused;
+    },
+    upstream: (): UpstreamState => upstreamOf(sender),""",
+        # EPISODE_SPEC only: measured 2026-09-14, `publishGate.test.ts` stays
+        # green at its full count under this mutant (its fakes never swap the
+        # sender between construction and the post-condition), and only "the
+        # born adapter reads the CURRENT sender, never a captured one" catches
+        # it. Naming a spec that cannot reach a mutation is how an entry
+        # reports a vacuous green, so the list says where the evidence is.
+        specs=[EPISODE_SPEC],
+    ),
+]
+
+
+# --- Mic pipeline deferral (plan D6, wave 2, 2026-09-14) ---------------------
+#
+# `micPipelinePolicy.ts` is the pure decision `#syncMicPipeline` asks before it
+# touches the mic's processor slot. Runs 1 and 3 of the rejoin-leak legs
+# measured why it exists: the join-time RNNoise attach runs
+# `LocalAudioTrack.setProcessor`, which in the pinned livekit-client 2.15.13
+# does `await sender.replaceTrack(processedTrack)` on `trackChangeLock` — not
+# the gate's `pauseUpstreamLock` — and emits `TrackProcessorUpdate` only AFTER
+# that, so under a held gate the processed mic was on the wire for 1.4–2.8 s
+# until the re-assert's `pauseUpstream()` landed. The decision is extracted so
+# these two rules are reachable here; the wiring (`#syncMicPipeline` asking it,
+# the `#resumeGate` re-run after the awaited sweep) is recorded in the header
+# admission above, items (iii) and (iv), never as an entry.
+#
+# Both entries target `MIC_POLICY` and were measured red under
+# `micPipelinePolicy.test.ts` alone on 2026-09-14 with all 4 tests executing.
+
+MUTATIONS += [
+    Mutation(
+        id="mic-pipeline-attaches-under-a-held-gate",
+        what="the held-gate arm returns `attach` instead of `defer`, so the join-time processor attach lands inside a held publish gate — reopening the mirror window `setProcessor → replaceTrack(processedTrack)` that measured 1.4–2.8 s of exposure on every join",
+        file=MIC_POLICY,
+        search="""  if (input.gateHeld) return "defer";""",
+        replace="""  if (input.gateHeld) return "attach";""",
+        specs=[MIC_POLICY_SPEC],
+    ),
+    Mutation(
+        id="mic-pipeline-tune-loses-to-gate",
+        what="the gate check is moved ABOVE the `hasPipeline` check, so a held gate defers even when a pipeline already exists — a mid-hold settings change on an existing pipeline is LOST for the whole hold instead of tuned in place (tuning is state-only and never touches the sender)",
+        file=MIC_POLICY,
+        search="""  if (input.hasPipeline) return "tune";
+  if (input.wantsDefault) return "none";
+  if (input.gateHeld) return "defer";""",
+        replace="""  if (input.gateHeld) return "defer";
+  if (input.hasPipeline) return "tune";
+  if (input.wantsDefault) return "none";""",
+        specs=[MIC_POLICY_SPEC],
+    ),
+]
+
+
+# --- Publish-time kick scoping (final audit F1, wave 4, 2026-09-14) ----------
+#
+# `publishKickPolicy.ts` is the pure decision the `LocalTrackPublished` handler
+# asks about the gate once a publication has landed. Wave 1 made that kick
+# UNCONDITIONAL: the born-paused publication whose gate emptied DURING its
+# offer/answer lands as `{flag: true, sender.track: null}` under an empty gate,
+# invisible to the 1→0 sweep and to `#reassertPublishGate` (both read
+# `trackPublications`, which did not hold it yet), so the publish-time sweep was
+# the only thing left that could resume it. The final audit (F1) found the
+# empty-gate sweep resumes EVERY `{flag: true, quiet}` publication, and the
+# screen-share consent-pending pause — `pauseUpstream()` issued while the
+# viewer-consent answer is still pending, on every shell — is one, so the
+# sweep put the share on the wire ahead of its answer. The gate is not the
+# only owner of `pauseUpstream()`, so "gate empty" cannot mean "resume
+# everything quiet". The decision is extracted so its three arms are reachable
+# here; the wiring (the `#bornPaused` tag and its consumption, the
+# `"resumeLanded"` op over the landed publication alone,
+# `#syncMicPipelineIfLanded`) is header admission item (ii), never an entry.
+#
+# All three entries target `KICK_POLICY` and were measured red under
+# `publishKickPolicy.test.ts` alone on 2026-09-14 with all 4 tests executing.
+
+MUTATIONS += [
+    Mutation(
+        id="publish-kick-sweeps-only-born",
+        what="the gate check is moved BELOW the born check, so every born-paused track landing under a STILL-HELD gate (the common case: the gate held for the whole offer/answer, 6/6 publishes in the wave-3 leg) reads `resumeLanded` — a bare one-publication `applyPublishGate(..., {})` instead of the episode's coalescing `#applyPublishGate(room)`: the op still reads the held gate so it pauses rather than resumes, but it runs outside the per-drive `repauseSpent`/`repausePending` bookkeeping and the `stillCurrent` generation check, nothing else in the map is re-asserted on that publish, and `unproven` — the only report a held gate produces — is dropped, because that arm reports on `failed`",
+        file=KICK_POLICY,
+        search="""  if (input.gateHeld) return "sweep";
+  if (input.bornPaused) return "resumeLanded";""",
+        replace="""  if (input.bornPaused) return "resumeLanded";
+  if (input.gateHeld) return "sweep";""",
+        specs=[KICK_POLICY_SPEC],
+    ),
+    Mutation(
+        id="publish-kick-resumes-everything",
+        what="the born arm returns `sweep` instead of `resumeLanded`, so a born-paused publication landing under an empty gate runs the whole-map sweep instead of its own resume — every other `{flag: true, quiet}` publication in the map goes on the wire with it, the consent-pending screen share included when its born-paused native-audio track lands: wave 1's F1 regression, back on every shell through every born-paused landing",
+        file=KICK_POLICY,
+        search="""  if (input.bornPaused) return "resumeLanded";""",
+        replace="""  if (input.bornPaused) return "sweep";""",
+        specs=[KICK_POLICY_SPEC],
+    ),
+    Mutation(
+        id="publish-kick-ignores-empty-gate",
+        what="the last arm returns `resumeLanded` instead of `none`, so an empty gate issues the gate's resume over EVERY landing publication, tagged or not — the gate undoing a pause it never issued. In today's ordering it reaches no quiet wire (every non-gate `pauseUpstream()` owner — the consent-pending share pause, the ask-modal pause — fires AFTER its own publication has landed, and a republish lands with a live sender), so this is the F1 rule itself, `resume ONLY what the hook paused`: the first pause owner that runs before its publish, on any shell, is put on the wire by this arm",
+        file=KICK_POLICY,
+        search="""  return "none";""",
+        replace="""  return "resumeLanded";""",
+        specs=[KICK_POLICY_SPEC],
+    ),
 ]
 
 

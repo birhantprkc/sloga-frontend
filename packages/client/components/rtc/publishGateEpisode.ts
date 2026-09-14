@@ -16,8 +16,14 @@
  * whole lifecycle were unreachable by any mutation, and TWO fifth-review
  * findings lived in exactly that region.
  *
- * This module is that region, extracted, with no runtime import at all — only
- * types from `publishGate.ts`.
+ * This module is that region, extracted. It has ONE runtime import from
+ * `publishGate.ts` — {@link applyPublishGate}, for {@link pauseAtBirth} — and
+ * otherwise only types. The born-paused hook must issue livekit's own
+ * `pauseUpstream()` / repause through the existing per-publication policy,
+ * never a bare `sender.replaceTrack(null)`: a detach issued outside livekit's
+ * `_isUpstreamPaused` flag is one its `resumeUpstream()` can never undo (it
+ * early-returns on a cleared flag), so the gate's own 1→0 resume would leave
+ * that sender mute for the rest of the call.
  *
  * 🔴 FOUR SCOPES, and collapsing any two of them is a defect that has already
  * shipped once in each direction:
@@ -162,10 +168,11 @@
  * is only that the distinction exists, is honest, and is not reachable only
  * through a log line.
  */
-import type {
-  GatedPublication,
-  PublishGateSweep,
-  UpstreamState,
+import {
+  type GatedPublication,
+  type PublishGateSweep,
+  type UpstreamState,
+  applyPublishGate,
 } from "./publishGate.ts";
 
 /**
@@ -434,15 +441,83 @@ export interface SenderLike {
 }
 
 /**
- * Present livekit's local publications to the sweep. Three-valued
- * {@link UpstreamState}, from the same triple livekit's own guards read.
+ * What ONE sender can send, as the sweep needs to see it: the three-valued
+ * {@link UpstreamState}, read from the same triple livekit's own guards read
+ * (`sender`, `sender.track`, `sender.transport.state`).
+ *
+ * This is the whole observation the gate has of the wire, and it is a function
+ * of the SENDER rather than of a publication because two adapters need it over
+ * senders that reach them by different routes: {@link gatedPublicationsFrom}
+ * reads `pub.track.sender` for every publication in `trackPublications`, and
+ * {@link gatedPublicationFromSender} reads `track.sender` for a track that is
+ * NOT yet in `trackPublications` at all (see there). One body, so the two
+ * cannot drift — a second copy of this decision is a second place for the
+ * 2026-09-08 fail-open to come back.
+ *
+ * 🔴 Every caller must read it LAZILY — `upstreamOf(track.sender)` at call
+ * time, never over a sender captured at construction. livekit REPLACES
+ * `track.sender` on every republish (`unpublishTrack` clears it; the next
+ * `publishOrRepublishTrack` assigns a new one), so a captured sender answers
+ * for a transceiver that may no longer carry anything — `"quiet"` about a wire
+ * that is live on its successor. {@link gatedPublicationOf} is the only place
+ * the read is spelled, and it reads the field.
+ */
+export function upstreamOf(
+  sender: SenderLike | null | undefined,
+): UpstreamState {
+  if (!sender) return "unpublished";
+  if (!sender.track) return "quiet";
+  // `new` / `connecting` / `failed` and an absent transport all read as
+  // live: the conservative direction, and `replaceTrack(null)` still
+  // succeeds on a failed transport. Only `closed` (terminal) is quiet,
+  // which is livekit's own test.
+  return sender.transport?.state === "closed" ? "quiet" : "live";
+}
+
+/**
+ * The ONE {@link GatedPublication} over a livekit `LocalTrack`, shared by both
+ * adapters below so the pause-flag getter and the wire thunk exist exactly
+ * once in this module.
  *
  * 🔴 The reads are LAZY — `upstreamPaused` is a getter and `upstream` is a
  * thunk — because `applyPublishGate` reads them itself, inside its own
  * per-publication try, and reads them AGAIN after the op as the
  * post-condition. Snapshotting either here would turn the post-condition into
  * a re-assertion of the pre-condition and silently delete the only thing in
- * the stack that observes the wire.
+ * the stack that observes the wire. And the thunk re-reads `track.sender` on
+ * every call, for the reason on {@link upstreamOf}: a republish swaps the
+ * sender, and the post-condition must judge the one that exists THEN.
+ *
+ * Not exported. The two adapters are its only callers, and each names its
+ * publication differently for a reason each one states.
+ */
+function gatedPublicationOf(
+  name: string,
+  track: LocalTrackLike,
+  pause: () => Promise<void>,
+  resume: () => Promise<void>,
+): GatedPublication {
+  return {
+    name,
+    get upstreamPaused() {
+      return track.isUpstreamPaused;
+    },
+    upstream: (): UpstreamState => upstreamOf(track.sender),
+    pauseUpstream: pause,
+    resumeUpstream: resume,
+  };
+}
+
+/**
+ * Present livekit's local publications to the sweep: every publication in
+ * `localParticipant.trackPublications` that currently has a track, through
+ * {@link gatedPublicationOf}, named `${source}/${trackSid}`.
+ *
+ * That name is the EPISODE KEY. {@link PublishGateEpisode.consume} spends and
+ * un-spends by it, `repauseSpent` / `repausePending` are keyed by it, and the
+ * reports carry it. It is stable for the life of a publication, which is what
+ * lets a spend made on one pass be lifted by a later one — and is exactly why
+ * the born-paused adapter below must NOT use it.
  */
 export function gatedPublicationsFrom(
   publications: Iterable<LocalPublicationLike>,
@@ -453,27 +528,125 @@ export function gatedPublicationsFrom(
     // Nothing to pause and nothing to read: `unpublishTrack` clears this for a
     // whole offer/answer during every republish.
     if (!track) continue;
-    gated.push({
-      // Source + SID: enough to identify it in a log, never user content.
-      name: `${pub.source}/${pub.trackSid}`,
-      get upstreamPaused() {
-        return track.isUpstreamPaused;
-      },
-      upstream: (): UpstreamState => {
-        const sender = track.sender;
-        if (!sender) return "unpublished";
-        if (!sender.track) return "quiet";
-        // `new` / `connecting` / `failed` and an absent transport all read as
-        // live: the conservative direction, and `replaceTrack(null)` still
-        // succeeds on a failed transport. Only `closed` (terminal) is quiet,
-        // which is livekit's own test.
-        return sender.transport?.state === "closed" ? "quiet" : "live";
-      },
-      pauseUpstream: () => pub.pauseUpstream(),
-      resumeUpstream: () => pub.resumeUpstream(),
-    });
+    gated.push(
+      gatedPublicationOf(
+        // Source + SID: enough to identify it in a log, never user content.
+        `${pub.source}/${pub.trackSid}`,
+        track,
+        () => pub.pauseUpstream(),
+        () => pub.resumeUpstream(),
+      ),
+    );
   }
   return gated;
+}
+
+/**
+ * Present ONE track to the sweep at the moment livekit CREATES its sender —
+ * the `ParticipantEvent.LocalSenderCreated` hook (plan D0, "born paused").
+ *
+ * Why a second adapter exists. livekit 2.15.13 creates the sender ALREADY
+ * CARRYING the live track (`addTransceiver(track.mediaStreamTrack, …)`),
+ * assigns `track.sender`, and emits `LocalSenderCreated` synchronously one
+ * statement later — with the sender in hand and BEFORE the offer/answer. RTP
+ * starts when the answer is applied. Between that emit and the
+ * `LocalTrackPublished` the ordinary sweep acts on, the publication is ABSENT
+ * from `trackPublications` (`unpublishTrack` deleted it; `addTrackPublication`
+ * re-adds it at the end), so {@link gatedPublicationsFrom} cannot see it, and
+ * the first 20–80 ms of a first publish — and seconds of a republish inside a
+ * held gate — left the device as plaintext (rejoin-leak handoff §7.9). This
+ * adapter is how the hook hands that one track to the SAME policy.
+ *
+ * It works at the emit because, on the targets we ship (WebView2, Android
+ * WebView; Safari < 12 throws after the flag), `pauseUpstream()`'s only guards are the flag
+ * and `if (!this.sender)`, and both are satisfied: the sender exists, and
+ * `sender.transport` is still null pre-negotiation, so the
+ * `transport?.state !== 'closed'` test passes and `replaceTrack(null)` IS
+ * issued. On a first publish the flag is false and `publishGateOp` yields
+ * `pause`; on a republish the flag is stale-TRUE (`unpublishTrack` clears
+ * `track.sender` and never the flag — `publishGate.ts`, case 1) over a live
+ * sender, so it yields `repause`, and livekit's own resume-then-pause is
+ * issued before the first await.
+ *
+ * 🔴 THE NAME IS NOT THE EPISODE KEY, on purpose: `${source}/${sid ??
+ * "no-sid"}#born`, never `${source}/${trackSid}`. At `LocalSenderCreated` the
+ * sid is UNASSIGNED on a first publish (the server has not answered yet) and
+ * STALE on a republish (the old publication's, which the answer replaces), so
+ * a name built from it would be wrong in one direction or the other — and were
+ * it right, it would collide with the key {@link PublishGateEpisode.consume}
+ * spends by. The hook never feeds `consume` (only the caller's own sweeps over
+ * `trackPublications` do), so nothing this adapter does can create a
+ * `repauseSpent` / `repausePending` entry that nothing lifts; the `#born`
+ * suffix keeps that true even where a report and an episode name are read
+ * side by side in a log. The sid is carried only so a log reader can match a
+ * republish to the publication it replaces.
+ *
+ * The `track` intersection is what the hook actually has: livekit hands the
+ * listener a `LocalTrack`, which carries its own `pauseUpstream` /
+ * `resumeUpstream` (the publication's are thin forwards to them) and is the
+ * thing that does not yet have a publication.
+ */
+export function gatedPublicationFromSender(input: {
+  source: string;
+  sid: string | null;
+  track: LocalTrackLike & {
+    pauseUpstream(): Promise<void>;
+    resumeUpstream(): Promise<void>;
+  };
+}): GatedPublication {
+  const { track } = input;
+  return gatedPublicationOf(
+    `${input.source}/${input.sid ?? "no-sid"}#born`,
+    track,
+    () => track.pauseUpstream(),
+    () => track.resumeUpstream(),
+  );
+}
+
+/**
+ * The born-paused hook's ONLY entry into the gate: under a held gate, run the
+ * existing per-publication policy over the one publication the
+ * `LocalSenderCreated` listener just built, so livekit's own `pauseUpstream()`
+ * (or resume-then-pause over a stale flag) is issued BEFORE the offer.
+ *
+ * Returns `null` — nothing issued, nothing to await — when the gate is empty.
+ * An empty gate is not "resume it": a publication born under an empty gate is
+ * simply publishing, and a `resume` sweep here would only emit
+ * `UpstreamResumed` into `#reassertPublishGate` for nothing. The guard is the
+ * hook's whole decision; everything after it is {@link applyPublishGate}'s.
+ *
+ * Timing, stated exactly. livekit's `pauseUpstream` takes `pauseUpstreamLock`
+ * before writing its flag, so the flag and the `replaceTrack(null)` are issued
+ * one microtask after the emit — before the 20 ms-debounced offer
+ * (`publisher.negotiate`) and long before the SFU's answer. livekit does not
+ * await the emit, so this is a race the hook wins by a wide margin rather than
+ * a synchronous guarantee: the `LocalTrackPublished` sweep stays as the
+ * backstop, and the plan claims NARROWING of the window, not closure.
+ *
+ * 🔴 Through {@link applyPublishGate}, never a bare `sender.replaceTrack(null)`
+ * — the reason this module now has a runtime import. A detach issued outside
+ * livekit's flag is invisible to `resumeUpstream()` (it early-returns on a
+ * cleared flag), so the gate's 1→0 resume could never put that sender back and
+ * the seat would stay mute for the call. The policy issues livekit's own ops,
+ * and `runOne`'s post-condition still reads the wire afterwards.
+ *
+ * 🔴 No options. `repauseSpent` / `repausePending` are keyed by the episode
+ * name and this publication does not carry one (see
+ * {@link gatedPublicationFromSender}); passing the episode's sets would be a
+ * lookup that can never hit. The caller reads `unproven` off the sweep and
+ * reports on THAT — never on an empty `proven`, which is also what a gate that
+ * emptied mid-op leaves behind (`runOne` returns `null` there) and is not a
+ * failure.
+ *
+ * Not `async`, so `null` is a synchronous answer with nothing to await and the
+ * caller `then`s only the promise it actually got.
+ */
+export function pauseAtBirth(
+  pub: GatedPublication,
+  gateHeld: () => boolean,
+): Promise<PublishGateSweep> | null {
+  if (!gateHeld()) return null;
+  return applyPublishGate([pub], gateHeld, {});
 }
 
 /**
