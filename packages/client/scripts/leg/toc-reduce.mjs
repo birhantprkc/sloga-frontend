@@ -1028,7 +1028,7 @@ const fx = {
     ],
   }),
   G: (t) => ({ t, p: t, at: POINTS.resumeGate, reason: "negotiating", emptied: true, gate: [], gateHeld: false }),
-  D: (t) => ({ t, p: t, at: POINTS.disconnect, via: "user", connectGenPhase: "pre-bump" }),
+  D: (t) => ({ t, p: t, at: POINTS.disconnect, connectGenPhase: "pre-bump" }),
   C: (t) => ({ t, p: t, at: POINTS.connectAdd, e2eeCapable: true, gate: ["negotiating"], gateHeld: true }),
   PU: (t, sid = "TR_A") => ({ t, p: t, at: POINTS.processorUpdate, subject: `microphone/${sid}`, subjectSource: "microphone", subjectSid: sid }),
   UR: (t, sid = "TR_A", gateHeld = false) => ({ t, p: t, at: POINTS.upstreamResumed, subject: `microphone/${sid}`, subjectSource: "microphone", subjectSid: sid, gateHeld, gate: gateHeld ? ["mixed"] : [] }),

@@ -1148,13 +1148,6 @@ export class MlsCallSession {
   /** Bound on successive re-establishes (rejoin/successor). */
   #reestablishes = 0;
   /**
-   * wave-0b instrumentation (M4), trace-only: the TWO `[gate-trace]`
-   * `rejoinFresh` records of ONE `#rejoinFresh` call carry the same `seq`, so
-   * the reducer counts re-establish EVENTS rather than records (wave 0 counted
-   * the pair twice). Nothing reads it and no behaviour depends on it.
-   */
-  #rejoinTraceSeq = 0;
-  /**
    * Monotonic establish generation (§4.2), bumped by EVERY `#establish` entry
    * — `start()`'s, `#rejoinFresh`'s, `#poisonedSuccessor`'s. Scheduled group
    * work and the Welcome wait capture it and abort when stale, so a
@@ -3337,29 +3330,6 @@ export class MlsCallSession {
   }
 
   async #rejoinFresh(reason: string): Promise<void> {
-    // wave-0 instrumentation (seam 8): the IN-PLACE re-establish arm. Emitted
-    // at entry, unconditionally and before any await, so M2 has a POSITIVE
-    // witness on this arm instead of inferring it from a missing line.
-    // wave 0b (B7/M4): ONE pre-serialized STRING, because Chromium's log
-    // renders an object argument as "[object Object]"; and `seq` pairs this
-    // record with the `afterDrop` one below so the reducer counts EVENTS.
-    const traceModeBefore = this.#callMode.kind;
-    const traceSeq = ++this.#rejoinTraceSeq;
-    console.error(
-      "[gate-trace] " +
-        JSON.stringify({
-          t: Date.now(),
-          p: performance.now(),
-          at: "rejoinFresh",
-          phase: "enter",
-          reason,
-          modeBefore: traceModeBefore,
-          modeAfter: traceModeBefore,
-          reestablishes: this.#reestablishes,
-          state: this.state(),
-          seq: traceSeq,
-        }),
-    );
     const old = this.#groupId;
     this.#groupId = null;
     this.#resetGroupBuffers();
@@ -3374,23 +3344,6 @@ export class MlsCallSession {
     }
     this.#toResecuring(reason);
     this.#dropModeToNegotiating();
-    // wave-0 instrumentation (seam 8): the same arm after the mode drop, so
-    // `#callMode` before and after are both on record for this call.
-    console.error(
-      "[gate-trace] " +
-        JSON.stringify({
-          t: Date.now(),
-          p: performance.now(),
-          at: "rejoinFresh",
-          phase: "afterDrop",
-          reason,
-          modeBefore: traceModeBefore,
-          modeAfter: this.#callMode.kind,
-          reestablishes: this.#reestablishes,
-          state: this.state(),
-          seq: traceSeq,
-        }),
-    );
 
     if (this.#reestablishes >= MAX_REESTABLISH) {
       this.#onLoud(new Error(`re-establish limit reached: ${reason}`));
@@ -3415,29 +3368,9 @@ export class MlsCallSession {
   #dropModeToNegotiating(): void {
     const confirmedInterlude =
       this.#callMode.kind === "interlude" && this.#callMode.localConfirmed;
-    // wave-0 instrumentation (seam 8): the exemption decision itself, and
-    // whether the `#setMode({ kind: "negotiating" })` below ACTUALLY ran —
-    // witnessed inside the arm. The condition is unchanged, and `#setMode`
-    // may still no-op on a closed session, which `modeAfter` exposes.
-    const traceModeBefore = this.#callMode.kind;
-    let traceRan = false;
     if (!confirmedInterlude && this.#callMode.kind !== "negotiating") {
-      traceRan = true;
       this.#setMode({ kind: "negotiating" });
     }
-    console.error(
-      "[gate-trace] " +
-        JSON.stringify({
-          t: Date.now(),
-          p: performance.now(),
-          at: "dropModeToNegotiating",
-          confirmedInterlude,
-          modeBefore: traceModeBefore,
-          modeAfter: this.#callMode.kind,
-          state: this.state(),
-          ran: traceRan,
-        }),
-    );
   }
 
   async #poisonedSuccessor(): Promise<void> {
@@ -5645,30 +5578,7 @@ export class MlsCallSession {
     // Closed is terminal (same idiom as #setState): a stale chained label-set
     // surviving dispose() must not touch the shared publish gate or clobber
     // the next call's UI signals through this binding.
-    if (this.#state === "closed") {
-      // wave-0 instrumentation (seam 5), observation only: the terminal
-      // short-circuit is recorded rather than left as a silent no-op, so a
-      // missing `setMode` record can never be read as "the call never came".
-      console.error(
-        "[gate-trace] " +
-          JSON.stringify({
-            t: Date.now(),
-            p: performance.now(),
-            at: "setMode",
-            branch: "closed",
-            wasNegotiating: this.#callMode.kind === "negotiating",
-            incoming: mode.kind,
-            mode: this.#callMode.kind,
-            latched: this.#loudLatched,
-            localConfirmed:
-              this.#callMode.kind === "interlude"
-                ? this.#callMode.localConfirmed
-                : null,
-            hasMedia: !!this.#media,
-          }),
-      );
-      return;
-    }
+    if (this.#state === "closed") return;
     // Under a loud latch `e2ee` is unreachable and folds to `negotiating`
     // (`modeUnderLoudLatch`): the terminal banner with its Leave /
     // Stay-unencrypted escape stays with the red chip, and the lockstep
@@ -5676,43 +5586,14 @@ export class MlsCallSession {
     // goes through here, so the machine running on under a latch (a peer's
     // rejoin declaring and clearing a mix, then the T2 warm resume) can no
     // longer end in a red chip with no banner and the promised pause lifted.
-    // wave-0 instrumentation (seam 5): the mode kind as it ARRIVED, captured
-    // before the latch rewrites it. Read only — `mode` is not touched here.
-    const traceIncoming = mode.kind;
     mode = modeUnderLoudLatch(mode, this.#loudLatched);
     const wasNegotiating = this.#callMode.kind === "negotiating";
     this.#callMode = mode;
-    // wave-0 instrumentation (seam 5): which lockstep arm fired, witnessed
-    // INSIDE the arm rather than re-derived from the outcome. The conditions,
-    // the calls and their order are unchanged. 🔴 The assignments sit AFTER
-    // each call, not before: `rtc-mutations.py`'s `setmode-lockstep-drops-
-    // the-pause` matches the two lines `if (...) {` + `void this.#media?.
-    // pausePublishing?.("negotiating");` as one EXACT string, and splitting
-    // them would hard-error that mutation.
-    let traceBranch = "none";
     if (mode.kind === "negotiating" && !wasNegotiating) {
       void this.#media?.pausePublishing?.("negotiating");
-      traceBranch = "pause";
     } else if (mode.kind !== "negotiating" && wasNegotiating) {
       void this.#media?.resumePublishing?.("negotiating");
-      traceBranch = "resume";
     }
-    console.error(
-      "[gate-trace] " +
-        JSON.stringify({
-          t: Date.now(),
-          p: performance.now(),
-          at: "setMode",
-          branch: traceBranch,
-          wasNegotiating,
-          incoming: traceIncoming,
-          mode: mode.kind,
-          latched: this.#loudLatched,
-          localConfirmed:
-            mode.kind === "interlude" ? mode.localConfirmed : null,
-          hasMedia: !!this.#media,
-        }),
-    );
     this.#media?.onCallModeChanged?.(mode, {
       nonEnrolled: this.#nonEnrolled,
       announcedBy: this.#announcedBy,
@@ -5771,25 +5652,6 @@ export class MlsCallSession {
           // Via the accessor: tsc narrows the field read above across the
           // awaits below and would flag a direct re-compare as impossible.
           if (this.state() === "closed") return;
-          // wave-0 instrumentation (seam 5): one record per effect, emitted
-          // synchronously BEFORE the effect runs. No await is introduced and
-          // no effect is added, removed or reordered.
-          console.error(
-            "[gate-trace] " +
-              JSON.stringify({
-                t: Date.now(),
-                p: performance.now(),
-                at: "applyMode.effect",
-                event: event.type,
-                next: mode.kind,
-                do: effect.do,
-                enabled: effect.do === "set_e2ee" ? effect.enabled : null,
-                reason:
-                  effect.do === "pause" || effect.do === "resume"
-                    ? effect.reason
-                    : null,
-              }),
-          );
           switch (effect.do) {
             case "pause":
               await this.#media?.pausePublishing?.(effect.reason);

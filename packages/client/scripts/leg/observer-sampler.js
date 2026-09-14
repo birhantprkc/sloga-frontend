@@ -15,8 +15,8 @@
  *    LocalTrack.pauseUpstream(), and the remote track then reads
  *    muted:false, enabled:false with ZERO RTP. Pausedness is therefore a
  *    property of the byte series and of nothing else. muted / enabled ARE
- *    recorded, but only under `annotationOnly`, and gate-trace-reduce.mjs
- *    refuses to let them reach a verdict.
+ *    recorded, but only under `annotationOnly`, and no reducer reads them
+ *    into a verdict (toc-reduce.mjs ignores `annotationOnly`).
  *
  * 2. CARRIER LIVENESS AND SUBJECT SILENCE COME FROM THE SAME SAMPLE. Every
  *    tick issues ONE getStats() per peer connection and emits ONE record

@@ -5,7 +5,6 @@
 #   packages/client/scripts/leg/launch-seats.sh <command> [options]
 #
 #   check      verify every rig assumption and exit non-zero if any fails
-#   preflight  prove a [gate-trace] record can reach the packaged log PARSEABLE
 #   steps      print the OPERATOR-ONLY steps (this script never performs them)
 #   subject    launch the PACKAGED media-E2EE seat with the Chromium trace on
 #   observer   launch an UNPACKAGED media-E2EE seat (shape (a) observer)
@@ -31,10 +30,21 @@
 #     so --enable-logging / ELECTRON_ENABLE_LOGGING survive into a packaged run
 #   - main.js still gates --sloga-media-e2ee on the platform, not on isPackaged
 #   - SLOGA_PROFILE is set for any seat that is not the first one
-#   - 🔴 and (wave 0b, B7) that a [gate-trace] record can reach the packaged
-#     Chromium log PARSEABLE rather than as "[object Object]". Wave 0 had NO
-#     console-forwarding or serialization pre-flight at all, and the whole
-#     wave-0 capture route rests on that one unproven assumption.
+#   - 🔴 and that the staged dist was BUILT WITH VITE_CFG_GATE_TRACE=true.
+#     The [gate-trace] seams sit behind the runtime guard
+#     CONFIGURATION.ENABLE_GATE_TRACE, which is false in every dist built
+#     without the flag: such a dist emits ZERO records, and a leg on it
+#     measures nothing while looking like a quiet pass. The emitter code and
+#     its "[gate-trace] " literal are NOT compiled out, so their presence
+#     proves nothing; `check` reads the INLINED flag value instead (see
+#     check_gate_trace_flag).
+#
+# The CONSUMER of the records is toc-reduce.mjs, next to this file: it joins
+# the subject seat's [gate-trace] JSONL to the observer's toc-tap.js frame
+# dump. The parseability self-check of that reader is
+#     node packages/client/scripts/leg/toc-reduce.mjs --selftest
+# (exit 0 iff every built-in control behaves). This script carries no
+# pre-flight of its own.
 
 set -uo pipefail
 
@@ -44,25 +54,23 @@ FRONTEND_DIR="${SLOGA_FRONTEND_DIR:-$(cd "$HERE/../.." && pwd)}"
 EXPECT_SHELL_COMMIT="${SLOGA_EXPECT_SHELL_COMMIT:-fc4855e4c1b544b8bbaef6fe39317b127a1c95a4}"
 # 🔴 THE FRONTEND PIN IS DERIVED FROM THIS WORKTREE, NOT FROZEN IN THIS FILE.
 #
-# It used to default to a literal commit. That commit predates the [gate-trace]
-# instrumentation, so the two halves of the same question were guaranteed to
-# disagree: BEFORE the mandatory re-stage `check_frontend_dist` passed and
-# `check_bundle_serialization` failed (correctly — a leg on that dist produces
-# ZERO records); AFTER it they INVERT, the dist matching the instrumented
-# commit and the frozen literal not. `check` could then never exit 0, and
-# `require_ok` refuses every seat, so the leg was unrunnable either way.
-# Deriving it from HEAD makes the two halves answerable by ONE re-stage.
-# SLOGA_EXPECT_FRONTEND_COMMIT still overrides it, for a leg run against a dist
-# staged from a commit other than the one checked out.
+# It used to default to a literal commit, which guaranteed that the two halves
+# of the same question would disagree. `check_frontend_dist` asks whether the
+# dist was staged from the expected commit; `check_gate_trace_flag` asks
+# whether the SAME staged dist was built with VITE_CFG_GATE_TRACE=true. With a
+# frozen literal a dist staged from HEAD failed the first, and re-staging from
+# the literal failed the second (that commit had no seams to switch on).
+# `check` could then never exit 0, and `require_ok` refuses every seat, so the
+# leg was unrunnable either way. Deriving the pin from HEAD makes both halves
+# answerable by ONE re-stage: build this HEAD with VITE_CFG_GATE_TRACE=true
+# and stage it. SLOGA_EXPECT_FRONTEND_COMMIT still overrides it, for a leg
+# run against a dist staged from a commit other than the one checked out.
 EXPECT_FRONTEND_COMMIT="${SLOGA_EXPECT_FRONTEND_COMMIT:-$(git -C "$FRONTEND_DIR" rev-parse HEAD 2>/dev/null)}"
 FRONTEND_PIN_SOURCE="${SLOGA_EXPECT_FRONTEND_COMMIT:+SLOGA_EXPECT_FRONTEND_COMMIT}"
 FRONTEND_PIN_SOURCE="${FRONTEND_PIN_SOURCE:-the worktree HEAD of $FRONTEND_DIR}"
 FRONTEND_DIRTY="$(git -C "$FRONTEND_DIR" status --porcelain 2>/dev/null | head -1)"
 APPIMAGE="${SLOGA_APPIMAGE:-$SHELL_DIR/out/Sloga-0.58.3-linux-x86_64.AppImage}"
 LOGDIR="${SLOGA_LEG_LOGDIR:-$HOME/leg-logs}"
-NODE="${NODE:-node}"
-REDUCE="$HERE/gate-trace-reduce.mjs"
-EXTRACT="$HERE/emitter-extract.mjs"
 
 fails=0
 fail() {
@@ -99,7 +107,7 @@ check_frontend_dist() {
   fi
   ok "expecting frontend commit $EXPECT_FRONTEND_COMMIT (from $FRONTEND_PIN_SOURCE)"
   if [ -n "$FRONTEND_DIRTY" ]; then
-    fail "the frontend worktree $FRONTEND_DIR is DIRTY, so its HEAD does not describe the code a dist staged from it would contain. Commit the instrumentation (or pass SLOGA_EXPECT_FRONTEND_COMMIT=<sha> for a dist staged elsewhere) before running a leg."
+    fail "the frontend worktree $FRONTEND_DIR is DIRTY, so its HEAD does not describe the code a dist staged from it would contain. Commit the change (or pass SLOGA_EXPECT_FRONTEND_COMMIT=<sha> for a dist staged elsewhere) before running a leg."
   else
     ok "frontend worktree clean, so HEAD describes what a dist staged from it contains"
   fi
@@ -110,7 +118,7 @@ check_frontend_dist() {
   local fc
   fc=$(sed -n 's/^frontend_commit=//p' "$info" | head -1)
   if [ "$fc" != "$EXPECT_FRONTEND_COMMIT" ]; then
-    fail "frontend-dist was staged from $fc, expected $EXPECT_FRONTEND_COMMIT ($FRONTEND_PIN_SOURCE). 🔴 THIS IS ONE HALF OF A PAIR: the other is check_bundle_serialization, which reads the SAME staged bundle for the [gate-trace] instrumentation. Both are satisfied by ONE re-stage of frontend-dist from the instrumented commit; satisfying either alone leaves \`check\` unable to exit 0, and require_ok then refuses every seat."
+    fail "frontend-dist was staged from $fc, expected $EXPECT_FRONTEND_COMMIT ($FRONTEND_PIN_SOURCE). 🔴 THIS IS ONE HALF OF A PAIR: the other is check_gate_trace_flag, which reads the SAME staged bundle for the inlined ENABLE_GATE_TRACE:\"true\" that only a VITE_CFG_GATE_TRACE=true build carries. Both are satisfied by ONE re-stage of frontend-dist, built from the expected commit with the flag on; satisfying either alone leaves \`check\` unable to exit 0, and require_ok then refuses every seat."
   else
     ok "frontend-dist staged from $fc"
   fi
@@ -200,88 +208,49 @@ check_display() {
   fi
 }
 
-# --- B7: the console-forwarding / serialization pre-flight --------------------
+# --- the staged-dist VITE_CFG_GATE_TRACE check ---------------------------------
 #
-# 🔴 The tell is NOT "the log has no [gate-trace] lines". Under the object
-# ARGUMENT form the lines ARE there and every field is gone:
+# The [gate-trace] seams are guarded at runtime by
+# CONFIGURATION.ENABLE_GATE_TRACE (components/common/lib/env.ts), computed as
+#     ((import.meta.env.VITE_CFG_GATE_TRACE as string) ?? "").toLowerCase() == "true"
+# Vite inlines the env value but nothing folds the `.toLowerCase()`
+# comparison, so the emitter code and its "[gate-trace] " literal survive in
+# EVERY bundle: their presence discriminates nothing. What does survive
+# minification is the inlined value in the entry chunk:
+#     instrumented dist:  ENABLE_GATE_TRACE:"true".toLowerCase()==
+#     production dist:    ENABLE_GATE_TRACE:"".toLowerCase()==
+# (the negative control — the same shape the sibling ENABLE_* flags show in
+# dist_prod). So the discriminating grep is for `ENABLE_GATE_TRACE:"true"`.
+#
+# The "[gate-trace] " literal is still read, SECONDARILY and NOT as a
+# discriminator: it only says the emitter code is present in the pre-serialized
+# form. 🔴 The tell for a broken emit is NOT "the log has no [gate-trace]
+# lines". Under an object-ARGUMENT form the lines ARE there and every field is
+# gone:
 #     [gate-trace] [object Object]
-# So this pre-flight checks that a record arrives PARSEABLE, and it proves its
-# own instrument against a known-bad sample BEFORE the operator relies on it.
 
-check_node() {
-  if ! command -v "$NODE" >/dev/null 2>&1; then
-    fail "no \`$NODE\` on PATH — the pre-flight and the reducer both need it"
-    return 1
-  fi
-  return 0
-}
-
-check_emit_form() {
-  # The SOURCE half: every emit site must be the pinned single pre-serialized
-  # string, never console.error("[gate-trace]", {...}).
-  local a="$FRONTEND_DIR/components/rtc/state.tsx"
-  local b="$FRONTEND_DIR/components/rtc/mlsCallSession.ts"
-  if [ ! -f "$a" ] || [ ! -f "$b" ]; then
-    fail "cannot find the emitters ($a, $b) — set SLOGA_FRONTEND_DIR"
-    return
-  fi
-  local out
-  out=$("$NODE" "$EXTRACT" "$a" "$b" 2>&1)
-  local rc=$?
-  if [ $rc -ne 0 ]; then
-    fail "the [gate-trace] emit sites do not all use the pinned pre-serialized string form (emitter-extract.mjs exited $rc):"
-    echo "$out" | sed -n '/PROBLEMS/,$p' >&2
-    return
-  fi
-  ok "every [gate-trace] emit site is one pre-serialized string ($(echo "$out" | sed -n 's/^sites *: \([0-9]*\).*/\1/p') sites)"
-}
-
-check_bundle_serialization() {
+check_gate_trace_flag() {
   # The ARTIFACT half: the bundle that will actually run.
   local dist="$SHELL_DIR/frontend-dist/assets"
   if [ ! -d "$dist" ]; then
-    fail "no $dist — there is no staged bundle to pre-flight"
+    fail "no $dist — there is no staged bundle to check"
     return
   fi
+  # The discriminator: the inlined flag value.
+  if grep -rqF -- 'ENABLE_GATE_TRACE:"true"' "$dist"; then
+    ok "the staged bundle carries ENABLE_GATE_TRACE:\"true\" — it was built with VITE_CFG_GATE_TRACE=true"
+  else
+    fail "the staged bundle in $dist does not carry ENABLE_GATE_TRACE:\"true\" — this dist was not built with VITE_CFG_GATE_TRACE=true (a production dist reads ENABLE_GATE_TRACE:\"\"; a dist older than the flag has no ENABLE_GATE_TRACE at all) and the leg would produce ZERO records. Re-stage frontend-dist from a build of $EXPECT_FRONTEND_COMMIT with VITE_CFG_GATE_TRACE=true before running a leg."
+  fi
+  # Secondary, NOT discriminating (the literal is in every bundle): is the
+  # emitter code present, and in the pre-serialized form?
   if grep -qrF -- '[gate-trace] ' "$dist"; then
-    ok "the staged bundle carries the pre-serialized \"[gate-trace] \" + JSON.stringify form"
+    ok "emitter code present in the pre-serialized \"[gate-trace] \" + JSON.stringify form (present in every bundle; NOT evidence the flag is on)"
   elif grep -qrF -- '[gate-trace]' "$dist"; then
     fail "the staged bundle carries a [gate-trace] tag WITHOUT the trailing space of the pre-serialized form — that is the object-ARGUMENT form, and the packaged Chromium log will read \"[gate-trace] [object Object]\": the lines present, every field gone"
   else
-    fail "the staged bundle in $dist carries NO [gate-trace] string at all — this dist is not the instrumented one and the leg would produce ZERO records. Re-stage frontend-dist from the instrumented commit before running a leg."
+    fail "the staged bundle in $dist carries NO [gate-trace] string at all — the emitter code is missing from this build, so even a flag-on dist would write nothing"
   fi
-}
-
-check_preflight_instrument() {
-  # 🔴 The instrument itself, against a known-bad sample first. A check that has
-  # never failed is not evidence.
-  local tmp
-  tmp=$(mktemp -d "${TMPDIR:-/tmp}/w0c_preflight.XXXXXX") || { fail "cannot create a temp dir for the pre-flight self-check"; return; }
-  local good="$tmp/good.log" bad="$tmp/bad.log"
-  # Chromium does NOT escape the inner quotes of a CONSOLE line, so neither
-  # do these samples: a sample that does not look like the artifact proves
-  # nothing about the artifact.
-  printf '%s\n' '[4242:4242:0910/120000.000000:INFO:CONSOLE(1)] "[gate-trace] {"t":1,"p":2,"at":"connect.add","e2eeCapable":true}", source: x (1)' >"$good"
-  printf '%s\n' '[4242:4242:0910/120000.000000:INFO:CONSOLE(1)] "[gate-trace] [object Object]", source: x (1)' >"$bad"
-  "$NODE" "$REDUCE" --check-log "$bad" >/dev/null 2>&1
-  local rcbad=$?
-  "$NODE" "$REDUCE" --check-log "$good" >/dev/null 2>&1
-  local rcgood=$?
-  if [ $rcbad -eq 0 ]; then
-    fail "the pre-flight instrument ACCEPTED an \"[object Object]\" log (exit $rcbad) — it would pass a rig on which every record is empty"
-  elif [ $rcgood -ne 0 ]; then
-    fail "the pre-flight instrument REJECTED a known-good log (exit $rcgood) — it cannot be used to clear the rig"
-  else
-    ok "pre-flight instrument: rejects [object Object] (exit $rcbad), accepts a parseable record (exit $rcgood)"
-  fi
-  rm -rf "$tmp"
-}
-
-check_trace_serialization() {
-  check_node || return
-  check_emit_form
-  check_bundle_serialization
-  check_preflight_instrument
 }
 
 cmd_check() {
@@ -292,69 +261,13 @@ cmd_check() {
   check_appimage
   check_electron
   check_display
-  check_trace_serialization
+  check_gate_trace_flag
   echo
   if [ $fails -ne 0 ]; then
     echo "################ RIG CHECK: $fails failing assumption(s) ################" >&2
     return 1
   fi
   echo "################ RIG CHECK: all assumptions hold ################"
-  return 0
-}
-
-cmd_preflight() {
-  local live=0 log=""
-  while [ $# -gt 0 ]; do
-    case "$1" in
-    --live) live=1; shift ;;
-    --log) log="$2"; shift 2 ;;
-    *) echo "unknown option $1" >&2; exit 2 ;;
-    esac
-  done
-  echo "=============== [gate-trace] pre-flight ==============="
-  echo "  🔴 The tell is NOT \"the log has no [gate-trace] lines\". Under the"
-  echo "     object-ARGUMENT form the lines ARE there and read"
-  echo "     \"[gate-trace] [object Object]\" — every field gone. This"
-  echo "     pre-flight answers: does a record reach the log PARSEABLE?"
-  echo
-  check_trace_serialization
-  echo
-  if [ $fails -ne 0 ]; then
-    echo "################ PRE-FLIGHT: $fails failing check(s) ################" >&2
-    return 1
-  fi
-  echo "    static half: PASS"
-  if [ "$live" != "1" ]; then
-    echo
-    echo "  The LIVE half is not run without --live. Run:"
-    echo "    ./launch-seats.sh preflight --live"
-    echo "  and follow the printed operator steps. Until the live half has"
-    echo "  passed once on THIS build, the wave-0 capture route is an"
-    echo "  ASSUMPTION: nothing here proves Chromium forwards a renderer"
-    echo "  console.error at default verbosity."
-    echo "################ PRE-FLIGHT (static): OK ################"
-    return 0
-  fi
-
-  mkdir -p "$LOGDIR" || { echo "cannot create $LOGDIR" >&2; return 1; }
-  [ -n "$log" ] || log="$LOGDIR/preflight-$(date +%Y%m%d-%H%M%S).log"
-  echo
-  echo "  launching the PACKAGED seat with logging to $log"
-  LAUNCH_ENV="ELECTRON_ENABLE_LOGGING=1"
-  launch "PRE-FLIGHT (packaged)" "$APPIMAGE" "--enable-logging=file" "--log-file=$log" "--v=1"
-  echo
-  echo "  OPERATOR: join ANY voice channel on this seat, stay ~5 seconds, then"
-  echo "            leave it. That is enough to fire several seams. Then press"
-  echo "            ENTER here."
-  read -r _
-  "$NODE" "$REDUCE" --check-log "$log"
-  local rc=$?
-  echo "  (--check-log exited $rc)"
-  if [ $rc -ne 0 ]; then
-    echo "################ PRE-FLIGHT (live): FAILED — do NOT run the leg ################" >&2
-    return 1
-  fi
-  echo "################ PRE-FLIGHT (live): OK on this build ################"
   return 0
 }
 
@@ -389,7 +302,6 @@ usage_seat() {
   --audio-file <wav>   Loop a wav into the fake capture device (carrier seat).
   --no-fake-device     Do not pass the fake-device flags.
   --dry-run            Print the exact command and env, launch nothing.
-  --live               (preflight only) also launch a seat and read its log.
 USAGE
 }
 
@@ -431,14 +343,19 @@ cmd_subject() {
   [ -n "$profile" ] && LAUNCH_ENV="$LAUNCH_ENV SLOGA_PROFILE=$profile"
   echo "  trace: $log"
   echo "  🔴 the SUBJECT seat is PACKAGED: no DevTools, no CDP, no sampler."
-  echo "     Its only instrument is this [gate-trace] log."
+  echo "     Its only instrument is this [gate-trace] log, and the dist writes"
+  echo "     records ONLY if it was built with VITE_CFG_GATE_TRACE=true"
+  echo "     (\`check\` reads the staged bundle for the inlined flag value)."
   echo "  🔴 THE TELL IS NOT \"the log has no [gate-trace] lines\". A record"
   echo "     that lost its payload still WRITES ITS LINE — it reads"
   echo "     \"[gate-trace] [object Object]\", the line present and every"
-  echo "     field gone. After the leg, judge the log with:"
-  echo "         node $REDUCE --check-log $log"
-  echo "     and read its EXIT STATUS (0 parseable / 3 not). Never fill an"
-  echo "     unparseable record in from the timeline."
+  echo "     field gone. After the leg, extract the [gate-trace] JSON payloads"
+  echo "     from this log into a JSONL file (one record per line) and reduce"
+  echo "     it against the observer's toc-tap.js dump:"
+  echo "         node $HERE/toc-reduce.mjs --trace <subject.jsonl> --tap <toc-tap.json> --carrier <ssrc>"
+  echo "     and read its EXIT STATUS (0 PASS / 1 FAIL or PASS-WITH-GREY /"
+  echo "     3 unparseable input, no verdict). Never fill an unparseable"
+  echo "     record in from the timeline."
   if [ "$mode" = "file" ]; then
     launch "SUBJECT (packaged)" "$APPIMAGE" "--enable-logging=file" "--log-file=$log" "--v=1"
   else
@@ -494,8 +411,9 @@ cmd_steps() {
 =============== OPERATOR-ONLY STEPS — this script performs NONE of them ===============
 
 Automatable (this script does these): launching the seats, the fake-capture
-flags on non-subject seats, the carrier audio loop, the packaged [gate-trace]
-log, the pre-flight, and the post-hoc reduction.
+flags on non-subject seats, the carrier audio loop, and the packaged
+[gate-trace] log. The post-hoc reduction (toc-reduce.mjs) is run by hand after
+the leg.
 
 🔴 OPERATOR-ONLY, BY DESIGN. Claude never does any of these and this script has
 no code path that could:
@@ -512,18 +430,20 @@ no code path that could:
   O6. Listening on the shape-(b) manager-free web observer and reporting
       honestly whether the subject was INTELLIGIBLE. That ear is the primary
       M1 instrument. "I think I heard something" is `unknown`, not `yes`.
-  O7. The pre-flight's live half: joining any voice channel for ~5 s so a
-      record is actually emitted.
 
 --------------------------------------------------------------------------------
 RUN ORDER
 
-  0. ./launch-seats.sh preflight --live           (must exit 0, ONCE per build)
-       🔴 Until this passes, the whole capture route is an ASSUMPTION: that
-       Chromium forwards a renderer console.error at default verbosity AND
-       that the record survives serialization. A [gate-trace] line that reads
-       "[object Object]" is PRESENT and EMPTY — "there are lines" is not the
-       tell, and wave 0 shipped that exact wrong guidance.
+  0. Build the leg dist with VITE_CFG_GATE_TRACE=true and stage it, then
+       node packages/client/scripts/leg/toc-reduce.mjs --selftest   (must exit 0)
+       🔴 The [gate-trace] seams sit behind CONFIGURATION.ENABLE_GATE_TRACE,
+       false in any dist built without the flag. Such a dist writes NO
+       records: `check` refuses it (by the inlined flag value, not the
+       [gate-trace] literal, which every bundle carries), and a log with no
+       [gate-trace] lines is an EMPTY leg, never a quiet PASS.
+       The opposite tell is just as wrong — a line that reads
+       "[object Object]" is PRESENT and EMPTY, so "there are lines" proves
+       nothing either, and wave 0 shipped that exact wrong guidance.
   1. ./launch-seats.sh check                      (must exit 0)
   2. ./launch-seats.sh subject --log <path>
        operator: O1, O2 on the subject seat.
@@ -536,28 +456,24 @@ RUN ORDER
        which M1 can be answered at all. Shape (b) therefore needs THREE seats;
        carrier and observer cannot be the same seat there.
   5. In the OBSERVER's devtools console, BEFORE it joins the call, paste
+     toc-tap.js (the per-frame tap toc-reduce.mjs consumes) and
      observer-sampler.js. Then join, then:
        SLOGA_LEG.roles()
        SLOGA_LEG.carrier("<the sid whose energy is rising while the subject is silent>")
        SLOGA_LEG.start({ label: "<shape>-<consent|noconsent>-run<N>",
                          shape: "a"|"b", consent: "yes"|"no" })
-     🔴 `consent` is REQUIRED and is recorded ON THE CAPTURE. The reducer
-     refuses a dump whose arm disagrees with its --consent, so a run can no
-     longer be filed into the wrong arm by a mistyped flag hours later.
+     🔴 `consent` is REQUIRED and is recorded ON THE CAPTURE, so a run cannot
+     be filed into the wrong arm by a mistyped label hours later.
   6. Operator runs the leg: O3 (consent runs only), O4, O5.
   7. SLOGA_LEG.stop(); SLOGA_LEG.summary(); SLOGA_LEG.save()
-  8. node gate-trace-reduce.mjs --sampler <dump.json> --log <subject.log> \
-       --shape a|b --consent yes|no --audible-subject yes|no|unknown \
-       --out <run.reduced.json>
-  9. When all runs are in, BOTH arms together:
-       node gate-trace-reduce.mjs --min-arm-runs 5 --aggregate <all the .reduced.json>
-     🔴 BOTH ARMS, and --min-arm-runs is not decoration: an aggregate whose
-     no-consent arm is absent, discarded or shape (a) is "POLARITY UNMEASURED"
-     (exit 7), never a confirmation. §2.4 specifies five runs per arm.
-     🔴 Step 9 is not optional. A row that fires in BOTH arms while the leak
-     appears only in the consent arm is "<row> confirmed as the WINDOW —
-     POLARITY UNEXPLAINED": an INCOMPLETE result that leaves §4.1 OPEN and the
-     banked 2/2-vs-0/2 entry untouched. It exits 6, not 0, for that reason.
+     SLOGA_TOC.stats(); SLOGA_TOC.save("<the same run label>-toc")
+  8. Extract the subject log's [gate-trace] JSON payloads into a JSONL file
+     (one record per line), then per run:
+       node toc-reduce.mjs --trace <subject.jsonl> --tap <toc-tap.json> \
+         --carrier <carrier ssrc> [--json]
+     Exit 0 PASS, 1 FAIL or PASS-WITH-GREY (read `reasons[]`), 3 input error
+     with NO verdict. Reduce the consent and no-consent arms SEPARATELY; §2.4
+     specifies five runs per arm, and the arms are never pooled.
 
 --------------------------------------------------------------------------------
 🔴 RULES THAT DECIDE WHETHER THE LEG MEANS ANYTHING
@@ -574,22 +490,21 @@ RUN ORDER
   - 5 runs with consent and 5 without, in EACH shape. The two series are never
     pooled and their byte series are never compared across shapes. If operator
     budget forces a cut, cut shape (a) — never shape (b).
-  - Record the run label on the sampler dump AND in the subject log filename so
-    the two can be paired afterwards without guessing, and pass --consent to
-    the reducer for every single run.
+  - Record the run label on the sampler dump, on the tap dump AND in the
+    subject log filename so the three can be paired afterwards without
+    guessing, and name the arm in every single run's label.
 STEPS
 }
 
 case "${1:-}" in
 check) shift; cmd_check ;;
-preflight) shift; cmd_preflight "$@" ;;
 steps) shift; cmd_steps ;;
 subject) shift; cmd_subject "$@" ;;
 observer) shift; cmd_unpackaged "OBSERVER" devtools "$@" ;;
 carrier) shift; cmd_unpackaged "CARRIER" nodevtools "$@" ;;
 *)
   cat <<EOF
-launch-seats.sh <check|preflight|steps|subject|observer|carrier> [options]
+launch-seats.sh <check|steps|subject|observer|carrier> [options]
 EOF
   usage_seat
   exit 2

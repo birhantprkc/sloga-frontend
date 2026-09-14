@@ -219,6 +219,34 @@ export default {
       (import.meta.env.VITE_CFG_ENABLE_CALL_MINIGAME as string) ?? ""
     ).toLowerCase() == "true",
   /**
+   * The publish-gate leg instrument. When on, `components/rtc/state.tsx`
+   * emits `console.error("[gate-trace] " + JSON)` records at the seven
+   * fiducials of the born-paused acceptance — `connect.add`,
+   * `disconnect.entry`, `localSenderCreated`, `localTrackPublished.entry`,
+   * `resumeGate`, `track.upstreamResumed`, `track.processorUpdate` — which
+   * `scripts/leg/toc-reduce.mjs` reads back out of the seat logs.
+   *
+   * DEFAULT OFF, and build-time on purpose: the flag's inlined VALUE is what
+   * a build artifact carries — an instrumented entry chunk reads
+   * `ENABLE_GATE_TRACE:"true".toLowerCase()==` and a production one
+   * `ENABLE_GATE_TRACE:"".toLowerCase()==` — and
+   * `scripts/leg/launch-seats.sh check` greps the staged dist for
+   * `ENABLE_GATE_TRACE:"true"` to refuse a non-instrumented dist before a
+   * leg is driven against it. The emitter code itself stays in every bundle
+   * behind the runtime guard, which costs one property read per fiducial;
+   * the `[gate-trace]` literal is NOT dead-code-eliminated.
+   *
+   * Should an on-build ever ship by accident, the Sentry breadcrumb filter in
+   * `src/sentry.ts` (`beforeBreadcrumb`) drops every `[gate-trace]` console
+   * line at the boundary, so the records cannot reach Sentry.
+   *
+   * Set `VITE_CFG_GATE_TRACE=true` only for a leg dist. Never in the prod
+   * `.env`.
+   */
+  ENABLE_GATE_TRACE:
+    ((import.meta.env.VITE_CFG_GATE_TRACE as string) ?? "").toLowerCase() ==
+    "true",
+  /**
    * Watch together — synced YouTube (slice 1) / Jellyfin (slice 2) playback
    * in a voice call. Sloga carries only the control state over the existing
    * WebSocket; the media never touches a Sloga server.
