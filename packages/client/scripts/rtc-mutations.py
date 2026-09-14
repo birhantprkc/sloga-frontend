@@ -128,15 +128,50 @@ HARNESS = "mlsCallSession.harness.ts"
 #:       just assigned. Restore the old `size > 0` condition and the strand
 #:       (`{flag: true, sender.track: null}` under an empty gate, nothing left
 #:       to resume it) is back with every spec green.
+#: AND THE TWO MIC-PIPELINE-DEFERRAL WIRINGS (plan D6, wave 2, 2026-09-14),
+#: the same shape one wave later:
+#:  (iii) the `micPipelineAction(...)` call inside `#syncMicPipeline`, after
+#:       its `this.room() !== room` early return, that turns the pure decision
+#:       into the branch taken — `"tune"` in place, `"none"` a plain return
+#:       (the raw capture IS what the settings ask for; nothing to tear down),
+#:       `"defer"` doing NOTHING (nothing stored; the wants are re-read when
+#:       the edge fires), `"attach"` building the `VoiceAudioPipeline` and
+#:       issuing `setProcessor` — plus the `gen = this.#connectGen` capture
+#:       whose continuation `destroy()`s the pipeline when a `disconnect()`
+#:       raced `init`. The `mic-pipeline-*` entries below pin what the
+#:       decision SAYS; nothing here can pin that `#syncMicPipeline` asks it,
+#:       that it feeds `this.#gateHeld()` rather than a constant, or that the
+#:       `"defer"` arm really falls through to no attach. Bypass the call and
+#:       the join-time RNNoise attach lands inside the held gate again, the
+#:       1.4–2.8 s mirror window `setProcessor → replaceTrack(processed)`
+#:       measured in rejoin-leak handoff §7.9, with every spec green.
+#:  (iv) the re-run at the gate's single 1→0 edge: in `#resumeGate`, AFTER
+#:       the awaited `#applyPublishGate(room)` sweep and only when
+#:       `this.#publishGate.size === 0 && this.room() === room`, the
+#:       fire-and-forget `this.#syncMicPipeline(room, this.#micPipelineWants())`
+#:       that performs the deferred attach. Two things live here that no
+#:       entry reaches: that the re-run EXISTS (drop it and a mic that joined
+#:       under a held gate never gets its pipeline — a quality regression the
+#:       user hears as "the noise filter is off", not a leak), and that it
+#:       sits AFTER the sweep (plan F12 as corrected by the wave-2 audit: the
+#:       `size === 0` re-check is only meaningful once the drive has settled,
+#:       and an attach must not be issued while the sweep's own repause may
+#:       still be mid-flight on the same sender; it is NOT a last-writer-wins
+#:       race over the raw track — livekit's `mediaStreamTrack` getter
+#:       prefers `processor.processedTrack` and `setProcessor` assigns
+#:       `processor` before its `replaceTrack`, so either order converges
+#:       on the processed track).
 #: Same rule as above: no `expect="green"` entry and no `grep -qF` over a file
 #: no runner can load. The live tier (wave 3: the receiver-side frame tap and
-#: its reducer, plus the subject's per-sender `getStats()` reads) is what
-#: covers both; until it has run they are admitted
+#: its reducer, plus the subject's per-sender `getStats()` reads, and for D6
+#: the pass-A ordering check `track.processorUpdate` AFTER `resumeGate
+#: emptied:true`) is what covers all four; until it has run they are admitted
 #: here, not measured.
 STATE = "state.tsx"
 GATE = "publishGate.ts"
 EPISODE = "publishGateEpisode.ts"
 VERDICT = "pauseVerdict.ts"
+MIC_POLICY = "micPipelinePolicy.ts"
 
 JOINRACE_SPEC = "components/rtc/mlsCallSession.joinrace.test.ts"
 HEAL_SPEC = "components/rtc/mlsCallSession.heal.test.ts"
@@ -145,6 +180,7 @@ FALSERED_SPEC = "components/rtc/mlsCallSession.falsered.test.ts"
 GATE_SPEC = "components/rtc/publishGate.test.ts"
 EPISODE_SPEC = "components/rtc/publishGateEpisode.test.ts"
 VERDICT_SPEC = "components/rtc/pauseVerdict.test.ts"
+MIC_POLICY_SPEC = "components/rtc/micPipelinePolicy.test.ts"
 ALL_SPECS = [POLICY_SPEC, HEAL_SPEC, JOINRACE_SPEC]
 
 
@@ -1600,6 +1636,47 @@ MUTATIONS += [
         # it. Naming a spec that cannot reach a mutation is how an entry
         # reports a vacuous green, so the list says where the evidence is.
         specs=[EPISODE_SPEC],
+    ),
+]
+
+
+# --- Mic pipeline deferral (plan D6, wave 2, 2026-09-14) ---------------------
+#
+# `micPipelinePolicy.ts` is the pure decision `#syncMicPipeline` asks before it
+# touches the mic's processor slot. Runs 1 and 3 of the rejoin-leak legs
+# measured why it exists: the join-time RNNoise attach runs
+# `LocalAudioTrack.setProcessor`, which in the pinned livekit-client 2.15.13
+# does `await sender.replaceTrack(processedTrack)` on `trackChangeLock` — not
+# the gate's `pauseUpstreamLock` — and emits `TrackProcessorUpdate` only AFTER
+# that, so under a held gate the processed mic was on the wire for 1.4–2.8 s
+# until the re-assert's `pauseUpstream()` landed. The decision is extracted so
+# these two rules are reachable here; the wiring (`#syncMicPipeline` asking it,
+# the `#resumeGate` re-run after the awaited sweep) is recorded in the header
+# admission above, items (iii) and (iv), never as an entry.
+#
+# Both entries target `MIC_POLICY` and were measured red under
+# `micPipelinePolicy.test.ts` alone on 2026-09-14 with all 4 tests executing.
+
+MUTATIONS += [
+    Mutation(
+        id="mic-pipeline-attaches-under-a-held-gate",
+        what="the held-gate arm returns `attach` instead of `defer`, so the join-time processor attach lands inside a held publish gate — reopening the mirror window `setProcessor → replaceTrack(processedTrack)` that measured 1.4–2.8 s of exposure on every join",
+        file=MIC_POLICY,
+        search="""  if (input.gateHeld) return "defer";""",
+        replace="""  if (input.gateHeld) return "attach";""",
+        specs=[MIC_POLICY_SPEC],
+    ),
+    Mutation(
+        id="mic-pipeline-tune-loses-to-gate",
+        what="the gate check is moved ABOVE the `hasPipeline` check, so a held gate defers even when a pipeline already exists — a mid-hold settings change on an existing pipeline is LOST for the whole hold instead of tuned in place (tuning is state-only and never touches the sender)",
+        file=MIC_POLICY,
+        search="""  if (input.hasPipeline) return "tune";
+  if (input.wantsDefault) return "none";
+  if (input.gateHeld) return "defer";""",
+        replace="""  if (input.gateHeld) return "defer";
+  if (input.hasPipeline) return "tune";
+  if (input.wantsDefault) return "none";""",
+        specs=[MIC_POLICY_SPEC],
     ),
 ]
 

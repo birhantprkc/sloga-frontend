@@ -200,6 +200,7 @@ import { RoomAudioManager } from "./components/RoomAudioManager";
 import { isDiceRollMessage, summariseDiceRoll } from "./diceRoll";
 import { faceSettingsActive } from "./faceFilterCatalog";
 import { localPublicationsEncrypted } from "./localPublicationEncryption";
+import { micPipelineAction } from "./micPipelinePolicy";
 import { MlsKeyProvider } from "./mlsCallKeys";
 import {
   type CallMode,
@@ -4014,6 +4015,21 @@ class Voice {
         }),
     );
     await this.#applyPublishGate(room);
+    // The gate's single 1->0 edge. Re-run the mic pipeline sync AFTER the
+    // awaited resume sweep, never before, for two reasons: the `size === 0`
+    // re-check is only meaningful once the drive has settled (a refill
+    // during the sweep must suppress the attach), and an attach must not be
+    // issued while the sweep's own repause (resume-then-pause) may still be
+    // mid-flight on the same sender. It is NOT a last-writer-wins race over
+    // the raw track: livekit's `mediaStreamTrack` getter prefers
+    // `processor.processedTrack`, and `setProcessor` assigns `processor`
+    // before its `replaceTrack`, so a resume landing in either order
+    // converges on the processed track (2.15.13, corrected by the wave-2
+    // audit). Fire-and-forget: `#enable()` awaits `resumePublishing`, and
+    // the attach's `init` is the worklet + wasm load (0.4-1.5 s measured as
+    // the `track.processorUpdate` offset in rejoin-leak handoff 7.6/7.9).
+    if (this.#publishGate.size === 0 && this.room() === room)
+      this.#syncMicPipeline(room, this.#micPipelineWants());
   }
 
   /**
@@ -4360,13 +4376,29 @@ class Voice {
    * `VoiceAudioPipeline` and this is the only place that attaches one.
    * All-default settings (browser/no noise filter, unity gain, shaper off)
    * run the raw capture with no Web Audio hop at all; the pipeline is
-   * attached the first time any stage is wanted and then stays for the
-   * life of the track, tuned in place.
+   * attached the first time any stage is wanted WHILE THE PUBLISH GATE IS
+   * EMPTY, and then stays for the life of the track, tuned in place. Under
+   * a held gate the attach is deferred (plan D6) -- nothing is stored, and
+   * `#resumeGate` re-runs this sync at the gate's 1->0 edge, after its
+   * awaited resume sweep, re-reading `#micPipelineWants()` then. The
+   * decision is `micPipelineAction` (`micPipelinePolicy.ts`), pure so it is
+   * spec- and mutation-reachable; only the wiring lives here.
    */
   #syncMicPipeline(room: Room, want: MicPipelineWants) {
     if (this.room() !== room) return;
     const pipeline = this.#micPipeline;
-    if (pipeline) {
+    const action = micPipelineAction({
+      gateHeld: this.#gateHeld(),
+      hasPipeline: !!pipeline,
+      wantsDefault:
+        !want.denoise &&
+        want.gainPercent === 100 &&
+        want.tonePreset === VOICE_TONE_PRESET_DEFAULT,
+    });
+    if (action === "tune") {
+      // "tune" is the `hasPipeline` arm, so the slot is live here; the guard
+      // is for the type only and never falls through to a second attach.
+      if (!pipeline) return;
       pipeline.setGain(want.gainPercent);
       pipeline.setTonePreset(want.tonePreset).catch(() => undefined);
       // Asset load can fail (offline at first enable): denoise stays off and
@@ -4374,23 +4406,40 @@ class Voice {
       pipeline.setDenoiseEnabled(want.denoise).catch(() => undefined);
       return;
     }
-    if (
-      !want.denoise &&
-      want.gainPercent === 100 &&
-      want.tonePreset === VOICE_TONE_PRESET_DEFAULT
-    )
+    if (action === "none") return;
+    if (action === "defer") {
+      // The attach below would `replaceTrack(processedTrack)` inside a held
+      // gate -- the processor mirror window (plan D6). Nothing is stored:
+      // `#resumeGate` re-runs this sync at the gate's 1->0 edge, after the
+      // awaited resume sweep, re-reading `#micPipelineWants()` at fire time.
       return;
+    }
     const track = room.localParticipant.getTrackPublication(
       Track.Source.Microphone,
     )?.audioTrack;
     if (!(track instanceof LocalAudioTrack)) return;
     const created = new VoiceAudioPipeline(want);
     this.#micPipeline = created;
-    track.setProcessor(created).catch(() => {
-      // Attach threw post-publish: the raw track keeps flowing. Forget the
-      // pipeline so the next settings change can try again.
-      if (this.#micPipeline === created) this.#micPipeline = undefined;
-    });
+    // [F11] A `disconnect()` racing `init` bumps `#connectGen` and drops
+    // `#micPipeline`, so an attach that resolves for a dead call must not
+    // leave a processor on the stopped track: destroy what was built.
+    const gen = this.#connectGen;
+    track.setProcessor(created).then(
+      () => {
+        if (gen !== this.#connectGen) void created.destroy();
+      },
+      () => {
+        // Attach threw post-publish: the raw track keeps flowing. Forget the
+        // pipeline so the next settings change can try again.
+        // A rejection can arrive after `init` succeeded (`replaceTrack` on a
+        // closing transport), with the graph built; if the call is already
+        // gone, nothing else will ever destroy it (livekit's `stop()` only
+        // destroys a processor assigned at stop time). `#teardown` is
+        // idempotent, so a double destroy is safe.
+        if (gen !== this.#connectGen) void created.destroy();
+        if (this.#micPipeline === created) this.#micPipeline = undefined;
+      },
+    );
   }
 
   async #setMicEnabled(room: Room, enabled: boolean) {
