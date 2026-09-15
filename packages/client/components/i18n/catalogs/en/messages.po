@@ -18,20 +18,28 @@ msgid "Able to access this forum"
 msgstr "Able to access this forum"
 
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
+msgid "Allow members to set a color with Masquerade"
+msgstr "Allow members to set a color with Masquerade"
+
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Create posts and reply to them"
 msgstr "Create posts and reply to them"
 
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
-msgid "Delete and pin posts and replies by other members"
-msgstr "Delete and pin posts and replies by other members"
+msgid "Delete and pin messages by other members — deleting a whole post needs Manage Channel"
+msgstr "Delete and pin messages by other members — deleting a whole post needs Manage Channel"
 
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Edit forum-specific role and default permissions"
 msgstr "Edit forum-specific role and default permissions"
 
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
-msgid "Read past posts and their replies"
-msgstr "Read past posts and their replies"
+msgid "Edit the forum and its tags, and delete, archive or lock posts"
+msgstr "Edit the forum and its tags, and delete, archive or lock posts"
+
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
+msgid "Read past replies inside a post"
+msgstr "Read past replies inside a post"
 
 #: components/rtc/state.tsx
 msgid "The call couldn't be started right now."
