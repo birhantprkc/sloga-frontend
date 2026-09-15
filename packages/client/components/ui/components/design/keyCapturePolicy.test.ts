@@ -24,7 +24,9 @@ import {
 } from "../../../keybinds/globalKeybinds.ts";
 
 import {
+  type CaptureDecision,
   type CaptureKeyEvent,
+  type ConflictMode,
   CANCEL_CODE,
   CHORD_SEPARATOR,
   CLEAR_CODES,
@@ -34,6 +36,9 @@ import {
   isHardConflict,
   isTypingChord,
   MODIFIER_CODES,
+  // Path import only — deliberately not on the `design/index.ts` barrel. It is
+  // here so the converse glyph assertion below quantifies over the real table.
+  NAMED_KEY_LEGENDS,
   TYPING_CODES,
 } from "./keyCapturePolicy.ts";
 
@@ -291,6 +296,174 @@ describe("decideCapture — conflicts", () => {
   });
 });
 
+/* ------------------------------------------------------------------ *
+ * conflictMode — the push-to-talk-row defect
+ * ------------------------------------------------------------------ */
+
+/**
+ * The defect: `decideCapture` always judged a chord with the chord-wise
+ * `findBindingConflict`, but the push-to-talk row
+ * (`settings/user/voice/VoiceProcessingOptions.tsx`) stores only
+ * `binding.code` and its runtime matchers compare bare `e.code`. So bare
+ * `ArrowDown` captured there drew no notice, yet `Alt+ArrowDown` (channel
+ * navigation) opened the mic — while `Alt+ArrowDown` captured deliberately
+ * warned and then stored the very same bare code. The verdict described a
+ * chord the consumer threw away.
+ *
+ * The fix is a `conflictMode` parameter selecting the finder. The axis is the
+ * consumer's runtime matcher, not the action kind: a code-storing consumer
+ * passes `"code"`, everything else takes the `"chord"` default — and the
+ * default path has to be exactly what it was, which the first spec pins.
+ */
+describe("decideCapture — conflictMode", () => {
+  const MODES: readonly ConflictMode[] = ["chord", "code"];
+
+  /**
+   * 🔴 The default path is byte-identical to before the parameter existed:
+   * omitting the argument and passing `"chord"` explicitly both give the
+   * decisions every spec above already pins, for a chord-conflict candidate
+   * and for a clean one. A mutant that inverted the modes fails here.
+   */
+  it('omitted and explicit "chord" give today\'s decisions', () => {
+    const collision = press("ArrowDown", { altKey: true });
+    const expectedCollision: CaptureDecision = {
+      kind: "commit",
+      binding: binding("ArrowDown", { alt: true }),
+      conflict: {
+        kind: "in-app",
+        sequence: binding("ArrowDown", { alt: true }),
+      },
+    };
+    assert.deepEqual(decideCapture(collision), expectedCollision);
+    assert.deepEqual(decideCapture(collision, undefined), expectedCollision);
+    assert.deepEqual(
+      decideCapture(collision, undefined, "chord"),
+      expectedCollision,
+    );
+
+    const clean = press("ArrowUp", { altKey: true });
+    const expectedClean: CaptureDecision = {
+      kind: "commit",
+      binding: binding("ArrowUp", { alt: true }),
+      conflict: null,
+    };
+    assert.deepEqual(decideCapture(clean), expectedClean);
+    assert.deepEqual(decideCapture(clean, undefined, "chord"), expectedClean);
+  });
+
+  /**
+   * 🔴 The defect itself, named. Bare `ArrowDown` is the chord the push-to-talk
+   * row stores; chord-wise it matches no in-app sequence (every arrow entry
+   * carries a modifier), and the `null` presents as a checked, confident "no
+   * conflict". Code-wise it is the same physical key as `Alt+ArrowDown` —
+   * NAVIGATION_CHANNEL_DOWN, the first `ArrowDown` entry in
+   * `IN_APP_DEFAULT_SEQUENCES` — and that is the collision the row's runtime
+   * actually has. A mutant that ignored the mode fails here.
+   */
+  it('"code" on bare ArrowDown reports the Alt+ArrowDown collision', () => {
+    const chordWise = decideCapture(press("ArrowDown"), undefined, "chord");
+    assert.deepEqual(chordWise, {
+      kind: "commit",
+      binding: binding("ArrowDown"),
+      conflict: null,
+    });
+
+    const codeWise = decideCapture(press("ArrowDown"), undefined, "code");
+    assert.deepEqual(codeWise, {
+      kind: "commit",
+      binding: binding("ArrowDown"),
+      conflict: {
+        kind: "in-app",
+        sequence: binding("ArrowDown", { alt: true }),
+      },
+    });
+  });
+
+  /**
+   * Reserved is evaluated on the EFFECTIVE bare binding in code mode: a
+   * code-storing consumer throws the modifiers away, so what it will actually
+   * match is bare `KeyQ`, which is not the panic combo. The stored binding is
+   * still the full chord — the reduction does not change with the mode.
+   */
+  it('"code" does not refuse the reserved chord — bare KeyQ is not reserved', () => {
+    const chord = press("KeyQ", {
+      ctrlKey: true,
+      shiftKey: true,
+      altKey: true,
+    });
+    const chordWise = decideCapture(chord, undefined, "chord");
+    assert.equal(chordWise.kind, "refuse");
+    assert.deepEqual(chordWise.kind === "refuse" ? chordWise.conflict : null, {
+      kind: "reserved",
+    });
+
+    assert.deepEqual(decideCapture(chord, undefined, "code"), {
+      kind: "commit",
+      binding: binding("KeyQ", { ctrl: true, shift: true, alt: true }),
+      conflict: null,
+    });
+  });
+
+  /** The push-to-talk arm is already code-wise, so the modes agree on it. */
+  it("the push-to-talk hard refusal survives in both modes", () => {
+    for (const mode of MODES) {
+      const decision = decideCapture(
+        press("Space", { ctrlKey: true }),
+        "Space",
+        mode,
+      );
+      assert.equal(decision.kind, "refuse", `${mode}: Ctrl+Space drives PTT`);
+      assert.deepEqual(decision.kind === "refuse" ? decision.conflict : null, {
+        kind: "push-to-talk",
+        code: "Space",
+      });
+    }
+  });
+
+  /**
+   * Everything decided before the finder runs cannot depend on the mode. The
+   * table runs each case under both modes and under the omitted default.
+   */
+  it("repeat, cancel, clear, modifier-only and meta-held are mode-independent", () => {
+    const cases: readonly [
+      CaptureKeyEvent,
+      string | undefined,
+      CaptureDecision,
+    ][] = [
+      [
+        press("KeyM", { repeat: true }),
+        undefined,
+        { kind: "ignore", reason: "repeat" },
+      ],
+      [press("Escape", { altKey: true }), undefined, { kind: "cancel" }],
+      // Escape configured as the push-to-talk key still cancels.
+      [press("Escape"), "Escape", { kind: "cancel" }],
+      [press("Delete"), undefined, { kind: "clear" }],
+      [press("Backspace", { ctrlKey: true }), "Backspace", { kind: "clear" }],
+      [
+        press("ShiftLeft", { shiftKey: true }),
+        undefined,
+        { kind: "ignore", reason: "modifier-only" },
+      ],
+      [
+        press("KeyM", { metaKey: true }),
+        undefined,
+        { kind: "ignore", reason: "meta-held" },
+      ],
+    ];
+    for (const [event, pushToTalkKey, expected] of cases) {
+      for (const mode of MODES) {
+        assert.deepEqual(
+          decideCapture(event, pushToTalkKey, mode),
+          expected,
+          `${mode}: ${event.code} must decide the same way in every mode`,
+        );
+      }
+      assert.deepEqual(decideCapture(event, pushToTalkKey), expected);
+    }
+  });
+});
+
 describe("isHardConflict", () => {
   it("blocks reserved and push-to-talk, warns on in-app", () => {
     assert.equal(isHardConflict({ kind: "reserved" }), true);
@@ -328,6 +501,11 @@ describe("isHardConflict", () => {
  * One representative per documented group of `TYPING_CODES`, so the
  * modifier-direction matrix below runs against all of them rather than only
  * against a letter.
+ *
+ * The four non-US numpad positions are listed individually rather than through
+ * one representative: each was added as its own decision (see the
+ * `NUMPAD_TEXT_CODES` doc), and a single stand-in would let any one of the
+ * other three drop out of the set with no spec noticing.
  */
 const TYPING_REPRESENTATIVES: readonly string[] = [
   "KeyM", // letters
@@ -337,6 +515,10 @@ const TYPING_REPRESENTATIVES: readonly string[] = [
   "IntlRo", // the international text positions (ABNT2/JIS)
   "Numpad1", // numpad digits, NumLock on
   "NumpadAdd", // numpad operators
+  "NumpadParenLeft", // the non-US numpad positions, each its own decision
+  "NumpadParenRight",
+  "NumpadHash",
+  "NumpadStar",
   "Enter", // the deliberate widening
   "NumpadEnter",
   "Tab",
@@ -432,6 +614,10 @@ const CODE_ROSTER: readonly string[] = [
   "NumpadComma",
   "NumpadEqual",
   "NumpadEnter",
+  "NumpadParenLeft",
+  "NumpadParenRight",
+  "NumpadHash",
+  "NumpadStar",
   ...GLYPH_PUNCTUATION,
   "IntlRo",
   "IntlYen",
@@ -441,6 +627,7 @@ const CODE_ROSTER: readonly string[] = [
   "ArrowRight",
   "Space",
   "Tab",
+  "Enter",
   ...DOCUMENTED_EXCLUSIONS,
   // Codes with no legend and no pattern — the pass-through path.
   "MediaTrackNext",
@@ -583,12 +770,14 @@ describe("TYPING_CODES — internal consistency", () => {
    *
    * # The coupling this creates, taken deliberately
    *
-   * `NAMED_KEY_LEGENDS` is private, so the converse half is really "anything
-   * that table gives a one-character legend must be in `TYPING_CODES`",
-   * enforced through `formatKeyCode`'s observable output. That is a real
-   * coupling, and it has a foreseeable false alarm: adding a glyph legend for a
-   * non-typing position (`Home: "⌂"`, say) would fail this test on a change
-   * that is not itself wrong.
+   * The converse half is really "anything `NAMED_KEY_LEGENDS` gives a
+   * one-character legend must be in `TYPING_CODES`", enforced through
+   * `formatKeyCode`'s observable output — and quantified over the real table
+   * (imported by path for exactly this) unioned with the roster, so a glyph
+   * legend added for a position the roster never listed cannot slip past by
+   * omission. That is a real coupling, and it has a foreseeable false alarm:
+   * adding a glyph legend for a non-typing position (`Home: "⌂"`, say) would
+   * fail this test on a change that is not itself wrong.
    *
    * It is kept anyway, because that failure is the feature and not the cost.
    * The operator rule for this set is "errs toward inclusion", so the only two
@@ -609,10 +798,12 @@ describe("TYPING_CODES — internal consistency", () => {
       assert.equal(TYPING_CODES.has(code), true, `${code} missing`);
     }
 
-    // Converse, over the enumerated roster.
-    const singles = [...new Set(CODE_ROSTER)].filter(
-      (code) => formatKeyCode(code).length === 1,
-    );
+    // Converse, over the enumerated roster AND every key of the real legend
+    // table, so a glyph legend for a position the roster forgot still lands in
+    // `singles`.
+    const singles = [
+      ...new Set([...CODE_ROSTER, ...Object.keys(NAMED_KEY_LEGENDS)]),
+    ].filter((code) => formatKeyCode(code).length === 1);
 
     /**
      * Anti-vacuity, in two ways. An empty or arrow-less `singles` would let
@@ -627,7 +818,19 @@ describe("TYPING_CODES — internal consistency", () => {
         `${code} must render as a glyph and be in the roster`,
       );
     }
-    // 26 letters + 10 digits + 12 punctuation + 4 arrows.
+    /**
+     * 26 letters + 10 digits + 12 punctuation + 4 arrows = 52, re-derived
+     * over the widened quantification. Nothing else in the union renders as
+     * one character: `Enter` (a roster member since the follow-up) renders
+     * "Enter"; the four non-US numpad positions have no `NUMPAD_LEGENDS`
+     * entry and fall through the generic numpad branch as "Num ParenLeft" and
+     * siblings (see "leaves the four non-US numpad positions unlegended"
+     * below); and every remaining `NAMED_KEY_LEGENDS` entry is a
+     * multi-character abbreviation ("Esc", "PgUp", …), all of which the roster
+     * already lists — true today by enumeration, not asserted: the next spec
+     * quantifies only over the single-glyph entries.
+     */
+    assert.equal(singles.length, 26 + 10 + 12 + 4);
     assert.equal(singles.length, 52, "the roster's glyph count drifted");
 
     for (const code of singles) {
@@ -640,13 +843,37 @@ describe("TYPING_CODES — internal consistency", () => {
   });
 
   /**
+   * The structural form of the property the converse relies on: the legend
+   * table may name a position the roster does not list only when that legend
+   * is multi-character. A single-glyph legend for an unlisted position would
+   * be a typing key the roster cannot see — the union above catches it in the
+   * converse, and this spec additionally makes the roster's own enumeration
+   * honest by forcing the position onto it.
+   */
+  it("gives no single-glyph legend to a position outside the roster", () => {
+    const glyphs = Object.entries(NAMED_KEY_LEGENDS).filter(
+      ([, legend]) => legend.length === 1,
+    );
+    // Anti-vacuity: the table holds the twelve punctuation glyphs and the
+    // four arrows, and nothing else that short.
+    assert.equal(glyphs.length, 12 + 4);
+    for (const [code, legend] of glyphs) {
+      assert.ok(
+        CODE_ROSTER.includes(code),
+        `${code} has the glyph legend "${legend}" but the roster does not list it`,
+      );
+    }
+  });
+
+  /**
    * 🔴 The count is pinned so the consuming settings row (lane A2) is pinned
    * to a known set. 26 letters + 10 digits + 12 punctuation + 2 international
-   * + Space + 17 numpad + 3 always-pressed + 4 arrows.
+   * + Space + 21 numpad (10 digits + 7 operators + the 4 non-US positions)
+   * + 3 always-pressed + 4 arrows.
    */
-  it("holds exactly the 75 documented codes", () => {
-    assert.equal(TYPING_CODES.size, 26 + 10 + 12 + 2 + 1 + 17 + 3 + 4);
-    assert.equal(TYPING_CODES.size, 75);
+  it("holds exactly the 79 documented codes", () => {
+    assert.equal(TYPING_CODES.size, 26 + 10 + 12 + 2 + 1 + 21 + 3 + 4);
+    assert.equal(TYPING_CODES.size, 79);
   });
 });
 
@@ -762,6 +989,29 @@ describe("the gap isTypingChord exists to cover", () => {
     // `IntlBackslash`, a member since the punctuation group, DOES have one.
     assert.equal(formatKeyCode("IntlBackslash"), "\\");
     assert.equal(TYPING_CODES.has("IntlBackslash"), true);
+  });
+
+  /**
+   * The four non-US numpad positions, decided the same way as the Intl pair:
+   * members because each types on hardware that has it, and deliberately
+   * unlegended. They fall through `formatKeyCode`'s generic numpad branch as
+   * the raw suffix — pinned here so a later lane adding `ParenLeft: "("` to
+   * `NUMPAD_LEGENDS` sees it is changing pinned output. `NumpadStar` is the
+   * sharp case: `"Num *"` is already `NumpadMultiply`'s legend, and two
+   * distinct positions must not read the same.
+   */
+  it("leaves the four non-US numpad positions unlegended", () => {
+    for (const suffix of ["ParenLeft", "ParenRight", "Hash", "Star"]) {
+      const code = `Numpad${suffix}`;
+      assert.equal(TYPING_CODES.has(code), true, `${code} types`);
+      assert.equal(isTypingChord(binding(code)), true);
+      assert.equal(decideCapture(press(code)).kind, "commit");
+      assert.equal(formatKeyCode(code), `Num ${suffix}`);
+    }
+    assert.notEqual(
+      formatKeyCode("NumpadStar"),
+      formatKeyCode("NumpadMultiply"),
+    );
   });
 
   /**

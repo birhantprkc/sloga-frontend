@@ -9,7 +9,11 @@ import {
 import { Symbol } from "../utils/Symbol";
 
 import { Ripple } from "./Ripple";
-import { decideCapture, formatBinding } from "./keyCapturePolicy.ts";
+import {
+  type ConflictMode,
+  decideCapture,
+  formatBinding,
+} from "./keyCapturePolicy.ts";
 
 /**
  * User-visible copy, supplied by the caller.
@@ -40,7 +44,8 @@ export type KeyCaptureCopy = {
  * 🔴 **Pinned cross-file contract.** Two later lanes consume this shape (the
  * settings rows that bind the twelve global actions, and the push-to-talk row
  * that retires the one-off capture in
- * `settings/user/voice/VoiceProcessingOptions.tsx`).
+ * `settings/user/voice/VoiceProcessingOptions.tsx`). The push-to-talk row is
+ * also the consumer of `conflictMode`, below.
  *
  * Fully controlled: this component holds no copy of the binding. `value` is
  * the single source of truth and the callbacks are the only way it changes,
@@ -92,6 +97,21 @@ export type KeyCaptureProps = {
    * create.
    */
   readonly pushToTalkKey?: string;
+
+  /**
+   * Which runtime matcher the CONSUMER of this binding uses, so the conflict
+   * verdict describes what will actually be stored and matched.
+   *
+   * "chord" (default): the consumer matches the whole chord — the twelve
+   * keybind rows. "code": the consumer stores and matches `code` alone and
+   * discards modifiers — the push-to-talk row. A soft in-app collision is
+   * then reported for the bare code, and reserved-ness is judged on the bare
+   * code the consumer will keep.
+   *
+   * Forwarded verbatim to `decideCapture`; this widget adds no logic of its
+   * own.
+   */
+  readonly conflictMode?: ConflictMode;
 
   /** Block capture entirely. */
   readonly disabled?: boolean;
@@ -214,7 +234,11 @@ export function KeyCapture(props: KeyCaptureProps) {
       swallow(event);
       swallowed.add(event.code);
 
-      const decision = decideCapture(event, props.pushToTalkKey);
+      const decision = decideCapture(
+        event,
+        props.pushToTalkKey,
+        props.conflictMode,
+      );
 
       switch (decision.kind) {
         // Modifier-only, auto-repeat, or a Meta-held chord `Binding` cannot

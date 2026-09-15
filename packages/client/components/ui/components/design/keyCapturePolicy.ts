@@ -44,6 +44,7 @@ import {
   type BindingConflict,
   type KeyLikeEvent,
   findBindingConflict,
+  findCodeWiseBindingConflict,
 } from "../../../keybinds/globalKeybinds.ts";
 
 /* ------------------------------------------------------------------------ *
@@ -224,6 +225,20 @@ const INTL_TEXT_CODES: readonly string[] = ["IntlRo", "IntlYen"];
  *
  * `NumpadEnter` is not here: it belongs to the {@link ALWAYS_PRESSED_CODES}
  * group, whose justification is different.
+ *
+ * The last four — `NumpadParenLeft`, `NumpadParenRight`, `NumpadHash`,
+ * `NumpadStar` — are positions a US numpad does not have: the parentheses sit
+ * on some extended numpads, and `#`/`*` on phone-style keypads. Each enters a
+ * character on hardware that has it, which is this set's whole test for
+ * membership, so the "errs toward inclusion" rule of {@link PUNCTUATION_CODES}
+ * decides them the same way it decided `IntlRo` and `IntlYen`: a position that
+ * types and carries no warning is the failure worth avoiding, and a warning on
+ * hardware that lacks the key costs nothing. Like the Intl pair they get no
+ * legend — `formatKeyCode` renders them through its generic numpad branch as
+ * the raw suffix ("Num ParenLeft"), ugly but true. `NumpadStar` in particular
+ * must not become `"Num *"`: that is already `NumpadMultiply`'s legend, and two
+ * distinct positions reading identically is the confusion the numpad legends
+ * exist to prevent.
  */
 const NUMPAD_TEXT_CODES: readonly string[] = [
   ...Array.from({ length: 10 }, (_, i) => `Numpad${i}`),
@@ -234,6 +249,10 @@ const NUMPAD_TEXT_CODES: readonly string[] = [
   "NumpadDivide",
   "NumpadComma",
   "NumpadEqual",
+  "NumpadParenLeft",
+  "NumpadParenRight",
+  "NumpadHash",
+  "NumpadStar",
 ];
 
 /**
@@ -352,7 +371,7 @@ const COMPOSER_MOTION_CODES: readonly string[] = [
  *
  * A `ReadonlySet` rather than the `readonly string[]` used by
  * {@link MODIFIER_CODES} and {@link CLEAR_CODES}. Those hold 8 and 2 entries
- * and are scanned once per keydown; this holds 75 and is read per rendered
+ * and are scanned once per keydown; this holds 79 and is read per rendered
  * row, where a linear scan is the wrong default. It stays iterable, which the
  * consistency assertions in the test file depend on.
  *
@@ -480,13 +499,34 @@ export function isHardConflict(conflict: BindingConflict): boolean {
 }
 
 /**
+ * Which conflict finder judges a captured chord — see the `conflictMode`
+ * parameter of {@link decideCapture}.
+ */
+export type ConflictMode = "chord" | "code";
+
+/**
  * Reduce one keydown to a decision. The whole policy of the widget.
  *
  * @param event the keydown, duck-typed
  * @param pushToTalkKey the caller's current `voice.pushToTalkKey`, or
- * `undefined` when push-to-talk is off. Threaded through to
- * `findBindingConflict` rather than read here — this module must not reach
- * `@revolt/state`, and the widget must not either.
+ * `undefined` when push-to-talk is off. Threaded through to the conflict
+ * finder rather than read here — this module must not reach `@revolt/state`,
+ * and the widget must not either.
+ * @param conflictMode which finder computes `conflict`. `"chord"` (the
+ * default) is `findBindingConflict`, which compares the whole chord; `"code"`
+ * is `findCodeWiseBindingConflict`, which ignores the modifiers in every arm.
+ *
+ * 🔴 The axis is the **consumer's runtime matcher**, not the kind of action
+ * being bound. A consumer that stores and matches the whole `Binding` takes the
+ * default. A consumer that stores and matches `binding.code` alone — the
+ * push-to-talk row in `settings/user/voice/VoiceProcessingOptions.tsx`, whose
+ * runtime compares bare `e.code` — must pass `"code"`, or its verdicts describe
+ * a chord it throws away: bare `ArrowDown` captured there draws no notice
+ * chord-wise, yet `Alt+ArrowDown` (channel navigation) opens the mic, while
+ * `Alt+ArrowDown` captured deliberately warns and then stores the same bare
+ * code. Nothing else in the decision changes with the mode — the reduction,
+ * the check order and the hard/soft split are identical, and the default path
+ * is exactly what it was before the parameter existed.
  *
  * Check order is load-bearing:
  *
@@ -509,6 +549,7 @@ export function isHardConflict(conflict: BindingConflict): boolean {
 export function decideCapture(
   event: CaptureKeyEvent,
   pushToTalkKey?: string,
+  conflictMode: ConflictMode = "chord",
 ): CaptureDecision {
   if (event.repeat) return { kind: "ignore", reason: "repeat" };
 
@@ -528,10 +569,12 @@ export function decideCapture(
     alt: event.altKey,
   };
 
-  // `findBindingConflict` already runs `isReservedCombo` as its first and
-  // highest-severity test, so calling that predicate separately here would be
-  // a second, redundant comparison that could only drift from it. The reserved
-  // combo arrives as `{ kind: "reserved" }`, which `isHardConflict` refuses.
+  // Either finder already runs the reserved check as its first and
+  // highest-severity test (`findBindingConflict` via `isReservedCombo` on the
+  // chord, `findCodeWiseBindingConflict` on the effective bare binding), so
+  // calling that predicate separately here would be a second, redundant
+  // comparison that could only drift from it. The reserved combo arrives as
+  // `{ kind: "reserved" }`, which `isHardConflict` refuses.
   //
   // 🔴 This refusal is a cheap early check, NOT a guarantee. `isReservedCombo`
   // is documented as a deliberate *subset* of the native arm-side refusal: it
@@ -540,7 +583,10 @@ export function decideCapture(
   // computable in the renderer. So a reserved chord can still pass this and
   // come back in `KeybindsArmResult.refused`. The caller owes that row an
   // unbindable state; this widget cannot promise one.
-  const conflict = findBindingConflict(binding, pushToTalkKey);
+  const conflict =
+    conflictMode === "code"
+      ? findCodeWiseBindingConflict(binding, pushToTalkKey)
+      : findBindingConflict(binding, pushToTalkKey);
 
   if (conflict !== null && isHardConflict(conflict)) {
     return { kind: "refuse", binding, conflict };
@@ -568,8 +614,12 @@ export function decideCapture(
  * bare `.replace("Key", "")` would also have mangled any code merely
  * *containing* "Key".) The fix is a lookup plus anchored patterns, not a chain
  * of substring replacements.
+ *
+ * Exported by path only — not on the `design/index.ts` barrel — so the spec's
+ * converse assertion ("every single-glyph legend is a typing key") can
+ * quantify over the real table instead of a hand-copied roster of it.
  */
-const NAMED_KEY_LEGENDS: Readonly<Record<string, string>> = {
+export const NAMED_KEY_LEGENDS: Readonly<Record<string, string>> = {
   ArrowUp: "↑",
   ArrowDown: "↓",
   ArrowLeft: "←",

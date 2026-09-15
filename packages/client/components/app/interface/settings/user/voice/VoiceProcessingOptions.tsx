@@ -13,7 +13,7 @@ import {
   CategoryButton,
   Checkbox,
   Column,
-  isHardConflict,
+  isTypingChord,
   KeyCapture,
   Row,
   Slider,
@@ -45,10 +45,29 @@ export function VoiceProcessingOptions() {
    * The conflict verdict for the last push-to-talk chord `KeyCapture`
    * captured, or `null` once retracted.
    *
-   * `onConflict` is optional on the widget and is wired up anyway, because a
-   * hard refusal binds nothing: without this the user presses the reserved
-   * combo, the capture ends, the keycap still shows the old key, and nothing
-   * says why it did not take.
+   * `onConflict` is optional on the widget and is wired up anyway, because the
+   * verdict here describes a real collision on the bare code the runtime will
+   * honor: the row passes `conflictMode="code"`, so `KeyCapture` judges the
+   * key alone, which is exactly what `onPushToTalkChange` stores and what
+   * `#pttKeydown` / `#pttKeyup` in `@revolt/rtc/state.tsx` match. A soft
+   * `in-app` verdict means an in-app shortcut shares that key and, while Sloga
+   * is focused, pressing it may do both. The chord DID bind, so the row owes a
+   * sentence under the keycap saying so.
+   *
+   * 🔴 Only the soft kind can arrive on this row, so the description renders a
+   * single verdict and has no hard-refusal branch. The hard-refusal predicate
+   * in `keyCapturePolicy.ts` refuses exactly two kinds, `reserved` and
+   * `push-to-talk`, and neither is reachable here in code mode:
+   *
+   * - `reserved` is judged on the bare code the row will keep, and the panic
+   *   combo needs all three modifiers held, so no bare code is ever reserved.
+   * - `push-to-talk` is the collision with the caller's `pushToTalkKey`, which
+   *   this row passes as `undefined`: it IS the push-to-talk key and cannot
+   *   collide with itself.
+   *
+   * `KeyCapture` owns the verdict and the refusal. A second verdict computed
+   * here from the same chord could only ever disagree with it, so this signal
+   * stores what the widget reported and nothing more.
    */
   const [pttConflict, setPttConflict] = createSignal<BindingConflict | null>(
     null,
@@ -440,10 +459,22 @@ export function VoiceProcessingOptions() {
               /* The shared capture control. Every decision it makes lives in
                  `keyCapturePolicy.ts`; the bridge to this setting's bare
                  `code` string, and why `pushToTalkKey` is `undefined` here,
-                 are documented on the handlers above. */
+                 are documented on the handlers above.
+
+                 `conflictMode="code"` because this setting stores and matches
+                 `code` alone: `onPushToTalkChange` drops the modifiers and
+                 both runtime matchers compare a bare `e.code`. The verdict
+                 therefore has to be computed on the bare code the row will
+                 actually keep. Judged chord-wise it was wrong in both
+                 directions: bare `ArrowDown` drew no notice even though the
+                 stored code then opened the mic under `Alt+ArrowDown` (channel
+                 navigation) and under every bare arrow press while scrolling
+                 chat, while `Alt+ArrowDown` captured deliberately DID warn and
+                 stored the identical bare code. */
               <KeyCapture
                 value={pushToTalkBinding()}
                 pushToTalkKey={undefined}
+                conflictMode="code"
                 onChange={onPushToTalkChange}
                 onClear={resetPushToTalkKey}
                 onConflict={onPushToTalkConflict}
@@ -458,25 +489,43 @@ export function VoiceProcessingOptions() {
             description={
               <Column gap="sm">
                 <Trans>Click to change the push to talk keybind.</Trans>
-                <Show when={pttConflict()}>
-                  {(conflict) => (
-                    <Text class="label">
-                      <Show
-                        when={isHardConflict(conflict())}
-                        fallback={
-                          <Trans>
-                            This key is also used by a Sloga shortcut, so while
-                            Sloga is focused pressing it may do both.
-                          </Trans>
-                        }
-                      >
+                {/* The single verdict this row can receive. It is always the
+                    soft kind — `pttConflict`'s doc gives both reasons a hard
+                    verdict cannot arrive here in code mode — so there is no
+                    hard/soft branch and no refusal copy. */}
+                <Show when={pttConflict()?.kind === "in-app"}>
+                  <Text class="label">
+                    <Trans>
+                      This key is also used by a Sloga shortcut, so while Sloga
+                      is focused pressing it may do both.
+                    </Trans>
+                  </Text>
+                </Show>
+                {/* Derived from the STORED binding, not from a capture event,
+                    so a bare typing key bound before a reload still draws the
+                    note (the same shape as `settings/user/Keybinds.tsx`).
+
+                    🔴 This renders under the default `Space`, and that is
+                    honest: `#pttKeydown` has no editable-target guard, so with
+                    push to talk on, a space typed into the composer opens the
+                    mic. The default is not special-cased.
+
+                    Unlike `Keybinds.tsx`, nothing suppresses it under a
+                    conflict: no hard verdict can co-exist here, so there is
+                    never a "nothing was saved" sentence for it to contradict.
+                    And it does not suggest adding a modifier — this setting
+                    DROPS modifiers, so that advice would be false here. */}
+                <Show when={pushToTalkBinding()}>
+                  {(b) => (
+                    <Show when={isTypingChord(b())}>
+                      <Text class="label">
                         <Trans>
-                          That combination is reserved by Sloga, so nothing was
-                          bound and your key is unchanged. Press the key on its
-                          own, without Ctrl, Shift or Alt.
+                          You use this key while typing, so it will also open
+                          your mic in the message box, in search, anywhere text
+                          goes.
                         </Trans>
-                      </Show>
-                    </Text>
+                      </Text>
+                    </Show>
                   )}
                 </Show>
                 <Show when={pttDroppedModifiers()}>

@@ -42,6 +42,7 @@ import {
   bindingMatchesRelease,
   bindingsEqual,
   findBindingConflict,
+  findCodeWiseBindingConflict,
   isGlobalKeybindAction,
   isReservedCombo,
 } from "./globalKeybinds.ts";
@@ -522,6 +523,146 @@ describe("findBindingConflict", () => {
       );
     }
     assert.equal(IN_APP_DEFAULT_SEQUENCES.length, 5);
+  });
+});
+
+/* ======================================================================== *
+ * findCodeWiseBindingConflict
+ *
+ * The same three arms as `findBindingConflict`, for a consumer whose runtime
+ * matcher compares `code` alone — the push-to-talk row, which stores only
+ * `binding.code` and whose keydown/keyup handlers gate on bare `e.code`.
+ * Modifiers on the candidate are ignored in every arm, so the property under
+ * test throughout is: two candidates with the same `code` and any modifiers
+ * get deep-equal verdicts.
+ * ======================================================================== */
+
+describe("findCodeWiseBindingConflict", () => {
+  // The third entry of the table: Alt+ArrowDown, channel navigation.
+  const altArrowDown = IN_APP_DEFAULT_SEQUENCES[2];
+
+  it("the defect: bare ArrowDown collides code-wise where the chord-wise check sees nothing", () => {
+    assert.deepEqual(altArrowDown, chord("ArrowDown", { alt: true }));
+    // Chord-wise, no table entry is a modifier-less ArrowDown, so the twelve
+    // keybind rows are right to see no conflict...
+    assert.equal(findBindingConflict(chord("ArrowDown")), null);
+    // ...but a consumer that matches bare `e.code` fires on Alt+ArrowDown and
+    // on every arrow press while scrolling chat.
+    assert.deepEqual(findCodeWiseBindingConflict(chord("ArrowDown")), {
+      kind: "in-app",
+      sequence: altArrowDown,
+    });
+  });
+
+  it("gives the same verdict for every modifier set on one code", () => {
+    const bare = findCodeWiseBindingConflict(chord("ArrowDown"));
+    for (const mods of [
+      { alt: true },
+      { ctrl: true, alt: true },
+      { ctrl: true, shift: true, alt: true },
+      { shift: true },
+    ]) {
+      assert.deepEqual(
+        findCodeWiseBindingConflict(chord("ArrowDown", mods)),
+        bare,
+        JSON.stringify(mods),
+      );
+    }
+    // Guard the reference: the shared verdict is the real one, not
+    // null-equals-null.
+    assert.deepEqual(bare, { kind: "in-app", sequence: altArrowDown });
+  });
+
+  it("reports ArrowUp against Ctrl+Alt+ArrowUp", () => {
+    assert.deepEqual(findCodeWiseBindingConflict(chord("ArrowUp")), {
+      kind: "in-app",
+      sequence: chord("ArrowUp", { ctrl: true, alt: true }),
+    });
+    // Chord-wise, bare ArrowUp is free.
+    assert.equal(findBindingConflict(chord("ArrowUp")), null);
+  });
+
+  it("reports Escape against the FIRST matching entry in table order", () => {
+    // Escape appears twice in the table: bare Escape, then Shift+Escape. One
+    // verdict is enough to warn, and the first in table order is returned —
+    // even for a Shift+Escape capture, which chord-wise would name the second.
+    assert.deepEqual(IN_APP_DEFAULT_SEQUENCES[0], chord("Escape"));
+    assert.deepEqual(
+      IN_APP_DEFAULT_SEQUENCES[1],
+      chord("Escape", { shift: true }),
+    );
+    assert.deepEqual(findCodeWiseBindingConflict(chord("Escape")), {
+      kind: "in-app",
+      sequence: chord("Escape"),
+    });
+    assert.deepEqual(
+      findCodeWiseBindingConflict(chord("Escape", { shift: true })),
+      { kind: "in-app", sequence: chord("Escape") },
+    );
+  });
+
+  it("does NOT report Ctrl+Shift+Alt+KeyQ as reserved — the row stores bare KeyQ", () => {
+    const panic = chord("KeyQ", { ctrl: true, shift: true, alt: true });
+    assert.deepEqual(findBindingConflict(panic), { kind: "reserved" });
+    assert.equal(findCodeWiseBindingConflict(panic), null);
+  });
+
+  it("evaluates reserved-ness against RESERVED_COMBO on the effective bare binding", () => {
+    // RESERVED_COMBO carries all three modifiers, and that is the ONLY reason
+    // a bare code can never be reserved here: the arm tests
+    // `{ code, ctrl: false, shift: false, alt: false }` against the constant,
+    // so the constant's modifiers decide. Were RESERVED_COMBO ever
+    // modifier-less, the bare code WOULD refuse — pinned by asserting the
+    // premise alongside the verdict rather than hard-coding the verdict.
+    assert.equal(RESERVED_COMBO.ctrl, true);
+    assert.equal(RESERVED_COMBO.shift, true);
+    assert.equal(RESERVED_COMBO.alt, true);
+    assert.equal(isReservedCombo(chord(RESERVED_COMBO.code)), false);
+    assert.equal(findCodeWiseBindingConflict(chord(RESERVED_COMBO.code)), null);
+    assert.equal(findCodeWiseBindingConflict({ ...RESERVED_COMBO }), null);
+  });
+
+  it("matches push-to-talk on the physical key, ignoring modifiers", () => {
+    assert.deepEqual(findCodeWiseBindingConflict(chord("Space"), "Space"), {
+      kind: "push-to-talk",
+      code: "Space",
+    });
+    assert.deepEqual(
+      findCodeWiseBindingConflict(chord("Space", { ctrl: true }), "Space"),
+      { kind: "push-to-talk", code: "Space" },
+    );
+  });
+
+  it("skips the push-to-talk arm when the key is undefined", () => {
+    assert.equal(findCodeWiseBindingConflict(chord("Space")), null);
+    assert.equal(findCodeWiseBindingConflict(chord("Space"), undefined), null);
+    assert.equal(
+      findCodeWiseBindingConflict(chord("Space", { ctrl: true }), "KeyM"),
+      null,
+    );
+  });
+
+  it("puts push-to-talk ahead of in-app", () => {
+    // Same severity order as findBindingConflict: a code that is both the
+    // push-to-talk key and an in-app default reports the hard refusal.
+    assert.deepEqual(
+      findCodeWiseBindingConflict(chord("ArrowDown"), "ArrowDown"),
+      { kind: "push-to-talk", code: "ArrowDown" },
+    );
+    assert.deepEqual(
+      findCodeWiseBindingConflict(chord("Escape", { shift: true }), "Escape"),
+      { kind: "push-to-talk", code: "Escape" },
+    );
+  });
+
+  it("returns null for a code outside IN_APP_COMPARABLE_CODES", () => {
+    assert.equal(findCodeWiseBindingConflict(chord("KeyA")), null);
+    assert.equal(
+      findCodeWiseBindingConflict(
+        chord("KeyA", { ctrl: true, shift: true, alt: true }),
+      ),
+      null,
+    );
   });
 });
 

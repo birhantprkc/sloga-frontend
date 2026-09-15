@@ -866,6 +866,11 @@ export type BindingConflict =
  * Check a candidate binding for the collisions the capture UI can actually
  * detect, in descending severity. Returns the first, or `null`.
  *
+ * The reserved and in-app arms compare the whole chord, which is right only
+ * for a consumer that is matched chord-wise at runtime;
+ * {@link findCodeWiseBindingConflict} is the counterpart for one that matches
+ * `code` alone.
+ *
  * @param candidate the chord the user just pressed
  * @param pushToTalkKey the current `voice.pushToTalkKey`, a bare
  * `KeyboardEvent.code` string (`"Space"` by default). Passed in rather than
@@ -912,6 +917,89 @@ export function findBindingConflict(
   // real conflict instead of reporting it.
   const sequence = IN_APP_DEFAULT_SEQUENCES.find((entry) =>
     bindingsEqual(entry, candidate),
+  );
+  if (sequence) return { kind: "in-app", sequence };
+
+  return null;
+}
+
+/**
+ * The code-wise counterpart of {@link findBindingConflict}: the same three
+ * arms in the same severity order, for a consumer whose RUNTIME matcher
+ * compares `code` alone. Modifiers on `candidate` are ignored in every arm.
+ *
+ * # Whom this is for
+ *
+ * A consumer that stores only `binding.code` and matches presses on bare
+ * `e.code` with no modifier comparison. Today that is the push-to-talk row
+ * (`settings/user/voice/VoiceProcessingOptions.tsx`), whose keydown/keyup
+ * handlers in `@revolt/rtc/state.tsx` compare `e.code` against the stored key
+ * with no modifier comparison at all. The twelve global keybind rows are NOT
+ * such a consumer: they store the whole chord and are matched by
+ * {@link bindingMatchesPress}, so they keep calling
+ * {@link findBindingConflict}.
+ *
+ * # Why the axis is the consumer's runtime matcher, not the action kind
+ *
+ * A conflict check is a prediction of what will collide at runtime, so it has
+ * to ask the question the runtime matcher will ask. {@link findBindingConflict}
+ * asks "is this chord one of those", which is right only for a consumer that
+ * will match the chord. For a consumer that will match the code, the chord-wise
+ * answer is wrong in both directions: bare `ArrowDown` captured on the
+ * push-to-talk row draws no notice (no table entry is a modifier-less
+ * `ArrowDown`), yet at runtime `Alt+ArrowDown` — channel navigation — opens
+ * the microphone, and so does every bare arrow press while scrolling chat;
+ * while `Alt+ArrowDown` captured on the same row DOES warn, and then stores the
+ * identical bare `"ArrowDown"`. Two captures with the same stored value get
+ * opposite verdicts. Keying the choice on "is this the push-to-talk action"
+ * would only relocate that mistake: what decides which comparison is honest is
+ * how the consumer matches, and a consumer states that by calling this
+ * function instead of the other one.
+ *
+ * The property the spec pins follows from this: two candidates with the same
+ * `code` and any modifiers get deep-equal verdicts.
+ *
+ * # Why reserved-ness is evaluated on the effective bare binding
+ *
+ * The consumer will store `candidate.code` alone, so what it will actually
+ * hold is `{ code, ctrl: false, shift: false, alt: false }`, and that is what
+ * is tested against {@link RESERVED_COMBO}. `Ctrl+Shift+Alt+KeyQ` captured on
+ * such a row is therefore NOT reserved: the row will store bare `KeyQ`, which
+ * is not the panic combo. The panic combo needs all three modifiers, so a bare
+ * code can never be it today; the arm is still written against the constant
+ * rather than short-circuited, so that a modifier-less {@link RESERVED_COMBO}
+ * would refuse the bare code as it should.
+ *
+ * # Why the in-app arm returns the first match in table order
+ *
+ * With modifiers ignored, one code can collide with several entries — bare
+ * `ArrowDown` collides with both `Alt+ArrowDown` and `Ctrl+Alt+ArrowDown`. One
+ * verdict is enough to warn, and the first entry in
+ * {@link IN_APP_DEFAULT_SEQUENCES} order is the one whose comment names the
+ * channel-navigation sequence.
+ *
+ * @param candidate the chord the user just pressed; only its `code` is read
+ * @param pushToTalkKey as for {@link findBindingConflict}
+ */
+export function findCodeWiseBindingConflict(
+  candidate: Binding,
+  pushToTalkKey?: string,
+): BindingConflict | null {
+  // The binding the consumer will actually store and match.
+  const effective: Binding = {
+    code: candidate.code,
+    ctrl: false,
+    shift: false,
+    alt: false,
+  };
+  if (isReservedCombo(effective)) return { kind: "reserved" };
+
+  if (pushToTalkKey !== undefined && candidate.code === pushToTalkKey) {
+    return { kind: "push-to-talk", code: pushToTalkKey };
+  }
+
+  const sequence = IN_APP_DEFAULT_SEQUENCES.find(
+    (entry) => entry.code === candidate.code,
   );
   if (sequence) return { kind: "in-app", sequence };
 
