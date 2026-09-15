@@ -122,6 +122,325 @@ export const CANCEL_CODE = "Escape";
 export const CLEAR_CODES: readonly string[] = ["Delete", "Backspace"];
 
 /* ------------------------------------------------------------------------ *
+ * 2b. Typing keys — the honest replacement for the CHAT_FOCUS_COMPOSITION gap
+ * ------------------------------------------------------------------------ */
+
+/**
+ * `KeyA`..`KeyZ`, derived rather than spelled out.
+ *
+ * The 26 entries are mechanical and a hand-written list of them is a list with
+ * 26 chances to typo one — the kind of defect that produces a set which is
+ * *almost* right and whose one missing member is a key that ships with no
+ * warning. The tables in section 4 are written out because each entry carries
+ * an independent decision (which glyph); these carry none.
+ */
+const LETTER_CODES: readonly string[] = Array.from(
+  { length: 26 },
+  (_, i) => `Key${String.fromCharCode("A".charCodeAt(0) + i)}`,
+);
+
+/** `Digit0`..`Digit9`. Derived for the same reason as {@link LETTER_CODES}. */
+const DIGIT_CODES: readonly string[] = Array.from(
+  { length: 10 },
+  (_, i) => `Digit${i}`,
+);
+
+/**
+ * The punctuation positions of the main block, on a US layout.
+ *
+ * These twelve are also the twelve *punctuation* entries
+ * {@link NAMED_KEY_LEGENDS} renders as a one-character glyph, and the test file
+ * asserts that overlap in both directions. But the overlap is a consequence,
+ * not the derivation.
+ *
+ * 🔴 That table is **not** a printability oracle, and an earlier version of
+ * this comment claimed it was — that "its membership is already the answer to
+ * which physical positions produce a printable character". It is a *keycap
+ * legend* table, and it holds **sixteen** single-character legends: the twelve
+ * below plus the four arrow glyphs (`ArrowUp: "↑"` and its three siblings).
+ * Reading "has a one-character legend" as "types a character" is precisely the
+ * reasoning that produced the arrow hole {@link COMPOSER_MOTION_CODES} exists
+ * to close: `↑` is a glyph printed on a keycap that enters no text at all.
+ * Membership here is therefore decided per position, on the one question that
+ * matters — does pressing it put a character into a focused composer.
+ *
+ * Layout caveat: `code` names a position, and which glyph (or whether any) it
+ * produces depends on the active layout. A position that types nothing on some
+ * layout only costs the user a warning they did not need; the reverse — a
+ * position that types and carries no warning — is the failure worth avoiding,
+ * so the set errs toward inclusion.
+ */
+const PUNCTUATION_CODES: readonly string[] = [
+  "Backquote",
+  "Minus",
+  "Equal",
+  "BracketLeft",
+  "BracketRight",
+  "Backslash",
+  "Semicolon",
+  "Quote",
+  "Comma",
+  "Period",
+  "Slash",
+  "IntlBackslash",
+];
+
+/**
+ * Main-block positions that type and that a US keyboard does not have.
+ *
+ * `IntlBackslash` — the extra key beside left Shift on an ISO board — is
+ * already in {@link PUNCTUATION_CODES}, because it has a legend entry and came
+ * along with the glyph-table reading corrected above. These two have no legend
+ * entry, and that is the only reason they were missed:
+ *
+ * - `IntlRo` is the ABNT2 (Brazilian) and JIS position that types `/`.
+ * - `IntlYen` is the JIS position that types `¥`, or `|` shifted.
+ *
+ * Both put a character into a focused composer, which is this set's whole test
+ * for membership, so the "errs toward inclusion" rule in
+ * {@link PUNCTUATION_CODES} decides them the same way it decided the twelve.
+ * Neither string appeared anywhere in this repo before this group, so the
+ * omission was a gap in coverage rather than a decision taken elsewhere — and
+ * Sloga runs a Brazilian media node, which makes ABNT2 a real population and
+ * not a hypothetical one.
+ *
+ * 🔴 No legend is added for either, deliberately. `formatKeyCode` has no entry
+ * for them, so they render as the raw `code` — ugly but true, which is that
+ * function's documented failure mode for a position it does not recognize.
+ * Inventing `/` and `¥` legends would change `formatKeyCode`'s behavior, which
+ * is pinned, and would assert an active layout this module refuses to guess.
+ */
+const INTL_TEXT_CODES: readonly string[] = ["IntlRo", "IntlYen"];
+
+/**
+ * The numpad positions that produce text with NumLock **on**.
+ *
+ * With NumLock off these same positions report navigation (`Numpad8` arrives
+ * as `key: "ArrowUp"` — the case `IN_APP_COMPARABLE_CODES` cites for keeping
+ * the numpad out of its one-to-one map). A binding is stored as a `code`, so
+ * it cannot know which of the two a future press will be, and NumLock is a
+ * per-machine state the renderer does not track. Included because the
+ * NumLock-on reading is the one that types.
+ *
+ * `NumpadEnter` is not here: it belongs to the {@link ALWAYS_PRESSED_CODES}
+ * group, whose justification is different.
+ */
+const NUMPAD_TEXT_CODES: readonly string[] = [
+  ...Array.from({ length: 10 }, (_, i) => `Numpad${i}`),
+  "NumpadDecimal",
+  "NumpadAdd",
+  "NumpadSubtract",
+  "NumpadMultiply",
+  "NumpadDivide",
+  "NumpadComma",
+  "NumpadEqual",
+];
+
+/**
+ * 🔴 The deliberate widening past "printable": `Enter`, `NumpadEnter`, `Tab`.
+ *
+ * None of these types a character, so a set named for printable keys would
+ * exclude all three. They are in anyway, and the reason is that the warning is
+ * about *typing*, not about text: these are the keys a user's hands are on
+ * constantly while composing. Bare `Enter` **sends** the message in the
+ * composer and bare `Tab` moves focus out of it, so a global binding on either
+ * fires in the middle of ordinary chat — which is exactly the failure the
+ * warning exists to name.
+ *
+ * `Enter` is the sharpest case and the reason this group is not optional. It is
+ * present in `IN_APP_COMPARABLE_CODES`, so `findBindingConflict` genuinely
+ * *does* compare it against the in-app registry — and bare `Enter` is not an
+ * entry in `IN_APP_DEFAULT_SEQUENCES`, so that comparison returns `null`. A
+ * bare `Enter` binding therefore draws a checked, confident "no conflict"
+ * today. Without this group it would ship with no caution of any kind.
+ *
+ * `NumpadEnter` rides along because it activates the composer the same way
+ * (`key: "Enter"`) while being a distinct `code` that the in-app path cannot
+ * reach at all.
+ */
+const ALWAYS_PRESSED_CODES: readonly string[] = ["Enter", "NumpadEnter", "Tab"];
+
+/**
+ * 🔴 The four bare arrows.
+ *
+ * # Why a group of its own, rather than three more entries in
+ * {@link ALWAYS_PRESSED_CODES}
+ *
+ * That group's justification is "types nothing, but the hands are on it while
+ * composing", and its sharpest case is `Enter`. The arrows qualify under that
+ * sentence too, but they were *excluded* for a specific stated reason, and a
+ * silent move into an existing list would leave that reason unaddressed. The
+ * correction is the rationale, so it gets its own place to live.
+ *
+ * # Why they were excluded, and why that reason was false
+ *
+ * The exclusion list below used to read: "Arrows are also where the real in-app
+ * conflicts live, so they are already covered honestly by
+ * `findBindingConflict`." Measured against the real functions, that is false —
+ * and false *by construction*, not by accident:
+ *
+ * - {@link isTypingChord} only ever evaluates **modifier-less** chords. It
+ *   returns `false` the instant any of ctrl/shift/alt is set, before it reads
+ *   the code at all.
+ * - Every arrow entry in `IN_APP_DEFAULT_SEQUENCES` carries a modifier:
+ *   `Alt+ArrowDown`, `Ctrl+Alt+ArrowUp`, `Ctrl+Alt+ArrowDown`. `ArrowLeft` and
+ *   `ArrowRight` appear in that list not at all. The only modifier-less entry
+ *   in the whole list is bare `Escape`, which is unbindable anyway.
+ * - `findBindingConflict` matches with `bindingsEqual`, on the **full** chord,
+ *   modifiers included.
+ *
+ * So the in-app conflict path and this predicate have **disjoint domains**
+ * where the arrows are concerned: no modified sequence can ever match a chord
+ * this predicate looks at, which makes "already covered by
+ * `findBindingConflict`" not merely optimistic but unreachable. Confirmed by
+ * driving the functions: bare `ArrowUp`, `ArrowDown`, `ArrowLeft` and
+ * `ArrowRight` each come back `conflict: null`. A bare arrow binding shipped
+ * with **no caution of any kind** — no conflict note, and no typing warning.
+ *
+ * That is verbatim the argument {@link ALWAYS_PRESSED_CODES} uses to *include*
+ * `Enter`, and the arrows are the same shape of case, only worse: they are in
+ * `IN_APP_COMPARABLE_CODES`, so the `null` presents to the UI as a checked,
+ * confident "no conflict" — while the chords actually checked are never the
+ * chord the user bound.
+ *
+ * # And the collision is concrete
+ *
+ * Bare `ArrowUp` on an **empty** composer runs edit-last-message: the
+ * `key: "ArrowUp"` keymap in `../features/texteditor/TextEditor2.tsx` (its
+ * `arrowUpKeymap`) calls `onPreviousContext()` whenever the document is empty.
+ * The arrows also drive selection in every autocomplete popout. Those are keys
+ * a user's hands are on while composing, which is {@link TYPING_CODES}' actual
+ * test for membership.
+ */
+const COMPOSER_MOTION_CODES: readonly string[] = [
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+];
+
+/**
+ * Physical keys a user presses while typing into Sloga.
+ *
+ * # What this set is for
+ *
+ * The DOM transport for global keybinds has **no editable-target filter**, and
+ * adding one is not an option: the native transport has no DOM to consult, so a
+ * renderer-side filter would make the two transports disagree about whether a
+ * binding fired. Binding bare `KeyM` therefore genuinely means that typing "m"
+ * in the composer mutes the user. That is allowed — the pinned decision is that
+ * capture accepts such a binding and the settings row **warns** about it — and
+ * this set is how a caller recognizes one.
+ *
+ * # Why it is not `findBindingConflict`'s job
+ *
+ * `globalKeybinds.ts` documents the hole: the in-app registry's
+ * `CHAT_FOCUS_COMPOSITION` is bound to the regex `/^[^ ]$/` — any single
+ * non-space character, unmodified — which **cannot be expressed** in `Binding`
+ * space, because no code in `IN_APP_COMPARABLE_CODES` yields a single-character
+ * `key` and adding letter codes to that map would require the layout guess it
+ * refuses. So `IN_APP_DEFAULT_SEQUENCES` omits it and the `"in-app"` conflict
+ * path can never warn about a printable key. This predicate is the honest
+ * replacement for that gap, sitting beside the conflict machinery rather than
+ * inside it: a `code`-space membership test claims only what it can check, and
+ * makes no assertion about which character the key types.
+ *
+ * Note that the regex excludes space, so `Space` is doubly uncovered by the
+ * in-app path — hence its presence here.
+ *
+ * # Shape
+ *
+ * A `ReadonlySet` rather than the `readonly string[]` used by
+ * {@link MODIFIER_CODES} and {@link CLEAR_CODES}. Those hold 8 and 2 entries
+ * and are scanned once per keydown; this holds 75 and is read per rendered
+ * row, where a linear scan is the wrong default. It stays iterable, which the
+ * consistency assertions in the test file depend on.
+ *
+ * # What is deliberately NOT a member
+ *
+ * - `Escape`, `Delete`, `Backspace` — {@link CANCEL_CODE} and
+ *   {@link CLEAR_CODES}. They are the control gestures of the capture widget,
+ *   so no `Binding` can ever hold them and a member here would be unreachable.
+ * - Everything in {@link MODIFIER_CODES} — never the subject of a chord, and
+ *   never reachable as `binding.code`.
+ * - `F1`..`F24` — not typed into a composer, which is what makes them the
+ *   keys this widget's own history steers users toward (the one-off it replaces
+ *   captured F13).
+ * - The navigation and lock cluster **minus the arrows**: `Home`, `End`,
+ *   `PageUp`, `PageDown`, `Insert`, `CapsLock`, `NumLock`, `ScrollLock`,
+ *   `PrintScreen`, `Pause`, `ContextMenu`. These move a caret or flip a lock
+ *   rather than entering text, and — unlike the arrows — none of them is wired
+ *   to a composer action anywhere in this app.
+ *
+ *   🔴 The four arrows are **members**, through
+ *   {@link COMPOSER_MOTION_CODES}. They were excluded here on the claim that
+ *   the real in-app arrow conflicts already covered them through
+ *   `findBindingConflict`. That claim was measurably false: every arrow entry
+ *   in `IN_APP_DEFAULT_SEQUENCES` is a **modified** chord, `bindingsEqual`
+ *   compares modifiers, and this predicate only ever sees modifier-less
+ *   chords — so that coverage could never intersect this one. The two domains
+ *   are disjoint, and bare arrows drew no conflict and no warning. The
+ *   measurement is in that group's comment.
+ *
+ * The exclusions are asserted against this set programmatically in
+ * `./keyCapturePolicy.test.ts`; that assertion is what stops a later edit
+ * re-adding one.
+ */
+export const TYPING_CODES: ReadonlySet<string> = new Set<string>([
+  ...LETTER_CODES,
+  ...DIGIT_CODES,
+  ...PUNCTUATION_CODES,
+  ...INTL_TEXT_CODES,
+  // A focused composer takes a space. `CHAT_FOCUS_COMPOSITION`'s `/^[^ ]$/`
+  // explicitly excludes space, so the in-app conflict path could not have
+  // covered this one even if it were expressible.
+  "Space",
+  ...NUMPAD_TEXT_CODES,
+  ...ALWAYS_PRESSED_CODES,
+  ...COMPOSER_MOTION_CODES,
+]);
+
+/**
+ * Will this binding also fire while the user is typing inside Sloga?
+ *
+ * `true` **only** for a chord with no modifier held whose key is in
+ * {@link TYPING_CODES}. The caller's settings row is expected to warn on
+ * `true`; nothing is refused, and {@link decideCapture} does not consult this
+ * at all — see below.
+ *
+ * # 🔴 The modifier condition
+ *
+ * Any one of `ctrl` / `shift` / `alt` makes this `false`. `Ctrl+KeyM` is
+ * `false`; bare `KeyM` is `true`. `Shift+KeyM` is also `false`, and that is the
+ * specified behavior rather than an oversight: Shift+M does type "M", but the
+ * pinned decision is about **modifier-less** bindings, and a shifted chord is
+ * not one the composer produces by accident the way a bare letter is. The
+ * predicate is exactly as specified; widening it to Shift is a separate
+ * decision and not one this module may take on its own.
+ *
+ * Meta is not consulted because {@link Binding} has no `meta` bit — a
+ * Meta-held chord is not representable and `decideCapture` ignores the press
+ * rather than storing one.
+ *
+ * # 🔴 Why a predicate over a stored `Binding`, and not a `CaptureDecision`
+ * field
+ *
+ * The warning is a property of the **stored binding**, not of the capture
+ * event: a bare `KeyM` bound yesterday still fires while typing today, so a row
+ * rendered after a reload — with no capture event anywhere in the past — owes
+ * the same warning. Deriving it in the row from the store is what makes that
+ * work. Returning it from {@link decideCapture} would additionally be a change
+ * to the {@link CaptureDecision} shape, which is pinned.
+ *
+ * This module produces no prose for the warning; all copy belongs to the
+ * caller, for the reason in the `TODO(i18n)` note at the bottom of this file.
+ */
+export function isTypingChord(binding: Binding): boolean {
+  if (binding.ctrl || binding.shift || binding.alt) return false;
+  return TYPING_CODES.has(binding.code);
+}
+
+/* ------------------------------------------------------------------------ *
  * 3. The capture decision
  * ------------------------------------------------------------------------ */
 

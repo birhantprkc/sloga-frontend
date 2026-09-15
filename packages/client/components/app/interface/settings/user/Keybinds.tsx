@@ -20,6 +20,8 @@ import {
   Column,
   KeyCapture,
   Text,
+  isHardConflict,
+  isTypingChord,
 } from "@revolt/ui";
 
 /* ------------------------------------------------------------------------ *
@@ -301,6 +303,19 @@ function KeybindRow(props: {
   const binding = () => keybinds.binding(props.action);
 
   /**
+   * Is a hard capture refusal on screen right now?
+   *
+   * Only meaningful for the typing note below, which is derived from the
+   * STORED binding and so describes the previous chord while a refusal of the
+   * new one is live. See that note's comment for why that specific overlap is
+   * the one case worth suppressing.
+   */
+  const hardRefusalLive = () => {
+    const verdict = conflict();
+    return verdict !== null && isHardConflict(verdict);
+  };
+
+  /**
    * 🔴 Push-to-talk IS passed here, deliberately.
    *
    * `findBindingConflict` hard-refuses any chord whose `code` equals it —
@@ -539,6 +554,63 @@ function KeybindRow(props: {
               </Text>
             </Match>
           </Switch>
+
+          {/* 🔴 A bare, modifier-less chord on a key the user types with.
+
+              Derived from the STORED binding, not from the capture verdict: a
+              bare KeyM bound yesterday still fires while typing today, so the
+              row owes this warning on every render — including one with no
+              capture anywhere in its past. A capture-driven note would flash
+              once and vanish on reload.
+
+              A <Show>, not a <Match> in either <Switch> above: it is not
+              exclusive with the arm status or with the conflict verdict, and
+              composes independently of both.
+
+              🔴 There are TWO refusal sources on this row and they do NOT get
+              the same treatment, because only one of them means "nothing was
+              saved".
+
+              (1) status() "unsupported" / "refused" — the NATIVE layer would
+              not register the chord. The chord IS still in the store, and the
+              DOM transport has no editable-target filter by design (adding one
+              would make it disagree with the native transport, which has no
+              DOM to consult), so this chord still fires from a focused
+              composer. The warning is true on exactly those rows, and its
+              closing "It is saved" is true too. Deliberately NOT suppressed:
+              suppressing it there would be the bug, not the fix.
+
+              (2) conflict() a HARD verdict — `reserved` or `push-to-talk`, per
+              isHardConflict. Here the capture wrote NOTHING, so binding() is
+              still the PREVIOUS chord and this note is describing that older
+              chord while the red note above describes the key just pressed.
+              Both sentences are individually true, but side by side the user
+              who pressed Space and was refused reads "It is saved" as being
+              about Space. So the note is suppressed while a hard verdict is
+              live — the ONE case where "nothing was saved" is simultaneously on
+              screen. The suppression is transient by construction: any fresh
+              capture calls onConflict(null) first, which retracts the verdict
+              and brings the note straight back.
+
+              A soft `in-app` verdict is NOT suppressed: that chord really was
+              saved, so the two notes agree and belong together.
+
+              Soft styling with no ColouredText, matching the `in-app` note
+              rather than the red `Unbindable` ones: the binding IS saved, and
+              red would read as a refusal. */}
+          <Show when={binding()}>
+            {(b) => (
+              <Show when={isTypingChord(b()) && !hardRefusalLive()}>
+                <Text class="label">
+                  <Trans>
+                    You use this key while typing, so it will also fire in the
+                    message box, in search, anywhere text goes. It is saved.
+                    Adding Ctrl, Shift or Alt avoids that.
+                  </Trans>
+                </Text>
+              </Show>
+            )}
+          </Show>
 
           {/* The store took the chord off another action. Named in a sibling
               slot rather than interpolated into the sentence: nested JSX

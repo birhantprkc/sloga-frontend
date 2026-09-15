@@ -25,11 +25,16 @@ import {
 
 import {
   type CaptureKeyEvent,
+  CANCEL_CODE,
   CHORD_SEPARATOR,
+  CLEAR_CODES,
   decideCapture,
   formatBinding,
   formatKeyCode,
   isHardConflict,
+  isTypingChord,
+  MODIFIER_CODES,
+  TYPING_CODES,
 } from "./keyCapturePolicy.ts";
 
 /** A keydown with nothing held. */
@@ -311,6 +316,478 @@ describe("isHardConflict", () => {
     assert.equal(soft.kind, "commit");
     if (soft.kind === "commit" && soft.conflict) {
       assert.equal(isHardConflict(soft.conflict), false);
+    }
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * Typing keys — the CHAT_FOCUS_COMPOSITION gap
+ * ------------------------------------------------------------------ */
+
+/**
+ * One representative per documented group of `TYPING_CODES`, so the
+ * modifier-direction matrix below runs against all of them rather than only
+ * against a letter.
+ */
+const TYPING_REPRESENTATIVES: readonly string[] = [
+  "KeyM", // letters
+  "Digit1", // digits
+  "Semicolon", // main-block punctuation
+  "Space", // the one CHAT_FOCUS_COMPOSITION's regex cannot even cover
+  "IntlRo", // the international text positions (ABNT2/JIS)
+  "Numpad1", // numpad digits, NumLock on
+  "NumpadAdd", // numpad operators
+  "Enter", // the deliberate widening
+  "NumpadEnter",
+  "Tab",
+  "ArrowUp", // composer motion — edit-last-message / autocomplete selection
+];
+
+/**
+ * Every code the module's doc comment names as deliberately excluded.
+ *
+ * 🔴 This list is duplicated prose→code on purpose: it is the assertion that
+ * the exclusions in the doc comment are the exclusions in the set. If someone
+ * adds `Home` to `TYPING_CODES` without amending the comment, this fails.
+ *
+ * 🔴 The four arrows used to be in this list, under "navigation and locks", and
+ * removing them is the most load-bearing edit in this file. The module excluded
+ * them on the claim that `findBindingConflict` already covered them; the claim
+ * was false by construction (every arrow entry in `IN_APP_DEFAULT_SEQUENCES` is
+ * a *modified* chord and `isTypingChord` only ever sees modifier-less ones), so
+ * a bare arrow drew no conflict and no warning. Pinning them here turned that
+ * gap into a **defended** gap: a later lane could not have closed it without
+ * editing a test, and the test encoded the false claim as if it were a
+ * decision. A list of exclusions is only worth having if each entry is
+ * re-derivable from something true — so an entry that stops being true has to
+ * leave, not be re-justified. The arrows' positive coverage is in
+ * `TYPING_REPRESENTATIVES` and in "a bare arrow draws no conflict" below.
+ */
+const DOCUMENTED_EXCLUSIONS: readonly string[] = [
+  // Control gestures of the capture widget — unreachable as a binding.
+  "Escape",
+  "Delete",
+  "Backspace",
+  // Modifiers.
+  ...MODIFIER_CODES,
+  // Function keys.
+  "F1",
+  "F13",
+  "F24",
+  // Navigation and locks, MINUS the four arrows — see the note above.
+  "Home",
+  "End",
+  "PageUp",
+  "PageDown",
+  "Insert",
+  "CapsLock",
+  "NumLock",
+  "ScrollLock",
+  "PrintScreen",
+  "Pause",
+  "ContextMenu",
+];
+
+/**
+ * The twelve US-layout main-block punctuation positions, as
+ * `PUNCTUATION_CODES` specifies them.
+ */
+const GLYPH_PUNCTUATION: readonly string[] = [
+  "Backquote",
+  "Minus",
+  "Equal",
+  "BracketLeft",
+  "BracketRight",
+  "Backslash",
+  "Semicolon",
+  "Quote",
+  "Comma",
+  "Period",
+  "Slash",
+  "IntlBackslash",
+];
+
+/**
+ * Every physical position this module can plausibly be handed, enumerated.
+ *
+ * Exists for the converse direction of the glyph assertion below, which has to
+ * quantify over "every code" and cannot: `formatKeyCode` accepts any string, so
+ * the real domain is unbounded and only a stated roster can be checked. Kept
+ * deliberately wider than `TYPING_CODES` — it includes the modifiers, the
+ * control gestures, the whole nav/lock cluster, the F range and two codes this
+ * module recognizes not at all — because a roster that only listed members
+ * could not detect a non-member that renders as a glyph, which is exactly the
+ * bug it is here to catch.
+ */
+const CODE_ROSTER: readonly string[] = [
+  ...Array.from({ length: 26 }, (_, i) => `Key${String.fromCharCode(65 + i)}`),
+  ...Array.from({ length: 10 }, (_, i) => `Digit${i}`),
+  ...Array.from({ length: 24 }, (_, i) => `F${i + 1}`),
+  ...Array.from({ length: 10 }, (_, i) => `Numpad${i}`),
+  "NumpadDecimal",
+  "NumpadAdd",
+  "NumpadSubtract",
+  "NumpadMultiply",
+  "NumpadDivide",
+  "NumpadComma",
+  "NumpadEqual",
+  "NumpadEnter",
+  ...GLYPH_PUNCTUATION,
+  "IntlRo",
+  "IntlYen",
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "Space",
+  "Tab",
+  ...DOCUMENTED_EXCLUSIONS,
+  // Codes with no legend and no pattern — the pass-through path.
+  "MediaTrackNext",
+  "Lang1",
+];
+
+describe("isTypingChord", () => {
+  it("flags a bare member of every documented group", () => {
+    for (const code of TYPING_REPRESENTATIVES) {
+      assert.equal(
+        isTypingChord(binding(code)),
+        true,
+        `bare ${code} is typed with and must warn`,
+      );
+    }
+  });
+
+  /**
+   * 🔴 The load-bearing half. The pinned decision is about MODIFIER-LESS
+   * bindings: Ctrl+M cannot be typed into the composer by accident, so warning
+   * about it would be noise on every row a user deliberately chorded.
+   *
+   * Each modifier is set individually, not only all three together — a
+   * predicate that consulted just `ctrl` would pass an all-three matrix.
+   */
+  it("does not flag a chord with any single modifier held", () => {
+    for (const code of TYPING_REPRESENTATIVES) {
+      for (const mods of [
+        { ctrl: true },
+        { shift: true },
+        { alt: true },
+        { ctrl: true, shift: true },
+        { ctrl: true, shift: true, alt: true },
+      ]) {
+        assert.equal(
+          isTypingChord(binding(code, mods)),
+          false,
+          `${JSON.stringify(mods)}+${code} is not a modifier-less binding`,
+        );
+      }
+    }
+  });
+
+  it("flips on the modifier bits for one and the same code", () => {
+    // The two directions side by side, which is what a mutant ignoring the
+    // modifier bits fails and an unconditional `false` also fails.
+    assert.equal(isTypingChord(binding("KeyM")), true);
+    assert.equal(isTypingChord(binding("KeyM", { ctrl: true })), false);
+    assert.equal(isTypingChord(binding("KeyM", { shift: true })), false);
+    assert.equal(isTypingChord(binding("KeyM", { alt: true })), false);
+  });
+
+  it("does not flag any documented exclusion, bare", () => {
+    for (const code of DOCUMENTED_EXCLUSIONS) {
+      assert.equal(
+        isTypingChord(binding(code)),
+        false,
+        `${code} is documented as excluded and must not warn`,
+      );
+    }
+  });
+
+  it("does not flag an unknown code", () => {
+    // Same failure direction as the formatter's pass-through: claim nothing
+    // about a code this module does not recognize.
+    assert.equal(isTypingChord(binding("MediaTrackNext")), false);
+    assert.equal(isTypingChord(binding("Lang1")), false);
+  });
+});
+
+describe("TYPING_CODES — internal consistency", () => {
+  /**
+   * 🔴 This is the assertion that stops a later edit re-adding a control
+   * gesture or a modifier to the typing set. Those codes can never reach
+   * `binding.code` (`decideCapture` intercepts them above the commit), so a
+   * member would be dead weight that reads as intent, and `isTypingChord`
+   * would start disagreeing with what the widget can actually store.
+   */
+  it("shares no member with the modifier or control-gesture lists", () => {
+    for (const code of MODIFIER_CODES) {
+      assert.equal(
+        TYPING_CODES.has(code),
+        false,
+        `${code} is a modifier and is never a bound key`,
+      );
+    }
+    for (const code of CLEAR_CODES) {
+      assert.equal(
+        TYPING_CODES.has(code),
+        false,
+        `${code} clears the binding and is never bindable`,
+      );
+    }
+    assert.equal(
+      TYPING_CODES.has(CANCEL_CODE),
+      false,
+      `${CANCEL_CODE} cancels capture and is never bindable`,
+    );
+  });
+
+  /**
+   * Pins the derived groups. `LETTER_CODES` and the numpad/digit ranges are
+   * built with `Array.from`, where an off-by-one produces a set that is almost
+   * right — and whose one missing member is a key that ships with no warning.
+   */
+  it("covers the full letter, digit and numpad ranges", () => {
+    for (const letter of "ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
+      assert.equal(
+        TYPING_CODES.has(`Key${letter}`),
+        true,
+        `Key${letter} missing`,
+      );
+    }
+    for (let d = 0; d <= 9; d++) {
+      assert.equal(TYPING_CODES.has(`Digit${d}`), true, `Digit${d} missing`);
+      assert.equal(TYPING_CODES.has(`Numpad${d}`), true, `Numpad${d} missing`);
+    }
+    // The bounds, from the other side: the ranges must not run over.
+    for (const code of ["Key[", "Digit10", "Numpad10", "KeyAA"]) {
+      assert.equal(
+        TYPING_CODES.has(code),
+        false,
+        `${code} must not be a member`,
+      );
+    }
+  });
+
+  /**
+   * 🔴 Both directions, and the second one is the one that matters.
+   *
+   * The forward half — each of the twelve punctuation positions formats to a
+   * one-character legend and is in the typing set — is all this test used to
+   * assert, under the title "includes **exactly** the glyph-rendering
+   * punctuation positions". It never asserted the converse the word "exactly"
+   * promises, and it passed at full green while the four arrows sat outside the
+   * set: `formatKeyCode("ArrowUp")` is `"↑"`, one character, and `ArrowUp` was
+   * not a member. Written in the direction its own title claimed, this test
+   * would have caught the arrow hole on the day it was introduced. It is
+   * written that way now.
+   *
+   * # The coupling this creates, taken deliberately
+   *
+   * `NAMED_KEY_LEGENDS` is private, so the converse half is really "anything
+   * that table gives a one-character legend must be in `TYPING_CODES`",
+   * enforced through `formatKeyCode`'s observable output. That is a real
+   * coupling, and it has a foreseeable false alarm: adding a glyph legend for a
+   * non-typing position (`Home: "⌂"`, say) would fail this test on a change
+   * that is not itself wrong.
+   *
+   * It is kept anyway, because that failure is the feature and not the cost.
+   * The operator rule for this set is "errs toward inclusion", so the only two
+   * ways past the failure are to add the position to `TYPING_CODES` or to
+   * record why it is exempt — both deliberate decisions, forced at the moment
+   * the glyph is added, which is the moment someone is actually looking at the
+   * question. What the one-directional form bought instead was silence: a
+   * glyph-rendering position outside the set, with nothing failing anywhere.
+   *
+   * The narrower alternative — assert only that the four arrows are members —
+   * was rejected. It would close this bug and nothing else, which is how this
+   * bug happened: a set that was right about the cases someone thought of.
+   */
+  it("includes every position whose legend is a single glyph", () => {
+    // Forward: the twelve US-layout punctuation positions.
+    for (const code of GLYPH_PUNCTUATION) {
+      assert.equal(formatKeyCode(code).length, 1, `${code} is not a glyph`);
+      assert.equal(TYPING_CODES.has(code), true, `${code} missing`);
+    }
+
+    // Converse, over the enumerated roster.
+    const singles = [...new Set(CODE_ROSTER)].filter(
+      (code) => formatKeyCode(code).length === 1,
+    );
+
+    /**
+     * Anti-vacuity, in two ways. An empty or arrow-less `singles` would let
+     * the `for` below pass while asserting nothing, and that is not a
+     * hypothetical failure mode — a roster built by filtering `TYPING_CODES`
+     * would do exactly that. The arrows are named because they are the precise
+     * codes the one-directional form missed.
+     */
+    for (const code of ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]) {
+      assert.ok(
+        singles.includes(code),
+        `${code} must render as a glyph and be in the roster`,
+      );
+    }
+    // 26 letters + 10 digits + 12 punctuation + 4 arrows.
+    assert.equal(singles.length, 52, "the roster's glyph count drifted");
+
+    for (const code of singles) {
+      assert.equal(
+        TYPING_CODES.has(code),
+        true,
+        `${code} renders as the single glyph "${formatKeyCode(code)}" but is not in TYPING_CODES`,
+      );
+    }
+  });
+
+  /**
+   * 🔴 The count is pinned so the consuming settings row (lane A2) is pinned
+   * to a known set. 26 letters + 10 digits + 12 punctuation + 2 international
+   * + Space + 17 numpad + 3 always-pressed + 4 arrows.
+   */
+  it("holds exactly the 75 documented codes", () => {
+    assert.equal(TYPING_CODES.size, 26 + 10 + 12 + 2 + 1 + 17 + 3 + 4);
+    assert.equal(TYPING_CODES.size, 75);
+  });
+});
+
+describe("the gap isTypingChord exists to cover", () => {
+  /**
+   * 🔴 The justification for `Enter` being in the set, asserted rather than
+   * claimed in a comment. `Enter` IS in `IN_APP_COMPARABLE_CODES`, so
+   * `findBindingConflict` genuinely compares it against the in-app registry —
+   * and bare `Enter` is not an entry in `IN_APP_DEFAULT_SEQUENCES`, so that
+   * comparison returns a checked, confident `null`. Without `isTypingChord`,
+   * bare Enter — which SENDS the composer message — would ship with no
+   * caution of any kind.
+   */
+  it("bare Enter draws no conflict, and is still flagged", () => {
+    const decision = decideCapture(press("Enter"));
+    assert.deepEqual(decision, {
+      kind: "commit",
+      binding: binding("Enter"),
+      conflict: null,
+    });
+    assert.equal(isTypingChord(binding("Enter")), true);
+  });
+
+  /**
+   * The printable-key hole itself: `CHAT_FOCUS_COMPOSITION` is bound to
+   * `/^[^ ]$/` and cannot be expressed in `Binding` space, so the `"in-app"`
+   * path can never report a bare letter. This is the honest replacement.
+   */
+  it("a bare letter draws no conflict, and is still flagged", () => {
+    const decision = decideCapture(press("KeyM"));
+    assert.equal(decision.kind, "commit");
+    assert.equal(
+      decision.kind === "commit" ? decision.conflict : undefined,
+      null,
+    );
+    assert.equal(isTypingChord(binding("KeyM")), true);
+  });
+
+  /**
+   * 🔴 The arrow hole, pinned from both sides — the regression this fix lane
+   * exists for.
+   *
+   * The exclusion it replaces claimed the in-app conflict path already covered
+   * the arrows. It cannot, by construction: every arrow entry in
+   * `IN_APP_DEFAULT_SEQUENCES` is a *modified* chord (`Alt+ArrowDown`,
+   * `Ctrl+Alt+ArrowUp`, `Ctrl+Alt+ArrowDown`, with `ArrowLeft`/`ArrowRight`
+   * absent entirely), `bindingsEqual` compares the full chord, and
+   * `isTypingChord` returns `false` before reading the code whenever a modifier
+   * is set. The two coverages have disjoint domains.
+   *
+   * This is the same assertion shape as "bare Enter draws no conflict, and is
+   * still flagged" directly above, because it is the same case: a code that IS
+   * in `IN_APP_COMPARABLE_CODES`, so the `null` presents as a checked,
+   * confident "no conflict" rather than an unchecked one.
+   */
+  it("a bare arrow draws no conflict, and is still flagged", () => {
+    for (const code of ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]) {
+      assert.deepEqual(
+        decideCapture(press(code)),
+        { kind: "commit", binding: binding(code), conflict: null },
+        `bare ${code} must commit with a checked, null conflict`,
+      );
+      assert.equal(
+        isTypingChord(binding(code)),
+        true,
+        `bare ${code} drives edit-last-message and autocomplete and must warn`,
+      );
+    }
+
+    /**
+     * The other half of the measurement: the arrow chords that ARE in-app
+     * sequences all carry modifiers, so they land outside this predicate and
+     * are covered by the conflict note instead. Both halves together are what
+     * make "disjoint domains" an assertion rather than a claim — and they are
+     * why adding the arrows costs no double warning on the chords that already
+     * had one.
+     */
+    const alt = decideCapture(press("ArrowDown", { altKey: true }));
+    assert.equal(alt.kind, "commit");
+    assert.deepEqual(
+      alt.kind === "commit" ? alt.conflict : undefined,
+      { kind: "in-app", sequence: binding("ArrowDown", { alt: true }) },
+      "Alt+ArrowDown is the in-app conflict the old exclusion pointed at",
+    );
+    assert.equal(isTypingChord(binding("ArrowDown", { alt: true })), false);
+    assert.equal(
+      isTypingChord(binding("ArrowUp", { ctrl: true, alt: true })),
+      false,
+    );
+  });
+
+  /**
+   * The international text positions. Both type, neither has a keycap legend,
+   * and neither string existed anywhere in this repo before the group that
+   * added them — so nothing else was covering them.
+   */
+  it("flags IntlRo and IntlYen, which have no legend to lean on", () => {
+    for (const code of ["IntlRo", "IntlYen"]) {
+      assert.equal(isTypingChord(binding(code)), true, `${code} types`);
+      assert.equal(decideCapture(press(code)).kind, "commit");
+
+      /**
+       * Pinned as a pass-through, not as a glyph. `formatKeyCode` has no entry
+       * for these, so they render as the raw code — this module's documented
+       * honest failure for an unrecognized position. The assertion is here so
+       * that a later lane adding `IntlRo: "/"` sees it is changing
+       * `formatKeyCode`'s behavior, which is pinned, rather than only adding a
+       * table row.
+       */
+      assert.equal(formatKeyCode(code), code);
+    }
+
+    // `IntlBackslash`, a member since the punctuation group, DOES have one.
+    assert.equal(formatKeyCode("IntlBackslash"), "\\");
+    assert.equal(TYPING_CODES.has("IntlBackslash"), true);
+  });
+
+  /**
+   * Space is doubly uncovered — the regex excludes it — but only while
+   * push-to-talk is off. With PTT on it is a hard refusal, and the warning
+   * never arises because the binding is never stored.
+   */
+  it("Space is flagged, and is separately a PTT refusal when PTT is on", () => {
+    assert.equal(decideCapture(press("Space")).kind, "commit");
+    assert.equal(isTypingChord(binding("Space")), true);
+    assert.equal(decideCapture(press("Space"), "Space").kind, "refuse");
+  });
+
+  /**
+   * The predicate is a warning, never a block: nothing about a typing chord
+   * changes `decideCapture`'s outcome. Pinned because the operator decision is
+   * explicitly "capture accepts it; nothing is refused".
+   */
+  it("never blocks — a typing chord still commits", () => {
+    for (const code of TYPING_REPRESENTATIVES) {
+      const decision = decideCapture(press(code));
+      assert.equal(
+        decision.kind,
+        "commit",
+        `${code} must still be bindable, only warned about`,
+      );
     }
   });
 });
