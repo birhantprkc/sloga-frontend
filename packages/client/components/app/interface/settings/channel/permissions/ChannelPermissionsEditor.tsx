@@ -154,6 +154,7 @@ export function ChannelPermissionsEditor(props: Props) {
       description: {
         Group: t`Whether other users can edit these settings`,
         TextChannel: t`Edit channel-specific role and default permissions`,
+        Forum: t`Edit forum-specific role and default permissions`,
         Server: t`Edit any permissions on the server`,
       },
     },
@@ -245,6 +246,7 @@ export function ChannelPermissionsEditor(props: Props) {
       title: t`View Channel`,
       description: {
         TextChannel: t`Able to access this channel`,
+        Forum: t`Able to access this forum`,
         Server: t`Able to access channels on this server`,
       },
     },
@@ -254,6 +256,7 @@ export function ChannelPermissionsEditor(props: Props) {
       title: t`Read Message History`,
       description: {
         TextChannel: t`Read past messages sent in channel`,
+        Forum: t`Read past posts and their replies`,
         Server: t`Read past messages sent in channels`,
       },
     },
@@ -264,6 +267,7 @@ export function ChannelPermissionsEditor(props: Props) {
       description: {
         Group: t`Send messages in channel`,
         TextChannel: t`Send messages in channel`,
+        Forum: t`Create posts and reply to them`,
         Server: t`Send messages in channels`,
       },
     },
@@ -274,6 +278,7 @@ export function ChannelPermissionsEditor(props: Props) {
       description: {
         Group: t`Delete and pin messages sent by other members`,
         TextChannel: t`Delete and pin messages sent by other members`,
+        Forum: t`Delete and pin posts and replies by other members`,
         Server: t`Delete and pin messages sent by other members`,
       },
     },
