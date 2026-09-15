@@ -3769,6 +3769,7 @@ msgstr "Leave"
 msgid "Leave {0}?"
 msgstr "Leave {0}?"
 
+#: components/app/interface/settings/user/Keybinds.tsx
 #: components/ui/components/features/voice/callCard/VoiceCallRecordingBanner.tsx
 #: components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
 msgid "Leave call"
@@ -8337,3 +8338,184 @@ msgstr "YouTube"
 #: components/ui/components/features/voice/minigame/MinigameChip.tsx
 msgid "Zap"
 msgstr "Zap"
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "Nothing is bound by default. A global keybind takes its key combination away from every other program on this computer while Sloga is running, so Sloga ships none of them and you choose the ones you want."
+msgstr "Nothing is bound by default. A global keybind takes its key combination away from every other program on this computer while Sloga is running, so Sloga ships none of them and you choose the ones you want."
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "Unbinds every keybind on this page."
+msgstr "Unbinds every keybind on this page."
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "Clear all keybinds"
+msgstr "Clear all keybinds"
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "Global keybinds"
+msgstr "Global keybinds"
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "These fire while Sloga is not the focused app — while you are in a game, a browser, or another window."
+msgstr "These fire while Sloga is not the focused app — while you are in a game, a browser, or another window."
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "Checking whether this device can register system-wide keys…"
+msgstr "Checking whether this device can register system-wide keys…"
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "This device cannot register system-wide keys, so nothing in this group will fire. The Windows desktop app can."
+msgstr "This device cannot register system-wide keys, so nothing in this group will fire. The Windows desktop app can."
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "Sloga checks whether this device can register system-wide keys when you bind the first one."
+msgstr "Sloga checks whether this device can register system-wide keys when you bind the first one."
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "In-app only"
+msgstr "In-app only"
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "These fire only while Sloga is focused, and that is not a limitation Sloga can lift. Fullscreen, theater mode and starting a screen share all need the browser to have seen your keypress itself before it will allow them, and a system-wide hook has no keypress to hand over. Starting a screen share also always opens the source picker, so an unfocused press would send you back to Sloga anyway — and a canceled picker fails with nothing shown at all."
+msgstr "These fire only while Sloga is focused, and that is not a limitation Sloga can lift. Fullscreen, theater mode and starting a screen share all need the browser to have seen your keypress itself before it will allow them, and a system-wide hook has no keypress to hand over. Starting a screen share also always opens the source picker, so an unfocused press would send you back to Sloga anyway — and a canceled picker fails with nothing shown at all."
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "Mute and unmute microphone"
+msgstr "Mute and unmute microphone"
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "Deafen and undeafen"
+msgstr "Deafen and undeafen"
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "Turn camera on and off"
+msgstr "Turn camera on and off"
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "Stop screen share"
+msgstr "Stop screen share"
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "Start screen share"
+msgstr "Start screen share"
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "Answer incoming call"
+msgstr "Answer incoming call"
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "Dismiss incoming call"
+msgstr "Dismiss incoming call"
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "Show and hide Sloga"
+msgstr "Show and hide Sloga"
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "Show and hide the in-game overlay"
+msgstr "Show and hide the in-game overlay"
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "Fullscreen the call"
+msgstr "Fullscreen the call"
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "Theater mode"
+msgstr "Theater mode"
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "Keybind for {name}"
+msgstr "Keybind for {name}"
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "Press a key…"
+msgstr "Press a key…"
+
+#: components/app/interface/settings/user/Keybinds.tsx
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Not bound"
+msgstr "Not bound"
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "Clear this keybind"
+msgstr "Clear this keybind"
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "Stops the ringtone and clears the notification on this device. The person calling is not told anything."
+msgstr "Stops the ringtone and clears the notification on this device. The person calling is not told anything."
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "Stopping works while Sloga is not focused; starting does not, which is why they are separate keybinds."
+msgstr "Stopping works while Sloga is not focused; starting does not, which is why they are separate keybinds."
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "Only does anything while the call is already fullscreen."
+msgstr "Only does anything while the call is already fullscreen."
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "Does nothing unless you are in a call."
+msgstr "Does nothing unless you are in a call."
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "Does nothing unless a call is ringing."
+msgstr "Does nothing unless a call is ringing."
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "Unbindable: Sloga cannot register that physical key. Media keys, IME keys and Pause/NumLock are not available. Pick a different key."
+msgstr "Unbindable: Sloga cannot register that physical key. Media keys, IME keys and Pause/NumLock are not available. Pick a different key."
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "Unbindable: this combination was refused. It is either reserved for a system shortcut, or past the keybind limit. Pick a different key."
+msgstr "Unbindable: this combination was refused. It is either reserved for a system shortcut, or past the keybind limit. Pick a different key."
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "Registered system-wide."
+msgstr "Registered system-wide."
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "Ctrl + Shift + Alt + Q is reserved for the remote-control panic shortcut and cannot be bound."
+msgstr "Ctrl + Shift + Alt + Q is reserved for the remote-control panic shortcut and cannot be bound."
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "That key is your push-to-talk key. Change push to talk under Voice first, or pick a different key here."
+msgstr "That key is your push-to-talk key. Change push to talk under Voice first, or pick a different key here."
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "This is also a Sloga shortcut while the app is focused. It is saved, and both may fire."
+msgstr "This is also a Sloga shortcut while the app is focused. It is saved, and both may fire."
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "You use this key while typing, so it will also fire in the message box, in search, anywhere text goes. It is saved. Adding Ctrl, Shift or Alt avoids that."
+msgstr "You use this key while typing, so it will also fire in the message box, in search, anywhere text goes. It is saved. Adding Ctrl, Shift or Alt avoids that."
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "This combination was taken from another keybind, which is now unbound:"
+msgstr "This combination was taken from another keybind, which is now unbound:"
+
+#: components/app/interface/settings/user/Keybinds.tsx
+msgid "Sloga could not save that combination. Pick a different key."
+msgstr "Sloga could not save that combination. Pick a different key."
+
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "This build asks the system for a global key hook when you join a call. If the desktop shell grants it, the key registers even while your game or another app is focused; if it refuses, push to talk falls back to working only while Sloga is focused. This screen cannot tell you which one you got."
+msgstr "This build asks the system for a global key hook when you join a call. If the desktop shell grants it, the key registers even while your game or another app is focused; if it refuses, push to talk falls back to working only while Sloga is focused. This screen cannot tell you which one you got."
+
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Reset the push to talk key to its default"
+msgstr "Reset the push to talk key to its default"
+
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "This key is also used by a Sloga shortcut, so while Sloga is focused pressing it may do both."
+msgstr "This key is also used by a Sloga shortcut, so while Sloga is focused pressing it may do both."
+
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "You use this key while typing, so it will also open your mic in the message box, in search, anywhere text goes."
+msgstr "You use this key while typing, so it will also open your mic in the message box, in search, anywhere text goes."
+
+#: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
+msgid "Push to talk matches a single key, so the modifiers you held were not saved. The key on its own opens your mic."
+msgstr "Push to talk matches a single key, so the modifiers you held were not saved. The key on its own opens your mic."
+
+#: components/app/interface/settings/UserSettings.tsx
+msgid "Keybinds"
+msgstr "Keybinds"
