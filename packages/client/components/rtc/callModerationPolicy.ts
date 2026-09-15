@@ -23,9 +23,11 @@ export type CallModerationSubject = {
   /**
    * Whether the target is currently connected to the call's voice channel.
    *
-   * The API refuses a disconnect for a member with no voice state
-   * (`NotConnected`), so an offered disconnect must mean someone is there to
-   * disconnect.
+   * The API does NOT refuse this one: clearing `VoiceChannel` for a member
+   * with no voice state simply no-ops (the `NotConnected` error belongs to
+   * the MOVE path, not the disconnect path). This gate is ours — offering
+   * "Disconnect from call" against someone who already left would report
+   * success while doing nothing at all.
    */
   isConnected: boolean;
   /**
@@ -36,10 +38,6 @@ export type CallModerationSubject = {
    * three actions, not just some.
    */
   isInferiorToActor: boolean;
-  /** Current server-mute state, so the entry can render as a toggle. */
-  serverMuted: boolean;
-  /** Current server-deafen state. */
-  serverDeafened: boolean;
 };
 
 /**
@@ -92,9 +90,12 @@ export function callModerationActions(
   if (!subject.isInferiorToActor) return NOTHING;
 
   return {
+    // Offered in BOTH states: these render as toggles, and withholding the
+    // entry while someone is muted would make a server mute permanent as far
+    // as the UI is concerned. The current state is read at the call site.
     mute: permissions.muteMembers,
     deafen: permissions.deafenMembers,
-    // Disconnecting someone who is not connected is refused by the API.
+    // Disconnecting someone who already left silently does nothing.
     disconnect: permissions.moveMembers && subject.isConnected,
   };
 }

@@ -1,4 +1,4 @@
-import { Trans } from "@lingui-solid/solid/macro";
+import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import { useNavigate } from "@solidjs/router";
 import { type JSX, Match, Show, Switch } from "solid-js";
 import type { Channel, Message, ServerMember, User } from "stoat.js";
@@ -70,6 +70,7 @@ export function UserContextMenu(props: {
   const { openModal, modals } = useModals();
   const voice = useVoice();
   const snackbar = useSnackbar();
+  const { t } = useLingui();
 
   // server context
   const params = useSmartParams();
@@ -434,19 +435,49 @@ export function UserContextMenu(props: {
     const serverId = voice.channel()?.serverId;
     if (!serverId) return undefined;
 
-    return client().serverMembers.getByKey({
-      server: serverId,
-      user: props.user.id,
-    });
+    const id = { server: serverId, user: props.user.id };
+    const member = client().serverMembers.getByKey(id);
+
+    // `getByKey` is a cache read that never fetches, and nothing in the voice
+    // path fills that cache — only the member sidebar and the server-event
+    // worker do. Joining a call without ever opening a text channel therefore
+    // leaves every participant uncached. Ask for the one member we need; the
+    // fetch short-circuits on a real hit, and the menu re-renders when it
+    // lands because the collection is reactive.
+    if (!member || client().serverMembers.isPartialByKey(id)) {
+      void client()
+        .serverMembers.fetch(serverId, props.user.id)
+        .catch(() => {
+          /* a member we cannot read is one we cannot moderate; stay quiet */
+        });
+    }
+
+    return member;
   }
 
   /**
    * Which server-moderation entries this call menu may offer.
    */
   function moderation() {
+    const serverId = voice.channel()?.serverId;
+    // Resolve the server DIRECTLY, not through the target member: deriving it
+    // from an uncached target collapsed the whole menu to the same "no server
+    // here" branch a DM takes, so the entries silently vanished instead of
+    // waiting for the member to load.
+    const server = serverId ? client().servers.get(serverId) : undefined;
     const member = callMember();
-    const server = member?.server;
     const actor = server?.member;
+
+    // A member the collection only knows as a partial has no real roles yet,
+    // so `ranking` reads as the lowest possible and EVERYONE looks inferior.
+    // Treat that as unresolved rather than as "safe to moderate".
+    const resolved =
+      !!member &&
+      !!serverId &&
+      !client().serverMembers.isPartialByKey({
+        server: serverId,
+        user: props.user.id,
+      });
 
     return callModerationActions(
       {
@@ -454,9 +485,7 @@ export function UserContextMenu(props: {
         isConnected: !!voice.channel()?.voiceParticipants.has(props.user.id),
         // No actor means we could not resolve our own membership; treat that
         // as "not established", never as elevated.
-        isInferiorToActor: !!actor && member!.inferiorTo(actor),
-        serverMuted: !!member?.serverMuted,
-        serverDeafened: !!member?.serverDeafened,
+        isInferiorToActor: resolved && !!actor && member!.inferiorTo(actor),
       },
       server && {
         muteMembers: server.havePermission("MuteMembers"),
@@ -472,7 +501,7 @@ export function UserContextMenu(props: {
   function moderationFailed(err: unknown) {
     console.error(err);
     snackbar.show({
-      message: "That didn't go through. You may not have permission.",
+      message: t`That didn't go through. They may have left, or you may not have permission.`,
     });
   }
 

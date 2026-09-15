@@ -22,8 +22,6 @@ const subject = (
   isSelf: false,
   isConnected: true,
   isInferiorToActor: true,
-  serverMuted: false,
-  serverDeafened: false,
   ...overrides,
 });
 
@@ -82,9 +80,9 @@ test("each permission gates only its own entry", () => {
 });
 
 test("disconnect needs someone actually in the call", () => {
-  // The API refuses a disconnect for a member with no voice state, so the
-  // entry must go — while mute and deafen stay, since those are stored on the
-  // member and hold for their next join.
+  // Clearing VoiceChannel for a member with no voice state no-ops server-side,
+  // so the entry would report success and do nothing. Mute and deafen stay:
+  // those are stored on the member and hold for their next join.
   const actions = callModerationActions(
     subject({ isConnected: false }),
     perms(),
@@ -92,14 +90,15 @@ test("disconnect needs someone actually in the call", () => {
   assert.deepEqual(actions, { mute: true, deafen: true, disconnect: false });
 });
 
-test("the mute entry is offered while already muted, so it can be lifted", () => {
-  // The toggle has to render in BOTH states or a server mute becomes
-  // permanent from the UI's point of view.
+test("an unresolved rank offers nothing", () => {
+  // The call site passes false while the member is uncached or partial: a
+  // partial has no roles yet and would otherwise read as the lowest rank,
+  // making everyone — including admins — look safe to moderate.
   const actions = callModerationActions(
-    subject({ serverMuted: true, serverDeafened: true }),
+    subject({ isInferiorToActor: false }),
     perms(),
   );
-  assert.deepEqual(actions, { mute: true, deafen: true, disconnect: true });
+  assert.equal(hasCallModerationActions(actions), false);
 });
 
 test("no permissions at all offers nothing", () => {

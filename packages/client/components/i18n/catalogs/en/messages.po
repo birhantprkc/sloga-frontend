@@ -13,6 +13,14 @@ msgstr ""
 "Language-Team: \n"
 "Plural-Forms: \n"
 
+#: components/rtc/state.tsx
+msgid "A moderator deafened you in this server. You won't hear this call until they lift it."
+msgstr "A moderator deafened you in this server. You won't hear this call until they lift it."
+
+#: components/rtc/state.tsx
+msgid "A moderator muted you in this server. Your microphone and camera stay off for everyone until they lift it."
+msgstr "A moderator muted you in this server. Your microphone and camera stay off for everyone until they lift it."
+
 #: components/ui/components/features/voice/VoiceStatefulUserIcons.tsx
 msgid "Deafened by a moderator. They cannot hear this call."
 msgstr "Deafened by a moderator. They cannot hear this call."
@@ -32,6 +40,10 @@ msgstr "Server deafen"
 #: components/app/menus/UserContextMenu.tsx
 msgid "Server mute"
 msgstr "Server mute"
+
+#: components/app/menus/UserContextMenu.tsx
+msgid "That didn't go through. They may have left, or you may not have permission."
+msgstr "That didn't go through. They may have left, or you may not have permission."
 
 #: components/rtc/state.tsx
 msgid "The call couldn't be started right now."

@@ -74,7 +74,12 @@ export function VoiceStatefulUserIcons(props: {
           voice_over_off
         </Symbol>
       </Show>
-      <Show when={isMuted() && !isServerMuted()}>
+      {/* Suppressed only where it would be pure duplication: a server mute
+          already implies they are not transmitting, so the plain mic_off adds
+          nothing. The "by-user" variant is NOT duplication — it is the only
+          way the viewer can tell their own mute is still armed — so it keeps
+          rendering alongside. */}
+      <Show when={isMuted() === "by-user" || (isMuted() && !isServerMuted())}>
         <Symbol
           size={16}
           color={

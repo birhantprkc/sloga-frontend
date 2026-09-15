@@ -2450,6 +2450,37 @@ class Voice {
       );
     });
 
+    // Server mute / server deafen, as it lands on the person it was applied
+    // to. The SFU revokes the grant and unpublishes the mic, so without this
+    // their mic button just flips to muted on its own, pressing unmute is
+    // refused, and nothing anywhere says why — the moderator's side of this
+    // feature is legible and the moderated side was not. Room-level for the
+    // same reason as TrackMuted above: it must survive a republish.
+    //
+    // Guarded on the FALLING edge only: the initial grant arrives as a change
+    // from undefined, and a re-grant (the mute being lifted) is not something
+    // to interrupt anyone about.
+    room.on(RoomEvent.ParticipantPermissionsChanged, (prev, participant) => {
+      if (participant !== room.localParticipant) return;
+      const now = participant.permissions;
+
+      if (prev?.canPublish && !now?.canPublish) {
+        this.onErr(
+          new Error(
+            t`A moderator muted you in this server. Your microphone and camera stay off for everyone until they lift it.`,
+          ),
+        );
+      }
+
+      if (prev?.canSubscribe && !now?.canSubscribe) {
+        this.onErr(
+          new Error(
+            t`A moderator deafened you in this server. You won't hear this call until they lift it.`,
+          ),
+        );
+      }
+    });
+
     // Autoplay gate. livekit flips `canPlaybackAudio` false when the browser
     // refuses playback (suspended AudioContext / element play() rejection)
     // and back to true once playback succeeds — including via its own
