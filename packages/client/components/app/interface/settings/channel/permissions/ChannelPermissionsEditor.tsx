@@ -136,6 +136,11 @@ export function ChannelPermissionsEditor(props: Props) {
       title: t`Manage Channel`,
       description: {
         Group: t`Edit group name and description`,
+        // The generic wording reads as "the forum container only", which hid
+        // that this is the forum's main moderation permission: deleting,
+        // archiving and locking posts all go through it, as do moderated tags
+        // and posting into a locked post.
+        Forum: t`Edit the forum and its tags, and delete, archive or lock posts`,
         Any: t`Edit and delete channel`,
       },
     },
@@ -154,6 +159,7 @@ export function ChannelPermissionsEditor(props: Props) {
       description: {
         Group: t`Whether other users can edit these settings`,
         TextChannel: t`Edit channel-specific role and default permissions`,
+        Forum: t`Edit forum-specific role and default permissions`,
         Server: t`Edit any permissions on the server`,
       },
     },
@@ -162,6 +168,13 @@ export function ChannelPermissionsEditor(props: Props) {
       value: 2n ** 3n,
       title: t`Manage Roles`,
       description: {
+        // This bit is also enforced per-CHANNEL: a masquerade that carries a
+        // color needs it, in both `message_send` and `forum_post_create`.
+        // With only the server wording the row never rendered on a channel,
+        // so the one thing it gates there could not be granted or denied
+        // except by handing out server-wide role management.
+        TextChannel: t`Allow members to set a color with Masquerade`,
+        Forum: t`Allow members to set a color with Masquerade`,
         Server: t`Create and edit server roles`,
       },
     },
@@ -245,6 +258,7 @@ export function ChannelPermissionsEditor(props: Props) {
       title: t`View Channel`,
       description: {
         TextChannel: t`Able to access this channel`,
+        Forum: t`Able to access this forum`,
         Server: t`Able to access channels on this server`,
       },
     },
@@ -254,6 +268,12 @@ export function ChannelPermissionsEditor(props: Props) {
       title: t`Read Message History`,
       description: {
         TextChannel: t`Read past messages sent in channel`,
+        // Deliberately NOT "read past posts": the forum post list is gated on
+        // View Channel alone, and the server hands back every starter message
+        // with it, so this permission only ever governs the replies inside a
+        // post. Promising more would let an admin deny it and believe the
+        // posts were hidden.
+        Forum: t`Read past replies inside a post`,
         Server: t`Read past messages sent in channels`,
       },
     },
@@ -264,6 +284,7 @@ export function ChannelPermissionsEditor(props: Props) {
       description: {
         Group: t`Send messages in channel`,
         TextChannel: t`Send messages in channel`,
+        Forum: t`Create posts and reply to them`,
         Server: t`Send messages in channels`,
       },
     },
@@ -274,6 +295,11 @@ export function ChannelPermissionsEditor(props: Props) {
       description: {
         Group: t`Delete and pin messages sent by other members`,
         TextChannel: t`Delete and pin messages sent by other members`,
+        // Pinning is per-MESSAGE, and deleting a whole post goes through the
+        // channel-delete route, which wants Manage Channel on the forum. The
+        // permission named here does neither of those things to a post, so
+        // the copy says where that power actually lives.
+        Forum: t`Delete and pin messages by other members — deleting a whole post needs Manage Channel`,
         Server: t`Delete and pin messages sent by other members`,
       },
     },
