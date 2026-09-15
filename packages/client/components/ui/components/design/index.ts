@@ -36,6 +36,17 @@ export { DataTable } from "./DataTable";
 export { type DialogProps, Dialog } from "./Dialog";
 export { FloatingSelect } from "./FloatingSelect";
 export { IconButton } from "./IconButton";
+export {
+  type KeyCaptureCopy,
+  type KeyCaptureProps,
+  KeyCapture,
+} from "./KeyCapture";
+// The two pure helpers a *consumer* of KeyCapture needs: `isHardConflict` to
+// tell a refusal from an accepted-with-warning chord off `onConflict`, and
+// `formatBinding` to render a chord outside the control. The rest of
+// `keyCapturePolicy` (`decideCapture`, `formatKeyCode`) is the widget's own
+// internals and stays off the barrel; its tests import it by path.
+export { formatBinding, isHardConflict } from "./keyCapturePolicy";
 export { List } from "./List";
 export { livePill } from "./LivePill";
 export { CircularProgress, slogaBurstKeyframes } from "./LoadingProgress";
