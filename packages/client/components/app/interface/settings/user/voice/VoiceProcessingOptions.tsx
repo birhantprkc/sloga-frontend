@@ -1,13 +1,20 @@
 import { createSignal, Show } from "solid-js";
 
-import { Trans } from "@lingui-solid/solid/macro";
+import { Trans, useLingui } from "@lingui-solid/solid/macro";
 
+import { tauriInvoke } from "@revolt/common";
+import {
+  type Binding,
+  type BindingConflict,
+} from "@revolt/keybinds/globalKeybinds";
 import { DISABLE_WEB_AUDIO_MIX_KEY } from "@revolt/rtc";
 import { useState } from "@revolt/state";
 import {
   CategoryButton,
   Checkbox,
   Column,
+  isHardConflict,
+  KeyCapture,
   Row,
   Slider,
   Text,
@@ -17,31 +24,125 @@ import { InputSensitivity } from "./InputSensitivity";
 import { RNNoiseLogo } from "./RNNoiseLogo";
 
 /**
+ * The store's own default push-to-talk key, restated.
+ *
+ * 🔴 Keep in sync with the `pushToTalkKey: "Space"` entry in the defaults
+ * block of `components/state/stores/Voice.ts`. That value is not exported and
+ * this wave does not own the store, so a local restatement with a keep-in-sync
+ * note is the honest option. See {@link VoiceProcessingOptions}'s
+ * `resetPushToTalkKey` for why the row needs a default at all.
+ */
+const DEFAULT_PUSH_TO_TALK_KEY = "Space";
+
+/**
  * Voice processing options
  */
 export function VoiceProcessingOptions() {
   const { voice } = useState();
-  const [bindingKey, setBindingKey] = createSignal(false);
+  const { t } = useLingui();
 
-  function startBinding() {
-    setBindingKey(true);
+  /**
+   * The conflict verdict for the last push-to-talk chord `KeyCapture`
+   * captured, or `null` once retracted.
+   *
+   * `onConflict` is optional on the widget and is wired up anyway, because a
+   * hard refusal binds nothing: without this the user presses the reserved
+   * combo, the capture ends, the keycap still shows the old key, and nothing
+   * says why it did not take.
+   */
+  const [pttConflict, setPttConflict] = createSignal<BindingConflict | null>(
+    null,
+  );
 
-    function onKey(e: KeyboardEvent) {
-      e.preventDefault();
-      voice.pushToTalkKey = e.code;
-      setBindingKey(false);
-      window.removeEventListener("keydown", onKey);
-    }
+  /** The last accepted chord carried modifiers this setting cannot store. */
+  const [pttDroppedModifiers, setPttDroppedModifiers] = createSignal(false);
 
-    window.addEventListener("keydown", onKey);
+  /**
+   * Can this build even ATTEMPT global (unfocused) push to talk?
+   *
+   * 🔴 The deep `__TAURI__.core.invoke` probe from `@revolt/common`, not the
+   * `"__TAURI__" in window` test this row used to gate its copy on.
+   * `tauriInvoke`'s own doc calls that shallow shape out by name: the bridge
+   * exists only when `withGlobalTauri` is on AND the window has a capability
+   * file, so the shallow check "reads as available in windows where every call
+   * will ACL-fail".
+   *
+   * 🔴 Even the deep probe is NECESSARY, NOT SUFFICIENT, so this predicate is
+   * only ever allowed to mean "the global path may be attempted".
+   * `#ensureNativePtt` in `@revolt/rtc/state.tsx` additionally requires
+   * `__TAURI__.event`, and then requires `ptt_arm` to RETURN TRUE (`if
+   * (!armed) return;`), with a thrown error swallowed into the same
+   * focused-only fallback. None of that outcome reaches the renderer —
+   * `#pttNativeKey` is private and nothing exposes it — and arming only
+   * happens once a call has a room, which a settings screen need not be in at
+   * all. The copy below therefore claims the attempt and both outcomes, and
+   * explicitly declines to claim which one the user got.
+   */
+  const globalPttPossible = () => tauriInvoke() !== undefined;
+
+  /**
+   * The store's bare `KeyboardEvent.code` as the `Binding` the widget wants.
+   *
+   * 🔴 This is the whole code↔`Binding` bridge, and it keeps only `code`,
+   * pinning the three modifier bits to `false`. Modifiers are unrepresentable
+   * END TO END for this setting, not merely unstored: the store field is one
+   * `string` (`Voice.ts:207`), the native `ptt_arm` payload is `{ key }` with
+   * no modifier fields, and both runtime matchers compare a bare `e.code` with
+   * no modifier comparison at all (`rtc/state.tsx:7038` and `:7072`).
+   * Widening the setting is a store change this wave does not own.
+   *
+   * `""` maps to `null` rather than to a blank keycap: the field is a
+   * non-optional `string`, so an empty value can only arrive from a
+   * hand-edited or corrupt persisted blob (`Voice.ts:504` accepts any string),
+   * and `copy.empty` is the honest rendering of it.
+   */
+  const pushToTalkBinding = (): Binding | null =>
+    voice.pushToTalkKey === ""
+      ? null
+      : { code: voice.pushToTalkKey, ctrl: false, shift: false, alt: false };
+
+  /**
+   * Store an accepted chord, keeping its key and dropping its modifiers.
+   *
+   * 🔴 The drop is disclosed, not silent: the row renders
+   * {@link pttDroppedModifiers} whenever this fires with a modifier held. The
+   * stored bare code is also what the runtime actually honors — the matchers
+   * ignore modifier state, so the key alone opens the mic, which is exactly
+   * what the notice says.
+   */
+  function onPushToTalkChange(binding: Binding) {
+    voice.pushToTalkKey = binding.code;
+    setPttDroppedModifiers(binding.ctrl || binding.shift || binding.alt);
   }
 
-  function formatKey(code: string) {
-    return code
-      .replace("Key", "")
-      .replace("Digit", "")
-      .replace("Arrow", "↑↓←→".includes(code) ? "" : "Arrow ")
-      .replace("Space", "Space");
+  /**
+   * Reset to {@link DEFAULT_PUSH_TO_TALK_KEY} — deliberately a reset, not an
+   * unbind.
+   *
+   * 🔴 `pushToTalkKey` has no value meaning "unbound", and inventing one
+   * (`""`) would reach three places this wave does not own: it would blank the
+   * key legend in `RemoteControlOverlays.tsx:50`, hand `ptt_arm` an empty key,
+   * and leave push to talk enabled but unable to ever open the mic. The
+   * control's `copy.clear` label says "reset" so the button does not claim to
+   * do something it cannot.
+   */
+  function resetPushToTalkKey() {
+    voice.pushToTalkKey = DEFAULT_PUSH_TO_TALK_KEY;
+    setPttDroppedModifiers(false);
+  }
+
+  /**
+   * Record a verdict, and drop any stale modifier notice with it.
+   *
+   * Ordering is safe in both directions: `KeyCapture` calls `onConflict`
+   * *before* `onChange` on a commit, so clearing here cannot wipe the flag
+   * `onChange` is about to set; and a refusal never reaches `onChange` at all,
+   * so the clear is what stops a previous capture's notice sitting under a
+   * chord that was rejected.
+   */
+  function onPushToTalkConflict(conflict: BindingConflict | null) {
+    setPttDroppedModifiers(false);
+    setPttConflict(conflict);
   }
 
   return (
@@ -301,9 +402,12 @@ export function VoiceProcessingOptions() {
             <Column gap="sm">
               <Trans>Hold a key to unmute while in a voice channel.</Trans>
               {/* EL-PTT honesty (P5): say which key source this build has
-                  instead of silently degrading. */}
+                  instead of silently degrading. The presence question is
+                  answered by `globalPttPossible`, whose comment spells out why
+                  the affirmative branch promises an ATTEMPT and names both
+                  outcomes rather than promising the global one. */}
               <Show
-                when={"__TAURI__" in window}
+                when={globalPttPossible()}
                 fallback={
                   <Text class="label">
                     <Trans>
@@ -315,8 +419,12 @@ export function VoiceProcessingOptions() {
               >
                 <Text class="label">
                   <Trans>
-                    Works globally: the key registers even while your game or
-                    another app is focused.
+                    This build asks the system for a global key hook when you
+                    join a call. If the desktop shell grants it, the key
+                    registers even while your game or another app is focused; if
+                    it refuses, push to talk falls back to working only while
+                    Sloga is focused. This screen cannot tell you which one you
+                    got.
                   </Trans>
                 </Text>
               </Show>
@@ -329,12 +437,58 @@ export function VoiceProcessingOptions() {
           <CategoryButton
             icon="blank"
             action={
-              <span style={{ "font-size": "0.8em", opacity: "0.7", "font-family": "monospace" }}>
-                {bindingKey() ? <Trans>Press any key...</Trans> : formatKey(voice.pushToTalkKey)}
-              </span>
+              /* The shared capture control. Every decision it makes lives in
+                 `keyCapturePolicy.ts`; the bridge to this setting's bare
+                 `code` string, and why `pushToTalkKey` is `undefined` here,
+                 are documented on the handlers above. */
+              <KeyCapture
+                value={pushToTalkBinding()}
+                pushToTalkKey={undefined}
+                onChange={onPushToTalkChange}
+                onClear={resetPushToTalkKey}
+                onConflict={onPushToTalkConflict}
+                copy={{
+                  label: t`Push to Talk Key`,
+                  listening: t`Press any key...`,
+                  empty: t`Not bound`,
+                  clear: t`Reset the push to talk key to its default`,
+                }}
+              />
             }
-            onClick={startBinding}
-            description={<Trans>Click to change the push to talk keybind.</Trans>}
+            description={
+              <Column gap="sm">
+                <Trans>Click to change the push to talk keybind.</Trans>
+                <Show when={pttConflict()}>
+                  {(conflict) => (
+                    <Text class="label">
+                      <Show
+                        when={isHardConflict(conflict())}
+                        fallback={
+                          <Trans>
+                            This key is also used by a Sloga shortcut, so while
+                            Sloga is focused pressing it may do both.
+                          </Trans>
+                        }
+                      >
+                        <Trans>
+                          That combination is reserved by Sloga, so nothing was
+                          bound and your key is unchanged. Press the key on its
+                          own, without Ctrl, Shift or Alt.
+                        </Trans>
+                      </Show>
+                    </Text>
+                  )}
+                </Show>
+                <Show when={pttDroppedModifiers()}>
+                  <Text class="label">
+                    <Trans>
+                      Push to talk matches a single key, so the modifiers you
+                      held were not saved. The key on its own opens your mic.
+                    </Trans>
+                  </Text>
+                </Show>
+              </Column>
+            }
           >
             <Trans>Push to Talk Key</Trans>
           </CategoryButton>
