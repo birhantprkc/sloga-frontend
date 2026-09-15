@@ -73,7 +73,12 @@ function VariantPreview(props: { channel: Channel }) {
     <Show when={props.channel.voiceParticipants.size}>
       <Base>
         <For each={[...props.channel.voiceParticipants.values()]}>
-          {(participant) => <ParticipantPreview participant={participant} />}
+          {(participant) => (
+            <ParticipantPreview
+              participant={participant}
+              serverId={props.channel.serverId}
+            />
+          )}
         </For>
       </Base>
     </Show>
@@ -127,6 +132,7 @@ function ParticipantLive(props: { channel: Channel }) {
       // Flag-gated so a deliberately-dark shell never renders a hint for a
       // feature it cannot join (the release-gate posture).
       watching={CONFIGURATION.ENABLE_WATCH_TOGETHER && (state()?.isWatching() ?? false)}
+      serverId={props.channel.serverId}
       isLive
     />
   );
@@ -135,9 +141,13 @@ function ParticipantLive(props: { channel: Channel }) {
 /**
  * Preview variant of participant
  */
-function ParticipantPreview(props: { participant: VoiceParticipant }) {
+function ParticipantPreview(props: {
+  participant: VoiceParticipant;
+  serverId?: string;
+}) {
   return (
     <CommonUser
+      serverId={props.serverId}
       userId={props.participant.userId}
       speaking={false}
       muted={!props.participant.isPublishing()}
@@ -165,6 +175,8 @@ function CommonUser(props: {
   /** Screen VIDEO is live — this is what earns the LIVE badge */
   sharingScreen?: boolean;
   isLive?: boolean;
+  /** Server owning the previewed channel, for the server-mute badge */
+  serverId?: string;
 }) {
   const { t } = useLingui();
 
@@ -218,7 +230,11 @@ function CommonUser(props: {
         </Show>
       </NameRow>
       <Row gap="sm">
-        <VoiceStatefulUserIcons {...iconProps} userId={rest.userId} />
+        <VoiceStatefulUserIcons
+          {...iconProps}
+          userId={rest.userId}
+          serverId={rest.serverId}
+        />
       </Row>
     </div>
   );

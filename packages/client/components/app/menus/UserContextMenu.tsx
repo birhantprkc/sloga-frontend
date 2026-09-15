@@ -7,7 +7,12 @@ import { useClient } from "@revolt/client";
 import { CONFIGURATION } from "@revolt/common";
 import { useModals } from "@revolt/modal";
 import { useSmartParams } from "@revolt/routing";
-import { nativeScreenShareAvailable, useVoice } from "@revolt/rtc";
+import {
+  callModerationActions,
+  hasCallModerationActions,
+  nativeScreenShareAvailable,
+  useVoice,
+} from "@revolt/rtc";
 import { useState } from "@revolt/state";
 import { Slider, Text, useSnackbar } from "@revolt/ui";
 
@@ -19,12 +24,14 @@ import MdAssignmentInd from "@material-design-icons/svg/outlined/assignment_ind.
 import MdBadge from "@material-design-icons/svg/outlined/badge.svg?component-solid";
 import MdBlock from "@material-design-icons/svg/outlined/block.svg?component-solid";
 import MdCall from "@material-design-icons/svg/outlined/call.svg?component-solid";
+import MdCallEnd from "@material-design-icons/svg/outlined/call_end.svg?component-solid";
 import MdCancel from "@material-design-icons/svg/outlined/cancel.svg?component-solid";
 import MdChat from "@material-design-icons/svg/outlined/chat.svg?component-solid";
 import MdClose from "@material-design-icons/svg/outlined/close.svg?component-solid";
 import MdDoNotDisturbOn from "@material-design-icons/svg/outlined/do_not_disturb_on.svg?component-solid";
 import MdDraw from "@material-design-icons/svg/outlined/draw.svg?component-solid";
 import MdFace from "@material-design-icons/svg/outlined/face.svg?component-solid";
+import MdHeadsetOff from "@material-design-icons/svg/outlined/headset_off.svg?component-solid";
 import MdHearing from "@material-design-icons/svg/outlined/hearing.svg?component-solid";
 import MdMicOff from "@material-design-icons/svg/outlined/mic_off.svg?component-solid";
 import MdPersonAddAlt from "@material-design-icons/svg/outlined/person_add_alt.svg?component-solid";
@@ -32,6 +39,7 @@ import MdPersonRemove from "@material-design-icons/svg/outlined/person_remove.sv
 import MdReport from "@material-design-icons/svg/outlined/report.svg?component-solid";
 import MdScreenShare from "@material-design-icons/svg/outlined/screen_share.svg?component-solid";
 import MdVideocam from "@material-design-icons/svg/outlined/videocam.svg?component-solid";
+import MdVoiceOverOff from "@material-design-icons/svg/outlined/voice_over_off.svg?component-solid";
 import MdChecked from "@material-symbols/svg-400/outlined/check_box.svg?component-solid";
 import MdUnchecked from "@material-symbols/svg-400/outlined/check_box_outline_blank.svg?component-solid";
 
@@ -414,6 +422,94 @@ export function UserContextMenu(props: {
   }
 
   /**
+   * The target as a member of the CALL's server.
+   *
+   * Deliberately NOT `props.member`, which `useUser` resolves through the
+   * current ROUTE: a moderator who navigates to another server, or to home,
+   * while staying in the call would watch these entries disappear. The call's
+   * own channel is the server the API will be asked about, so it is the one
+   * the menu must ask about too. Undefined for a DM or group call.
+   */
+  function callMember() {
+    const serverId = voice.channel()?.serverId;
+    if (!serverId) return undefined;
+
+    return client().serverMembers.getByKey({
+      server: serverId,
+      user: props.user.id,
+    });
+  }
+
+  /**
+   * Which server-moderation entries this call menu may offer.
+   */
+  function moderation() {
+    const member = callMember();
+    const server = member?.server;
+    const actor = server?.member;
+
+    return callModerationActions(
+      {
+        isSelf: props.user.self,
+        isConnected: !!voice.channel()?.voiceParticipants.has(props.user.id),
+        // No actor means we could not resolve our own membership; treat that
+        // as "not established", never as elevated.
+        isInferiorToActor: !!actor && member!.inferiorTo(actor),
+        serverMuted: !!member?.serverMuted,
+        serverDeafened: !!member?.serverDeafened,
+      },
+      server && {
+        muteMembers: server.havePermission("MuteMembers"),
+        deafenMembers: server.havePermission("DeafenMembers"),
+        moveMembers: server.havePermission("MoveMembers"),
+      },
+    );
+  }
+
+  /**
+   * Surface a refused moderation action instead of letting it fail silently
+   */
+  function moderationFailed(err: unknown) {
+    console.error(err);
+    snackbar.show({
+      message: "That didn't go through. You may not have permission.",
+    });
+  }
+
+  /**
+   * Toggle the server mute on this member
+   */
+  function toggleServerMute() {
+    const member = callMember();
+    if (!member) return;
+
+    member.setServerMuted(!member.serverMuted).catch(moderationFailed);
+    props.onClose?.();
+  }
+
+  /**
+   * Toggle the server deafen on this member
+   */
+  function toggleServerDeafen() {
+    const member = callMember();
+    if (!member) return;
+
+    member.setServerDeafened(!member.serverDeafened).catch(moderationFailed);
+    props.onClose?.();
+  }
+
+  /**
+   * Disconnect this member from the call
+   */
+  function disconnectFromCall() {
+    const member = callMember();
+    if (!member) return;
+
+    member.disconnectFromVoice().catch(moderationFailed);
+    props.onClose?.();
+  }
+
+  /**
    * Whether the user can remove a member from the current group
    */
   function canRemoveMemberFromGroup() {
@@ -507,6 +603,43 @@ export function UserContextMenu(props: {
               onClick={() => void voice.channel()?.revokeAnnotators()}
             >
               <Trans>Stop all drawing on my screen</Trans>
+            </ContextMenuButton>
+          </Show>
+        </Show>
+        {/* Server moderation of the call. Distinct from the personal "Mute"
+            above, which only silences this person for ME — these change what
+            the SFU accepts from them, for everyone. Each entry is gated by
+            the same server-level permission and rank check the API applies,
+            so an entry that renders is one the API will honour. */}
+        <Show when={hasCallModerationActions(moderation())}>
+          <ContextMenuDivider />
+          <Show when={moderation().mute}>
+            <ContextMenuButton
+              icon={MdVoiceOverOff}
+              onClick={toggleServerMute}
+              actionSymbol={callMember()?.serverMuted ? MdChecked : MdUnchecked}
+            >
+              <Trans>Server mute</Trans>
+            </ContextMenuButton>
+          </Show>
+          <Show when={moderation().deafen}>
+            <ContextMenuButton
+              icon={MdHeadsetOff}
+              onClick={toggleServerDeafen}
+              actionSymbol={
+                callMember()?.serverDeafened ? MdChecked : MdUnchecked
+              }
+            >
+              <Trans>Server deafen</Trans>
+            </ContextMenuButton>
+          </Show>
+          <Show when={moderation().disconnect}>
+            <ContextMenuButton
+              icon={MdCallEnd}
+              onClick={disconnectFromCall}
+              destructive
+            >
+              <Trans>Disconnect from call</Trans>
             </ContextMenuButton>
           </Show>
         </Show>
