@@ -78,7 +78,7 @@ import {
  */
 export type KeybindArmState = {
   /**
-   * The native arm has been attempted at least once, so the other four
+   * The native arm has been attempted at least once, so the other six
    * fields mean something. `false` is the pre-mount state: the page must not
    * read an empty `armed` as "nothing took" before anything was tried.
    */
@@ -93,11 +93,32 @@ export type KeybindArmState = {
    *
    * A `false` here therefore means "this run produced no evidence of a native
    * layer": no shell bridge, a throwing/ACL-refused invoke, a non-Windows
-   * shell, or nothing submitted to learn from. The page may say "global
-   * keybinds need the desktop app" on it, but it may not say "your shell is
-   * broken".
+   * shell, or nothing submitted to learn from. 🔴 On its own it is NOT a
+   * negative, and the page must not read it as one: with nothing bound the
+   * disarm path publishes exactly this `false`, and a page that treats it as
+   * "absent" locks every row's capture before a first key can ever be bound
+   * to produce the evidence — on the Windows desktop app included. The two
+   * facts that separate "no evidence yet" from "proven absent" are `bridge`
+   * and `submitted` below.
    */
   nativeAvailable: boolean;
+  /**
+   * A shell invoke bridge (`tauriInvoke()` non-undefined) existed when this
+   * state was derived.
+   *
+   * `false` means nothing can ever arm from this build, because the native
+   * arm is only reachable through that bridge: PROVEN ABSENT, the one
+   * negative the page is entitled to state outright.
+   */
+  bridge: boolean;
+  /**
+   * How many bindings the arm carried; `0` on the disarm path.
+   *
+   * With `bridge` true and `submitted` `0` the state is UNKNOWN, not
+   * negative — the page must keep capture open so the first bind can produce
+   * evidence.
+   */
+  submitted: number;
   /**
    * Installed — a global hook is live for these. The **only** positive signal
    * that a binding took.
@@ -126,6 +147,8 @@ const NO_ACTIONS = Object.freeze([]) as unknown as GlobalKeybindAction[];
 export const UNPROBED_KEYBIND_ARM_STATE: KeybindArmState = Object.freeze({
   probed: false,
   nativeAvailable: false,
+  bridge: false,
+  submitted: 0,
   armed: NO_ACTIONS,
   unsupported: NO_ACTIONS,
   refused: NO_ACTIONS,
@@ -209,12 +232,19 @@ export function deriveNativeAvailable(
  * being published as a different shape than a refusal.
  *
  * @param submitted the bindings the arm carried (its length is the evidence
- * base for {@link deriveNativeAvailable}, so pass the real array)
+ * base for {@link deriveNativeAvailable} and is published as `submitted`, so
+ * pass the real array — an empty one on the disarm path)
  * @param raw the resolved `KeybindsArmResult`, or `undefined`
+ * @param bridge whether a shell invoke bridge existed for this attempt;
+ * published verbatim as `bridge`. Pass the real answer on every path,
+ * including the disarm and the failure ones — `false` is the one negative the
+ * page may state outright, so a caller that defaults it would turn "no
+ * evidence yet" into "proven absent"
  */
 export function armStateFromResult(
   submitted: readonly unknown[],
   raw: unknown,
+  bridge: boolean,
 ): KeybindArmState {
   const container =
     typeof raw === "object" && raw !== null
@@ -230,6 +260,8 @@ export function armStateFromResult(
   return {
     probed: true,
     nativeAvailable: deriveNativeAvailable(submitted.length, result),
+    bridge,
+    submitted: submitted.length,
     ...result,
   };
 }

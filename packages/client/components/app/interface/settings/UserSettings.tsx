@@ -46,6 +46,7 @@ import { MyBots, ViewBot } from "./user/bots";
 import { ConnectionsSettings } from "./user/Connections";
 import { EncryptionSettings } from "./user/Encryption";
 import { Feedback } from "./user/Feedback";
+import { KeybindsSettings } from "./user/Keybinds";
 import { LanguageSettings } from "./user/Language";
 import Native from "./user/Native";
 import Notifications from "./user/notifications/Notifications";
@@ -123,6 +124,8 @@ const Config: SettingsConfiguration<{ server: Server }> = {
         return <VideoSettings />;
       case "overlay":
         return <OverlaySettingsPage />;
+      case "keybinds":
+        return <KeybindsSettings />;
       case "notifications":
         return <Notifications isDesktop={!!window.native} />;
       case "streamer":
@@ -341,11 +344,14 @@ const Config: SettingsConfiguration<{ server: Server }> = {
               title: <Trans>Game Overlay</Trans>,
               hidden: !overlayShellAvailable(),
             },
-            // {
-            //   id: "keybinds",
-            //   icon: <MdKeybinds {...iconSize(20)} />,
-            //   title: t("app.settings.pages.keybinds.title"),
-            // },
+            // Not hidden on any platform, unlike Overlay above: the in-app
+            // binds work everywhere, and the page reports what the native
+            // probe found.
+            {
+              id: "keybinds",
+              icon: <Symbol size={20}>keyboard</Symbol>,
+              title: <Trans>Keybinds</Trans>,
+            },
             {
               id: "language",
               icon: <MdLanguage {...iconSize(20)} />,

@@ -282,7 +282,7 @@ describe("deriveNativeAvailable: an all-empty result is NOT success", () => {
 
 describe("armStateFromResult", () => {
   it("marks the state probed even when the invoke produced nothing", () => {
-    const state = armStateFromResult([{}, {}], undefined);
+    const state = armStateFromResult([{}, {}], undefined, true);
     assert.equal(state.probed, true);
     assert.equal(state.nativeAvailable, false);
     assert.deepEqual(state.armed, []);
@@ -291,11 +291,15 @@ describe("armStateFromResult", () => {
   });
 
   it("publishes the three lists narrowed to known actions", () => {
-    const state = armStateFromResult([{}, {}, {}], {
-      armed: ["toggle-mute", "not-an-action", 7, null],
-      unsupported: ["toggle-deafen"],
-      refused: ["toggle-camera"],
-    });
+    const state = armStateFromResult(
+      [{}, {}, {}],
+      {
+        armed: ["toggle-mute", "not-an-action", 7, null],
+        unsupported: ["toggle-deafen"],
+        refused: ["toggle-camera"],
+      },
+      true,
+    );
     assert.deepEqual(state.armed, ["toggle-mute"]);
     assert.deepEqual(state.unsupported, ["toggle-deafen"]);
     assert.deepEqual(state.refused, ["toggle-camera"]);
@@ -306,32 +310,89 @@ describe("armStateFromResult", () => {
     // The race `isGlobalKeybindAction` exists for: a stale `keybinds_arm`
     // echoing an action a later build dropped. Carried into the published
     // state it would index KEYBIND_TIER to `undefined` in the settings page.
-    const state = armStateFromResult([{}], { armed: ["toggle-telepathy"] });
+    const state = armStateFromResult(
+      [{}],
+      { armed: ["toggle-telepathy"] },
+      true,
+    );
     assert.deepEqual(state.armed, []);
     assert.equal(state.nativeAvailable, false);
   });
 
   it("tolerates a non-array list and a non-object result", () => {
-    const fromString = armStateFromResult([{}], { armed: "toggle-mute" });
+    const fromString = armStateFromResult([{}], { armed: "toggle-mute" }, true);
     assert.deepEqual(fromString.armed, []);
 
-    const fromScalar = armStateFromResult([{}], 42);
+    const fromScalar = armStateFromResult([{}], 42, true);
     assert.equal(fromScalar.probed, true);
     assert.deepEqual(fromScalar.armed, []);
   });
 
   it("collapses a duplicated id", () => {
-    const state = armStateFromResult([{}, {}], {
-      armed: ["toggle-mute", "toggle-mute"],
-    });
+    const state = armStateFromResult(
+      [{}, {}],
+      { armed: ["toggle-mute", "toggle-mute"] },
+      true,
+    );
     assert.deepEqual(state.armed, ["toggle-mute"]);
+  });
+
+  it("carries `bridge` through verbatim, true and false", () => {
+    // The page's one entitled negative. It is not derived from the result —
+    // a bridged invoke that throws still had a bridge — so the caller's
+    // answer must survive untouched in both directions.
+    const bridged = armStateFromResult([{}], { armed: ["toggle-mute"] }, true);
+    assert.equal(bridged.bridge, true);
+
+    const unbridged = armStateFromResult(
+      [{}],
+      { armed: ["toggle-mute"] },
+      false,
+    );
+    assert.equal(unbridged.bridge, false);
+  });
+
+  it("publishes `submitted` as the length of the array it was handed", () => {
+    assert.equal(armStateFromResult([], undefined, true).submitted, 0);
+    assert.equal(armStateFromResult([{}], undefined, true).submitted, 1);
+    assert.equal(
+      armStateFromResult([{}, {}, {}], { armed: ["toggle-mute"] }, true)
+        .submitted,
+      3,
+    );
+  });
+
+  it("🔴 the bridged disarm is the UNKNOWN shape, not a negative", () => {
+    // The shipped default: zero bindings, so the worker disarms and publishes
+    // this. `nativeAvailable` is honestly `false` (nothing was submitted, so
+    // nothing could prove a layer), but `bridge: true` with `submitted: 0`
+    // is what tells the page there is no evidence YET — reading it as
+    // "absent" locked every row's capture on every platform and made the
+    // first global key unbindable, Windows desktop included.
+    const state = armStateFromResult([], undefined, true);
+    assert.equal(state.probed, true);
+    assert.equal(state.nativeAvailable, false);
+    assert.equal(state.bridge, true);
+    assert.equal(state.submitted, 0);
+  });
+
+  it("an unbridged disarm publishes `bridge: false` — proven absent", () => {
+    // No invoke bridge at all (a plain browser tab): nothing can ever arm
+    // from this build, and the page may say so outright.
+    const state = armStateFromResult([], undefined, false);
+    assert.equal(state.probed, true);
+    assert.equal(state.nativeAvailable, false);
+    assert.equal(state.bridge, false);
+    assert.equal(state.submitted, 0);
   });
 
   it("is distinguishable from the unprobed constant", () => {
     assert.equal(UNPROBED_KEYBIND_ARM_STATE.probed, false);
     assert.equal(UNPROBED_KEYBIND_ARM_STATE.nativeAvailable, false);
+    assert.equal(UNPROBED_KEYBIND_ARM_STATE.bridge, false);
+    assert.equal(UNPROBED_KEYBIND_ARM_STATE.submitted, 0);
     assert.notEqual(
-      armStateFromResult([], undefined).probed,
+      armStateFromResult([], undefined, true).probed,
       UNPROBED_KEYBIND_ARM_STATE.probed,
     );
   });

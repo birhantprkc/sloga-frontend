@@ -57,10 +57,11 @@ function payloadActionId(payload: unknown): string {
 /**
  * Turns a keypress into a keybind action, over both transports.
  *
- * Mounted inside `<VoiceContext>` (a later lane mounts it in
- * `src/Interface.tsx`), following `NotificationsWorker`: a component that
- * grabs `useVoice()` at mount and registers native listeners in `onMount`.
- * Renders nothing.
+ * Mounted once, in `src/Interface.tsx`, inside `<VoiceContext>` and in the
+ * main window only (the popout is turned away by that component's
+ * `IS_POPOUT_WINDOW` redirect), following `NotificationsWorker`: a component
+ * that grabs `useVoice()` at mount and registers native listeners in
+ * `onMount`. Renders nothing.
  *
  * # Two transports, deliberately
  *
@@ -168,7 +169,16 @@ export function KeybindsWorker() {
       //
       // Published synchronously, before the await, so it cannot land after a
       // newer arm's result: nothing is armed the instant the plan says so.
-      setKeybindArmState(armStateFromResult([], undefined));
+      //
+      // It also records whether an invoke bridge exists. With nothing bound
+      // that is the only evidence the settings page has: a shell WITH a
+      // bridge keeps capture open so a first key can be bound at all, and a
+      // shell without one locks it. Reporting "unavailable" here regardless
+      // would lock every global row on every platform, the desktop app
+      // included, before a single key was ever submitted.
+      setKeybindArmState(
+        armStateFromResult([], undefined, invoke !== undefined),
+      );
       if (!invoke) return;
       // Idempotent and argument-free; a shell without the command throws and
       // that is the same inert outcome as not having a hook to drop.
@@ -178,10 +188,12 @@ export function KeybindsWorker() {
 
     if (!invoke) {
       // Web, Android, Electron, or a Tauri window with no capability file.
-      // Probed, nothing armed, nothing proven — the settings page needs to
-      // know the rows are inert, and this is the same shape a throwing
-      // invoke produces.
-      setKeybindArmState(armStateFromResult(plan.bindings, undefined));
+      // Probed, nothing armed, nothing proven, and no bridge to ask — the
+      // settings page needs to know the rows are inert. A throwing invoke
+      // below publishes the same "nothing armed" shape but with
+      // `bridge: true`; the page reads both as unavailable once bindings
+      // were submitted.
+      setKeybindArmState(armStateFromResult(plan.bindings, undefined, false));
       return;
     }
 
@@ -214,7 +226,13 @@ export function KeybindsWorker() {
     // inside `armStateFromResult`: an all-empty result means "no native
     // layer", NOT "armed" — off Windows `keybinds_arm` returns
     // `KeybindsArmResult::default()` with no error at all.
-    setKeybindArmState(armStateFromResult(plan.bindings, raw));
+    //
+    // `bridge: true` unconditionally: a bridge existed, or this line would
+    // not be reached. A throwing or ACL-refused invoke lands here too, with
+    // `raw === undefined` — the bridge was there and the arm produced no
+    // evidence, which the page renders as unavailable because bindings were
+    // submitted and none came back armed.
+    setKeybindArmState(armStateFromResult(plan.bindings, raw, true));
   }
 
   /*

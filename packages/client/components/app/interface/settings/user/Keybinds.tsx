@@ -11,7 +11,6 @@ import {
   type GlobalKeybindAction,
   GLOBAL_KEYBIND_ACTIONS,
   KEYBIND_REQUIREMENT,
-  KEYBIND_TIER,
 } from "@revolt/keybinds/globalKeybinds";
 import { useState } from "@revolt/state";
 import {
@@ -24,110 +23,18 @@ import {
   isTypingChord,
 } from "@revolt/ui";
 
-/* ------------------------------------------------------------------------ *
- * Pure decisions
- *
- * Kept at module scope and exported so they are readable — and, once a lane
- * is allowed to add a file next to them, testable — independently of the
- * markup. They are the only non-trivial logic on this page; everything below
- * is composition.
- * ------------------------------------------------------------------------ */
+import {
+  GLOBAL_TIER_ACTIONS,
+  IN_APP_TIER_ACTIONS,
+  blocksCapture,
+  globalTierStatus,
+  keybindRowStatus,
+} from "./keybindRowPolicy.ts";
 
-/**
- * The actions the native hook can fire while Sloga is unfocused, in
- * `GLOBAL_KEYBIND_ACTIONS` order.
- *
- * Derived from `KEYBIND_TIER` rather than listed again. The tier table is the
- * single source of truth for which side of this split an action falls on, and
- * a second hand-written list here would be a copy that silently stops matching
- * it — the failure mode `globalKeybinds.ts` describes for
- * `IN_APP_DEFAULT_SEQUENCES`, without that list's excuse (there is no leaf
- * constraint here; the table is one import away).
- */
-export const GLOBAL_TIER_ACTIONS: readonly GlobalKeybindAction[] =
-  GLOBAL_KEYBIND_ACTIONS.filter((action) => KEYBIND_TIER[action] === "global");
-
-/** The actions that can only ever be driven by a focused DOM keydown. */
-export const IN_APP_TIER_ACTIONS: readonly GlobalKeybindAction[] =
-  GLOBAL_KEYBIND_ACTIONS.filter((action) => KEYBIND_TIER[action] === "in-app");
-
-/**
- * What this page is entitled to say about one row.
- *
- * - `"unsupported"` / `"refused"` — the native layer reported that this
- *   action's chord did not arm. Unbindable: the row must say so.
- * - `"probing"` — the capability answer is not in yet. 🔴 Distinct from
- *   `"unavailable"` on purpose: an unanswered probe is not a negative answer,
- *   and it is not a positive one either, so the row makes no claim.
- * - `"unavailable"` — the probe answered, and there is no native hook here.
- *   Nothing in the global tier can fire.
- * - `"armed"` — the id came back in `KeybindsArmResult.armed`. The **only**
- *   positive signal that a binding took, per that type's discharge rule; this
- *   is the one status that earns a "works system-wide" claim.
- * - `"unclaimed"` — no signal in either direction. An unbound row, an
- *   `"in-app"`-tier row (which is never submitted to `keybinds_arm` at all),
- *   or a global row whose last arm did not mention it. The row shows its chord
- *   and promises nothing.
- */
-export type KeybindRowStatus =
-  | "unsupported"
-  | "refused"
-  | "probing"
-  | "unavailable"
-  | "armed"
-  | "unclaimed";
-
-/**
- * Decide what one row may claim, from the arm result and the tier.
- *
- * 🔴 **The two refusal lists are checked FIRST, ahead of the tier and probe
- * state.** They are facts about a specific chord that native has already
- * answered on, and they can only be non-empty if native answered at all — so
- * there is no ordering in which a refusal is masked by `"probing"`. They are
- * also not filtered by tier: an `"in-app"` action must never be submitted to
- * `keybinds_arm`, so its id appearing in a result at all is a bug in the
- * arming lane, and swallowing it here would hide that bug behind a row that
- * looks fine.
- *
- * 🔴 **`armed` is the only positive test.** `refused.length === 0 &&
- * unsupported.length === 0` is not evidence of anything — off Windows
- * `keybinds_arm` returns three empty lists and no error, which is
- * indistinguishable from success to a negative check. That is the exact shape
- * of the existing push-to-talk row's lie, which promises "works globally" off
- * `"__TAURI__" in window`.
- */
-export function keybindRowStatus(
-  action: GlobalKeybindAction,
-  arm: KeybindArmState,
-): KeybindRowStatus {
-  if (arm.unsupported.includes(action)) return "unsupported";
-  if (arm.refused.includes(action)) return "refused";
-
-  if (KEYBIND_TIER[action] === "global") {
-    if (!arm.probed) return "probing";
-    if (!arm.nativeAvailable) return "unavailable";
-  }
-
-  if (arm.armed.includes(action)) return "armed";
-  return "unclaimed";
-}
-
-/**
- * Should the row refuse further capture?
- *
- * 🔴 Only `"unavailable"`. A `"unsupported"` or `"refused"` row is exactly the
- * row the user needs to re-bind — locking it would leave them staring at a
- * chord that cannot work with no way to replace it. And `"probing"` stays open
- * because the store is authoritative regardless of the probe: a chord saved
- * while the answer is in flight arms when it lands.
- */
-export function blocksCapture(status: KeybindRowStatus): boolean {
-  return status === "unavailable";
-}
-
-/* ------------------------------------------------------------------------ *
- * Page
- * ------------------------------------------------------------------------ */
+// The tier split, the row status and the capture lock are decided in
+// `./keybindRowPolicy.ts` and tested there. What stays on this page is
+// composition and the per-row glue: labels, the conflict verdicts a capture
+// reports, and the ordering of a store write.
 
 /**
  * Global keybinds settings page.
@@ -193,8 +100,21 @@ export function KeybindsSettings() {
  * unavailable copy or the available copy. `probed === false` means "still
  * asking", and flashing either answer before it lands is the same lie in one
  * direction or the other for the width of a frame.
+ *
+ * 🔴 The invariant behind the four-way split below: a state with NO evidence
+ * never locks capture, because binding something is the only way to get
+ * evidence. With nothing bound, the worker submits nothing to `keybinds_arm`
+ * and so learns nothing about the hook — reading that silence as "no hook"
+ * would lock every row and make the first global key impossible to bind, on
+ * every platform including the one that has the hook. The red note is
+ * reserved for proven negatives: the bridge is absent, or a real arm through
+ * the bridge produced no evidence of a hook. `"unproven"` gets a neutral note
+ * that says the check happens at first bind, and `"available"` renders
+ * nothing.
  */
 function GlobalKeybindGroup() {
+  const tier = () => globalTierStatus(keybindArmState());
+
   return (
     <>
       <Text class="title">
@@ -209,14 +129,14 @@ function GlobalKeybindGroup() {
       </Text>
 
       <Switch>
-        <Match when={!keybindArmState().probed}>
+        <Match when={tier() === "probing"}>
           <Text class="label">
             <Trans>
               Checking whether this device can register system-wide keys…
             </Trans>
           </Text>
         </Match>
-        <Match when={!keybindArmState().nativeAvailable}>
+        <Match when={tier() === "unavailable"}>
           <ColouredText colour="var(--md-sys-color-error)">
             <Text class="label">
               <Trans>
@@ -226,6 +146,16 @@ function GlobalKeybindGroup() {
             </Text>
           </ColouredText>
         </Match>
+        <Match when={tier() === "unproven"}>
+          <Text class="label">
+            <Trans>
+              Sloga checks whether this device can register system-wide keys
+              when you bind the first one.
+            </Trans>
+          </Text>
+        </Match>
+        {/* `"available"` has no <Match>: a hook that is proven present needs
+            no note, and the rows below carry the per-binding claims. */}
       </Switch>
 
       <CategoryButton.Group>
@@ -588,9 +518,14 @@ function KeybindRow(props: {
               who pressed Space and was refused reads "It is saved" as being
               about Space. So the note is suppressed while a hard verdict is
               live — the ONE case where "nothing was saved" is simultaneously on
-              screen. The suppression is transient by construction: any fresh
-              capture calls onConflict(null) first, which retracts the verdict
-              and brings the note straight back.
+              screen. The suppression is NOT self-retracting: `conflict` is a
+              component-scope signal that only the next capture, a clear, or
+              unmount resets, so a hard verdict hides this note until one of
+              those happens. That is safe for a different reason — the red
+              hard-refusal note above is driven by the same signal and is
+              therefore always co-resident with the suppression, so the user
+              never sees a silently missing warning, only a suppressed one
+              with its explanation beside it.
 
               A soft `in-app` verdict is NOT suppressed: that chord really was
               saved, so the two notes agree and belong together.

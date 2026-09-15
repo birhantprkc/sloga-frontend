@@ -19,6 +19,7 @@ import { useClient, useClientLifecycle } from "@revolt/client";
 import { ActivityWorker } from "@revolt/client/ActivityWorker";
 import { ApkUpdateWorker } from "@revolt/client/ApkUpdateWorker";
 import { DiscordImportWorker } from "@revolt/client/DiscordImportWorker";
+import { KeybindsWorker } from "@revolt/client/KeybindsWorker";
 import { NotificationsWorker } from "@revolt/client/NotificationsWorker";
 import { StreamerModeWorker } from "@revolt/client/StreamerModeWorker";
 import { IS_OVERLAY_WINDOW, IS_POPOUT_WINDOW } from "@revolt/client/popout";
@@ -192,6 +193,18 @@ const Interface = (props: { children: JSX.Element }) => {
         <ActivityWorker />
         <StreamerModeWorker />
         <ApkUpdateWorker />
+        {/* Global and in-app keybinds, over the native hook and the focused
+            window. Main window only. It reads the `Voice` store, so it has to
+            sit inside `<VoiceContext>` — which it does here, and would in
+            `src/index.tsx` too, but there it would also run in the friends
+            popout: `MountContext` short-circuits only for the overlay window,
+            so the popout builds the full provider stack, and the workers
+            above are spared only by the `IS_POPOUT_WINDOW` redirect at the
+            top of this component. In the popout the native arm is ACL-denied
+            (`keybinds_arm` is granted to `main` alone), but the DOM listener
+            would still fire against that window's roomless `Voice`, and a
+            bound key would act on the wrong instance. */}
+        <KeybindsWorker />
         {/* Publishes the in-game overlay's roster/speaking state to the
             overlay window and owns that window's lifetime. Main window only
             — this is the window that owns the LiveKit Room, and
