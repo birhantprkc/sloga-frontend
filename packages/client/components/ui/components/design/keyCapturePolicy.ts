@@ -1,6 +1,7 @@
 /**
  * The pure half of `./KeyCapture.tsx`: the chord→{@link Binding} reduction,
- * the cancel/clear/refusal decisions, and the display formatter.
+ * the cancel/clear/refusal decisions, the modifier-as-key release path, and
+ * the display formatter.
  *
  * # Why `…Policy`, and not `keyCapture.ts`
  *
@@ -45,6 +46,8 @@ import {
   type KeyLikeEvent,
   findBindingConflict,
   findCodeWiseBindingConflict,
+  normalizeBinding,
+  selfModifier,
 } from "../../../keybinds/globalKeybinds.ts";
 
 /* ------------------------------------------------------------------------ *
@@ -52,7 +55,8 @@ import {
  * ------------------------------------------------------------------------ */
 
 /**
- * What {@link decideCapture} reads off a keydown.
+ * What {@link decideCapture} and {@link trackCaptureKeydown} read off a
+ * keydown.
  *
  * Widens the contract's {@link KeyLikeEvent} by the two fields a *capture*
  * needs and a *match* does not:
@@ -64,6 +68,11 @@ import {
  * - `repeat`, because capture listens on a focused DOM `keydown`, which
  *   auto-repeats. The native hook collapses repeat twice before it ever emits
  *   an edge, so the matching predicates never see one; a DOM listener does.
+ *
+ * The release path ({@link decideCaptureRelease}) reads only `code` off a
+ * keyup: by then the chord has already been decided from the keydowns, and a
+ * keyup's modifier flags describe the hand *after* the release, which is the
+ * wrong moment — see {@link trackCaptureKeydown}.
  *
  * Duck-typed rather than taking `KeyboardEvent`, matching `KeyLikeEvent`'s own
  * rationale: it keeps this callable from `node --test` with a plain object.
@@ -78,17 +87,25 @@ export type CaptureKeyEvent = KeyLikeEvent & {
  * ------------------------------------------------------------------------ */
 
 /**
- * Physical keys that are only ever part of a chord, never its subject.
+ * Physical keys {@link decideCapture} skips on **keydown**.
  *
  * 🔴 This set is the fix for defect 2 of the one-off in
  * `settings/user/voice/VoiceProcessingOptions.tsx`: that capture bound the
  * first `keydown` it saw, so pressing Shift+F13 stored `"ShiftLeft"` — the
- * modifier, not the key. Skipping these is what lets a chord accumulate until
- * a real key lands.
+ * modifier, not the key. Skipping these on keydown is what lets a chord
+ * accumulate until a real key lands.
  *
- * `MetaLeft`/`MetaRight` are listed even though {@link Binding} cannot express
- * Meta: they must not be captured *as* the bound key either, and the Meta-held
- * refusal in {@link decideCapture} covers the other half.
+ * Skipped is not the same as unbindable. A modifier's keydown is ignored here
+ * so that the chord can keep building; if no real key ever lands and the user
+ * lets go, the modifier pressed last becomes the key on its **release** — the
+ * path {@link trackCaptureKeydown} and {@link decideCaptureRelease} own. So a
+ * lone Ctrl, Shift or Alt is bindable, and Shift+F13 still binds F13.
+ *
+ * Only Meta is unbindable, because {@link Binding} has no bit for it (the
+ * pinned `keybinds_arm` payload has no field for one). `MetaLeft`/`MetaRight`
+ * are listed so they are never captured *as* the bound key; the Meta-held
+ * refusal in {@link decideCapture} covers the other half, and
+ * {@link trackCaptureKeydown} returns no candidate for them.
  *
  * `CapsLock` is deliberately absent — it is a normal key to the native scan
  * table and binding it is legal.
@@ -298,9 +315,10 @@ const ALWAYS_PRESSED_CODES: readonly string[] = ["Enter", "NumpadEnter", "Tab"];
  * `findBindingConflict`." Measured against the real functions, that is false —
  * and false *by construction*, not by accident:
  *
- * - {@link isTypingChord} only ever evaluates **modifier-less** chords. It
- *   returns `false` the instant any of ctrl/shift/alt is set, before it reads
- *   the code at all.
+ * - {@link isTypingChord} evaluates a chord keyed on a regular key only when
+ *   it is **modifier-less**. It returns `false` the instant any of
+ *   ctrl/shift/alt is set, before it reads the code at all. (The modifier-keyed
+ *   exception in that predicate is irrelevant here: no arrow is a modifier.)
  * - Every arrow entry in `IN_APP_DEFAULT_SEQUENCES` carries a modifier:
  *   `Alt+ArrowDown`, `Ctrl+Alt+ArrowUp`, `Ctrl+Alt+ArrowDown`. `ArrowLeft` and
  *   `ArrowRight` appear in that list not at all. The only modifier-less entry
@@ -339,6 +357,37 @@ const COMPOSER_MOTION_CODES: readonly string[] = [
 ];
 
 /**
+ * The six modifiers a {@link Binding} can be keyed on.
+ *
+ * These are the members of {@link MODIFIER_CODES} minus the Meta pair — the
+ * keys `selfModifier` in `globalKeybinds.ts` names. They are typing keys under
+ * this set's own test for membership, and more sharply than any letter: a
+ * bare-Shift binding fires on every capital letter and every `?`, a bare-Ctrl
+ * one on Ctrl+C, Ctrl+V and Ctrl+Enter, a bare-Alt one on Alt+Tab. The hand is
+ * on all six constantly while composing, and none of them is a chord the
+ * composer produces on purpose.
+ *
+ * Note that the caution applies to a modifier-keyed binding **whatever its
+ * other flags** — `{ ShiftLeft, ctrl: true }` still fires on the Shift half of
+ * Ctrl+Shift+V mid-composition — which is why {@link isTypingChord} tests the
+ * modifier case before its flag check rather than after.
+ *
+ * The same six also fire on their keydown before the rest of any chord is
+ * known — a bare Ctrl binding fires on Ctrl+click and on AltGr (see the note
+ * in {@link NAMED_KEY_LEGENDS}) — which is the Discord behavior and is
+ * accepted; the warning is the only notice the user gets, so it must not be
+ * skipped for these.
+ */
+const BINDABLE_MODIFIER_CODES: readonly string[] = [
+  "ControlLeft",
+  "ControlRight",
+  "ShiftLeft",
+  "ShiftRight",
+  "AltLeft",
+  "AltRight",
+];
+
+/**
  * Physical keys a user presses while typing into Sloga.
  *
  * # What this set is for
@@ -371,7 +420,7 @@ const COMPOSER_MOTION_CODES: readonly string[] = [
  *
  * A `ReadonlySet` rather than the `readonly string[]` used by
  * {@link MODIFIER_CODES} and {@link CLEAR_CODES}. Those hold 8 and 2 entries
- * and are scanned once per keydown; this holds 79 and is read per rendered
+ * and are scanned once per keydown; this holds 85 and is read per rendered
  * row, where a linear scan is the wrong default. It stays iterable, which the
  * consistency assertions in the test file depend on.
  *
@@ -380,8 +429,12 @@ const COMPOSER_MOTION_CODES: readonly string[] = [
  * - `Escape`, `Delete`, `Backspace` — {@link CANCEL_CODE} and
  *   {@link CLEAR_CODES}. They are the control gestures of the capture widget,
  *   so no `Binding` can ever hold them and a member here would be unreachable.
- * - Everything in {@link MODIFIER_CODES} — never the subject of a chord, and
- *   never reachable as `binding.code`.
+ * - `MetaLeft`, `MetaRight` — the only two members of {@link MODIFIER_CODES}
+ *   that can never reach `binding.code`, because {@link Binding} has no Meta
+ *   bit and {@link trackCaptureKeydown} produces no candidate for them. The
+ *   other six modifiers ARE members, through {@link BINDABLE_MODIFIER_CODES}:
+ *   they are ignored on keydown only so a chord can accumulate, and they become
+ *   the key when released without one.
  * - `F1`..`F24` — not typed into a composer, which is what makes them the
  *   keys this widget's own history steers users toward (the one-off it replaces
  *   captured F13).
@@ -397,9 +450,9 @@ const COMPOSER_MOTION_CODES: readonly string[] = [
  *   `findBindingConflict`. That claim was measurably false: every arrow entry
  *   in `IN_APP_DEFAULT_SEQUENCES` is a **modified** chord, `bindingsEqual`
  *   compares modifiers, and this predicate only ever sees modifier-less
- *   chords — so that coverage could never intersect this one. The two domains
- *   are disjoint, and bare arrows drew no conflict and no warning. The
- *   measurement is in that group's comment.
+ *   chords on a regular key — so that coverage could never intersect this
+ *   one. The two domains are disjoint, and bare arrows drew no conflict and no
+ *   warning. The measurement is in that group's comment.
  *
  * The exclusions are asserted against this set programmatically in
  * `./keyCapturePolicy.test.ts`; that assertion is what stops a later edit
@@ -417,17 +470,30 @@ export const TYPING_CODES: ReadonlySet<string> = new Set<string>([
   ...NUMPAD_TEXT_CODES,
   ...ALWAYS_PRESSED_CODES,
   ...COMPOSER_MOTION_CODES,
+  ...BINDABLE_MODIFIER_CODES,
 ]);
 
 /**
  * Will this binding also fire while the user is typing inside Sloga?
  *
- * `true` **only** for a chord with no modifier held whose key is in
+ * `true` for a binding keyed on a modifier, whatever its flags, and otherwise
+ * **only** for a chord with no modifier held whose key is in
  * {@link TYPING_CODES}. The caller's settings row is expected to warn on
- * `true`; nothing is refused, and {@link decideCapture} does not consult this
- * at all — see below.
+ * `true`; nothing is refused, and neither {@link decideCapture} nor
+ * {@link decideCaptureRelease} consults this at all — see below.
  *
- * # 🔴 The modifier condition
+ * # 🔴 The modifier-keyed clause
+ *
+ * A binding whose `code` is Ctrl, Shift or Alt is `true` before the flags are
+ * read. Its flags say which *other* modifiers must already be held, and at
+ * runtime that is satisfied in the middle of every shortcut that starts with
+ * them: `{ ShiftLeft, ctrl: true }` fires on the Shift keydown of Ctrl+Shift+V
+ * while the user is pasting into the composer, and bare `ShiftLeft` fires on
+ * every capital letter. There is no flag combination that keeps a
+ * modifier-keyed binding out of ordinary typing, so the flag rule below does
+ * not apply to it.
+ *
+ * # 🔴 The modifier condition, for a regular key
  *
  * Any one of `ctrl` / `shift` / `alt` makes this `false`. `Ctrl+KeyM` is
  * `false`; bare `KeyM` is `true`. `Shift+KeyM` is also `false`, and that is the
@@ -455,6 +521,7 @@ export const TYPING_CODES: ReadonlySet<string> = new Set<string>([
  * caller, for the reason in the `TODO(i18n)` note at the bottom of this file.
  */
 export function isTypingChord(binding: Binding): boolean {
+  if (selfModifier(binding.code) !== null) return true;
   if (binding.ctrl || binding.shift || binding.alt) return false;
   return TYPING_CODES.has(binding.code);
 }
@@ -536,7 +603,11 @@ export type ConflictMode = "chord" | "code";
  *    listener installed *underneath their still-held Enter*, and the next
  *    repeat would capture Enter as the binding.
  * 2. **Cancel and clear before anything else**, so they cannot be captured.
- * 3. **Modifier-only**, so the chord can accumulate.
+ * 3. **Modifier-only**, so the chord can accumulate. This is an `ignore`, not
+ *    a refusal: a modifier can still become the key, but only on its
+ *    release, through {@link decideCaptureRelease}. The component feeds every
+ *    keydown to {@link trackCaptureKeydown} as well, which is what remembers
+ *    the modifier this decision skipped.
  * 4. **Meta held.** `Binding` has no `meta` bit, so `Win+KeyM` could only be
  *    stored as bare `KeyM` — a binding that fires on a chord the user never
  *    chose, and that shadows plain M. Dropping the bit silently is the
@@ -596,6 +667,165 @@ export function decideCapture(
 }
 
 /* ------------------------------------------------------------------------ *
+ * 3b. A modifier as the key — decided on release
+ * ------------------------------------------------------------------------ */
+
+/**
+ * The modifier-keyed chord a capture would commit if the user let go now, or
+ * `null` when there is none. Owned by the component for the lifetime of one
+ * capture, fed by {@link trackCaptureKeydown} on every keydown and consumed by
+ * {@link decideCaptureRelease} on keyup.
+ */
+export type CaptureCandidate = Binding | null;
+
+/**
+ * Fold one keydown into the modifier-keyed candidate.
+ *
+ * {@link decideCapture} ignores a modifier's keydown so the chord can keep
+ * building toward a real key. This is the other half: it remembers that
+ * keydown, so that if the user lets go without a real key ever landing, the
+ * modifier can be the key. The rule is **the last self-modifier keydown the
+ * capture observed**, carrying that keydown's own flags with the pressed
+ * modifier's bit normalized away:
+ *
+ * - `repeat` → `prev`, unchanged. A held modifier auto-repeats on a DOM
+ *   listener, and a repeat is not a new press.
+ * - a Ctrl / Shift / Alt keydown without Meta held → the new candidate,
+ *   `normalizeBinding({ code, ctrl, shift, alt })` off the event. So press
+ *   Ctrl, then Shift, gives `{ ShiftLeft, ctrl: true }`; press Shift, then
+ *   Ctrl, gives `{ ControlLeft, shift: true }`.
+ * - anything else → `null`. That is a regular key (the chord is now that
+ *   key's, and {@link decideCapture} decides it), Meta itself, or a modifier
+ *   pressed while Meta is held ({@link Binding} cannot express Meta, and a
+ *   candidate that dropped the bit would be a chord the user never chose —
+ *   the same reasoning as the `meta-held` ignore).
+ *
+ * # 🔴 Why the keydown, and not the keyup
+ *
+ * Two bugs are closed by deciding the chord from the keydown that would fire
+ * it, rather than from the keyup that ends it.
+ *
+ * First, the keydown **is the runtime match event**. `bindingMatchesPress`
+ * fires `{ ShiftLeft, ctrl: true }` on a Shift keydown with Ctrl held, so the
+ * chord a capture stores has to follow press order. A keyup carries the flags
+ * of the hand after the release, and the user's hand unrolls in either order:
+ * release Ctrl first and the Shift keyup arrives with `ctrlKey: false`;
+ * release Shift first and the Ctrl keyup arrives with `shiftKey: true`. Built
+ * from those, "hold Ctrl, press Shift" would store bare `ShiftLeft` on one
+ * ordering and `{ ControlLeft, shift: true }` on the other — the second of
+ * which never fires on the gesture that produced it. Built from the keydown,
+ * both orderings store the same `{ ShiftLeft, ctrl: true }`, and
+ * {@link decideCaptureRelease} reads nothing off the keyup but its `code`.
+ *
+ * Second, **a modifier held before capture started has no keydown here**, so
+ * it can never become the candidate. A user who Shift+Tabs onto the trigger,
+ * presses Enter, and then lets go of Shift produces a Shift keyup with no
+ * matching keydown inside the capture; with no candidate, that keyup is
+ * ignored rather than committed as a bare Shift the user never asked for.
+ *
+ * @param prev the candidate before this keydown
+ * @param event the keydown, duck-typed
+ */
+export function trackCaptureKeydown(
+  prev: CaptureCandidate,
+  event: CaptureKeyEvent,
+): CaptureCandidate {
+  if (event.repeat) return prev;
+
+  if (selfModifier(event.code) !== null && !event.metaKey) {
+    return normalizeBinding({
+      code: event.code,
+      ctrl: event.ctrlKey,
+      shift: event.shiftKey,
+      alt: event.altKey,
+    });
+  }
+
+  return null;
+}
+
+/**
+ * What the component should do about one keyup seen while listening.
+ *
+ * Narrower than {@link CaptureDecision}: a keyup never cancels or clears
+ * (those are keydown gestures), and the two `ignore` reasons are its own. The
+ * `commit` and `refuse` arms are shaped identically to the keydown ones so
+ * the component handles both through the same branches.
+ */
+export type CaptureReleaseDecision =
+  /** Not a modifier's keyup, or nothing to commit yet. Stay listening. */
+  | { kind: "ignore"; reason: "not-self-modifier" | "no-candidate" }
+  /** The candidate, judged. Same semantics as the keydown `commit`. */
+  | { kind: "commit"; binding: Binding; conflict: BindingConflict | null }
+  /** The candidate provably cannot work. End capture, bind nothing. */
+  | { kind: "refuse"; binding: Binding; conflict: BindingConflict };
+
+/**
+ * Reduce one keyup to a decision — the commit point for a modifier-keyed
+ * chord.
+ *
+ * A candidate commits on the **first** self-modifier keyup while one exists.
+ * Which modifier was released does not matter, only that one was: the chord
+ * was already decided by its keydowns (see {@link trackCaptureKeydown}), and
+ * the keyup only says the user is done. The component additionally gates this
+ * on the released key being one this capture swallowed on the way down, which
+ * is the same "no down, no up" invariant the runtime's release path owes.
+ *
+ * Check order:
+ *
+ * 1. Not a Ctrl / Shift / Alt keyup → `ignore`. A regular key's keyup is
+ *    noise here (its chord was decided on keydown), and Meta's keyup can never
+ *    commit because {@link trackCaptureKeydown} never candidates it.
+ * 2. No candidate → `ignore`. This is the modifier-held-before-capture case,
+ *    and also the state after a regular key or Meta nulled the candidate: a
+ *    stray modifier keyup afterwards must not resurrect a chord.
+ * 3. Otherwise judge `candidate` — not anything derived from the keyup — with
+ *    exactly the finder selection and hard/soft routing {@link decideCapture}
+ *    applies to a keydown chord: `"chord"` is `findBindingConflict`, `"code"`
+ *    is `findCodeWiseBindingConflict`, and {@link isHardConflict} decides
+ *    `refuse` against `commit`. Today no in-app sequence and no reserved combo
+ *    is keyed on a modifier, so the only conflict a candidate can draw is
+ *    `"push-to-talk"` — which it draws in both modes, because both finders
+ *    compare that arm code-wise.
+ *
+ * @param candidate the running candidate from {@link trackCaptureKeydown}
+ * @param event the keyup; only `code` is read, deliberately (its modifier
+ * flags describe the hand after the release)
+ * @param pushToTalkKey as for {@link decideCapture}
+ * @param conflictMode as for {@link decideCapture}
+ */
+export function decideCaptureRelease(
+  candidate: CaptureCandidate,
+  event: Pick<CaptureKeyEvent, "code">,
+  pushToTalkKey?: string,
+  conflictMode: ConflictMode = "chord",
+): CaptureReleaseDecision {
+  if (selfModifier(event.code) === null) {
+    return { kind: "ignore", reason: "not-self-modifier" };
+  }
+
+  if (candidate === null) return { kind: "ignore", reason: "no-candidate" };
+
+  // The chord is the candidate as tracked on keydown. Nothing is read off the
+  // keyup past its code — see `trackCaptureKeydown` for why.
+  const binding: Binding = candidate;
+
+  // Kept textually parallel to the tail of `decideCapture` on purpose: the
+  // same finder for the same mode, the same hard/soft split. A spec pins that
+  // the two agree on the push-to-talk refusal in both modes.
+  const conflict =
+    conflictMode === "code"
+      ? findCodeWiseBindingConflict(binding, pushToTalkKey)
+      : findBindingConflict(binding, pushToTalkKey);
+
+  if (conflict !== null && isHardConflict(conflict)) {
+    return { kind: "refuse", binding, conflict };
+  }
+
+  return { kind: "commit", binding, conflict };
+}
+
+/* ------------------------------------------------------------------------ *
  * 4. Display
  * ------------------------------------------------------------------------ */
 
@@ -615,6 +845,16 @@ export function decideCapture(
  * *containing* "Key".) The fix is a lookup plus anchored patterns, not a chain
  * of substring replacements.
  *
+ * The six bindable modifiers have legends because a modifier-keyed binding
+ * renders its `code` through here like any other: bare `ShiftLeft` reads
+ * "Shift", and `{ ShiftLeft, ctrl: true }` reads "Ctrl + Shift" — the held
+ * modifier first, then the one pressed last, which is the order the user
+ * pressed them. The right-hand keys are named as such so two distinct
+ * physical positions never read the same. One reading to know about: on
+ * Windows, Chromium reports a synthesized `ControlLeft` keydown before
+ * `AltRight` when AltGr is pressed, so a plain AltGr capture reads
+ * "Ctrl + Right Alt" — accepted and documented, not a formatter defect.
+ *
  * Exported by path only — not on the `design/index.ts` barrel — so the spec's
  * converse assertion ("every single-glyph legend is a typing key") can
  * quantify over the real table instead of a hand-copied roster of it.
@@ -624,6 +864,13 @@ export const NAMED_KEY_LEGENDS: Readonly<Record<string, string>> = {
   ArrowDown: "↓",
   ArrowLeft: "←",
   ArrowRight: "→",
+
+  ControlLeft: "Ctrl",
+  ControlRight: "Right Ctrl",
+  ShiftLeft: "Shift",
+  ShiftRight: "Right Shift",
+  AltLeft: "Alt",
+  AltRight: "Right Alt",
 
   Escape: "Esc",
   Enter: "Enter",
@@ -722,6 +969,12 @@ export function formatKeyCode(code: string): string {
  * order and the way the contract file writes the reserved combo
  * ("Ctrl+Shift+Alt+Q"), so a chord the user reads here matches the chord the
  * docs name.
+ *
+ * A modifier-keyed chord renders its key last like any other, so
+ * `{ ShiftLeft, ctrl: true }` is "Ctrl + Shift" and `{ ControlLeft, shift:
+ * true }` is "Shift + Ctrl". Those are two different bindings (each fires on
+ * the gesture that created it — see `Binding`'s doc), and they read
+ * differently, which is the point.
  */
 export function formatBinding(binding: Binding): string {
   const parts: string[] = [];

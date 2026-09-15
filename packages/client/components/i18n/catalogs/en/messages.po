@@ -8485,8 +8485,8 @@ msgid "This is also a Sloga shortcut while the app is focused. It is saved, and 
 msgstr "This is also a Sloga shortcut while the app is focused. It is saved, and both may fire."
 
 #: components/app/interface/settings/user/Keybinds.tsx
-msgid "You use this key while typing, so it will also fire in the message box, in search, anywhere text goes. It is saved. Adding Ctrl, Shift or Alt avoids that."
-msgstr "You use this key while typing, so it will also fire in the message box, in search, anywhere text goes. It is saved. Adding Ctrl, Shift or Alt avoids that."
+msgid "You use this key while typing, so it will also fire in the message box, in search, anywhere text goes. It is saved. Binding it together with a regular key avoids that."
+msgstr "You use this key while typing, so it will also fire in the message box, in search, anywhere text goes. It is saved. Binding it together with a regular key avoids that."
 
 #: components/app/interface/settings/user/Keybinds.tsx
 msgid "This combination was taken from another keybind, which is now unbound:"

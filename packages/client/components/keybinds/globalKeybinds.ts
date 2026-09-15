@@ -124,6 +124,19 @@ export function isGlobalKeybindAction(id: string): id is GlobalKeybindAction {
  * exists only in the Windows desktop shell. Adding Meta later is a change to
  * the native payload first and to this type second — 🔴 not a field that can be
  * added here alone.
+ *
+ * # A modifier can be the key
+ *
+ * `code` may itself be Ctrl, Shift or Alt — `"ShiftLeft"`, `"ControlRight"`
+ * and the rest of the six named by {@link selfModifier}. Such a binding never
+ * carries its own flag: `{ code: "ShiftLeft", shift: true }` is not a distinct
+ * chord from `{ code: "ShiftLeft", shift: false }`, and {@link normalizeBinding}
+ * folds the first into the second. The other two flags keep their usual
+ * meaning, and for a modifier-keyed chord the key is the modifier pressed
+ * LAST: `{ code: "ShiftLeft", ctrl: true }` is "Ctrl + Shift" (Ctrl held,
+ * Shift pressed) and `{ code: "ControlLeft", shift: true }` is "Shift + Ctrl"
+ * (Shift held, Ctrl pressed). They are two bindings, each firing on the
+ * gesture that created it and not on the other.
  */
 export type Binding = {
   /** A `KeyboardEvent.code` (physical key), e.g. `"KeyM"`, `"F13"`. */
@@ -148,24 +161,112 @@ export type KeyLikeEvent = {
   altKey: boolean;
 };
 
+/** The flag a modifier key sets on its own keydown — see {@link selfModifier}. */
+export type SelfModifier = "ctrl" | "shift" | "alt";
+
+/**
+ * The {@link Binding} flag that `code`'s OWN keydown sets, if `code` is one of
+ * the six bindable modifier keys; `null` for every other code.
+ *
+ * Only Ctrl, Shift and Alt, left and right: the three flags a `Binding`
+ * carries. Meta is `null` on purpose, for the same reason the type has no
+ * `meta` field — the native payload cannot express it as a flag, so this
+ * module cannot treat it as a key either, and the capture UI refuses it.
+ */
+export function selfModifier(code: string): SelfModifier | null {
+  switch (code) {
+    case "ControlLeft":
+    case "ControlRight":
+      return "ctrl";
+    case "ShiftLeft":
+    case "ShiftRight":
+      return "shift";
+    case "AltLeft":
+    case "AltRight":
+      return "alt";
+    default:
+      return null;
+  }
+}
+
+/**
+ * A copy of `binding` with the flag its own key sets cleared: `shift` for a
+ * `ShiftLeft` / `ShiftRight` binding, `ctrl` for the Ctrl pair, `alt` for the
+ * Alt pair. Every other field is copied as-is, and a binding whose key is not
+ * a modifier comes back as an equal copy — equal by value, not by reference,
+ * so callers must not test identity. Idempotent.
+ *
+ * # Why the own flag is never stored
+ *
+ * A modifier's own keydown carries its flag on the DOM: `ShiftLeft` arrives as
+ * `{ code: "ShiftLeft", shiftKey: true }`, because the key is already down by
+ * the time the event is dispatched. A binding captured straight off that
+ * event would read `{ ShiftLeft, shift: true }`, while one written by hand or
+ * loaded from an earlier build might read `{ ShiftLeft, shift: false }` — the
+ * same gesture in two spellings, which a field-wise duplicate sweep would not
+ * catch. Clearing the own flag makes the cleared form the ONE canonical
+ * spelling, so {@link bindingsEqual} and the store's duplicate check keep
+ * working unchanged. {@link bindingMatchesPress} then never consults that flag
+ * at all, and the native hook masks the same bit before it compares
+ * (`self_modifier_bit` in the desktop shell's `ptt.rs`), so both transports
+ * agree on what a modifier-keyed binding means.
+ *
+ * The store is expected to normalize on every write and on load, so a
+ * persisted `{ ShiftLeft, shift: true }` from any earlier build cleans itself.
+ */
+export function normalizeBinding(binding: Binding): Binding {
+  const own = selfModifier(binding.code);
+  const copy = { ...binding };
+  if (own !== null) copy[own] = false;
+  return copy;
+}
+
 /**
  * Does `event` PRESS `binding`?
  *
- * Modifier match is **exact equality**: a binding with `ctrl: false` does not
- * fire while Ctrl is held. This is what keeps global bindings from stealing
- * every superset chord out from under the focused application — bind
- * `Alt+KeyM` loosely and it would also fire on `Ctrl+Alt+Shift+KeyM`, which
- * belongs to whatever the user is actually typing into.
+ * Modifier match is **exact equality on every flag the binding's own key does
+ * not set**. For a binding on a regular key that is all three: a binding with
+ * `ctrl: false` does not fire while Ctrl is held. This is what keeps global
+ * bindings from stealing every superset chord out from under the focused
+ * application — bind `Alt+KeyM` loosely and it would also fire on
+ * `Ctrl+Alt+Shift+KeyM`, which belongs to whatever the user is actually typing
+ * into.
+ *
+ * # A modifier as the key
+ *
+ * When `binding.code` is itself Ctrl, Shift or Alt ({@link selfModifier}),
+ * that ONE flag is not compared and the other two still are. A modifier's own
+ * keydown always carries its flag on the DOM — `ShiftLeft` arrives with
+ * `shiftKey: true` — so comparing it against the stored `shift: false` (the
+ * normalized form, see {@link normalizeBinding}) would mean a bare Shift
+ * binding could never match its own key. The native hook masks the same bit
+ * before it compares (`self_modifier_bit` in `ptt.rs`), so a modifier-keyed
+ * binding means the same thing on both transports.
+ *
+ * The superset argument holds unchanged for the two flags that ARE compared:
+ * `{ ShiftLeft, ctrl: true }` ("Ctrl + Shift") fires on Shift pressed while
+ * Ctrl is held — not while Ctrl and Alt are held, and not on a bare Shift.
+ * Because a chord's key is the modifier pressed LAST, `{ ControlLeft, shift:
+ * true }` ("Shift + Ctrl") is a different binding that fires on the reverse
+ * gesture; {@link bindingsEqual} tells them apart and each matches only its
+ * own keydown.
+ *
+ * A bare modifier binding fires on EVERY press of that modifier, before any
+ * chord it starts is known: Ctrl+C in a game, Ctrl+click, the Alt of Alt+Tab.
+ * Native passes the key through rather than consuming it, so the application
+ * underneath still gets its shortcut and the binding fires alongside it. That
+ * is the accepted cost of binding a lone modifier, not a defect to filter.
  */
 export function bindingMatchesPress(
   binding: Binding,
   event: KeyLikeEvent,
 ): boolean {
+  if (event.code !== binding.code) return false;
+  const own = selfModifier(binding.code);
   return (
-    event.code === binding.code &&
-    event.ctrlKey === binding.ctrl &&
-    event.shiftKey === binding.shift &&
-    event.altKey === binding.alt
+    (own === "ctrl" || event.ctrlKey === binding.ctrl) &&
+    (own === "shift" || event.shiftKey === binding.shift) &&
+    (own === "alt" || event.altKey === binding.alt)
   );
 }
 

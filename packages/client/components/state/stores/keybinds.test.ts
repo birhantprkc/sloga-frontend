@@ -593,3 +593,184 @@ describe("Keybinds — store surface", () => {
     assert.deepEqual(store.bindings(), defaultKeybinds().bindings);
   });
 });
+
+/**
+ * A lone modifier is bindable, and a modifier's own keydown carries its own
+ * flag: bare Shift arrives as `{ ShiftLeft, shift: true }` while the
+ * normalized shape is `{ ShiftLeft, shift: false }`. Both matchers ignore
+ * that one flag, so the two shapes are one effective key. The store is the
+ * last line: `validBinding` normalizes on the one path every persisted or
+ * written entry passes through, BEFORE the reserved and duplicate checks. The
+ * known-bad controls for this block are (a) `validBinding` returning the
+ * rebuilt object without `normalizeBinding`, which turns the cleans-on-load
+ * spec red, and (b) normalizing after the duplicate sweep in `setBinding`,
+ * which turns the dedupe spec red.
+ */
+describe("modifier-keyed bindings are normalized before dedupe", () => {
+  /** What a modifier's own keydown produces, un-normalized. */
+  const RAW_SHIFT: Binding = {
+    code: "ShiftLeft",
+    ctrl: false,
+    shift: true,
+    alt: false,
+  };
+  /** The same key, as the store must hold it. */
+  const BARE_SHIFT: Binding = {
+    code: "ShiftLeft",
+    ctrl: false,
+    shift: false,
+    alt: false,
+  };
+  /** "Ctrl + Shift": Shift is the key, Ctrl is the flag. */
+  const CTRL_THEN_SHIFT: Binding = {
+    code: "ShiftLeft",
+    ctrl: true,
+    shift: false,
+    alt: false,
+  };
+  /** "Shift + Ctrl": Ctrl is the key, Shift is the flag. */
+  const SHIFT_THEN_CTRL: Binding = {
+    code: "ControlLeft",
+    ctrl: false,
+    shift: true,
+    alt: false,
+  };
+  const SHIFT_M: Binding = {
+    code: "KeyM",
+    ctrl: false,
+    shift: true,
+    alt: false,
+  };
+
+  it("cleans a persisted {ShiftLeft, shift:true} to shift:false on load", () => {
+    const cleaned = cleanRaw({ bindings: { [EARLIER]: RAW_SHIFT } });
+
+    assert.deepEqual(cleaned.bindings[EARLIER], BARE_SHIFT);
+  });
+
+  it("is still a fixed point once the modifier flag is cleared", () => {
+    // `State.hydrate()` writes back on a difference. The first pass rewrites
+    // the blob (that is the migration); the second must not.
+    const once = cleanRaw({ bindings: { [EARLIER]: RAW_SHIFT } });
+
+    assert.deepEqual(cleanKeybinds(once), once);
+  });
+
+  it("dedupes the two shapes of one key to the FIRST holder on load", () => {
+    // Normalize-before-dedupe. Without it `bindingsEqual` sees two distinct
+    // chords, both rows survive, and one Shift press fires both actions. The
+    // survivor is the existing duplicate rule: first in declared order.
+    const cleaned = cleanRaw({
+      bindings: { [EARLIER]: RAW_SHIFT, [LATER]: BARE_SHIFT },
+    });
+
+    assert.deepEqual(cleaned.bindings[EARLIER], BARE_SHIFT);
+    assert.equal(cleaned.bindings[LATER], null);
+  });
+
+  it("dedupes the same pair the other way round, same survivor", () => {
+    // The tie-break is declared order, not "which shape was normalized".
+    const cleaned = cleanRaw({
+      bindings: { [EARLIER]: BARE_SHIFT, [LATER]: RAW_SHIFT },
+    });
+
+    assert.deepEqual(cleaned.bindings[EARLIER], BARE_SHIFT);
+    assert.equal(cleaned.bindings[LATER], null);
+  });
+
+  it("setBinding stores the normalized shape", () => {
+    const store = makeStore();
+
+    assert.equal(store.setBinding(EARLIER, RAW_SHIFT), true);
+    assert.deepEqual(store.binding(EARLIER), BARE_SHIFT);
+  });
+
+  it("setBinding with the raw shape STEALS the normalized row, not duplicates", () => {
+    // The pinned contract: `{ShiftLeft, shift:true}` written over a row
+    // holding `{ShiftLeft, shift:false}` takes it, the same stolen-from
+    // behavior as any other chord moving between rows. A store that
+    // normalized after the sweep would leave both rows bound to one key.
+    const store = makeStore();
+    store.setBinding(EARLIER, BARE_SHIFT);
+
+    assert.equal(store.setBinding(LATER, RAW_SHIFT), true);
+    assert.equal(store.binding(EARLIER), null);
+    assert.deepEqual(store.binding(LATER), BARE_SHIFT);
+  });
+
+  it("setBinding with the normalized shape steals the raw-written row too", () => {
+    // Symmetric: the first write was raw and is held normalized, so the
+    // second write, already normalized, must find it.
+    const store = makeStore();
+    store.setBinding(EARLIER, RAW_SHIFT);
+
+    assert.equal(store.setBinding(LATER, BARE_SHIFT), true);
+    assert.equal(store.binding(EARLIER), null);
+    assert.deepEqual(store.binding(LATER), BARE_SHIFT);
+  });
+
+  it("conflictingAction reports a modifier row held in normalized form", () => {
+    // The capture UI warns through this before `setBinding`. Its candidate
+    // arrives already normalized (`trackCaptureKeydown` in
+    // `keyCapturePolicy.ts` runs `normalizeBinding` on every keydown), so the
+    // question this pins is that the stored side is normalized too: a row
+    // written raw is found by the normalized candidate.
+    const store = makeStore();
+    store.setBinding(EARLIER, RAW_SHIFT);
+
+    assert.equal(store.conflictingAction(BARE_SHIFT), EARLIER);
+  });
+
+  it("leaves a non-modifier chord untouched", () => {
+    // `KeyM` names no modifier, so `shift:true` is a real part of the chord.
+    const cleaned = cleanRaw({ bindings: { [EARLIER]: SHIFT_M } });
+    const store = makeStore();
+    store.setBinding(LATER, SHIFT_M);
+
+    assert.deepEqual(cleaned.bindings[EARLIER], SHIFT_M);
+    assert.deepEqual(store.binding(LATER), SHIFT_M);
+  });
+
+  it("still refuses the reserved combo — KeyQ is not a modifier", () => {
+    // Normalization must not clear a flag off `Ctrl+Shift+Alt+KeyQ` and let
+    // it slip past `isReservedCombo` as a partial chord.
+    const store = makeStore();
+
+    assert.equal(store.setBinding(EARLIER, RESERVED_COMBO), false);
+    assert.equal(
+      cleanRaw({ bindings: { [EARLIER]: RESERVED_COMBO } }).bindings[EARLIER],
+      null,
+    );
+  });
+
+  it("keeps {ControlLeft, shift} and {ShiftLeft, ctrl} as two bindings", () => {
+    // "Shift + Ctrl" and "Ctrl + Shift" differ in which modifier was pressed
+    // last, and each fires on the gesture that created it. Normalization
+    // clears only the flag the code itself names, so neither collapses into
+    // the other and they coexist on two actions, on both paths.
+    const cleaned = cleanRaw({
+      bindings: { [EARLIER]: SHIFT_THEN_CTRL, [LATER]: CTRL_THEN_SHIFT },
+    });
+
+    assert.deepEqual(cleaned.bindings[EARLIER], SHIFT_THEN_CTRL);
+    assert.deepEqual(cleaned.bindings[LATER], CTRL_THEN_SHIFT);
+
+    const store = makeStore();
+    assert.equal(store.setBinding(EARLIER, SHIFT_THEN_CTRL), true);
+    assert.equal(store.setBinding(LATER, CTRL_THEN_SHIFT), true);
+    assert.deepEqual(store.binding(EARLIER), SHIFT_THEN_CTRL);
+    assert.deepEqual(store.binding(LATER), CTRL_THEN_SHIFT);
+  });
+
+  it("does not collapse a bare modifier into its chorded sibling", () => {
+    // `{ShiftLeft}` and `{ShiftLeft, ctrl}` share a code and differ in a flag
+    // that normalization does NOT touch (`ctrl` is not what `ShiftLeft`
+    // names), so the full-chord duplicate rule keeps both.
+    const cleaned = cleanRaw({
+      bindings: { [EARLIER]: RAW_SHIFT, [LATER]: CTRL_THEN_SHIFT },
+    });
+
+    assert.deepEqual(cleaned.bindings[EARLIER], BARE_SHIFT);
+    assert.deepEqual(cleaned.bindings[LATER], CTRL_THEN_SHIFT);
+  });
+});

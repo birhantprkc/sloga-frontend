@@ -19,8 +19,10 @@
  * only be pinned by a runtime assertion, which is what most of this file is.
  *
  * The headline invariant is the press/release asymmetry (§ "press vs release"):
- * a chord matches a PRESS only on exact modifier equality and a RELEASE on
- * physical key identity alone. Collapsing the two is the bug that leaves a
+ * a chord matches a PRESS on exact modifier equality — except for the one flag
+ * a modifier key sets by being pressed at all, which its own binding never
+ * compares — and a RELEASE on physical key identity alone. Collapsing the two
+ * is the bug that leaves a
  * microphone open after the user has let go, and a typecheck cannot see it
  * because both predicates have the same shape.
  */
@@ -30,6 +32,7 @@ import { describe, it } from "node:test";
 import {
   type Binding,
   type KeyLikeEvent,
+  type SelfModifier,
   GLOBAL_KEYBIND_ACTIONS,
   IN_APP_COMPARABLE_CODES,
   IN_APP_DEFAULT_SEQUENCES,
@@ -45,6 +48,8 @@ import {
   findCodeWiseBindingConflict,
   isGlobalKeybindAction,
   isReservedCombo,
+  normalizeBinding,
+  selfModifier,
 } from "./globalKeybinds.ts";
 
 /** A `Binding` from a terse spelling, so the chords below stay readable. */
@@ -678,5 +683,297 @@ describe("KEYBIND_MIN_INTERVAL_MS", () => {
     // one-round margin, and it doubles as the in-app tier's DOM-repeat floor.
     assert.equal(KEYBIND_MIN_INTERVAL_MS, 300);
     assert.ok(KEYBIND_MIN_INTERVAL_MS > 250);
+  });
+});
+
+/* ======================================================================== *
+ * Modifier keys as bindings
+ *
+ * A modifier's OWN keydown carries its flag on the DOM (`ShiftLeft` arrives
+ * with `shiftKey: true`), so a press matcher that compared all three flags
+ * against a stored `{ ShiftLeft, shift: false }` could never fire a bare
+ * Shift. The rule: a modifier-keyed binding never stores its own flag
+ * (`normalizeBinding`), and `bindingMatchesPress` skips exactly that one flag
+ * while still comparing the other two. Everything else — release, equality,
+ * the exact rule for a regular key — is pinned unchanged next to the new
+ * cases so a loosening cannot hide behind them.
+ * ======================================================================== */
+
+describe("modifier keys as bindings", () => {
+  /** The six bindable modifier codes and the flag each one's keydown sets. */
+  const MODIFIER_CODES: readonly (readonly [string, SelfModifier])[] = [
+    ["ControlLeft", "ctrl"],
+    ["ControlRight", "ctrl"],
+    ["ShiftLeft", "shift"],
+    ["ShiftRight", "shift"],
+    ["AltLeft", "alt"],
+    ["AltRight", "alt"],
+  ];
+
+  describe("selfModifier", () => {
+    it("names the flag each of the six modifier codes sets", () => {
+      for (const [code, flag] of MODIFIER_CODES) {
+        assert.equal(selfModifier(code), flag, code);
+      }
+      // Guard the loop: six codes, not a shrunken table passing vacuously.
+      assert.equal(MODIFIER_CODES.length, 6);
+    });
+
+    it("is null for a regular key, a lock key, Meta and the empty string", () => {
+      // Meta is null on purpose: Binding has no `meta` flag because the
+      // native payload has none, so it can be neither a flag nor a key.
+      for (const code of ["KeyA", "CapsLock", "MetaLeft", "MetaRight", ""]) {
+        assert.equal(selfModifier(code), null, JSON.stringify(code));
+      }
+    });
+  });
+
+  describe("normalizeBinding", () => {
+    it("clears exactly the own flag and nothing else", () => {
+      for (const [code, flag] of MODIFIER_CODES) {
+        const all = chord(code, { ctrl: true, shift: true, alt: true });
+        const expected = { ...all, [flag]: false };
+        assert.deepEqual(normalizeBinding(all), expected, code);
+      }
+    });
+
+    it("is idempotent", () => {
+      for (const [code] of MODIFIER_CODES) {
+        const once = normalizeBinding(
+          chord(code, { ctrl: true, shift: true, alt: true }),
+        );
+        assert.deepEqual(normalizeBinding(once), once, code);
+      }
+    });
+
+    it("returns an equal copy for a regular key", () => {
+      const bare = chord("KeyM");
+      const full = chord("KeyM", { ctrl: true, shift: true, alt: true });
+      assert.deepEqual(normalizeBinding(bare), bare);
+      assert.deepEqual(normalizeBinding(full), full);
+    });
+
+    it("does not mutate its input", () => {
+      const input = chord("ShiftLeft", { shift: true });
+      const output = normalizeBinding(input);
+      assert.equal(input.shift, true);
+      assert.equal(output.shift, false);
+      assert.notEqual(output, input);
+    });
+  });
+
+  describe("bindingMatchesPress with a modifier as the key", () => {
+    const bareShift = chord("ShiftLeft");
+    const ctrlShift = chord("ShiftLeft", { ctrl: true });
+    const shiftCtrl = chord("ControlLeft", { shift: true });
+
+    // 🔴 THE CASE THIS LANE EXISTS FOR: the real keydown for the Shift key
+    // reports shiftKey: true, and the stored binding says shift: false.
+    it("bare ShiftLeft matches its own keydown, which carries shiftKey: true", () => {
+      assert.equal(
+        bindingMatchesPress(bareShift, {
+          code: "ShiftLeft",
+          ctrlKey: false,
+          shiftKey: true,
+          altKey: false,
+        }),
+        true,
+      );
+    });
+
+    it("bare ShiftLeft also matches with shiftKey: false — the own flag is not consulted", () => {
+      assert.equal(
+        bindingMatchesPress(bareShift, {
+          code: "ShiftLeft",
+          ctrlKey: false,
+          shiftKey: false,
+          altKey: false,
+        }),
+        true,
+      );
+    });
+
+    it("bare ShiftLeft does NOT match while Ctrl or Alt is held", () => {
+      // The superset rule survives for the two flags that are still compared.
+      assert.equal(
+        bindingMatchesPress(bareShift, {
+          code: "ShiftLeft",
+          ctrlKey: true,
+          shiftKey: true,
+          altKey: false,
+        }),
+        false,
+      );
+      assert.equal(
+        bindingMatchesPress(bareShift, {
+          code: "ShiftLeft",
+          ctrlKey: false,
+          shiftKey: true,
+          altKey: true,
+        }),
+        false,
+      );
+    });
+
+    it("{ShiftLeft, ctrl} needs ctrlKey and ignores shiftKey", () => {
+      assert.equal(
+        bindingMatchesPress(ctrlShift, {
+          code: "ShiftLeft",
+          ctrlKey: true,
+          shiftKey: true,
+          altKey: false,
+        }),
+        true,
+      );
+      assert.equal(
+        bindingMatchesPress(ctrlShift, {
+          code: "ShiftLeft",
+          ctrlKey: true,
+          shiftKey: false,
+          altKey: false,
+        }),
+        true,
+      );
+      assert.equal(
+        bindingMatchesPress(ctrlShift, {
+          code: "ShiftLeft",
+          ctrlKey: false,
+          shiftKey: true,
+          altKey: false,
+        }),
+        false,
+      );
+    });
+
+    it("{ShiftLeft, ctrl} does NOT match with Alt also held", () => {
+      assert.equal(
+        bindingMatchesPress(ctrlShift, {
+          code: "ShiftLeft",
+          ctrlKey: true,
+          shiftKey: true,
+          altKey: true,
+        }),
+        false,
+      );
+    });
+
+    it("Ctrl + Shift and Shift + Ctrl are two bindings, each firing on its own gesture", () => {
+      // The key is the modifier pressed LAST, so the two orderings of the
+      // same pair are different chords and are not duplicates of each other.
+      assert.equal(bindingsEqual(ctrlShift, shiftCtrl), false);
+
+      // Ctrl held, Shift pressed: the keydown is on ShiftLeft.
+      const shiftPressedUnderCtrl: KeyLikeEvent = {
+        code: "ShiftLeft",
+        ctrlKey: true,
+        shiftKey: true,
+        altKey: false,
+      };
+      assert.equal(bindingMatchesPress(ctrlShift, shiftPressedUnderCtrl), true);
+      assert.equal(
+        bindingMatchesPress(shiftCtrl, shiftPressedUnderCtrl),
+        false,
+      );
+
+      // Shift held, Ctrl pressed: the keydown is on ControlLeft.
+      const ctrlPressedUnderShift: KeyLikeEvent = {
+        code: "ControlLeft",
+        ctrlKey: true,
+        shiftKey: true,
+        altKey: false,
+      };
+      assert.equal(bindingMatchesPress(shiftCtrl, ctrlPressedUnderShift), true);
+      assert.equal(
+        bindingMatchesPress(ctrlShift, ctrlPressedUnderShift),
+        false,
+      );
+    });
+
+    it("an unnormalized spelling matches the same keydown as the normalized one", () => {
+      // The matcher never reads the own flag, so a store that failed to
+      // normalize would still fire — normalization exists for equality and
+      // duplicate detection, not for matching.
+      const unnormalized = chord("ShiftLeft", { shift: true });
+      const keydown: KeyLikeEvent = {
+        code: "ShiftLeft",
+        ctrlKey: false,
+        shiftKey: true,
+        altKey: false,
+      };
+      assert.equal(bindingMatchesPress(unnormalized, keydown), true);
+      assert.equal(
+        bindingMatchesPress(normalizeBinding(unnormalized), keydown),
+        true,
+      );
+    });
+
+    // Pinned again NEXT to the new rule: the masking is per-binding and only
+    // for a modifier-keyed one. A regular key still needs every flag exact.
+    it("a regular key still needs exact flags — KeyM refuses shiftKey", () => {
+      const bareM = chord("KeyM");
+      assert.equal(
+        bindingMatchesPress(bareM, {
+          code: "KeyM",
+          ctrlKey: false,
+          shiftKey: true,
+          altKey: false,
+        }),
+        false,
+      );
+      assert.equal(
+        bindingMatchesPress(bareM, {
+          code: "KeyM",
+          ctrlKey: false,
+          shiftKey: false,
+          altKey: false,
+        }),
+        true,
+      );
+    });
+
+    it("a modifier binding does NOT match a different physical key", () => {
+      // ShiftRight is not ShiftLeft: the code comparison is untouched.
+      assert.equal(
+        bindingMatchesPress(bareShift, {
+          code: "ShiftRight",
+          ctrlKey: false,
+          shiftKey: true,
+          altKey: false,
+        }),
+        false,
+      );
+    });
+  });
+
+  describe("bindingMatchesRelease with a modifier as the key", () => {
+    it("matches on code alone, whatever the flags — unchanged", () => {
+      const ctrlShift = chord("ShiftLeft", { ctrl: true });
+      // Typed as the full event shape, as the release specs above do: the
+      // predicate's parameter is `Pick<KeyLikeEvent, "code">`, and an inline
+      // literal with the other three fields would fail the excess-property
+      // check while a real KeyboardEvent (which has them) would not.
+      // Ctrl released first: the Shift keyup carries no flags at all.
+      const ctrlReleasedFirst: KeyLikeEvent = {
+        code: "ShiftLeft",
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false,
+      };
+      assert.equal(bindingMatchesRelease(ctrlShift, ctrlReleasedFirst), true);
+      const everythingHeld: KeyLikeEvent = {
+        code: "ShiftLeft",
+        ctrlKey: true,
+        shiftKey: true,
+        altKey: true,
+      };
+      assert.equal(bindingMatchesRelease(ctrlShift, everythingHeld), true);
+      const otherShift: KeyLikeEvent = {
+        code: "ShiftRight",
+        ctrlKey: true,
+        shiftKey: false,
+        altKey: false,
+      };
+      assert.equal(bindingMatchesRelease(ctrlShift, otherShift), false);
+    });
   });
 });

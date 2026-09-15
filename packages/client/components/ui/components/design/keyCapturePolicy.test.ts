@@ -20,17 +20,21 @@ import { describe, it } from "node:test";
 
 import {
   type Binding,
+  bindingsEqual,
   RESERVED_COMBO,
 } from "../../../keybinds/globalKeybinds.ts";
 
 import {
+  type CaptureCandidate,
   type CaptureDecision,
   type CaptureKeyEvent,
+  type CaptureReleaseDecision,
   type ConflictMode,
   CANCEL_CODE,
   CHORD_SEPARATOR,
   CLEAR_CODES,
   decideCapture,
+  decideCaptureRelease,
   formatBinding,
   formatKeyCode,
   isHardConflict,
@@ -39,6 +43,7 @@ import {
   // Path import only — deliberately not on the `design/index.ts` barrel. It is
   // here so the converse glyph assertion below quantifies over the real table.
   NAMED_KEY_LEGENDS,
+  trackCaptureKeydown,
   TYPING_CODES,
 } from "./keyCapturePolicy.ts";
 
@@ -58,8 +63,48 @@ function press(
   };
 }
 
+/**
+ * A keyup, carrying the flags of the hand AFTER the release — which is what a
+ * real DOM keyup reports (releasing Ctrl arrives with `ctrlKey: false`). The
+ * full event shape is built deliberately, even though `decideCaptureRelease`
+ * declares only `code`: the B1 spec below hands it these post-release flags so
+ * that a mutant reading the chord off the keyup has something wrong to read.
+ */
+function release(
+  code: string,
+  stillHeld: Partial<Omit<CaptureKeyEvent, "code">> = {},
+): CaptureKeyEvent {
+  return press(code, stillHeld);
+}
+
 function binding(code: string, mods: Partial<Omit<Binding, "code">> = {}) {
   return { code, ctrl: false, shift: false, alt: false, ...mods };
+}
+
+/**
+ * The six modifiers a `Binding` can be keyed on — `MODIFIER_CODES` minus the
+ * Meta pair. Spelled out rather than derived from `MODIFIER_CODES`, so a
+ * change to that list cannot silently move a key across this line.
+ */
+const BINDABLE_MODIFIERS: readonly string[] = [
+  "ControlLeft",
+  "ControlRight",
+  "ShiftLeft",
+  "ShiftRight",
+  "AltLeft",
+  "AltRight",
+];
+
+/**
+ * Drive a capture's keydown side the way the component does: every keydown
+ * through `trackCaptureKeydown`, in order. Returns the candidate at the end.
+ */
+function track(...keydowns: CaptureKeyEvent[]): CaptureCandidate {
+  let candidate: CaptureCandidate = null;
+  for (const event of keydowns) {
+    candidate = trackCaptureKeydown(candidate, event);
+  }
+  return candidate;
 }
 
 /* ------------------------------------------------------------------ *
@@ -494,6 +539,283 @@ describe("isHardConflict", () => {
 });
 
 /* ------------------------------------------------------------------ *
+ * A modifier as the key — tracked on keydown, committed on keyup
+ * ------------------------------------------------------------------ */
+
+/**
+ * `decideCapture` ignores a modifier's keydown so a chord can accumulate, and
+ * that is still what it does (the "does not bind a modifier as the key" spec
+ * above is unchanged). What is new is the other half: the keydown is
+ * remembered, and if the user lets go before a real key lands, the modifier
+ * pressed LAST becomes the key. The chord is decided from the keydown — the
+ * event that would fire it at runtime — never from the keyup.
+ */
+describe("trackCaptureKeydown", () => {
+  it("a lone Ctrl keydown becomes the candidate, with its own flag cleared", () => {
+    // The DOM reports `ctrlKey: true` on Ctrl's own keydown. That bit is the
+    // key itself, not a held modifier, and the candidate must not carry it.
+    assert.deepEqual(
+      trackCaptureKeydown(null, press("ControlLeft", { ctrlKey: true })),
+      binding("ControlLeft"),
+    );
+  });
+
+  it("the LAST modifier pressed is the key; the earlier one is its flag", () => {
+    const candidate = track(
+      press("ControlLeft", { ctrlKey: true }),
+      press("ShiftLeft", { ctrlKey: true, shiftKey: true }),
+    );
+    assert.deepEqual(candidate, binding("ShiftLeft", { ctrl: true }));
+
+    // And the mirror image is a DIFFERENT chord, not the same one reordered.
+    const mirror = track(
+      press("ShiftLeft", { shiftKey: true }),
+      press("ControlLeft", { ctrlKey: true, shiftKey: true }),
+    );
+    assert.deepEqual(mirror, binding("ControlLeft", { shift: true }));
+    assert.equal(bindingsEqual(candidate!, mirror!), false);
+  });
+
+  it("a repeat keydown keeps the previous candidate", () => {
+    const prev = binding("ShiftLeft", { ctrl: true });
+    assert.equal(
+      trackCaptureKeydown(
+        prev,
+        press("ShiftLeft", { ctrlKey: true, shiftKey: true, repeat: true }),
+      ),
+      prev,
+    );
+    // Including a repeat that would otherwise have nulled it.
+    assert.equal(
+      trackCaptureKeydown(prev, press("KeyH", { repeat: true })),
+      prev,
+    );
+  });
+
+  it("a regular key's keydown nulls the candidate", () => {
+    // The chord is now KeyH's, and `decideCapture` decides it on this very
+    // keydown; a modifier keyup afterwards must not resurrect the modifier.
+    const prev = binding("ControlLeft");
+    assert.equal(
+      trackCaptureKeydown(prev, press("KeyH", { ctrlKey: true })),
+      null,
+    );
+  });
+
+  it("Meta itself never becomes a candidate", () => {
+    for (const code of ["MetaLeft", "MetaRight"]) {
+      assert.equal(
+        trackCaptureKeydown(
+          binding("ControlLeft"),
+          press(code, { metaKey: true }),
+        ),
+        null,
+        `${code} has no Binding bit and cannot be the key`,
+      );
+    }
+  });
+
+  it("a modifier pressed with Meta held is not a candidate either", () => {
+    // Win+Shift could only be stored as bare Shift — a chord the user never
+    // chose. Same reasoning as `decideCapture`'s meta-held ignore.
+    assert.equal(
+      trackCaptureKeydown(
+        binding("ControlLeft"),
+        press("ShiftLeft", { shiftKey: true, metaKey: true }),
+      ),
+      null,
+    );
+  });
+
+  it("starting from nothing, a regular key leaves nothing", () => {
+    assert.equal(trackCaptureKeydown(null, press("KeyH")), null);
+    assert.equal(
+      trackCaptureKeydown(null, press("KeyH", { repeat: true })),
+      null,
+    );
+  });
+});
+
+describe("decideCaptureRelease", () => {
+  /**
+   * 🔴 B1, the blocker the keydown rule exists for. Hold Ctrl, press Shift,
+   * then let go of CTRL FIRST — the common way a hand unrolls. The Ctrl keyup
+   * arrives with `shiftKey: true` and `ctrlKey: false`; read off that keyup,
+   * the chord would be `{ ControlLeft, shift: true }`, a binding that never
+   * fires on the gesture that made it. The chord is the last KEYDOWN, so it
+   * is `{ ShiftLeft, ctrl: true }`, which `bindingMatchesPress` fires on
+   * exactly this gesture.
+   */
+  it("B1: hold Ctrl, press Shift, release Ctrl first — commits Ctrl + Shift", () => {
+    const candidate = track(
+      press("ControlLeft", { ctrlKey: true }),
+      press("ShiftLeft", { ctrlKey: true, shiftKey: true }),
+    );
+    const decision = decideCaptureRelease(
+      candidate,
+      release("ControlLeft", { shiftKey: true }),
+    );
+    assert.deepEqual(decision, {
+      kind: "commit",
+      binding: binding("ShiftLeft", { ctrl: true }),
+      conflict: null,
+    });
+  });
+
+  it("every release order of a two-modifier chord commits the chord its keydowns built", () => {
+    const ctrlThenShift = [
+      press("ControlLeft", { ctrlKey: true }),
+      press("ShiftLeft", { ctrlKey: true, shiftKey: true }),
+    ];
+    const shiftThenCtrl = [
+      press("ShiftLeft", { shiftKey: true }),
+      press("ControlLeft", { ctrlKey: true, shiftKey: true }),
+    ];
+    const cases: readonly [
+      string,
+      CaptureKeyEvent[],
+      CaptureKeyEvent,
+      Binding,
+    ][] = [
+      [
+        "Ctrl, Shift; release Ctrl first",
+        ctrlThenShift,
+        release("ControlLeft", { shiftKey: true }),
+        binding("ShiftLeft", { ctrl: true }),
+      ],
+      [
+        "Ctrl, Shift; release Shift first",
+        ctrlThenShift,
+        release("ShiftLeft", { ctrlKey: true }),
+        binding("ShiftLeft", { ctrl: true }),
+      ],
+      [
+        "Shift, Ctrl; release Shift first",
+        shiftThenCtrl,
+        release("ShiftLeft", { ctrlKey: true }),
+        binding("ControlLeft", { shift: true }),
+      ],
+      [
+        "Shift, Ctrl; release Ctrl first",
+        shiftThenCtrl,
+        release("ControlLeft", { shiftKey: true }),
+        binding("ControlLeft", { shift: true }),
+      ],
+    ];
+    for (const [name, keydowns, keyup, expected] of cases) {
+      const decision = decideCaptureRelease(track(...keydowns), keyup);
+      assert.deepEqual(
+        decision,
+        { kind: "commit", binding: expected, conflict: null },
+        `${name}: the release order must not change the chord`,
+      );
+    }
+  });
+
+  it("press Ctrl, release Ctrl — commits bare Ctrl", () => {
+    const candidate = track(press("ControlLeft", { ctrlKey: true }));
+    assert.deepEqual(decideCaptureRelease(candidate, release("ControlLeft")), {
+      kind: "commit",
+      binding: binding("ControlLeft"),
+      conflict: null,
+    });
+  });
+
+  /**
+   * 🔴 B2. A modifier held BEFORE capture started has no keydown inside the
+   * capture, so there is no candidate — and its keyup must not commit. The
+   * concrete case: Shift+Tab onto the trigger, Enter, release Shift.
+   */
+  it("B2: a modifier held before capture started never commits", () => {
+    const decision = decideCaptureRelease(null, release("ShiftLeft"));
+    assert.deepEqual(decision, { kind: "ignore", reason: "no-candidate" });
+    assert.ok(!("binding" in decision), "no binding may be produced");
+  });
+
+  it("a regular key's keyup is ignored", () => {
+    // Even with a live candidate: KeyH's chord was decided on its keydown.
+    assert.deepEqual(
+      decideCaptureRelease(binding("ControlLeft"), release("KeyH")),
+      { kind: "ignore", reason: "not-self-modifier" },
+    );
+    // Meta's keyup too — it can never have been a candidate.
+    assert.deepEqual(
+      decideCaptureRelease(binding("ControlLeft"), release("MetaLeft")),
+      { kind: "ignore", reason: "not-self-modifier" },
+    );
+  });
+
+  it("the push-to-talk hard refusal survives, in both modes", () => {
+    for (const mode of ["chord", "code"] as const) {
+      const decision = decideCaptureRelease(
+        binding("ControlLeft"),
+        release("ControlLeft"),
+        "ControlLeft",
+        mode,
+      );
+      assert.deepEqual(
+        decision,
+        {
+          kind: "refuse",
+          binding: binding("ControlLeft"),
+          conflict: { kind: "push-to-talk", code: "ControlLeft" },
+        },
+        `${mode}: a bare Ctrl binding drives push-to-talk on Ctrl`,
+      );
+      assert.equal(
+        decision.kind === "refuse" ? isHardConflict(decision.conflict) : null,
+        true,
+      );
+    }
+  });
+
+  /**
+   * No in-app default sequence is keyed on a modifier, so the chord-wise and
+   * code-wise finders agree on every modifier-keyed candidate: a checked
+   * `null` in both. Pinned so a later in-app entry on a modifier code is a
+   * deliberate change to both rows, not a drift between them.
+   */
+  it('"chord" and "code" agree on a bare modifier — null conflict in both', () => {
+    for (const code of BINDABLE_MODIFIERS) {
+      const expected: CaptureReleaseDecision = {
+        kind: "commit",
+        binding: binding(code),
+        conflict: null,
+      };
+      assert.deepEqual(
+        decideCaptureRelease(binding(code), release(code), undefined, "chord"),
+        expected,
+        `${code} chord-wise`,
+      );
+      assert.deepEqual(
+        decideCaptureRelease(binding(code), release(code), undefined, "code"),
+        expected,
+        `${code} code-wise`,
+      );
+      assert.deepEqual(
+        decideCaptureRelease(binding(code), release(code)),
+        expected,
+        `${code} default mode`,
+      );
+    }
+  });
+
+  /**
+   * The reserved combo is keyed on `KeyQ`, which is not a modifier, so no
+   * candidate can be it — even one carrying all the flags the combo needs.
+   */
+  it("the reserved combo is unreachable from a modifier-keyed candidate", () => {
+    const candidate = binding("ShiftLeft", { ctrl: true, alt: true });
+    assert.equal(bindingsEqual(candidate, RESERVED_COMBO), false);
+    assert.deepEqual(decideCaptureRelease(candidate, release("ShiftLeft")), {
+      kind: "commit",
+      binding: candidate,
+      conflict: null,
+    });
+  });
+});
+
+/* ------------------------------------------------------------------ *
  * Typing keys — the CHAT_FOCUS_COMPOSITION gap
  * ------------------------------------------------------------------ */
 
@@ -523,6 +845,7 @@ const TYPING_REPRESENTATIVES: readonly string[] = [
   "NumpadEnter",
   "Tab",
   "ArrowUp", // composer motion — edit-last-message / autocomplete selection
+  "ShiftLeft", // the bindable modifiers — fire on every capital letter
 ];
 
 /**
@@ -550,8 +873,11 @@ const DOCUMENTED_EXCLUSIONS: readonly string[] = [
   "Escape",
   "Delete",
   "Backspace",
-  // Modifiers.
-  ...MODIFIER_CODES,
+  // The Meta pair only. The other six modifiers are MEMBERS now — bindable on
+  // release, and typed with constantly — so `...MODIFIER_CODES` would be wrong
+  // here; spelled out so the line is visible.
+  "MetaLeft",
+  "MetaRight",
   // Function keys.
   "F1",
   "F13",
@@ -628,6 +954,14 @@ const CODE_ROSTER: readonly string[] = [
   "Space",
   "Tab",
   "Enter",
+  // The six bindable modifiers, explicitly: they used to arrive through
+  // `DOCUMENTED_EXCLUSIONS`, which now carries only the Meta pair.
+  "ControlLeft",
+  "ControlRight",
+  "ShiftLeft",
+  "ShiftRight",
+  "AltLeft",
+  "AltRight",
   ...DOCUMENTED_EXCLUSIONS,
   // Codes with no legend and no pattern — the pass-through path.
   "MediaTrackNext",
@@ -654,7 +988,13 @@ describe("isTypingChord", () => {
    * predicate that consulted just `ctrl` would pass an all-three matrix.
    */
   it("does not flag a chord with any single modifier held", () => {
-    for (const code of TYPING_REPRESENTATIVES) {
+    // The modifier representatives are excluded from this matrix on purpose:
+    // a modifier-keyed binding is `true` under every flag combination by
+    // design (it fires mid-shortcut whatever its flags), and the spec below
+    // pins that direction.
+    for (const code of TYPING_REPRESENTATIVES.filter(
+      (code) => !BINDABLE_MODIFIERS.includes(code),
+    )) {
       for (const mods of [
         { ctrl: true },
         { shift: true },
@@ -680,6 +1020,36 @@ describe("isTypingChord", () => {
     assert.equal(isTypingChord(binding("KeyM", { alt: true })), false);
   });
 
+  /**
+   * 🔴 The modifier-keyed clause. A binding keyed on Ctrl, Shift or Alt fires
+   * in the middle of every shortcut that starts with that modifier — bare
+   * Shift on every capital letter, `{ ShiftLeft, ctrl: true }` on the Shift
+   * half of Ctrl+Shift+V while pasting — so it warns whatever its flags. This
+   * is the one place the flag rule does not apply, and it is tested before
+   * the flags are read: a predicate that ran the flag check first would call
+   * `{ ShiftLeft, ctrl: true }` a deliberate chord and stay silent.
+   */
+  it("flags a modifier-keyed binding, bare and chorded alike", () => {
+    for (const code of BINDABLE_MODIFIERS) {
+      assert.equal(isTypingChord(binding(code)), true, `bare ${code}`);
+      for (const mods of [
+        { ctrl: true },
+        { shift: true },
+        { alt: true },
+        { ctrl: true, shift: true, alt: true },
+      ]) {
+        assert.equal(
+          isTypingChord(binding(code, mods)),
+          true,
+          `${JSON.stringify(mods)}+${code} still fires mid-shortcut`,
+        );
+      }
+    }
+    assert.equal(isTypingChord(binding("ShiftLeft", { ctrl: true })), true);
+    // The pinned regular-key direction is untouched by the clause.
+    assert.equal(isTypingChord(binding("KeyM", { shift: true })), false);
+  });
+
   it("does not flag any documented exclusion, bare", () => {
     for (const code of DOCUMENTED_EXCLUSIONS) {
       assert.equal(
@@ -701,17 +1071,31 @@ describe("isTypingChord", () => {
 describe("TYPING_CODES — internal consistency", () => {
   /**
    * 🔴 This is the assertion that stops a later edit re-adding a control
-   * gesture or a modifier to the typing set. Those codes can never reach
-   * `binding.code` (`decideCapture` intercepts them above the commit), so a
-   * member would be dead weight that reads as intent, and `isTypingChord`
-   * would start disagreeing with what the widget can actually store.
+   * gesture or the Meta pair to the typing set. Those codes can never reach
+   * `binding.code` (`decideCapture` intercepts them above the commit, and
+   * `trackCaptureKeydown` never candidates Meta), so a member would be dead
+   * weight that reads as intent, and `isTypingChord` would start disagreeing
+   * with what the widget can actually store.
+   *
+   * The other six modifiers are the opposite case and are asserted PRESENT:
+   * they reach `binding.code` through the release path, and a bare one fires
+   * constantly while typing.
    */
-  it("shares no member with the modifier or control-gesture lists", () => {
-    for (const code of MODIFIER_CODES) {
+  it("excludes the Meta pair and the control gestures, and holds the six bindable modifiers", () => {
+    for (const code of ["MetaLeft", "MetaRight"]) {
+      assert.ok(MODIFIER_CODES.includes(code), `${code} must be a modifier`);
       assert.equal(
         TYPING_CODES.has(code),
         false,
-        `${code} is a modifier and is never a bound key`,
+        `${code} has no Binding bit and is never a bound key`,
+      );
+    }
+    for (const code of BINDABLE_MODIFIERS) {
+      assert.ok(MODIFIER_CODES.includes(code), `${code} must be a modifier`);
+      assert.equal(
+        TYPING_CODES.has(code),
+        true,
+        `${code} is bindable on release and typed with constantly`,
       );
     }
     for (const code of CLEAR_CODES) {
@@ -828,7 +1212,11 @@ describe("TYPING_CODES — internal consistency", () => {
      * below); and every remaining `NAMED_KEY_LEGENDS` entry is a
      * multi-character abbreviation ("Esc", "PgUp", …), all of which the roster
      * already lists — true today by enumeration, not asserted: the next spec
-     * quantifies only over the single-glyph entries.
+     * quantifies only over the single-glyph entries. The six modifier legends
+     * ("Ctrl", "Right Alt", …) are multi-character too, so adding them moved
+     * neither this count nor the 16 glyph entries the next spec pins: 52
+     * singles, 16 glyphs, both re-derived after the modifiers joined the
+     * roster and the legend table.
      */
     assert.equal(singles.length, 26 + 10 + 12 + 4);
     assert.equal(singles.length, 52, "the roster's glyph count drifted");
@@ -855,7 +1243,8 @@ describe("TYPING_CODES — internal consistency", () => {
       ([, legend]) => legend.length === 1,
     );
     // Anti-vacuity: the table holds the twelve punctuation glyphs and the
-    // four arrows, and nothing else that short.
+    // four arrows, and nothing else that short — the six modifier legends are
+    // all multi-character, so 16 it stays.
     assert.equal(glyphs.length, 12 + 4);
     for (const [code, legend] of glyphs) {
       assert.ok(
@@ -869,11 +1258,11 @@ describe("TYPING_CODES — internal consistency", () => {
    * 🔴 The count is pinned so the consuming settings row (lane A2) is pinned
    * to a known set. 26 letters + 10 digits + 12 punctuation + 2 international
    * + Space + 21 numpad (10 digits + 7 operators + the 4 non-US positions)
-   * + 3 always-pressed + 4 arrows.
+   * + 3 always-pressed + 4 arrows + 6 bindable modifiers.
    */
-  it("holds exactly the 79 documented codes", () => {
-    assert.equal(TYPING_CODES.size, 26 + 10 + 12 + 2 + 1 + 21 + 3 + 4);
-    assert.equal(TYPING_CODES.size, 79);
+  it("holds exactly the 85 documented codes", () => {
+    assert.equal(TYPING_CODES.size, 26 + 10 + 12 + 2 + 1 + 21 + 3 + 4 + 6);
+    assert.equal(TYPING_CODES.size, 85);
   });
 });
 
@@ -1032,7 +1421,12 @@ describe("the gap isTypingChord exists to cover", () => {
    */
   it("never blocks — a typing chord still commits", () => {
     for (const code of TYPING_REPRESENTATIVES) {
-      const decision = decideCapture(press(code));
+      // A modifier commits on its release, not its keydown (the keydown is
+      // ignored so a chord can accumulate); the outcome pinned is the same —
+      // bindable, only warned about.
+      const decision = BINDABLE_MODIFIERS.includes(code)
+        ? decideCaptureRelease(binding(code), release(code))
+        : decideCapture(press(code));
       assert.equal(
         decision.kind,
         "commit",
@@ -1205,5 +1599,28 @@ describe("formatBinding", () => {
         `Ctrl${CHORD_SEPARATOR}Alt${CHORD_SEPARATOR}1`,
       );
     }
+  });
+
+  /**
+   * A modifier-keyed chord reads held-then-pressed, which is press order. The
+   * two orderings of Ctrl and Shift are two bindings (each fires only on the
+   * gesture that created it), and they must read differently so the user can
+   * tell which one a row holds.
+   */
+  it("renders a modifier-keyed chord with the key last, and the two orders differ", () => {
+    const ctrlThenShift = binding("ShiftLeft", { ctrl: true });
+    const shiftThenCtrl = binding("ControlLeft", { shift: true });
+    assert.equal(formatBinding(ctrlThenShift), "Ctrl + Shift");
+    assert.equal(formatBinding(shiftThenCtrl), "Shift + Ctrl");
+    assert.equal(bindingsEqual(ctrlThenShift, shiftThenCtrl), false);
+
+    assert.equal(formatBinding(binding("ControlLeft")), "Ctrl");
+    assert.equal(formatBinding(binding("AltRight")), "Right Alt");
+    assert.equal(
+      formatBinding(binding("ShiftRight", { alt: true })),
+      "Alt + Right Shift",
+    );
+    // Left and right are distinct physical positions and never read the same.
+    assert.notEqual(formatKeyCode("ShiftLeft"), formatKeyCode("ShiftRight"));
   });
 });

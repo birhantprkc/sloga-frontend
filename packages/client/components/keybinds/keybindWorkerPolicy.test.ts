@@ -900,3 +900,203 @@ describe("both transports, one held-set", () => {
     assert.deepEqual(dispatched, ["toggle-mute"]);
   });
 });
+
+/* ------------------------------------------------------------------------ *
+ * 6. A modifier as the bound key
+ * ------------------------------------------------------------------------ */
+
+describe("matchDomKey: a modifier as the bound key", () => {
+  // `bindingMatchesPress` skips the ONE flag the binding's own key sets
+  // (`selfModifier` in ./globalKeybinds.ts) and compares the other two
+  // exactly. `matchDomKey` calls it unchanged on the "down" edge, so this
+  // transport inherits the rule with no change of its own — which is why it
+  // is pinned here as well: a leaf that stopped delegating would keep the
+  // predicate's own specs green and make every modifier-keyed binding dead
+  // on the focused transport.
+  const BARE_SHIFT = chord("ShiftLeft");
+  const CTRL_SHIFT = chord("ShiftLeft", { ctrl: true });
+  const SHIFT_CTRL = chord("ControlLeft", { shift: true });
+
+  /** A `ShiftLeft` keydown as the DOM delivers it: its own flag is set. */
+  const SHIFT_DOWN = {
+    code: "ShiftLeft",
+    ctrlKey: false,
+    shiftKey: true,
+    altKey: false,
+  };
+
+  function press(
+    bindings: Record<GlobalKeybindAction, Binding | null>,
+    event: ReturnType<typeof pressOf>,
+    repeat = false,
+  ) {
+    return matchDomKey({
+      bindings,
+      event,
+      edge: "down",
+      suppressed: false,
+      repeat,
+    });
+  }
+
+  it("🔴 a bare Shift binding matches the keydown Shift itself sends", () => {
+    // A modifier's own keydown always carries its flag — ShiftLeft arrives
+    // with `shiftKey: true` — while the stored binding is the normalized
+    // `{ shift: false }`. Under exact equality on all three flags that is a
+    // mismatch, and a bare Shift binding can never fire on its own key.
+    const verdict = press(bound({ "toggle-mute": BARE_SHIFT }), SHIFT_DOWN);
+    assert.deepEqual(verdict.actions, ["toggle-mute"]);
+    assert.equal(verdict.reason, null);
+  });
+
+  it("matches the same binding with its own flag clear too", () => {
+    // The own flag is not compared at all — not "compared as true". A
+    // keydown that omits it still matches.
+    const verdict = press(bound({ "toggle-mute": BARE_SHIFT }), {
+      ...SHIFT_DOWN,
+      shiftKey: false,
+    });
+    assert.deepEqual(verdict.actions, ["toggle-mute"]);
+  });
+
+  it("🔴 Ctrl+Shift needs Ctrl held and refuses Alt, whatever shiftKey says", () => {
+    const bindings = bound({ "toggle-mute": CTRL_SHIFT });
+    for (const shiftKey of [true, false]) {
+      assert.deepEqual(
+        press(bindings, { ...SHIFT_DOWN, shiftKey, ctrlKey: true }).actions,
+        ["toggle-mute"],
+        `ctrlKey held, shiftKey ${shiftKey}`,
+      );
+      assert.deepEqual(
+        press(bindings, { ...SHIFT_DOWN, shiftKey, ctrlKey: false }).actions,
+        [],
+        `ctrlKey missing, shiftKey ${shiftKey}`,
+      );
+      assert.deepEqual(
+        press(bindings, {
+          ...SHIFT_DOWN,
+          shiftKey,
+          ctrlKey: true,
+          altKey: true,
+        }).actions,
+        [],
+        `altKey extra, shiftKey ${shiftKey}`,
+      );
+    }
+  });
+
+  it("🔴 bare Shift and Ctrl+Shift on two actions: Ctrl picks exactly one", () => {
+    // The two flags that ARE compared keep the press exact, so the bare one
+    // never fires under Ctrl and the chorded one never fires without it —
+    // one action per press, as for any other pair of chords on one key.
+    const bindings = bound({
+      "toggle-mute": BARE_SHIFT,
+      "toggle-deafen": CTRL_SHIFT,
+    });
+    assert.deepEqual(press(bindings, SHIFT_DOWN).actions, ["toggle-mute"]);
+    assert.deepEqual(
+      press(bindings, { ...SHIFT_DOWN, ctrlKey: true }).actions,
+      ["toggle-deafen"],
+    );
+  });
+
+  it("🔴 Ctrl+Shift and Shift+Ctrl are two bindings, each on its own gesture", () => {
+    // The key of a modifier-keyed chord is the modifier pressed LAST, so the
+    // same two keys held produce two different keydowns depending on the
+    // order, and each binding answers exactly one of them.
+    const bindings = bound({
+      "toggle-mute": SHIFT_CTRL,
+      "toggle-deafen": CTRL_SHIFT,
+    });
+    // Ctrl held, then Shift pressed.
+    assert.deepEqual(
+      press(bindings, { ...SHIFT_DOWN, ctrlKey: true }).actions,
+      ["toggle-deafen"],
+    );
+    // Shift held, then Ctrl pressed.
+    assert.deepEqual(
+      press(bindings, {
+        code: "ControlLeft",
+        ctrlKey: true,
+        shiftKey: true,
+        altKey: false,
+      }).actions,
+      ["toggle-mute"],
+    );
+  });
+
+  it("a regular key still refuses a press with an extra modifier", () => {
+    // The relaxation is for the binding's OWN key only. A bare KeyM binding
+    // under Shift is still the superset case: exact on all three flags.
+    const verdict = press(bound({ "toggle-mute": chord("KeyM") }), {
+      code: "KeyM",
+      ctrlKey: false,
+      shiftKey: true,
+      altKey: false,
+    });
+    assert.deepEqual(verdict.actions, []);
+    assert.equal(verdict.reason, null);
+  });
+
+  it("releases a modifier key on `code` alone, whatever the flags", () => {
+    const bindings = bound({ "toggle-mute": CTRL_SHIFT });
+    for (const flags of [
+      { ctrlKey: false, shiftKey: false, altKey: false },
+      { ctrlKey: true, shiftKey: true, altKey: true },
+      { ctrlKey: false, shiftKey: true, altKey: false },
+    ]) {
+      const verdict = matchDomKey({
+        bindings,
+        event: { code: "ShiftLeft", ...flags },
+        edge: "up",
+        suppressed: false,
+        repeat: false,
+      });
+      assert.deepEqual(verdict.actions, ["toggle-mute"]);
+      assert.equal(verdict.reason, null);
+    }
+  });
+
+  it("drops an auto-repeat modifier press like any other key", () => {
+    // A held Shift repeats its keydown at the OS rate exactly as a letter
+    // does; nothing about being a modifier exempts it from the collapse.
+    const verdict = press(
+      bound({ "toggle-mute": BARE_SHIFT }),
+      SHIFT_DOWN,
+      true,
+    );
+    assert.deepEqual(verdict.actions, []);
+    assert.equal(verdict.reason, "auto-repeat");
+  });
+
+  it("walks the held-set as a letter does: dispatch on down, none on up", () => {
+    const bindings = bound({ "toggle-mute": BARE_SHIFT });
+
+    const pressed = press(bindings, SHIFT_DOWN);
+    assert.deepEqual(pressed.actions, ["toggle-mute"]);
+    const down = applyKeybindHeldEvent(new Set(), {
+      kind: "down",
+      id: "toggle-mute",
+    });
+    assert.equal(down.dispatch, "toggle-mute");
+    assert.equal(down.reason, null);
+    assert.deepEqual([...down.held], ["toggle-mute"]);
+
+    // Shift's own keyup arrives with `shiftKey: false`.
+    const released = matchDomKey({
+      bindings,
+      event: { ...SHIFT_DOWN, shiftKey: false },
+      edge: "up",
+      suppressed: false,
+      repeat: false,
+    });
+    assert.deepEqual(released.actions, ["toggle-mute"]);
+    const up = applyKeybindHeldEvent(down.held, {
+      kind: "up",
+      id: "toggle-mute",
+    });
+    assert.equal(up.dispatch, null);
+    assert.equal(up.reason, "press-edge-only");
+    assert.deepEqual([...up.held], []);
+  });
+});

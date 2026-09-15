@@ -537,10 +537,16 @@ function KeybindRow(props: {
             {(b) => (
               <Show when={isTypingChord(b()) && !hardRefusalLive()}>
                 <Text class="label">
+                  {/* 🔴 The closing advice must NOT be "add Ctrl, Shift or
+                      Alt": this note now also fires for a binding whose KEY is
+                      a modifier, where that reads as "add Ctrl to Ctrl", and
+                      `{ShiftLeft, ctrl}` still fires on the Shift half of
+                      every Ctrl+Shift shortcut. Only pairing with a regular
+                      key takes the binding out of ordinary typing. */}
                   <Trans>
                     You use this key while typing, so it will also fire in the
                     message box, in search, anywhere text goes. It is saved.
-                    Adding Ctrl, Shift or Alt avoids that.
+                    Binding it together with a regular key avoids that.
                   </Trans>
                 </Text>
               </Show>

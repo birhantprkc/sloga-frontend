@@ -52,6 +52,7 @@ import {
   bindingsEqual,
   isGlobalKeybindAction,
   isReservedCombo,
+  normalizeBinding,
 } from "../../keybinds/globalKeybinds.ts";
 
 import { AbstractStore } from ".";
@@ -93,6 +94,19 @@ export type TypeKeybinds = {
  * An empty `code` is rejected: no real `KeyboardEvent.code` is `""`, so it is
  * a row that looks bound and can never fire — the same failure mode as the
  * reserved combo below.
+ *
+ * The rebuilt copy is then passed through `normalizeBinding`, which clears
+ * the one flag the binding's own key names (`ShiftLeft` with `shift`,
+ * `ControlLeft` with `ctrl`, and so on) and leaves every other binding
+ * as it is. A modifier's own keydown carries its flag, so a capture or a
+ * hand-edited blob can present a bare Shift as `{ ShiftLeft, shift: true }`
+ * while a normalized one is `{ ShiftLeft, shift: false }`; both matchers
+ * ignore that flag, so the two shapes are ONE effective key. The store must
+ * not persist both, because the duplicate checks in {@link cleanKeybinds}
+ * and {@link Keybinds.setBinding} compare whole chords with `bindingsEqual`
+ * and would let two rows hold the same key and both fire on one press.
+ * Normalizing here, on the single path every persisted or written entry
+ * passes through, puts the shape right before either check runs.
  */
 function validBinding(value: unknown): Binding | null {
   if (typeof value !== "object" || value === null) return null;
@@ -103,12 +117,12 @@ function validBinding(value: unknown): Binding | null {
   if (typeof candidate.shift !== "boolean") return null;
   if (typeof candidate.alt !== "boolean") return null;
 
-  return {
+  return normalizeBinding({
     code: candidate.code,
     ctrl: candidate.ctrl,
     shift: candidate.shift,
     alt: candidate.alt,
-  };
+  });
 }
 
 /** How many actions currently hold a chord. */
@@ -199,6 +213,9 @@ export function cleanKeybinds(
   const accepted: Binding[] = [];
 
   for (const action of GLOBAL_KEYBIND_ACTIONS) {
+    // Validated AND normalized before the reserved and duplicate checks, so a
+    // blob holding `{ ShiftLeft, shift: true }` on one action and
+    // `{ ShiftLeft, shift: false }` on another is seen as one chord twice.
     const binding = validBinding(persisted[action]);
     if (!binding) continue;
 
@@ -356,13 +373,19 @@ export class Keybinds extends AbstractStore<"keybinds", TypeKeybinds> {
     candidate: Binding,
     except?: GlobalKeybindAction,
   ): GlobalKeybindAction | null {
+    // Normalized first, for the same reason `setBinding` normalizes before its
+    // duplicate sweep: everything already held is stored with a modifier key's
+    // own flag cleared, so an un-normalized `{ShiftLeft, shift: true}` would
+    // compare unequal to the identical binding on another row, report "no
+    // conflict", and then be silently stolen by the write that follows.
+    const wanted = normalizeBinding(candidate);
     const bindings = this.bindings();
 
     for (const action of GLOBAL_KEYBIND_ACTIONS) {
       if (action === except) continue;
 
       const held = bindings[action];
-      if (held && bindingsEqual(held, candidate)) return action;
+      if (held && bindingsEqual(held, wanted)) return action;
     }
 
     return null;
@@ -385,7 +408,12 @@ export class Keybinds extends AbstractStore<"keybinds", TypeKeybinds> {
   setBinding(action: GlobalKeybindAction, binding: Binding): boolean {
     // Re-validated rather than trusted: the argument is typed, but a capture
     // UI mid-chord can hand over a half-built object, and this also strips any
-    // extra property before it reaches disk.
+    // extra property before it reaches disk. It also normalizes a
+    // modifier-keyed chord, and it runs FIRST on purpose: the reserved check
+    // and the duplicate sweep below compare the normalized shape, so
+    // `{ ShiftLeft, shift: true }` written over a row holding
+    // `{ ShiftLeft, shift: false }` takes that row instead of sitting beside
+    // it as a second copy of the same key.
     const clean = validBinding(binding);
     if (!clean) return false;
 

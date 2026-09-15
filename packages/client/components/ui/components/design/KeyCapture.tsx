@@ -10,9 +10,12 @@ import { Symbol } from "../utils/Symbol";
 
 import { Ripple } from "./Ripple";
 import {
+  type CaptureCandidate,
   type ConflictMode,
   decideCapture,
+  decideCaptureRelease,
   formatBinding,
+  trackCaptureKeydown,
 } from "./keyCapturePolicy.ts";
 
 /**
@@ -130,6 +133,9 @@ export type KeyCaptureProps = {
  * conflict detection, and a formatter whose arrow branch was dead code. The
  * decisions all live in `./keyCapturePolicy.ts` so they are unit-testable;
  * this file owns listener lifetime and markup only.
+ *
+ * A lone modifier (Ctrl, Shift, Alt) binds on its release; a modifier plus a
+ * key binds on the key's press.
  */
 export function KeyCapture(props: KeyCaptureProps) {
   const [listening, setListening] = createSignal(false);
@@ -225,6 +231,16 @@ export function KeyCapture(props: KeyCaptureProps) {
      */
     const swallowed = new Set<string>();
 
+    /**
+     * The modifier-keyed chord a release would commit: the LAST self-modifier
+     * keydown this capture observed, or `null` once a non-modifier key (or
+     * Meta) has been seen. Tracked on keydown because that keydown is the
+     * event the runtime matcher fires on, so the flags it carried are the
+     * flags the binding must record — deriving them from the release inverts
+     * the chord on half the two-modifier orderings.
+     */
+    let candidate: CaptureCandidate = null;
+
     function swallow(event: KeyboardEvent) {
       event.preventDefault();
       event.stopPropagation();
@@ -233,6 +249,9 @@ export function KeyCapture(props: KeyCaptureProps) {
     function onKeyDown(event: KeyboardEvent) {
       swallow(event);
       swallowed.add(event.code);
+      // Before the switch on purpose: a modifier keydown is an "ignore" below,
+      // and it is exactly the keydown the release path needs to have seen.
+      candidate = trackCaptureKeydown(candidate, event);
 
       const decision = decideCapture(
         event,
@@ -276,23 +295,63 @@ export function KeyCapture(props: KeyCaptureProps) {
 
     function onKeyUp(event: KeyboardEvent) {
       // Not a key we ate — leave it alone rather than eating a release the
-      // app is owed.
+      // app is owed, and never commit on it: a modifier held BEFORE capture
+      // started (Shift+Tab onto the trigger, Enter, release Shift) has no
+      // keydown here and must not bind on its release.
       if (!swallowed.delete(event.code)) return;
       swallow(event);
-      // Last held key released after the capture already ended: the swallow
-      // has done its job and the final listeners can go.
-      //
-      // 🔴 `removeBlur` belongs here, not in `endCaptureRef`. The blur handler
-      // is what disposes the swallow when the releases are delivered to
-      // whatever took focus instead of to us, so it has to outlive the end of
-      // the capture for exactly as long as the swallow does — see the note on
-      // `endCaptureRef`. This is the ordinary drain, where the swallow is
-      // finished and the blur handler is finished with it.
-      if (swallowed.size === 0 && !listening()) {
-        removeKeyUp();
-        removeBlur();
-        detachAllRef = undefined;
-        endCaptureRef = undefined;
+
+      // A lone modifier cannot commit on its keydown (the chord may still be
+      // accumulating), so it commits on the first self-modifier release —
+      // with the flags its OWN keydown carried, which `candidate` holds.
+      if (listening()) {
+        const decision = decideCaptureRelease(
+          candidate,
+          event,
+          props.pushToTalkKey,
+          props.conflictMode,
+        );
+
+        switch (decision.kind) {
+          // A non-modifier release, or no modifier keydown to commit.
+          case "ignore":
+            break;
+
+          // Same routing as the keydown path: a hard conflict binds nothing.
+          case "refuse":
+            stopCapture();
+            props.onConflict?.(decision.conflict);
+            break;
+
+          case "commit":
+            stopCapture();
+            props.onConflict?.(decision.conflict);
+            props.onChange(decision.binding);
+            break;
+        }
+      }
+
+      if (swallowed.size === 0) {
+        if (listening()) {
+          // Every key we ate has been released with nothing committed: the
+          // next chord starts clean (heals a Meta-held or held-Enter start).
+          candidate = null;
+        } else {
+          // Last held key released after the capture already ended: the
+          // swallow has done its job and the final listeners can go.
+          //
+          // 🔴 `removeBlur` belongs here, not in `endCaptureRef`. The blur
+          // handler is what disposes the swallow when the releases are
+          // delivered to whatever took focus instead of to us, so it has to
+          // outlive the end of the capture for exactly as long as the swallow
+          // does — see the note on `endCaptureRef`. This is the ordinary
+          // drain, where the swallow is finished and the blur handler is
+          // finished with it.
+          removeKeyUp();
+          removeBlur();
+          detachAllRef = undefined;
+          endCaptureRef = undefined;
+        }
       }
     }
 
