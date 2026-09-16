@@ -75,8 +75,19 @@ import {
   useClientLifecycle,
   useSound,
 } from "@revolt/client";
-import { CONFIGURATION } from "@revolt/common";
+import { CONFIGURATION, tauriInvoke } from "@revolt/common";
+// The dependency-free leaf, by deep specifier on purpose: the `@revolt/keybinds`
+// barrel pulls `keybindActions` -> `suppress`, which calls `createSignal` at
+// module scope. `globalKeybinds` documents that import direction as the thing to
+// avoid, and this file is on the init path of the whole app.
+import {
+  type GlobalKeybindAction,
+  KEYBIND_COMMANDS,
+  KEYBIND_MIN_INTERVAL_MS,
+  KEYBIND_REQUIREMENT,
+} from "@revolt/keybinds/globalKeybinds";
 import { ModalControllerExtended, useModals } from "@revolt/modal";
+import { useNavigate } from "@revolt/routing";
 import { useState } from "@revolt/state";
 import {
   type CameraColorLookId,
@@ -109,6 +120,7 @@ import {
 import { Attenuation } from "./attenuation";
 import { CaptureClaim } from "./captureClaim";
 import { entranceSoundFor } from "./entranceSound";
+import { dismissIncomingCall, incomingCall } from "./incomingCall";
 import {
   type JoinBlockedReason,
   type JoinRefusalLatch,
@@ -117,6 +129,7 @@ import {
   JOIN_REFUSAL_HOLD_MS,
   joinBlockedReason,
 } from "./joinRefusalPolicy";
+import { decideKeybindDispatch } from "./keybindDispatchPolicy";
 import { watchLocalUserId } from "./localUserIdentity";
 import { isPermissionDeniedError } from "./mediaAccessPolicy";
 import { RemoteControl } from "./remoteControl";
@@ -582,6 +595,64 @@ class Voice {
   #pttNativeKey: string | undefined;
   #pttNativeUnlisten: (() => void)[] = [];
   #pttNativeArming = false;
+  /**
+   * A push-to-talk key is HELD, so the microphone being hot is the hold's
+   * doing and not the user's mute preference. Read only by
+   * {@link pttActive} / {@link dispatchKeybind}.
+   *
+   * 🔴 **A latch, and the clears are the feature.** It cannot be derived
+   * honestly: "is the talk key down" exists nowhere else in this process —
+   * the four PTT edges (`#pttKeydown` / `#pttKeyup` and the native
+   * `ptt:down` / `ptt:up` listeners) are the only observations of it, and
+   * inferring it from `isMicrophoneEnabled && !#settings.micOn` would also
+   * be true for a VAD-opened gate and for a mid-whisper restore. So it
+   * latches, and every path that can end a hold must clear it:
+   *
+   * - `#pttKeyup` and the native `ptt:up` — the two real up edges;
+   * - `#disarmNativePtt`, because native `disarm()` clears its own `IS_DOWN`
+   *   and emits **no** `ptt:up` ("the frontend force-disables the mic on the
+   *   paths that call this" — `ptt.rs`), so waiting for one latches forever;
+   * - `#stopPushToTalk`, which is also where the DOM listeners go away;
+   * - `disconnect()`, above its no-room guard, so a half-set-up call clears
+   *   too;
+   * - `window` blur, because a DOM key-up is delivered only to the focused
+   *   window — alt-tabbing mid-hold means that up never arrives at all.
+   *
+   * The native layer treats the same latch as unacceptable for the same
+   * reason: `fire_panic` (`ptt.rs`) force-clears `IS_DOWN` "rather than
+   * latching the microphone open". A latched flag here is milder but just as
+   * invisible — it makes the mute keybind silently dead with no cause the
+   * user can see.
+   */
+  #pttHeld = false;
+  /**
+   * Keybind actions whose dispatch is awaiting an async call right now.
+   *
+   * 🔴 None of the voice toggles has an in-flight guard of its own; on the
+   * click path the guard comes free from the input device (a finger cannot
+   * produce two presses inside one renegotiation). A key gives no such
+   * guarantee, so the guard lives here. A press arriving while the action is
+   * in flight is DROPPED, never queued — a queued second toggle lands in a
+   * state the user can no longer see the reason for.
+   */
+  #keybindInFlight = new Set<GlobalKeybindAction>();
+  /**
+   * `performance.now()` of the last ACCEPTED press edge, per action, for the
+   * {@link KEYBIND_MIN_INTERVAL_MS} floor. Monotonic clock deliberately: a
+   * wall-clock step (NTP, sleep/resume) must not be able to open the window
+   * this floor exists to keep shut.
+   *
+   * Separate from `#keybindInFlight` because the publish-gate sweep OUTLIVES
+   * the await — see the constant's own comment for the dropped-sweep failure.
+   */
+  #keybindLastAccepted = new Map<GlobalKeybindAction, number>();
+  /**
+   * Router navigation, captured at construction (`VoiceContext` mounts inside
+   * the `Router` root, so the hook is in scope there and nowhere else in this
+   * class). Only `accept-call` uses it — the overlay's Accept button navigates
+   * to the conversation as it joins, and a keybind must do the same thing.
+   */
+  #navigate: ((path: string) => void) | undefined;
   #vadStream: MediaStream | undefined;
   #vadCtx: AudioContext | undefined;
   #vadTimer: ReturnType<typeof setInterval> | undefined;
@@ -1674,6 +1745,17 @@ class Voice {
 
     this.getClient = useClient();
 
+    // Same shape as `useClient()` above — a hook read in the constructor,
+    // which is legal because it runs synchronously inside `VoiceContext`'s
+    // body and `VoiceContext` is mounted inside the `Router` root. Guarded
+    // because a Voice built outside a router (a harness) must not fail to
+    // construct over a convenience `accept-call` uses and nothing else does.
+    try {
+      this.#navigate = useNavigate();
+    } catch {
+      /* no router in scope — accept-call joins without navigating */
+    }
+
     // Rejoin plan §4.6 (hardening ONLY — the crash shape has no unload event,
     // so the §4.1 startup fresh-rejoin carries the real fix): a reload with a
     // live call never ran `disconnect()`, leaving the SFU connection and the
@@ -1695,6 +1777,20 @@ class Voice {
         } catch {
           /* best-effort */
         }
+      });
+
+      // One of `#pttHeld`'s mandatory clears (see the field): a DOM `keyup`
+      // only reaches the FOCUSED window, so alt-tabbing while holding the
+      // talk key means `#pttKeyup` never fires and the latch would survive
+      // with nothing left to clear it. On the desktop shell the native hook
+      // still delivers `ptt:up` and clears it properly; on web and Electron
+      // this listener is the only clear there is. Fail-safe direction: the
+      // cost of clearing early is that the mute keybind starts working again
+      // mid-hold, which is strictly better than a mute key that is dead for
+      // the rest of the session. Deliberately does NOT touch the microphone —
+      // that would be a behavior change to push-to-talk itself.
+      window.addEventListener("blur", () => {
+        this.#pttHeld = false;
       });
     }
 
@@ -3646,6 +3742,12 @@ class Voice {
       // error path lands here with no room and the context must still die.
       void this.#callAudioContext?.close().catch(() => undefined);
       this.#callAudioContext = undefined;
+
+      // ABOVE the room guard on purpose, for the reason the audio-context
+      // close above states: the call is over either way, and a hold recorded
+      // against a call that never got a room must not outlive it. The
+      // `#stopPushToTalk()` below clears it too, but that is under the guard.
+      this.#pttHeld = false;
 
       const room = this.room();
       if (!room) return;
@@ -7565,6 +7667,15 @@ class Voice {
       if (!this.#settings.pushToTalk) return;
       if (e.code !== this.#settings.pushToTalkKey) return;
       if (e.repeat) return;
+      // Record the hold HERE — above the whisper and already-hot early
+      // returns, not next to the `#setMicEnabled` call below. The flag means
+      // "a talk key is down", not "this edge turned the mic on": the matching
+      // `#pttKeyup` mutes on `isMicrophoneEnabled` alone, so a hold that
+      // found the mic already hot still ends in a mute, and a mute keybind
+      // pressed in between would still be inverting against the wire. Set
+      // after the setting/key/repeat guards so a press that PTT ignores
+      // outright cannot set a flag nothing will clear.
+      this.#pttHeld = true;
       // EL-PTT: the user can only change the setting/keybind while focused,
       // so a focused keydown is the perfect lazy re-arm point for the
       // global hook (covers mid-call enable + keybind changes).
@@ -7577,6 +7688,16 @@ class Voice {
     };
 
     this.#pttKeyup = (e: KeyboardEvent) => {
+      // 🔴 The clear is ABOVE both remaining guards, and the asymmetry
+      // against the set in `#pttKeydown` is deliberate: clear more eagerly
+      // than you set. Turning push-to-talk off mid-hold makes the
+      // `!pushToTalk` guard below return early, and the mic-state guard does
+      // the same for a hold during a whisper — either would strand the latch.
+      // Matched on physical key identity alone, exactly as the native hook
+      // matches releases (see `bindingMatchesRelease` in `globalKeybinds`):
+      // this handler already compares no modifiers, so a chord released in
+      // any order still lands here.
+      if (e.code === this.#settings.pushToTalkKey) this.#pttHeld = false;
       if (!this.#settings.pushToTalk) return;
       if (e.code !== this.#settings.pushToTalkKey) return;
       if (!room.localParticipant.isMicrophoneEnabled) return;
@@ -7634,12 +7755,23 @@ class Voice {
             void this.#disarmNativePtt();
             return;
           }
+          // Set above the whisper / already-hot returns for the same reason
+          // as the focused handler, and AFTER the disarm branch above: a
+          // disarm emits no `ptt:up`, so a flag set on that path would never
+          // be cleared by an event.
+          this.#pttHeld = true;
           // Suppressed during a whisper, same as the focused handler.
           if (this.whisper.target()) return;
           if (room.localParticipant.isMicrophoneEnabled) return;
           void this.#setMicEnabled(room, true).catch(() => {});
         });
         const up = await tauri.event.listen<void>("ptt:up", () => {
+          // Above the guards, same eager-clear rule as `#pttKeyup`. This is
+          // the up edge the native side promises for every down it emitted —
+          // including the synthetic ones from `sweep_stuck_downs` and
+          // `fire_panic`, which exist precisely so a hold that lost its real
+          // key-up still ends.
+          this.#pttHeld = false;
           if (!this.#settings.pushToTalk) return;
           if (!room.localParticipant.isMicrophoneEnabled) return;
           room.localParticipant.setMicrophoneEnabled(false);
@@ -7655,6 +7787,12 @@ class Voice {
   }
 
   async #disarmNativePtt() {
+    // 🔴 Native `disarm()` stores `IS_DOWN = false` itself and its doc is
+    // explicit that no `ptt:up` follows ("the frontend force-disables the mic
+    // on the paths that call this"). So the up edge that would clear the
+    // latch is not coming, and the drop has to happen HERE — before the
+    // listeners go away, so it cannot depend on one of them.
+    this.#pttHeld = false;
     for (const unlisten of this.#pttNativeUnlisten) unlisten();
     this.#pttNativeUnlisten = [];
     if (this.#pttNativeKey === undefined) return;
@@ -7668,12 +7806,297 @@ class Voice {
   }
 
   #stopPushToTalk() {
+    // FIRST, and not left to `#disarmNativePtt` below: this is the method
+    // that takes the DOM `keyup` listener away, so after it runs neither of
+    // the real up edges can arrive. Stated here rather than relied upon
+    // transitively so a later change to the native path cannot quietly
+    // remove the only clear on the web build.
+    this.#pttHeld = false;
     if (this.#pttKeydown)
       window.removeEventListener("keydown", this.#pttKeydown);
     if (this.#pttKeyup) window.removeEventListener("keyup", this.#pttKeyup);
     this.#pttKeydown = undefined;
     this.#pttKeyup = undefined;
     void this.#disarmNativePtt();
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Global keybind dispatch (`@revolt/keybinds/globalKeybinds`)
+   * ------------------------------------------------------------------ */
+
+  /**
+   * Whether a push-to-talk hold is what is currently holding the microphone
+   * open. See `#pttHeld` for the clearing discipline, which is the whole of
+   * this feature.
+   *
+   * Not reactive, and the same shape/reason as {@link callAudioContext}: it
+   * is read at the instant of a keypress by code that is not a computation,
+   * so a signal would buy nothing and would add a re-render on every hold.
+   */
+  pttActive(): boolean {
+    return this.#pttHeld;
+  }
+
+  /**
+   * THE entry point for every global keybind. Nothing else in this class is
+   * a keybind target; the arming/listening lanes call only this.
+   *
+   * 🔴 **The decision is not here.** {@link decideKeybindDispatch}
+   * (`./keybindDispatchPolicy`) owns all five guards, their ORDER and their
+   * named reasons, and carries the production failure each one prevents.
+   * This method owns only the mutable state those guards read
+   * (`#keybindInFlight`, `#keybindLastAccepted`, `#pttHeld`), the signal
+   * reads that feed them, and the side effects. The split exists because the
+   * guards had ZERO automated coverage while they lived here: this file is a
+   * `.tsx` that imports `livekit-client/e2ee-worker?worker` and four other
+   * Vite-only or aliased specifiers, so no unit runner can load it, and no
+   * `components/rtc/*.test.ts` does.
+   *
+   * {@link KEYBIND_REQUIREMENT} is indexed here and never defaulted: an id
+   * that is not a `GlobalKeybindAction` reads `undefined` there, and
+   * `undefined` matches no `case` in the policy's requirement switch, whose
+   * `never` arm then `return`s `undefined` — no verdict at all. That is not
+   * benign: reading `.accept` off it throws a `TypeError` at the guard below,
+   * which sits OUTSIDE this method's `try` (that wraps only `#runKeybind`),
+   * so the throw escapes as an unhandled rejection from a keypress the user
+   * may have made in another application — the outcome the precondition guard
+   * exists to prevent. The optional read (`!verdict?.accept`) is what makes
+   * that case fail CLOSED, i.e. indistinguishable from any other silent
+   * rejection. Three layers keep it from arising at all: the parameter type
+   * here, `isGlobalKeybindAction` at the wire boundary, and the policy's
+   * `never` arm as a compile error if a fourth `KeybindRequirement` is added.
+   *
+   * A rejected press is dropped SILENTLY and never queued. There is no
+   * feedback channel for a key pressed while unfocused, and a modal is the
+   * specific outcome the precondition guard exists to prevent.
+   *
+   * Resolves when the action settles. Never rejects: the `catch` is
+   * `console.error`, not `onErr`, because the paths that genuinely owe the
+   * user a dialog already raise one themselves (`#captureFailed`,
+   * `connect()`'s own `onErr`) — and turning every other failure into a
+   * modal is exactly what makes an unfocused keypress hostile.
+   */
+  async dispatchKeybind(action: GlobalKeybindAction): Promise<void> {
+    const now = performance.now();
+    // Untracked for the reason the precondition read always was: `room()`,
+    // `incomingCall()` and `fullscreen()` are signals, and this can be
+    // reached from inside a computation (an in-app `keydown` handler created
+    // in an effect), where a registered dependency would re-run that
+    // computation on every room, ring or fullscreen change.
+    const verdict = untrack(() =>
+      decideKeybindDispatch({
+        action,
+        requirement: KEYBIND_REQUIREMENT[action],
+        now,
+        lastAccepted: this.#keybindLastAccepted.get(action),
+        minIntervalMs: KEYBIND_MIN_INTERVAL_MS,
+        inFlight: this.#keybindInFlight.has(action),
+        hasRoom: this.room() !== undefined,
+        hasIncomingCall: incomingCall() !== undefined,
+        pttHeld: this.#pttHeld,
+        isFullscreen: this.fullscreen(),
+      }),
+    );
+    // 🔴 `verdict?.accept`, not `verdict.accept`. The optional read is the
+    // fail-closed half of the comment above: the policy's `never` arm is a
+    // compile-time check only, so a `requirement` outside the union still
+    // returns `undefined` at runtime, and an unguarded `.accept` off that
+    // throws a `TypeError` HERE — outside the `try`, which wraps only
+    // `#runKeybind` — i.e. an unhandled rejection from a keypress possibly
+    // made in another application, the exact outcome guard 3 exists to
+    // prevent. `!undefined?.accept` is `true`, so a verdict-less press is
+    // dropped silently like any other rejection.
+    if (!verdict?.accept) return;
+
+    // Stamped only for an ACCEPTED press, which is what the constant
+    // specifies: a press dropped by a precondition never happened, and
+    // stamping it would then rate-limit the first press that CAN run.
+    this.#keybindLastAccepted.set(action, now);
+    this.#keybindInFlight.add(action);
+    try {
+      await this.#runKeybind(action);
+    } catch (error) {
+      console.error(`[rtc] keybind "${action}" failed`, error);
+    } finally {
+      this.#keybindInFlight.delete(action);
+    }
+  }
+
+  /** Guards are the caller's ({@link dispatchKeybind}); this only routes. */
+  #runKeybind(action: GlobalKeybindAction): Promise<unknown> | void {
+    switch (action) {
+      // The `*Anywhere` variants, never the bare toggles: they check
+      // `#liveToggleReady()` and otherwise write the persisted preference, so
+      // they are safe with no room (hence `KEYBIND_REQUIREMENT` "none") where
+      // the bare ones throw `"invalid state"` into a modal.
+      case "toggle-mute":
+        return this.toggleMuteAnywhere();
+      case "toggle-deafen":
+        return this.toggleDeafenAnywhere();
+
+      case "toggle-camera":
+        return this.toggleCamera();
+
+      case "screenshare-stop":
+        return this.stopScreenshare();
+
+      // The full toggle, as the button uses. A press while already sharing
+      // therefore STOPS — the same behavior the user has from the control
+      // this is bound to, and the benign direction. The dangerous direction
+      // (a "stop" key that starts a share) is what `stopScreenshare` exists
+      // for. `"in-app"` tier, so this is only ever reached from a focused
+      // keydown — `getDisplayMedia` has no transient activation otherwise.
+      case "screenshare-start":
+        return this.toggleScreenshare();
+
+      case "disconnect-call":
+        // Synchronous and genuinely idempotent: it bumps `#connectGen`,
+        // stops the ringtone and returns early with no room.
+        this.disconnect();
+        return;
+
+      case "accept-call":
+        return this.#acceptRingingCall();
+      case "dismiss-call":
+        this.#dismissRingingCall();
+        return;
+
+      case "toggle-window":
+        return this.#toggleWindowVisible();
+
+      case "toggle-overlay":
+        // 🔴 The voice OVERLAY setting, on the settings store this class
+        // holds as `#settings` (`@revolt/state/stores/Voice`) — NOT an
+        // invoke, and not this rtc singleton, which is also called `Voice`.
+        // `OverlayBridgeWorker` arms on
+        // `overlayShellAvailable() && state.voice.overlayEnabled`, so the
+        // store write IS the toggle and the shell window follows reactively.
+        // Writing it with no shell is harmless and correct: the preference
+        // persists and the worker stays unarmed.
+        this.#settings.overlayEnabled = !this.#settings.overlayEnabled;
+        return;
+
+      case "toggle-fullscreen":
+        this.toggleFullscreen();
+        return;
+
+      case "toggle-theater":
+        // The fullscreen precondition this case used to read inline is guard
+        // 5 in `./keybindDispatchPolicy` — `KEYBIND_REQUIREMENT` is "none"
+        // for theater because it cannot THROW, not because it is
+        // unconditional, and without the gate `toggleImmersive()` sets
+        // `immersive` and hides the call bar in the normal view where
+        // nothing offers a way back. Reaching here means it passed.
+        this.toggleImmersive();
+        return;
+
+      default: {
+        // Exhaustiveness, for the same reason `KEYBIND_REQUIREMENT` is a
+        // `Record<GlobalKeybindAction, …>`: a 13th action added to
+        // `GLOBAL_KEYBIND_ACTIONS` must be a COMPILE error here, not a row
+        // the settings UI renders as bound and which dispatches nothing.
+        // Without this arm the switch just falls out returning `undefined`,
+        // which is a legal `void` and passes the typecheck silently.
+        const unreachable: never = action;
+        return unreachable;
+      }
+    }
+  }
+
+  /**
+   * STOP-ONLY screen share, for the `screenshare-stop` keybind.
+   *
+   * 🔴 A separate entry point because `toggleScreenshare()` cannot be used
+   * for a stop: it reaches the stop branch only by falling through
+   * `this.screenshare()`, and on Android it returns into
+   * `#toggleAndroidScreenShare` BEFORE that read, where "not currently
+   * sharing" means START — opening the OS consent dialog. A key the user
+   * pressed to stop sharing must never be able to begin one, which is also
+   * why this is the only `"global"`-tier share action (stopping needs no
+   * transient activation; starting does).
+   *
+   * No-op, never a throw, when there is nothing to stop — unlike
+   * `toggleScreenshare`, whose `"invalid state"` is raised outside any try.
+   */
+  async stopScreenshare(): Promise<void> {
+    if (!this.room()) return;
+    // The §7.4 funnel, and the honest stop for the phone: it also cancels a
+    // start that is mid-`connect()` and therefore invisible to `active()`.
+    if (nativeScreenShareAvailable()) {
+      await this.#stopAndroidLeg();
+      return;
+    }
+    // Web/desktop: `screenshare()` is true, so `toggleScreenshare()` takes
+    // its stop branch — reached synchronously from here, with no await in
+    // between for the flag to change under. Reusing it rather than
+    // duplicating the teardown keeps the screen-audio token bump, the stale
+    // quality dialog close and the shield drop in one place.
+    if (!this.screenshare()) return;
+    await this.toggleScreenshare();
+  }
+
+  /**
+   * The `accept-call` keybind's target: exactly the `IncomingCallOverlay`
+   * Accept body (stop the ringtone, dismiss the popup, navigate to the
+   * conversation, join), reachable from here because `incomingCall` is a
+   * module-level signal singleton rather than component state.
+   */
+  async #acceptRingingCall(): Promise<void> {
+    const call = untrack(incomingCall);
+    // Re-read after the guard: `dispatchKeybind` checked a ring existed, and
+    // nothing has awaited since, but the ring is the one piece of state a
+    // timeout can clear on its own (`INCOMING_CALL_TIMEOUT_MS`).
+    if (!call) return;
+    this.sound.stopRingtone();
+    dismissIncomingCall();
+    try {
+      this.#navigate?.(call.channel.path);
+    } catch {
+      /* no router — join anyway rather than losing the call to a nav error */
+    }
+    await this.connect(call.channel);
+  }
+
+  /**
+   * The `dismiss-call` keybind's target: silence the ring and take the popup
+   * down.
+   *
+   * 🔴 This signals NOTHING to the caller. `dismissIncomingCall` is local
+   * only — it clears a module signal, cancels the taskbar attention flash
+   * and cancels the Android notification. There is no REST call and no
+   * websocket event, so the caller keeps ringing until they give up or the
+   * server times the call out. The overlay button labelled "Decline" does
+   * exactly this and no more. 🔴 Any UI for this keybind must therefore call
+   * it "Dismiss"/"Ignore" and never "Decline" or "Reject".
+   */
+  #dismissRingingCall(): void {
+    this.sound.stopRingtone();
+    dismissIncomingCall();
+  }
+
+  /**
+   * The `toggle-window` keybind's target: show/hide the shell's main window.
+   *
+   * Through the sanctioned probe, not a local `__TAURI__` read: `tauriInvoke`
+   * checks `__TAURI__.core.invoke`, which is present only when
+   * `withGlobalTauri` is on AND the window has a capability file — i.e. it
+   * doubles as "am I allowed to talk to the shell at all". A copy that
+   * checked `__TAURI__` alone would read as available in windows where every
+   * call ACL-fails.
+   *
+   * Undefined off the desktop shell (web, Android, Electron), where there is
+   * no window to toggle and the press is correctly inert.
+   */
+  async #toggleWindowVisible(): Promise<void> {
+    const invoke = tauriInvoke();
+    if (!invoke) return;
+    try {
+      await invoke(KEYBIND_COMMANDS.toggleWindowVisible);
+    } catch {
+      // Older shell without the command, or an ACL refusal. Same
+      // focused-only-fallback posture as `#ensureNativePtt`: inert, never a
+      // dialog over whatever the user was actually doing.
+    }
   }
 
   async #startVAD(room: Room) {

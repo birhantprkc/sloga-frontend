@@ -393,12 +393,28 @@ function VoiceCallCard(props: { channel: Channel }) {
     if (voice.fullscreen() && inCall()) {
       if (!viewRef?.isSameNode(document.fullscreenElement)) {
         if (document.fullscreenElement) {
-          document.exitFullscreen();
+          // Best-effort: a foreign element refusing to give fullscreen up is
+          // not ours to reconcile, and the request below decides the signal
+          // either way. Caught only so the rejection is not unhandled.
+          document.exitFullscreen().catch(() => {});
         }
-        viewRef?.requestFullscreen();
+        // `requestFullscreen()` demands transient user activation, and this
+        // runs from an effect — so a signal write that nothing "clicked"
+        // (a global keybind) rejects here, as does a focused key press behind
+        // a modal <dialog>, a permissions policy, or an element elsewhere
+        // still holding fullscreen. A rejection means the DOM is NOT
+        // fullscreen, so the signal must not keep claiming that it is: left
+        // true, the effect sees no change on the next toggle and the button
+        // looks dead. Reset through `toggleFullscreen(false)` rather than the
+        // signal alone because this is the same "we are out of fullscreen"
+        // path the `fullscreenchange` listener above takes, and theater mode
+        // must never survive outside fullscreen.
+        viewRef?.requestFullscreen().catch(() => voice.toggleFullscreen(false));
       }
     } else if (document.fullscreenElement) {
-      document.exitFullscreen();
+      // Nothing to reset: the signal already reads false. The
+      // `fullscreenchange` listener is what reconciles a refused exit.
+      document.exitFullscreen().catch(() => {});
     }
   });
 
