@@ -8,6 +8,66 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // v0.60.0 (2026-09-16). Copy constraints, load-bearing:
+  // - The keybinds platform line is exact and must stay exact: on macOS,
+  //   Linux and web there is NO native bridge, so the nine system-wide rows
+  //   are DISABLED and cannot be bound at all. Only the three in-app actions
+  //   (start screen share, fullscreen, theater) work there. An earlier draft
+  //   said bindings "still fire while Sloga is focused", which would send a
+  //   Mac user to a greyed-out row to file a bug.
+  // - The lone-Ctrl caution is deliberate, not a hedge: a bare Ctrl binding
+  //   fires on every Ctrl shortcut system-wide AND on every AltGr, because
+  //   Windows synthesizes ControlLeft before AltRight. Users who bind it
+  //   without knowing that will report it as a bug.
+  // - Disconnect is described as "not a kick" on purpose: the entry sits
+  //   next to Kick and Ban in the same menu, and a moderator reading it as
+  //   permanent would misuse it.
+  // - The rank rule is stated on purpose. A moderator who cannot mute a peer
+  //   will otherwise report that as broken.
+  // - The encrypted-calls bullet describes the PUBLISH GATE only. Say
+  //   "cannot be secured", never the exact banner sentence, and never
+  //   "turned off" / "starting capture" wording: those strings are build
+  //   gate markers and the notes must not collide with them. Make no claim
+  //   about what the chip or the banner says; those waves have not landed.
+  // - NOT announced: denying Read Message History on a forum still hides
+  //   nothing server-side, so the forum bullet claims only that the rows are
+  //   settable, never that they are enforced.
+  // - macOS: the first bind locks every system-wide row including its own
+  //   clear control. Not claimed here, and it must be fixed before a Mac
+  //   build carries this page.
+  {
+    id: "sloga-2026-09-16",
+    title: "Patch Notes",
+    published_at: "2026-09-16T12:00:00.000Z",
+    web_version: "0.60.0",
+    markdown_content: `## v0.60.0 — Keybinds, and moderating a call
+
+### ⌨️ Keybinds
+- **Settings → Keybinds is new.** Bind a key to mute, deafen, your camera, stopping a screen share, disconnecting, accepting or dismissing a call, showing and hiding Sloga, and the overlay — and on the Windows app **those keys work while you are in another application.** No more alt-tabbing out of a game to mute.
+- **The key still works in whatever you are using.** Sloga acts on it and the game or app in front of you receives it as normal, so binding a key you already use somewhere else will not break it there.
+- **A key on its own works, and so does a combination.** Ctrl by itself is a valid binding, and so is Ctrl+H. Bear in mind that a lone Ctrl fires on *every* Ctrl shortcut you press — and on AltGr, which Windows reports as Ctrl — so binding it together with a regular key is usually what you want. Sloga warns you when a binding is a key you are likely to type.
+- Starting a screen share, fullscreen and theater mode are bound too, but they need Sloga in front of you.
+- Keys that work outside the app are **Windows only for now.** On macOS, Linux and the web the system-wide group is greyed out with a note saying why; the three that need Sloga in front of you — starting a screen share, fullscreen and theater mode — can still be bound, and still work.
+- **CapsLock can be bound**, and capturing AltGr reads as "Ctrl + Right Alt", which is the binding that works on those layouts.
+- **Keybinds are saved on the device you set them on** and are not carried between your devices.
+
+### 🎙️ Calls
+- **Moderators can now mute, deafen and disconnect someone in a call.** Right-click somebody in a voice channel and you will find Server Mute, Server Deafen and Disconnect from call. A server mute stops them transmitting to everyone; a server deafen also stops them hearing. Both stay until a moderator lifts them.
+- These need the matching server permission — Mute Members, Deafen Members and Move Members — and you cannot use them on somebody at your own rank or above. Disconnecting somebody removes them from the call; it is not a kick, and it does not stop them rejoining.
+- **Somebody muted or deafened by a moderator now carries a badge** beside their name in the call, so it is clear who was silenced by a moderator and who muted themselves.
+- **If a moderator mutes you, Sloga now tells you.** Your microphone previously just stopped working, with nothing on screen to explain why.
+
+### 🔒 Encrypted calls
+- **Your microphone no longer sends anything at all until an encrypted call is ready for it.** Joining or rejoining could previously let a moment of audio out before the call's encryption was armed.
+
+### 💬 Forums
+- **A forum's permission settings now show the posting permissions.** Sending messages, managing messages, managing the channel and managing roles were missing from the list outright, so there was no way to set who may post in a forum.
+- **Several permission rows now describe what they actually control** in a forum, instead of repeating the wording written for ordinary text channels.
+
+### 🛡️ Security
+- **Lifting a server mute is now checked like applying one.** Somebody who had been server-muted could previously remove it from themselves and start transmitting again.
+`,
+  },
   // v0.59.0 (2026-09-13). Copy constraints, load-bearing:
   // - The re-securing fix is the one item here seen working on a real call: a
   //   live leg on 2026-09-11 reproduced the stuck chip on the base build and
