@@ -13,6 +13,66 @@ msgstr ""
 "Language-Team: \n"
 "Plural-Forms: \n"
 
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
+msgid "Able to access this forum"
+msgstr "Able to access this forum"
+
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
+msgid "Allow members to set a color with Masquerade"
+msgstr "Allow members to set a color with Masquerade"
+
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
+msgid "Create posts and reply to them"
+msgstr "Create posts and reply to them"
+
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
+msgid "Delete and pin messages by other members — deleting a whole post needs Manage Channel"
+msgstr "Delete and pin messages by other members — deleting a whole post needs Manage Channel"
+
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
+msgid "Edit forum-specific role and default permissions"
+msgstr "Edit forum-specific role and default permissions"
+
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
+msgid "Edit the forum and its tags, and delete, archive or lock posts"
+msgstr "Edit the forum and its tags, and delete, archive or lock posts"
+
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
+msgid "Read past replies inside a post"
+msgstr "Read past replies inside a post"
+
+#: components/rtc/state.tsx
+msgid "A moderator deafened you in this server. You won't hear this call until they lift it."
+msgstr "A moderator deafened you in this server. You won't hear this call until they lift it."
+
+#: components/rtc/state.tsx
+msgid "A moderator muted you in this server. Your microphone and camera stay off for everyone until they lift it."
+msgstr "A moderator muted you in this server. Your microphone and camera stay off for everyone until they lift it."
+
+#: components/ui/components/features/voice/VoiceStatefulUserIcons.tsx
+msgid "Deafened by a moderator. They cannot hear this call."
+msgstr "Deafened by a moderator. They cannot hear this call."
+
+#: components/app/menus/UserContextMenu.tsx
+msgid "Disconnect from call"
+msgstr "Disconnect from call"
+
+#: components/ui/components/features/voice/VoiceStatefulUserIcons.tsx
+msgid "Muted by a moderator. They cannot speak in this server."
+msgstr "Muted by a moderator. They cannot speak in this server."
+
+#: components/app/menus/UserContextMenu.tsx
+msgid "Server deafen"
+msgstr "Server deafen"
+
+#: components/app/menus/UserContextMenu.tsx
+msgid "Server mute"
+msgstr "Server mute"
+
+#: components/app/menus/UserContextMenu.tsx
+msgid "That didn't go through. They may have left, or you may not have permission."
+msgstr "That didn't go through. They may have left, or you may not have permission."
+
 #: components/rtc/state.tsx
 msgid "The call couldn't be started right now."
 msgstr "The call couldn't be started right now."

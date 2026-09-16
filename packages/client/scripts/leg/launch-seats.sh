@@ -1,0 +1,512 @@
+#!/bin/bash
+# launch-seats.sh — non-interactive seat launcher for the consent-rejoin media
+# leak leg (rejoin-leak-plan.md §2.1 / §2.4, wave 0, lane W0-C).
+#
+#   packages/client/scripts/leg/launch-seats.sh <command> [options]
+#
+#   check      verify every rig assumption and exit non-zero if any fails
+#   steps      print the OPERATOR-ONLY steps (this script never performs them)
+#   subject    launch the PACKAGED media-E2EE seat with the Chromium trace on
+#   observer   launch an UNPACKAGED media-E2EE seat (shape (a) observer)
+#   carrier    launch an UNPACKAGED seat with fake capture, for the carrier
+#
+# 🔴 THIS SCRIPT NEVER HANDLES CREDENTIALS. Login, MFA, and the native blocking
+# "Turn off encryption" confirm dialog are operator-only BY DESIGN — the
+# renderer can neither render nor dismiss that dialog. `steps` prints them; the
+# script does not attempt them and has no code path that could.
+#
+# 🔴 IT IS NOT A BUILD. It never invokes electron-builder, never runs pnpm, and
+# never runs mise. An unpackaged `electron .` run is already a genuine
+# media-E2EE seat: `--sloga-media-e2ee=1` is injected on
+# `process.platform === "linux"` plus command-table membership, NOT on
+# `app.isPackaged`.
+#
+# Verified facts it nonetheless RE-CHECKS at runtime, because a fact that is
+# only true at contract-writing time is how a leg gets run on the wrong build:
+#   - the shell worktree and its detached commit
+#   - frontend-dist staged from the expected frontend commit (BUILD_INFO.txt)
+#   - the packaged AppImage exists and is executable
+#   - main.js's strip list is still exactly the four remote-debugging names,
+#     so --enable-logging / ELECTRON_ENABLE_LOGGING survive into a packaged run
+#   - main.js still gates --sloga-media-e2ee on the platform, not on isPackaged
+#   - SLOGA_PROFILE is set for any seat that is not the first one
+#   - 🔴 and that the staged dist was BUILT WITH VITE_CFG_GATE_TRACE=true.
+#     The [gate-trace] seams sit behind the runtime guard
+#     CONFIGURATION.ENABLE_GATE_TRACE, which is false in every dist built
+#     without the flag: such a dist emits ZERO records, and a leg on it
+#     measures nothing while looking like a quiet pass. The emitter code and
+#     its "[gate-trace] " literal are NOT compiled out, so their presence
+#     proves nothing; `check` reads the INLINED flag value instead (see
+#     check_gate_trace_flag).
+#
+# The CONSUMER of the records is toc-reduce.mjs, next to this file: it joins
+# the subject seat's [gate-trace] JSONL to the observer's toc-tap.js frame
+# dump. The parseability self-check of that reader is
+#     node packages/client/scripts/leg/toc-reduce.mjs --selftest
+# (exit 0 iff every built-in control behaves). This script carries no
+# pre-flight of its own.
+
+set -uo pipefail
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+SHELL_DIR="${SLOGA_SHELL_DIR:-/home/mcp/sloga-desktop-el4/electron-shell}"
+FRONTEND_DIR="${SLOGA_FRONTEND_DIR:-$(cd "$HERE/../.." && pwd)}"
+EXPECT_SHELL_COMMIT="${SLOGA_EXPECT_SHELL_COMMIT:-fc4855e4c1b544b8bbaef6fe39317b127a1c95a4}"
+# 🔴 THE FRONTEND PIN IS DERIVED FROM THIS WORKTREE, NOT FROZEN IN THIS FILE.
+#
+# It used to default to a literal commit, which guaranteed that the two halves
+# of the same question would disagree. `check_frontend_dist` asks whether the
+# dist was staged from the expected commit; `check_gate_trace_flag` asks
+# whether the SAME staged dist was built with VITE_CFG_GATE_TRACE=true. With a
+# frozen literal a dist staged from HEAD failed the first, and re-staging from
+# the literal failed the second (that commit had no seams to switch on).
+# `check` could then never exit 0, and `require_ok` refuses every seat, so the
+# leg was unrunnable either way. Deriving the pin from HEAD makes both halves
+# answerable by ONE re-stage: build this HEAD with VITE_CFG_GATE_TRACE=true
+# and stage it. SLOGA_EXPECT_FRONTEND_COMMIT still overrides it, for a leg
+# run against a dist staged from a commit other than the one checked out.
+EXPECT_FRONTEND_COMMIT="${SLOGA_EXPECT_FRONTEND_COMMIT:-$(git -C "$FRONTEND_DIR" rev-parse HEAD 2>/dev/null)}"
+FRONTEND_PIN_SOURCE="${SLOGA_EXPECT_FRONTEND_COMMIT:+SLOGA_EXPECT_FRONTEND_COMMIT}"
+FRONTEND_PIN_SOURCE="${FRONTEND_PIN_SOURCE:-the worktree HEAD of $FRONTEND_DIR}"
+FRONTEND_DIRTY="$(git -C "$FRONTEND_DIR" status --porcelain 2>/dev/null | head -1)"
+APPIMAGE="${SLOGA_APPIMAGE:-$SHELL_DIR/out/Sloga-0.58.3-linux-x86_64.AppImage}"
+LOGDIR="${SLOGA_LEG_LOGDIR:-$HOME/leg-logs}"
+
+fails=0
+fail() {
+  echo ">>> RIG FAIL: $*" >&2
+  fails=$((fails + 1))
+}
+ok() { echo "    ok: $*"; }
+
+# --- assumption checks -------------------------------------------------------
+
+check_shell_dir() {
+  if [ ! -d "$SHELL_DIR" ]; then
+    fail "shell worktree $SHELL_DIR does not exist"
+    return
+  fi
+  ok "shell worktree $SHELL_DIR"
+  local head
+  head=$(git -C "$SHELL_DIR" rev-parse HEAD 2>/dev/null)
+  local rc=$?
+  if [ $rc -ne 0 ] || [ -z "$head" ]; then
+    fail "$SHELL_DIR is not a git checkout (git rev-parse exited $rc)"
+  elif [ "$head" != "$EXPECT_SHELL_COMMIT" ]; then
+    fail "shell HEAD is $head, expected $EXPECT_SHELL_COMMIT — this is a DIFFERENT shell than the plan pinned"
+  else
+    ok "shell HEAD $head"
+  fi
+}
+
+check_frontend_dist() {
+  local info="$SHELL_DIR/frontend-dist/BUILD_INFO.txt"
+  if [ -z "$EXPECT_FRONTEND_COMMIT" ]; then
+    fail "no frontend commit to expect: \`git -C $FRONTEND_DIR rev-parse HEAD\` produced nothing and SLOGA_EXPECT_FRONTEND_COMMIT is unset. Set SLOGA_EXPECT_FRONTEND_COMMIT=<sha> explicitly rather than running a leg against an unpinned dist."
+    return
+  fi
+  ok "expecting frontend commit $EXPECT_FRONTEND_COMMIT (from $FRONTEND_PIN_SOURCE)"
+  if [ -n "$FRONTEND_DIRTY" ]; then
+    fail "the frontend worktree $FRONTEND_DIR is DIRTY, so its HEAD does not describe the code a dist staged from it would contain. Commit the change (or pass SLOGA_EXPECT_FRONTEND_COMMIT=<sha> for a dist staged elsewhere) before running a leg."
+  else
+    ok "frontend worktree clean, so HEAD describes what a dist staged from it contains"
+  fi
+  if [ ! -f "$info" ]; then
+    fail "no $info — frontend-dist provenance is unknown, and a leg on an unknown dist proves nothing"
+    return
+  fi
+  local fc
+  fc=$(sed -n 's/^frontend_commit=//p' "$info" | head -1)
+  if [ "$fc" != "$EXPECT_FRONTEND_COMMIT" ]; then
+    fail "frontend-dist was staged from $fc, expected $EXPECT_FRONTEND_COMMIT ($FRONTEND_PIN_SOURCE). 🔴 THIS IS ONE HALF OF A PAIR: the other is check_gate_trace_flag, which reads the SAME staged bundle for the inlined ENABLE_GATE_TRACE:\"true\" that only a VITE_CFG_GATE_TRACE=true build carries. Both are satisfied by ONE re-stage of frontend-dist, built from the expected commit with the flag on; satisfying either alone leaves \`check\` unable to exit 0, and require_ok then refuses every seat."
+  else
+    ok "frontend-dist staged from $fc"
+  fi
+  local dirty
+  dirty=$(sed -n 's/^dirty=//p' "$info" | head -1)
+  if [ "$dirty" != "false" ]; then
+    fail "frontend-dist was staged from a DIRTY tree (dirty=$dirty) — the bundle does not correspond to a commit"
+  else
+    ok "frontend-dist staged clean"
+  fi
+  # 🔴 `shell_dirty` was READ BY NOBODY. It describes the tree the PACKAGED
+  # seat was built from, and it is currently `true`: the AppImage under test
+  # then corresponds to no commit, which is exactly the provenance question the
+  # `dirty=` line above exists to answer for the other half of the build.
+  local sdirty
+  sdirty=$(sed -n 's/^shell_dirty=//p' "$info" | head -1)
+  if [ -z "$sdirty" ]; then
+    fail "$info carries no shell_dirty= line — the packaged seat's provenance is unknown"
+  elif [ "$sdirty" != "false" ]; then
+    if [ "${SLOGA_ALLOW_DIRTY_SHELL:-0}" = "1" ]; then
+      ok "shell_dirty=$sdirty ACCEPTED because SLOGA_ALLOW_DIRTY_SHELL=1 — 🔴 the packaged seat does NOT correspond to commit $EXPECT_SHELL_COMMIT and any result must say so"
+    else
+      fail "frontend-dist records shell_dirty=$sdirty: the packaged seat was built from a DIRTY shell tree and does not correspond to $EXPECT_SHELL_COMMIT. Re-build it from a clean tree, or set SLOGA_ALLOW_DIRTY_SHELL=1 to accept it — which makes the shell's provenance an UNPROVEN part of every result from this leg."
+    fi
+  else
+    ok "packaged seat built from a clean shell tree"
+  fi
+}
+
+check_main_js() {
+  local m="$SHELL_DIR/src/main.js"
+  if [ ! -f "$m" ]; then
+    fail "no $m"
+    return
+  fi
+  # The strip list must still be EXACTLY the four remote-debugging names. If a
+  # logging switch ever joins it, the packaged trace route below is dead and
+  # this script must not pretend otherwise. Read the array itself, not a count
+  # of matches anywhere in the file.
+  local strip expect
+  strip=$(sed -n '/for (const sw of \[/,/\]) {/p' "$m" | grep -o '"[a-z][a-z-]*"' | tr -d '"' | sort | tr '\n' ' ')
+  expect="remote-allow-origins remote-debugging-address remote-debugging-pipe remote-debugging-port "
+  if [ "$strip" != "$expect" ]; then
+    fail "main.js's strip list is [$strip], expected [$expect] — re-derive the packaged trace route before running a leg"
+  else
+    ok "strip list is exactly the 4 remote-debugging names, so --enable-logging / ELECTRON_ENABLE_LOGGING survive a packaged run"
+  fi
+  if grep -q 'process.platform === "linux"' "$m" && grep -q -- '--sloga-media-e2ee=1' "$m"; then
+    ok "--sloga-media-e2ee=1 is platform-gated (so an UNPACKAGED run is still a media-E2EE seat)"
+  else
+    fail "could not find the platform-gated --sloga-media-e2ee=1 injection in main.js — an unpackaged seat may NOT be a media-E2EE seat"
+  fi
+  if grep -q 'app.isPackaged' "$m" && grep -q -- '--sloga-media-e2ee=1' "$m"; then
+    local ctx
+    ctx=$(grep -n -B6 -- '--sloga-media-e2ee=1' "$m" | grep -c 'app.isPackaged')
+    if [ "$ctx" -ne 0 ]; then
+      fail "app.isPackaged now appears within 6 lines above the --sloga-media-e2ee=1 injection — the unpackaged seat assumption must be re-derived"
+    fi
+  fi
+}
+
+check_appimage() {
+  if [ ! -f "$APPIMAGE" ]; then
+    fail "packaged seat $APPIMAGE does not exist"
+    return
+  fi
+  if [ ! -x "$APPIMAGE" ]; then
+    fail "packaged seat $APPIMAGE is not executable"
+    return
+  fi
+  ok "packaged seat $APPIMAGE"
+}
+
+check_electron() {
+  if [ ! -x "$SHELL_DIR/node_modules/.bin/electron" ]; then
+    fail "no $SHELL_DIR/node_modules/.bin/electron — the unpackaged seats cannot start. Do NOT run pnpm or mise to fix this; report it."
+  else
+    ok "unpackaged runner $SHELL_DIR/node_modules/.bin/electron"
+  fi
+}
+
+check_display() {
+  if [ -z "${DISPLAY:-}" ]; then
+    fail "DISPLAY is unset — under WSLg it must be :0"
+  else
+    ok "DISPLAY=$DISPLAY"
+  fi
+}
+
+# --- the staged-dist VITE_CFG_GATE_TRACE check ---------------------------------
+#
+# The [gate-trace] seams are guarded at runtime by
+# CONFIGURATION.ENABLE_GATE_TRACE (components/common/lib/env.ts), computed as
+#     ((import.meta.env.VITE_CFG_GATE_TRACE as string) ?? "").toLowerCase() == "true"
+# Vite inlines the env value but nothing folds the `.toLowerCase()`
+# comparison, so the emitter code and its "[gate-trace] " literal survive in
+# EVERY bundle: their presence discriminates nothing. What does survive
+# minification is the inlined value in the entry chunk:
+#     instrumented dist:  ENABLE_GATE_TRACE:"true".toLowerCase()==
+#     production dist:    ENABLE_GATE_TRACE:"".toLowerCase()==
+# (the negative control — the same shape the sibling ENABLE_* flags show in
+# dist_prod). So the discriminating grep is for `ENABLE_GATE_TRACE:"true"`.
+#
+# The "[gate-trace] " literal is still read, SECONDARILY and NOT as a
+# discriminator: it only says the emitter code is present in the pre-serialized
+# form. 🔴 The tell for a broken emit is NOT "the log has no [gate-trace]
+# lines". Under an object-ARGUMENT form the lines ARE there and every field is
+# gone:
+#     [gate-trace] [object Object]
+
+check_gate_trace_flag() {
+  # The ARTIFACT half: the bundle that will actually run.
+  local dist="$SHELL_DIR/frontend-dist/assets"
+  if [ ! -d "$dist" ]; then
+    fail "no $dist — there is no staged bundle to check"
+    return
+  fi
+  # The discriminator: the inlined flag value.
+  if grep -rqF -- 'ENABLE_GATE_TRACE:"true"' "$dist"; then
+    ok "the staged bundle carries ENABLE_GATE_TRACE:\"true\" — it was built with VITE_CFG_GATE_TRACE=true"
+  else
+    fail "the staged bundle in $dist does not carry ENABLE_GATE_TRACE:\"true\" — this dist was not built with VITE_CFG_GATE_TRACE=true (a production dist reads ENABLE_GATE_TRACE:\"\"; a dist older than the flag has no ENABLE_GATE_TRACE at all) and the leg would produce ZERO records. Re-stage frontend-dist from a build of $EXPECT_FRONTEND_COMMIT with VITE_CFG_GATE_TRACE=true before running a leg."
+  fi
+  # Secondary, NOT discriminating (the literal is in every bundle): is the
+  # emitter code present, and in the pre-serialized form?
+  if grep -qrF -- '[gate-trace] ' "$dist"; then
+    ok "emitter code present in the pre-serialized \"[gate-trace] \" + JSON.stringify form (present in every bundle; NOT evidence the flag is on)"
+  elif grep -qrF -- '[gate-trace]' "$dist"; then
+    fail "the staged bundle carries a [gate-trace] tag WITHOUT the trailing space of the pre-serialized form — that is the object-ARGUMENT form, and the packaged Chromium log will read \"[gate-trace] [object Object]\": the lines present, every field gone"
+  else
+    fail "the staged bundle in $dist carries NO [gate-trace] string at all — the emitter code is missing from this build, so even a flag-on dist would write nothing"
+  fi
+}
+
+cmd_check() {
+  echo "=============== rig check ==============="
+  check_shell_dir
+  check_frontend_dist
+  check_main_js
+  check_appimage
+  check_electron
+  check_display
+  check_gate_trace_flag
+  echo
+  if [ $fails -ne 0 ]; then
+    echo "################ RIG CHECK: $fails failing assumption(s) ################" >&2
+    return 1
+  fi
+  echo "################ RIG CHECK: all assumptions hold ################"
+  return 0
+}
+
+require_ok() {
+  cmd_check >/dev/null 2>&1
+  local rc=$?
+  if [ $rc -ne 0 ]; then
+    # `fails` is a global that the silenced run already incremented; reset it
+    # so the visible re-run reports the true count rather than double it.
+    fails=0
+    cmd_check
+    echo ">>> refusing to launch a seat on a rig whose assumptions do not hold" >&2
+    exit 1
+  fi
+}
+
+# --- seats -------------------------------------------------------------------
+
+usage_seat() {
+  cat <<'USAGE'
+  --profile <name>     SLOGA_PROFILE for this seat. REQUIRED for every seat
+                       except the first: productName is "Sloga", so an
+                       unprofiled run shares ~/.config/Sloga with the packaged
+                       install (same login, same e2ee store, one shared
+                       requestSingleInstanceLock). 🔴 A profiled seat is CLEAN
+                       but UNPROVISIONED and needs an operator login.
+  --log <path>         Chromium log file (subject seat; default under
+                       $SLOGA_LEG_LOGDIR).
+  --log-mode file|stderr
+                       Current Chromium needs --enable-logging=file for
+                       --log-file to apply; =stderr is the fallback.
+  --audio-file <wav>   Loop a wav into the fake capture device (carrier seat).
+  --no-fake-device     Do not pass the fake-device flags.
+  --dry-run            Print the exact command and env, launch nothing.
+USAGE
+}
+
+launch() {
+  local label="$1"
+  shift
+  echo "=============== launching $label ==============="
+  echo "  env : $LAUNCH_ENV"
+  echo "  cmd : $*"
+  if [ "${DRY_RUN:-0}" = "1" ]; then
+    echo "  (dry run — nothing launched)"
+    return 0
+  fi
+  # shellcheck disable=SC2086
+  env $LAUNCH_ENV "$@" &
+  echo "  pid : $!"
+}
+
+cmd_subject() {
+  local profile="" log="" mode="file"
+  DRY_RUN=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --profile) profile="$2"; shift 2 ;;
+    --log) log="$2"; shift 2 ;;
+    --log-mode) mode="$2"; shift 2 ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    *) echo "unknown option $1" >&2; exit 2 ;;
+    esac
+  done
+  require_ok
+  mkdir -p "$LOGDIR" || { echo "cannot create $LOGDIR" >&2; exit 1; }
+  [ -n "$log" ] || log="$LOGDIR/subject-$(date +%Y%m%d-%H%M%S).log"
+  if [ "$mode" != "file" ] && [ "$mode" != "stderr" ]; then
+    echo ">>> --log-mode must be file or stderr" >&2
+    exit 2
+  fi
+  LAUNCH_ENV="ELECTRON_ENABLE_LOGGING=1"
+  [ -n "$profile" ] && LAUNCH_ENV="$LAUNCH_ENV SLOGA_PROFILE=$profile"
+  echo "  trace: $log"
+  echo "  🔴 the SUBJECT seat is PACKAGED: no DevTools, no CDP, no sampler."
+  echo "     Its only instrument is this [gate-trace] log, and the dist writes"
+  echo "     records ONLY if it was built with VITE_CFG_GATE_TRACE=true"
+  echo "     (\`check\` reads the staged bundle for the inlined flag value)."
+  echo "  🔴 THE TELL IS NOT \"the log has no [gate-trace] lines\". A record"
+  echo "     that lost its payload still WRITES ITS LINE — it reads"
+  echo "     \"[gate-trace] [object Object]\", the line present and every"
+  echo "     field gone. After the leg, extract the [gate-trace] JSON payloads"
+  echo "     from this log into a JSONL file (one record per line) and reduce"
+  echo "     it against the observer's toc-tap.js dump:"
+  echo "         node $HERE/toc-reduce.mjs --trace <subject.jsonl> --tap <toc-tap.json> --carrier <ssrc>"
+  echo "     and read its EXIT STATUS (0 PASS / 1 FAIL or PASS-WITH-GREY /"
+  echo "     3 unparseable input, no verdict). Never fill an unparseable"
+  echo "     record in from the timeline."
+  if [ "$mode" = "file" ]; then
+    launch "SUBJECT (packaged)" "$APPIMAGE" "--enable-logging=file" "--log-file=$log" "--v=1"
+  else
+    launch "SUBJECT (packaged, stderr)" "$APPIMAGE" "--enable-logging=stderr" "--v=1"
+  fi
+}
+
+cmd_unpackaged() {
+  local label="$1" devtools="$2"
+  shift 2
+  local profile="" fake=1 audio=""
+  DRY_RUN=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --profile) profile="$2"; shift 2 ;;
+    --audio-file) audio="$2"; shift 2 ;;
+    --no-fake-device) fake=0; shift ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    *) echo "unknown option $1" >&2; exit 2 ;;
+    esac
+  done
+  # Refused BEFORE require_ok: a missing --profile is wrong on ANY rig, and a
+  # refusal that only fires on a clean rig is a refusal nobody can rely on.
+  if [ -z "$profile" ]; then
+    echo ">>> RIG FAIL: --profile is REQUIRED for a $label seat. productName is \"Sloga\", so an unprofiled unpackaged run shares ~/.config/Sloga with the packaged install (same login, same e2ee store) and collides on requestSingleInstanceLock." >&2
+    exit 1
+  fi
+  require_ok
+  LAUNCH_ENV="SLOGA_PROFILE=$profile"
+  [ "$devtools" = "devtools" ] && LAUNCH_ENV="$LAUNCH_ENV SLOGA_DEVTOOLS=1"
+  local -a flags=()
+  if [ "$fake" = "1" ]; then
+    flags+=("--use-fake-device-for-media-stream" "--use-fake-ui-for-media-stream")
+    if [ -n "$audio" ]; then
+      if [ ! -f "$audio" ]; then
+        echo ">>> RIG FAIL: --audio-file $audio does not exist" >&2
+        exit 1
+      fi
+      flags+=("--use-file-for-fake-audio-capture=$audio")
+      echo "  carrier audio: $audio (looped by Chromium)"
+    fi
+    echo "  🔴 fake-device flags are for NON-SUBJECT seats only."
+    echo "     Carrier continuity is NOT assumed from these flags — it is"
+    echo "     MEASURED from the carrier byte series by the sampler, and a run"
+    echo "     whose carrier series is not continuous is discarded."
+  fi
+  echo "  🔴 this seat is CLEAN but UNPROVISIONED: it needs an operator login."
+  ( cd "$SHELL_DIR" && launch "$label (unpackaged)" "./node_modules/.bin/electron" "." "${flags[@]}" )
+}
+
+cmd_steps() {
+  cat <<'STEPS'
+=============== OPERATOR-ONLY STEPS — this script performs NONE of them ===============
+
+Automatable (this script does these): launching the seats, the fake-capture
+flags on non-subject seats, the carrier audio loop, and the packaged
+[gate-trace] log. The post-hoc reduction (toc-reduce.mjs) is run by hand after
+the leg.
+
+🔴 OPERATOR-ONLY, BY DESIGN. Claude never does any of these and this script has
+no code path that could:
+
+  O1. All credential entry on every seat (username, password).
+  O2. The MFA ticket prompt.
+  O3. The native blocking "Turn off encryption" confirm dialog. The renderer
+      can NEITHER render NOR dismiss it — that is the whole point of it being
+      native. Only a human at the machine can answer it.
+  O4. Pressing leave, and pressing rejoin.
+  O5. SPEAKING on the subject seat, continuously, from before the rejoin is
+      pressed until well after it completes. The leak window is 1-3 s wide; a
+      subject who starts talking after the rejoin lands measures nothing.
+  O6. Listening on the shape-(b) manager-free web observer and reporting
+      honestly whether the subject was INTELLIGIBLE. That ear is the primary
+      M1 instrument. "I think I heard something" is `unknown`, not `yes`.
+
+--------------------------------------------------------------------------------
+RUN ORDER
+
+  0. Build the leg dist with VITE_CFG_GATE_TRACE=true and stage it, then
+       node packages/client/scripts/leg/toc-reduce.mjs --selftest   (must exit 0)
+       🔴 The [gate-trace] seams sit behind CONFIGURATION.ENABLE_GATE_TRACE,
+       false in any dist built without the flag. Such a dist writes NO
+       records: `check` refuses it (by the inlined flag value, not the
+       [gate-trace] literal, which every bundle carries), and a log with no
+       [gate-trace] lines is an EMPTY leg, never a quiet PASS.
+       The opposite tell is just as wrong — a line that reads
+       "[object Object]" is PRESENT and EMPTY, so "there are lines" proves
+       nothing either, and wave 0 shipped that exact wrong guidance.
+  1. ./launch-seats.sh check                      (must exit 0)
+  2. ./launch-seats.sh subject --log <path>
+       operator: O1, O2 on the subject seat.
+  3. ./launch-seats.sh carrier --profile carrier --audio-file <wav>
+       operator: O1, O2 on the carrier seat (it is unprovisioned).
+  4. shape (a): ./launch-seats.sh observer --profile observer
+     shape (b): the operator opens the WEB client in Chrome. 🔴 Shape (b)'s
+       observer MUST be the browser: a browser has e2eeCapable === false, so it
+       has NO e2eeManager and NO decode transform, and it is the ONLY seat on
+       which M1 can be answered at all. Shape (b) therefore needs THREE seats;
+       carrier and observer cannot be the same seat there.
+  5. In the OBSERVER's devtools console, BEFORE it joins the call, paste
+     toc-tap.js (the per-frame tap toc-reduce.mjs consumes) and
+     observer-sampler.js. Then join, then:
+       SLOGA_LEG.roles()
+       SLOGA_LEG.carrier("<the sid whose energy is rising while the subject is silent>")
+       SLOGA_LEG.start({ label: "<shape>-<consent|noconsent>-run<N>",
+                         shape: "a"|"b", consent: "yes"|"no" })
+     🔴 `consent` is REQUIRED and is recorded ON THE CAPTURE, so a run cannot
+     be filed into the wrong arm by a mistyped label hours later.
+  6. Operator runs the leg: O3 (consent runs only), O4, O5.
+  7. SLOGA_LEG.stop(); SLOGA_LEG.summary(); SLOGA_LEG.save()
+     SLOGA_TOC.stats(); SLOGA_TOC.save("<the same run label>-toc")
+  8. Extract the subject log's [gate-trace] JSON payloads into a JSONL file
+     (one record per line), then per run:
+       node toc-reduce.mjs --trace <subject.jsonl> --tap <toc-tap.json> \
+         --carrier <carrier ssrc> [--json]
+     Exit 0 PASS, 1 FAIL or PASS-WITH-GREY (read `reasons[]`), 3 input error
+     with NO verdict. Reduce the consent and no-consent arms SEPARATELY; §2.4
+     specifies five runs per arm, and the arms are never pooled.
+
+--------------------------------------------------------------------------------
+🔴 RULES THAT DECIDE WHETHER THE LEG MEANS ANYTHING
+
+  - The carrier MUST talk continuously for the whole leg. Any run whose carrier
+    byte series is not continuous across the measurement window is DISCARDED,
+    NOT INTERPRETED. Two runs this session were discarded for this and one was
+    reported as a PASS before the operator revealed the carrier had stopped.
+  - "Is it paused" is read from BYTES ONLY. A held gate pauses via
+    pauseUpstream() and the remote track then reads muted:false, enabled:false
+    with zero RTP. The mute flag has already produced one false PASS here.
+  - bytesReceived can NEVER establish plaintext. The discriminator is audio
+    energy on a manager-free seat.
+  - 5 runs with consent and 5 without, in EACH shape. The two series are never
+    pooled and their byte series are never compared across shapes. If operator
+    budget forces a cut, cut shape (a) — never shape (b).
+  - Record the run label on the sampler dump, on the tap dump AND in the
+    subject log filename so the three can be paired afterwards without
+    guessing, and name the arm in every single run's label.
+STEPS
+}
+
+case "${1:-}" in
+check) shift; cmd_check ;;
+steps) shift; cmd_steps ;;
+subject) shift; cmd_subject "$@" ;;
+observer) shift; cmd_unpackaged "OBSERVER" devtools "$@" ;;
+carrier) shift; cmd_unpackaged "CARRIER" nodevtools "$@" ;;
+*)
+  cat <<EOF
+launch-seats.sh <check|steps|subject|observer|carrier> [options]
+EOF
+  usage_seat
+  exit 2
+  ;;
+esac

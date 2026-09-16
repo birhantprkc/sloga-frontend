@@ -22,6 +22,16 @@ export {
 export type { OutgoingRingAction } from "./outgoingRingPolicy";
 
 export {
+  callModerationActions,
+  hasCallModerationActions,
+} from "./callModerationPolicy";
+export type {
+  CallModerationActions,
+  CallModerationPermissions,
+  CallModerationSubject,
+} from "./callModerationPolicy";
+
+export {
   REMOTE_CONTROL_CLAIM,
   REMOTE_CONTROL_EXPRESS_NOTE,
   REMOTE_CONTROL_TRUST_NOTE,

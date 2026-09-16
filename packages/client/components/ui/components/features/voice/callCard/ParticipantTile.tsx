@@ -518,6 +518,7 @@ export function ParticipantTile(props: TileProps) {
                   userId={participantUserId(participant.identity)}
                   muted={isMuted()}
                   camera={isVideo()}
+                  serverId={voice.channel()?.serverId}
                 />
               )}
             </Row>
