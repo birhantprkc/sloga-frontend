@@ -61,6 +61,10 @@ msgstr "Disconnect from call"
 msgid "Muted by a moderator. They cannot speak in this server."
 msgstr "Muted by a moderator. They cannot speak in this server."
 
+#: components/ui/components/features/voice/callCard/VoiceCallCardStatus.tsx
+msgid "Rejoin"
+msgstr "Rejoin"
+
 #: components/app/menus/UserContextMenu.tsx
 msgid "Server deafen"
 msgstr "Server deafen"
