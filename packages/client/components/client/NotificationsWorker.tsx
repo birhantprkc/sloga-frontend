@@ -35,6 +35,8 @@ import {
   showNotification,
 } from "./nativeNotifications";
 import { connectionUrl } from "./streamConnections";
+import { type UnreadBadge, sameBadge, unreadBadge } from "./unreadBadge";
+import { publishUnreadBadge } from "./unreadBadgeShell";
 
 /**
  * Process and display desktop notifications
@@ -657,6 +659,46 @@ export function NotificationsWorker() {
     document.removeEventListener("click", tryRequest);
     initNotifications();
   }
+
+  /**
+   * Publish the unread total to the OS — the taskbar button on Windows, the
+   * dock on macOS, the launcher entry on Linux, the tab title everywhere.
+   *
+   * It lives in this component because this is the one that already means "the
+   * signed-in app's background work", and because it must mount exactly once:
+   * the friends popout and the voice overlay are separate windows with their
+   * own documents, and a second publisher racing this one would leave whichever
+   * wrote last on the taskbar.
+   *
+   * Nothing is throttled. The effect only re-runs when an unread total the rail
+   * already tracks actually changes, and `sameBadge` drops the repaints where
+   * the number did not move — a message arriving in an already-unread channel
+   * with no count from the server is the common case, and it must not repaint.
+   */
+  let published: UnreadBadge = { count: 0, mention: false };
+  createEffect(() => {
+    const c = client();
+    const badge = c
+      ? unreadBadge({
+          servers: state.ordering.orderedServers(c),
+          conversations: state.ordering.orderedConversations(c),
+          isServerMuted: (server) => state.notifications.isMuted(server),
+        })
+      : { count: 0, mention: false };
+
+    if (sameBadge(badge, published)) return;
+    published = badge;
+    publishUnreadBadge(badge);
+  });
+
+  onCleanup(() => {
+    // Signing out unmounts this; the count belongs to the session, so it must
+    // not outlive it on the taskbar.
+    if (published.count !== 0) {
+      published = { count: 0, mention: false };
+      publishUnreadBadge(published);
+    }
+  });
 
   let resyncRetryTimer: number | undefined;
 
