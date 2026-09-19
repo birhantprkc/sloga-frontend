@@ -1,4 +1,11 @@
-import { Show, createMemo, createSignal, onCleanup } from "solid-js";
+import {
+  Match,
+  Show,
+  Switch,
+  createMemo,
+  createSignal,
+  onCleanup,
+} from "solid-js";
 
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import { styled } from "styled-system/jsx";
@@ -48,6 +55,23 @@ import { participantUserId } from "../participantIdentity";
  * which does not read it), and it therefore needs no chip precedence and no
  * new affordance.
  *
+ * It ALSO carries the two DEVICE-level states, whose cause and remedy are not
+ * this call's: this install could encrypt calls but is not set up for the
+ * signed-in account, and this shell can never encrypt. They exist because a
+ * red NOT-ENCRYPTED chip used to be a dead end there — no banner, no
+ * explanation, and (for a device that simply needs setting up) a one-click fix
+ * the user was never shown. Which banner applies is decided once, in
+ * `mlsCallModePolicy.callBannerState`, under a spec that asserts no red chip
+ * can reach `none`.
+ *
+ * The two device states are NOT interchangeable, and the copy tracks the
+ * difference rather than the label: a never-enrolled device never attempted
+ * anything, so nothing is paused and there is nothing to "stay" unencrypted
+ * from; a device the server refuses stays E2EE-capable, so its publishing IS
+ * held by the `negotiating` gate and the release is the only way to be heard.
+ * `voice.callCanStayUnencrypted()` is the single term that decides which,
+ * instead of a per-arm guess.
+ *
  * First paint is debounced by `MIX_BANNER_DEBOUNCE_MS` (judgment call 5) so a
  * cap-refused joiner's brief in/out never flashes the banner — the fail-closed
  * publish pause is immediate and undebounced regardless.
@@ -59,13 +83,9 @@ export function VoiceCallDowngradeBanner() {
   const { t } = useLingui();
 
   const mode = () => voice.callMode();
-  const isDowngrade = () =>
-    mode()?.kind === "mixed" ||
-    mode()?.kind === "interlude" ||
-    // ME-10 terminal-loud: the call failed to secure — offer the blocking
-    // Leave / Stay-unencrypted choice instead of leaving the user parked
-    // muted behind a chip.
-    voice.callTerminalLoud();
+  const banner = () => voice.callBannerState();
+  const readiness = () => voice.callEncryptionReadiness();
+  const isDowngrade = () => banner() !== "none";
 
   // Debounce first paint: only show once the downgrade state has persisted.
   const [visible, setVisible] = createSignal(false);
@@ -108,8 +128,30 @@ export function VoiceCallDowngradeBanner() {
   // fail identically, so the banner also offers the only real remedy.
   const e2ee = useE2EE();
   const client = useClient();
-  const { mfaFlow, showError } = useModals();
+  const { mfaFlow, showError, openModal } = useModals();
+  // The native refusal, which KNOWS the store's owner because it read the row.
   const ownerMismatch = () => storeOwnerMismatch(voice.callEncryptionError());
+  // 🔴 The store-owner accessor does NOT widen this. It reads a local row,
+  // but it compares it against `client.user.id`, which the server assigns in
+  // the `Ready` frame — so a compromised bonfire can manufacture the mismatch
+  // on a healthy device, and this button wipes local E2EE state including
+  // stored encrypted messages. Reset stays on the NATIVE refusal, which is
+  // raised by a crypto path the server does not drive
+  // (media-e2ee-reviewer, HIGH-2).
+  // The same fault seen from outside: the server would not accept this
+  // device's identity. Deliberately does NOT claim another account owns it —
+  // a hard-revoked device of the signed-in account lands here too.
+  //
+  // 🔴 It also does NOT get the Reset button. That control wipes local E2EE
+  // state including stored encrypted messages, and this verdict is assembled
+  // entirely from SERVER answers (a rejected claim, an absent directory row);
+  // letting it summon a destructive prompt inside a call hands a hostile or
+  // compromised server a lever it should not have (media-e2ee-reviewer,
+  // HIGH-3). Reset stays on `ownerMismatch`, which native produced by READING
+  // the store's own row. Here the user is routed to Settings → Encryption
+  // instead, where the same remedy sits behind the same MFA and native
+  // confirm, with the whole picture in front of them.
+  const deviceRefused = () => readiness() === "owned_elsewhere";
 
   const [resetting, setResetting] = createSignal(false);
 
@@ -144,112 +186,146 @@ export function VoiceCallDowngradeBanner() {
     }
   };
 
+  /**
+   * Take the user to the one place that fixes this: Settings → Encryption,
+   * deep-linked so they do not have to find it while a call is up. Setting
+   * encryption up mid-call does not rescue THIS call — the session is decided
+   * at connect — so the copy promises the next one, not this one.
+   */
+  const openEncryptionSettings = () =>
+    openModal({
+      type: "settings",
+      config: "user",
+      context: { page: "security" },
+    });
+
   return (
     <Show when={visible()}>
-      <Banner interlude={mode()?.kind === "interlude"}>
+      <Banner
+        interlude={banner() === "interlude"}
+        // A NOTICE, not a failure, only where nothing is paused and nothing
+        // failed: a shell that can never encrypt, and a device that was never
+        // set up here. A device the server REFUSED keeps the error colour —
+        // its publishing really is held.
+        notice={
+          banner() === "device_unsupported" ||
+          banner() === "unencrypted_notice" ||
+          (banner() === "device_not_set_up" && !deviceRefused())
+        }
+      >
         <Text>
-          <Show
-            when={ownerMismatch()}
+          <Switch
             fallback={
-              // 🔴 CONFIDENCE IS DELIBERATELY NOT READ HERE. The companion
-              // accessor `callPauseDisproofConfirmed()` grades this TRUE:
-              // confirmed means a confirming re-sweep ACTUALLY RAN, a macrotask
-              // after the first look, while FALSE — where a disproof exists at
-              // all — means the episode's consecutive-confirm budget was
-              // exhausted and a SINGLE unconfirmed observation was promoted to
-              // the verdict. This consumer treats the two alike: either one
-              // swaps in the withdrawal copy below, so a `confirmed: false`
-              // verdict carries exactly the weight of a confirmed one.
-              //
-              // That is safe TODAY only because the direction of error is a
-              // WITHDRAWAL. Acting on the weaker verdict retracts a "stays
-              // paused" promise this banner can no longer stand behind and
-              // points at Leave; it cannot raise the banner, cannot claim a
-              // pause, and cannot turn a green into a red. An over-eager
-              // withdrawal costs a too-cautious sentence, never a false red.
-              //
-              // 🔴 It stops being safe the moment this arm gains any
-              // ESCALATING effect — raising the banner itself, reddening the
-              // chip, or adding an affordance. Whoever does that must split
-              // the two verdicts here FIRST: giving a budget-exhausted single
-              // observation the weight of a confirmed disproof is the
-              // 2026-09-08 false-red class one level up. Wiring that read is
-              // its own slice, with its own audit, and is not done here.
-              <Show
-                when={voice.callPauseDisproved()}
-                fallback={
-                  <Show
-                    when={localConfirmed()}
-                    fallback={
-                      <Show
-                        when={voice.callTerminalLoud()}
-                        fallback={
-                          <Show
-                            when={
-                              mode()?.kind === "interlude" &&
-                              voice.callAnnouncedBy()
-                            }
-                            fallback={
-                              <Show
-                                when={names().length}
-                                fallback={
-                                  <Trans>
-                                    Someone in this call is not using encrypted
-                                    calls. Your audio and video stay paused
-                                    until you turn off encryption.
-                                  </Trans>
-                                }
-                              >
-                                <Trans>
-                                  {names().join(", ")} is not using encrypted
-                                  calls. Your audio and video stay paused until
-                                  you turn off encryption.
-                                </Trans>
-                              </Show>
-                            }
-                          >
-                            <Trans>
-                              A participant turned off encryption for this call.
-                              Resume to be heard — the server will be able to
-                              read this call.
-                            </Trans>
-                          </Show>
-                        }
-                      >
-                        <Trans>
-                          This call could not be secured. Your audio and video
-                          stay paused — leave, or continue without encryption.
-                        </Trans>
-                      </Show>
-                    }
-                  >
-                    <Trans>
-                      You turned off encryption for this call. Your audio and
-                      video are being sent unencrypted — the server will be able
-                      to read this call.
-                    </Trans>
-                  </Show>
-                }
-              >
-                <Trans>
-                  This call could not be secured, and your audio and video may
-                  still be sending. Leave the call to stop them.
-                </Trans>
-              </Show>
+              <Trans>
+                Someone in this call is not using encrypted calls. Your audio
+                and video stay paused until you turn off encryption.
+              </Trans>
             }
           >
-            <Trans>
-              Encryption on this device is set up for a different account, so
-              calls here cannot be encrypted. Resetting clears this device's
-              encryption — including encrypted messages stored on it — and sets
-              it up again for the account you are signed in as.
-            </Trans>
-          </Show>
+            <Match when={banner() === "device_unsupported"}>
+              <Trans>
+                Encrypted calls aren't available on this device, so your audio
+                and video are not encrypted here. Everyone else in this call can
+                see that.
+              </Trans>
+            </Match>
+            <Match when={ownerMismatch()}>
+              <Trans>
+                Encryption on this device is set up for a different account, so
+                calls here cannot be encrypted. Resetting clears this device's
+                encryption — including encrypted messages stored on it — and
+                sets it up again for the account you are signed in as.
+              </Trans>
+            </Match>
+            {/* 🔴 CONFIDENCE IS DELIBERATELY NOT READ HERE. The companion
+                accessor `callPauseDisproofConfirmed()` grades this TRUE:
+                confirmed means a confirming re-sweep ACTUALLY RAN, a macrotask
+                after the first look, while FALSE — where a disproof exists at
+                all — means the episode's consecutive-confirm budget was
+                exhausted and a SINGLE unconfirmed observation was promoted to
+                the verdict. This consumer treats the two alike: either one
+                swaps in the withdrawal copy below, so a `confirmed: false`
+                verdict carries exactly the weight of a confirmed one.
+
+                That is safe TODAY only because the direction of error is a
+                WITHDRAWAL. Acting on the weaker verdict retracts a "stays
+                paused" promise this banner can no longer stand behind and
+                points at Leave; it cannot raise the banner, cannot claim a
+                pause, and cannot turn a green into a red. An over-eager
+                withdrawal costs a too-cautious sentence, never a false red.
+
+                🔴 It stops being safe the moment this arm gains any
+                ESCALATING effect — raising the banner itself, reddening the
+                chip, or adding an affordance. Whoever does that must split
+                the two verdicts here FIRST: giving a budget-exhausted single
+                observation the weight of a confirmed disproof is the
+                2026-09-08 false-red class one level up. Wiring that read is
+                its own slice, with its own audit, and is not done here. */}
+            <Match when={voice.callPauseDisproved()}>
+              <Trans>
+                This call could not be secured, and your audio and video may
+                still be sending. Leave the call to stop them.
+              </Trans>
+            </Match>
+            <Match when={banner() === "device_not_set_up" && deviceRefused()}>
+              <Trans>
+                This device's encryption isn't registered to your account, so
+                this call can't be encrypted. Your audio and video stay paused —
+                set encryption up again on this device, continue without it, or
+                leave.
+              </Trans>
+            </Match>
+            <Match when={banner() === "device_not_set_up"}>
+              <Trans>
+                Encrypted calls aren't set up on this device, so your audio and
+                video are not encrypted here. Set encryption up to encrypt your
+                next call.
+              </Trans>
+            </Match>
+            <Match when={localConfirmed()}>
+              <Trans>
+                You turned off encryption for this call. Your audio and video
+                are being sent unencrypted — the server will be able to read
+                this call.
+              </Trans>
+            </Match>
+            <Match when={mode()?.kind === "call_full"}>
+              {/* Terminal in the session, so the plaintext release is hidden
+                  (`plaintextReleaseAvailable`) — the copy must not offer it. */}
+              <Trans>
+                This call could not be secured. Your audio and video stay
+                paused.
+              </Trans>
+            </Match>
+            <Match when={banner() === "terminal_loud"}>
+              <Trans>
+                This call could not be secured. Your audio and video stay paused
+                — leave, or continue without encryption.
+              </Trans>
+            </Match>
+            <Match when={banner() === "unencrypted_notice"}>
+              {/* The honest floor: nothing is latched, so nothing is paused
+                  and there is nothing to promise. */}
+              <Trans>This call is not encrypted.</Trans>
+            </Match>
+            <Match when={banner() === "interlude" && voice.callAnnouncedBy()}>
+              <Trans>
+                A participant turned off encryption for this call. Resume to be
+                heard — the server will be able to read this call.
+              </Trans>
+            </Match>
+            <Match when={names().length}>
+              <Trans>
+                {names().join(", ")} is not using encrypted calls. Your audio
+                and video stay paused until you turn off encryption.
+              </Trans>
+            </Match>
+          </Switch>
         </Text>
         <Actions>
           {/* Offered, never forced: this destroys local E2EE state, so it sits
               alongside "Stay unencrypted" rather than replacing it. */}
-          <Show when={ownerMismatch()}>
+          <Show when={!!ownerMismatch() && !!e2ee}>
             <Button
               size="sm"
               variant="text"
@@ -259,7 +335,30 @@ export function VoiceCallDowngradeBanner() {
               <Trans>Reset encryption</Trans>
             </Button>
           </Show>
-          <Show when={!localConfirmed()}>
+          {/* The route to device setup — the escape the ME-7 dead end lacked,
+              and (per the `deviceRefused` note above) the ONLY remedy offered
+              for a server-asserted refusal. The Encryption page serves both:
+              an unenrolled device gets the enable flow, a provisioned one the
+              disable-then-enrol flow, each behind its own gates. */}
+          {/* Not alongside Reset, where that is offered: it is the specific
+              remedy there and a second button to the same page is clutter. */}
+          <Show
+            when={
+              !ownerMismatch() &&
+              (readiness() === "needs_setup" ||
+                readiness() === "owned_elsewhere")
+            }
+          >
+            <Button size="sm" variant="text" onPress={openEncryptionSettings}>
+              <Trans>Set up encryption</Trans>
+            </Button>
+          </Show>
+          {/* Shown only where it would do something: `callCanStayUnencrypted`
+              is false with no session and no hold (a never-enrolled device, an
+              unsupported shell — nothing is paused, so the press is a silent
+              no-op) and for the terminal `call_full`, where the session
+              returns immediately. */}
+          <Show when={!localConfirmed() && voice.callCanStayUnencrypted()}>
             <Button
               size="sm"
               variant="text"
@@ -268,7 +367,8 @@ export function VoiceCallDowngradeBanner() {
               <Show
                 when={mode()?.kind === "interlude"}
                 fallback={
-                  voice.callTerminalLoud()
+                  banner() === "terminal_loud" ||
+                  banner() === "device_not_set_up"
                     ? t`Stay unencrypted`
                     : t`Turn off encryption`
                 }
@@ -309,6 +409,16 @@ const Banner = styled("div", {
       true: {
         background: "var(--md-sys-color-tertiary-container)",
         color: "var(--md-sys-color-on-tertiary-container)",
+      },
+    },
+    // Device states where nothing is paused and nothing failed: they must not
+    // wear the failure colour. The chip stays red — that is the fail-closed
+    // statement about the media — while the strip explains and offers the
+    // remedy.
+    notice: {
+      true: {
+        background: "var(--md-sys-color-secondary-container)",
+        color: "var(--md-sys-color-on-secondary-container)",
       },
     },
   },

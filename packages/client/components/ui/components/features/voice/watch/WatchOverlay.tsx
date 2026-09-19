@@ -16,6 +16,7 @@ import { useClient } from "@revolt/client";
 import { CONFIGURATION } from "@revolt/common";
 import { useError } from "@revolt/i18n";
 import { InRoom, useVoice } from "@revolt/rtc";
+import { bannerParksFloat } from "@revolt/rtc/mlsCallModePolicy";
 import { Button, IconButton } from "@revolt/ui/components/design";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
@@ -72,10 +73,12 @@ export function WatchOverlay() {
   // A BLOCKING card banner (the E2EE downgrade / terminal-loud banner, z5
   // inside the card) must stay on top; the player host sits at Float level
   // ABOVE the card, so park it (audio continues) while one is showing.
-  const blockingBanner = () => {
-    const kind = voice.callMode()?.kind;
-    return kind === "mixed" || kind === "interlude" || voice.callTerminalLoud();
-  };
+  // `bannerParksFloat(callBannerState())`, not a third copy of the rule: the
+  // old three-term test missed `call_full` (which latches, so the banner shows
+  // and the player should move), and testing `!== "none"` instead would park
+  // on the DEVICE banners — which nothing in the call clears, so the player
+  // would never come back (media-e2ee-reviewer round 5, MEDIUM).
+  const blockingBanner = () => bannerParksFloat(voice.callBannerState());
 
   // Anchor the player host to the slot whenever the slot exists.
   const [slot, setSlot] = createSignal<HTMLDivElement>();

@@ -947,7 +947,10 @@ export class World {
       ),
       rosterVerified: this.roster.map(() => true),
       channelHasOpenGroup: true,
-      capableAndEnabled: true,
+      // Both read only on the no-session path; a device running a session
+      // is enrolled, and its peers are the ones publishing.
+      deviceNeedsSetup: false,
+      peerCouldEncrypt: publishing.length > 0,
     });
   }
 

@@ -13,6 +13,7 @@ import {
   JOIN_REFUSAL_HOLD_MS,
   joinBlockedReason,
   refusalHolds,
+  refusalSuperseded,
 } from "./joinRefusalPolicy.ts";
 
 test("the join_call answers a retry cannot change are terminal", () => {
@@ -192,5 +193,118 @@ test("in flight wins over refused when both would apply", () => {
       latch: latch(),
     }),
     "in-flight",
+  );
+});
+
+test("🔴 the device-not-registered refusal is named, and is still TERMINAL", () => {
+  // An account switch on an enrolled desktop hits this, and the generic
+  // `FailedValidation` copy ("The call couldn't be started right now") never
+  // mentions encryption — so the user loses voice with no way to learn why.
+  // Naming it changes NOTHING about what the client does: the join stays
+  // refused, because delta builds that message with a catch-all `map_err` and
+  // a database error says it too.
+  assert.equal(
+    classifyJoinRefusal({
+      type: "FailedValidation",
+      error: "joining device is not registered",
+    }),
+    "DeviceNotRegistered",
+  );
+  // Any other FailedValidation keeps the generic name.
+  assert.equal(
+    classifyJoinRefusal({
+      type: "FailedValidation",
+      error: "invalid bundle encoding",
+    }),
+    "FailedValidation",
+  );
+  // And it must still block a press-storm exactly as before.
+  assert.equal(
+    joinBlockedReason({
+      channelId: "c",
+      now: 1_000,
+      channelVersion: 3,
+      inFlightChannelId: undefined,
+      latch: {
+        channelId: "c",
+        reason: "DeviceNotRegistered",
+        at: 0,
+        channelVersion: 3,
+      },
+    }),
+    "refused",
+  );
+});
+
+test("🔴 a corroborated device verdict supersedes its own refusal latch", () => {
+  // The claim that proves the device is refused lands a beat after the join
+  // that was refused for it, and the next attempt withholds the device id the
+  // server rejected — so the server's answer WILL differ. Holding the user for
+  // the rest of the 30 s punishes them for a race that a cold start into a
+  // call loses every time (media-e2ee-reviewer round 3, finding 4).
+  const latch = {
+    channelId: "c",
+    reason: "DeviceNotRegistered" as const,
+    at: 0,
+    channelVersion: 3,
+  };
+  assert.equal(refusalHolds(latch, { now: 1_000, channelVersion: 3 }), true);
+  assert.equal(
+    refusalHolds(latch, { now: 1_000, channelVersion: 3, superseded: true }),
+    false,
+  );
+  assert.equal(
+    joinBlockedReason({
+      channelId: "c",
+      now: 1_000,
+      channelVersion: 3,
+      inFlightChannelId: undefined,
+      latch,
+      superseded: true,
+    }),
+    undefined,
+  );
+});
+
+test("a media-E2EE-off deployment refuses terminally instead of throwing at the caller", () => {
+  // `require_media_e2ee_enabled` runs BEFORE the device check in
+  // `voice_join.rs`, so any enrolled client that sends a device id on such a
+  // deployment used to get an unhandled rejection and no dialog at all.
+  assert.equal(
+    classifyJoinRefusal({ type: "FeatureDisabled", feature: "media_e2ee" }),
+    "MediaE2EEDisabled",
+  );
+  // 🔴 The discriminant, never the bare type: delta uses `FeatureDisabled`
+  // right across the product (Android screen share, the /mls routes), and
+  // classifying all of them would put unrelated refusals behind copy that
+  // names encryption — and would newly latch channels for 30 s on them.
+  assert.equal(
+    classifyJoinRefusal({ type: "FeatureDisabled", feature: "screen_share" }),
+    undefined,
+  );
+  assert.equal(classifyJoinRefusal({ type: "FeatureDisabled" }), undefined);
+});
+
+test("🔴 supersession covers the latch the verdict PRECEDED, and no other", () => {
+  // Unscoped, "the verdict is up" is also true of the next refusal and the one
+  // after — so a server that raises the verdict and then keeps answering
+  // `FailedValidation` re-arms the affordance on every press, which is the
+  // press-storm the latch exists to stop (media-e2ee-reviewer round 4).
+  const at = (t: number) => ({
+    channelId: "c",
+    reason: "DeviceNotRegistered" as const,
+    at: t,
+    channelVersion: 3,
+  });
+  assert.equal(refusalSuperseded(at(100), 200), true); // verdict landed after
+  assert.equal(refusalSuperseded(at(300), 200), false); // refused since
+  assert.equal(refusalSuperseded(at(200), 200), false); // same instant holds
+  assert.equal(refusalSuperseded(at(100), undefined), false); // no verdict
+  assert.equal(refusalSuperseded(undefined, 200), false);
+  // Only this reason: every other refusal is the server's own verdict about
+  // the channel, which nothing the client corroborated can overtake.
+  assert.equal(
+    refusalSuperseded({ ...at(100), reason: "CannotJoinCall" }, 200),
+    false,
   );
 });

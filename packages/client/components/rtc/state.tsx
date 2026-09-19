@@ -128,10 +128,12 @@ import {
   classifyJoinRefusal,
   JOIN_REFUSAL_HOLD_MS,
   joinBlockedReason,
+  refusalSuperseded,
 } from "./joinRefusalPolicy";
 import { decideKeybindDispatch } from "./keybindDispatchPolicy";
 import { watchLocalUserId } from "./localUserIdentity";
 import { isPermissionDeniedError } from "./mediaAccessPolicy";
+import { anyPeerCouldEncrypt } from "./mlsRosterPolicy";
 import { RemoteControl } from "./remoteControl";
 import {
   type RemoteControlQueue,
@@ -218,15 +220,24 @@ import { CaptionSpeaker } from "./components/CaptionSpeaker";
 import { InRoom } from "./components/InRoom";
 import { RoomAudioManager } from "./components/RoomAudioManager";
 import { isDiceRollMessage, summariseDiceRoll } from "./diceRoll";
+import {
+  type CallEncryptionReadiness,
+  callEncryptionCapable,
+  callEncryptionReadiness,
+  encryptionSetupAvailable,
+} from "./e2eeDeviceReadiness";
 import { faceSettingsActive } from "./faceFilterCatalog";
 import { localPublicationsEncrypted } from "./localPublicationEncryption";
 import { micPipelineAction } from "./micPipelinePolicy";
 import { MlsKeyProvider } from "./mlsCallKeys";
 import {
+  type CallBannerKind,
   type CallMode,
   type ChipState,
+  callBannerState,
   chipState,
   isTerminalLoud,
+  plaintextReleaseAvailable,
 } from "./mlsCallModePolicy";
 import {
   type MlsMediaBinding,
@@ -237,7 +248,6 @@ import {
 } from "./mlsCallSession";
 import {
   canConfirmNoSessionPlaintext,
-  e2eeProvenOff,
   sessionSetupDecision,
 } from "./mlsSessionSetupPolicy";
 import { pauseVerdictReaders } from "./pauseVerdict";
@@ -1040,6 +1050,15 @@ class Voice {
    */
   callE2EECapable: Accessor<boolean>;
   #setCallE2EECapable: Setter<boolean>;
+  /**
+   * WHY this call is or is not encrypting on this device — the reason behind
+   * the boolean above (`e2eeDeviceReadiness`). A connect-time snapshot, like
+   * `callE2EECapable`: the chrome describes the call it joined, and the bridge
+   * facts it reads move only on a reconnect. The banner reads it to tell "set
+   * encryption up on this device" from "this shell can never encrypt".
+   */
+  callEncryptionReadiness: Accessor<CallEncryptionReadiness>;
+  #setCallEncryptionReadiness: Setter<CallEncryptionReadiness>;
   /** For a remote announce (T4): the user who announced plaintext (banner copy). */
   callAnnouncedBy: Accessor<string | undefined>;
   #setCallAnnouncedBy: Setter<string | undefined>;
@@ -1694,6 +1713,11 @@ class Voice {
     const [callE2EECapable, setCallE2EECapable] = createSignal(false);
     this.callE2EECapable = callE2EECapable;
     this.#setCallE2EECapable = setCallE2EECapable;
+
+    const [encryptionReadiness, setEncryptionReadiness] =
+      createSignal<CallEncryptionReadiness>("unsupported");
+    this.callEncryptionReadiness = encryptionReadiness;
+    this.#setCallEncryptionReadiness = setEncryptionReadiness;
 
     const [callAnnouncedBy, setCallAnnouncedBy] = createSignal<
       string | undefined
@@ -2377,9 +2401,10 @@ class Voice {
     //
     // Fail-safe (gate HIGH): a worker/provider that cannot construct — e.g.
     // the bundled `?worker` asset blocked by a `worker-src`-less CSP — must
-    // NOT break the call. Degrade to a NON-E2EE-capable Room (the same
-    // loud-non-enrolled path as an unsupported shell, never a silent plaintext
-    // lock) so voice still works.
+    // NOT break the call. It no longer DEGRADES to a non-E2EE-capable Room,
+    // which was a silent-plaintext hole (see the catch below): the call still
+    // connects and audio is held rather than lost, and one explicit press
+    // releases it.
     //
     // Fail-CLOSED on a no-key-push shell (slice 6.4 step 7, audit H3/NEW-4):
     // `nativeE2EEAvailable()` is TRUE on the Capacitor Android shell, but that
@@ -2395,7 +2420,12 @@ class Voice {
     // Wire the "Encrypt my calls" accessor into the bridge (§0.2 #9) so the
     // media-E2EE KeyPackage pre-publish is gated on the local toggle (ME-14).
     bridge?.setCallsEnabled(() => this.#settings.e2eeCallsEnabled);
-    let e2eeCapable =
+    // The PLATFORM terms — what this SHELL could do, independent of whether
+    // this install has any encryption set up. Split from the device terms
+    // below so the call chrome can tell "this browser can never encrypt"
+    // from "encryption is not set up on this desktop": the same red chip,
+    // two different remedies (`e2eeDeviceReadiness`).
+    const shellSupported =
       isE2EESupported() &&
       nativeE2EEAvailable() &&
       !!bridge?.nativeKeyPushAvailable() &&
@@ -2408,17 +2438,40 @@ class Voice {
       // "Encrypt my calls" (§0.2 #9): with it OFF we negotiate plaintext —
       // no session, no E2EE Room — and appear non-enrolled to E2EE peers
       // (their loud downgrade attributes it to us). LOCAL per-device toggle.
-      this.#settings.e2eeCallsEnabled &&
-      // E2EE proven OFF on this device is the same class as the toggle: no
-      // identity, no session, not an E2EE call — a plain voice call the
-      // peers attribute to us. Only a PROVEN off counts (`e2eeProvenOff`: a
-      // LOADED snapshot saying `enabled: false`, which the bridge writes at
-      // boot for a never-provisioned device and after a wipe). An unloaded
-      // snapshot cannot be told from an enrolled device, so it stays capable
-      // and the session-setup decision below holds the gate loud rather than
-      // let plaintext out on a device that may be enrolled (R2-4,
-      // fail-closed).
-      !e2eeProvenOff(bridge?.status.get("state"));
+      // 🔴 Folded into the SHELL term, so an install with it off would be told
+      // "encrypted calls aren't available on this device" — a lie about the
+      // shell. Harmless only because the accessor hard-returns true today
+      // (media E2EE is mandatory); whoever makes that toggle real must give it
+      // its own readiness reason first.
+      this.#settings.e2eeCallsEnabled;
+    // The DEVICE terms. E2EE proven OFF here is the same class as the
+    // toggle: no identity, no session, not an E2EE call — a plain voice call
+    // the peers attribute to us. Only a PROVEN off counts (`e2eeProvenOff`:
+    // a LOADED snapshot saying `enabled: false`, which the bridge writes at
+    // boot for a never-provisioned device and after a wipe). An unloaded
+    // snapshot cannot be told from an enrolled device, so it stays capable
+    // and the session-setup decision below holds the gate loud rather than
+    // let plaintext out on a device that may be enrolled (R2-4, fail-closed).
+    // `const`, and that is the point: capability and readiness are two
+    // names for one fact, and the only bug that ever made them disagree was
+    // a later assignment to one of them (media-e2ee-reviewer, HIGH-1).
+    const readiness = callEncryptionReadiness({
+      shellSupported,
+      status: bridge?.status.get("state"),
+      // Signing out does not wipe the E2EE store, so a second account on
+      // this install holds a device the server will not accept for it. The
+      // bridge raises this durably from a rejected device claim with an
+      // absent server row; the join refusal below is the backstop for the
+      // very first call after the switch.
+      // Either verdict is enough, and they are deliberately separate facts:
+      // the first is the server's (a rejected claim plus an absent directory
+      // row), the second is this disk's (`mls_signature_key.user_id` via the
+      // native accessor). The local one is the only unforgeable half.
+      deviceOwnedElsewhere:
+        bridge?.deviceOwnedElsewhere.has("state") === true ||
+        bridge?.storeOwnedByAnotherAccount.has("state") === true,
+    });
+    const e2eeCapable = callEncryptionCapable(readiness);
     if (e2eeCapable) {
       try {
         this.#mlsKeyProvider = new MlsKeyProvider();
@@ -2470,7 +2523,26 @@ class Voice {
         this.#e2eeWorker?.terminate();
         this.#mlsKeyProvider = undefined;
         this.#e2eeWorker = undefined;
-        e2eeCapable = false;
+        // 🔴 Deliberately does NOT drop `e2eeCapable`. It used to, as a
+        // fail-safe so a worker that cannot construct (a `worker-src`-less
+        // CSP, OOM, a bad bundle) would not break the call — but the
+        // 2026-09-06 rule that made every other capable-but-sessionless arm a
+        // loud HOLD applies here word for word, and `sessionSetupDecision`
+        // has carried the arm for it ("the call key provider is unavailable")
+        // the whole time; `connect()` was short-circuiting its own policy.
+        //
+        // Dropping it also could not be done safely: capability and
+        // `readiness` are two names for one fact, and this assignment moved
+        // only one of them. With `owned_elsewhere` that gave no gate, no
+        // latch and — where the open-group probe had not seen a group — no
+        // chip either, i.e. silent plaintext; with `ready` it gave a red strip
+        // promising "your audio and video stay paused" over a live, ungated
+        // mic (media-e2ee-reviewer, HIGH-1, twice).
+        //
+        // So the provider and worker stay undefined, the R2-5 gate stays
+        // asserted, `sessionSetupDecision` holds it loud, and the user's
+        // explicit press is the only way out — with `onErr` still surfacing
+        // the underlying exception.
         this.onErr(error);
       }
     }
@@ -2479,6 +2551,7 @@ class Voice {
     // captions must never broadcast on a call that can be encrypted unless the
     // mode is positively plaintext.
     this.#setCallE2EECapable(e2eeCapable);
+    this.#setCallEncryptionReadiness(readiness);
 
     // Device-qualified LiveKit identity (slice 6.1/6.4 item 3): source the
     // E2EE device id so `joinCall` mints identity `{user_id}:{device_id}` —
@@ -2486,9 +2559,22 @@ class Voice {
     // exact identity. Undefined ⇒ we request no qualified identity (non-E2EE
     // / not-yet-provisioned), and the identity assertion below is skipped.
     const selfUserId = this.getClient()?.user?.id;
-    const e2eeDeviceId = e2eeCapable
-      ? bridge?.status.get("state")?.device_id
-      : undefined;
+    // Withheld once the corroborated verdict says the server will refuse it:
+    // sending it would fail the join outright, and the whole point is that
+    // this device joins, unqualified and loud, rather than losing voice.
+    //
+    // Also withheld when the provider or worker failed to construct. That hold
+    // can never resolve, and a device-qualified identity makes every peer read
+    // us as `pending` and spend their admit grace on a member that will never
+    // arrive; bare, they classify us non-enrolled at once and go loud on their
+    // own side immediately (round 4, LOW).
+    const e2eeDeviceId =
+      e2eeCapable &&
+      readiness !== "owned_elsewhere" &&
+      this.#mlsKeyProvider !== undefined &&
+      this.#e2eeWorker !== undefined
+        ? bridge?.status.get("state")?.device_id
+        : undefined;
 
     // Resolved once so the Room option and the post-connect sink switch below
     // can never disagree about which audio path this call is on.
@@ -2658,6 +2744,17 @@ class Voice {
 
     room.addListener("connected", () => {
       this.#setState("CONNECTED");
+      // 🔴 The participants already in the call when we joined never bump this
+      // otherwise. livekit routes `ParticipantConnected` through
+      // `emitWhenConnected`, which DROPS it unless the room is already
+      // connected, so the JoinResponse roster arrives silently — and `#setRoom`
+      // ran before `room.connect()`, so `room()` does not change either. Every
+      // chip term derived from `remoteParticipants` (`peerCouldEncrypt`, gate
+      // (b)'s publisher set) therefore read an empty roster for the whole call
+      // if nobody joined, left or published after us: a device that cannot
+      // encrypt, joining a call an enrolled peer was already in, stayed on
+      // chip `none` with no banner (media-e2ee-reviewer round 4, HIGH).
+      this.#setCallParticipantsVersion((v) => v + 1);
       nativeCallServiceStart();
       // Captions relay through the SERVER, not a LiveKit data channel: the
       // voice token is minted `can_publish_data: false`, so the SFU silently
@@ -3311,6 +3408,30 @@ class Voice {
             e2eeDeviceId ?? undefined,
           );
         } catch (error) {
+          // 🔴 Deliberately NOT recovered here. delta refuses a device-qualified
+          // join it cannot resolve for the signed-in account
+          // (`assert_device_bound_session`), and the commonest cause is this
+          // install's E2EE store belonging to a DIFFERENT account — sign-out
+          // does not wipe it. Re-joining UNQUALIFIED would rescue the call, and
+          // a first cut did exactly that; it hands a hostile or compromised
+          // server a lever it does not otherwise have. One `FailedValidation`
+          // reply would put this client on a BARE identity, which every peer
+          // classifies as instantly non-enrolled (`mlsRosterPolicy`) — so the
+          // whole call drops to `mixed` and everyone else is offered "Turn off
+          // encryption" — and would raise a destructive "Reset encryption"
+          // prompt here, on nothing but that server's say-so. The route builds
+          // that message with a catch-all `map_err`, so a database error says
+          // it too (media-e2ee-reviewer, HIGH-2).
+          //
+          // The account-switch case is recovered on the CORROBORATED path
+          // instead: `E2EEBridge.#onClaimResult` (a rejected device claim plus
+          // an absent device-directory row plus no §6.4 restore) raises
+          // `deviceOwnedElsewhere`, `readiness` reads `owned_elsewhere` before
+          // this join, and the device id is withheld above — so the call joins
+          // unqualified, holds the gate loud, and never reaches this catch.
+          // What the refusal earns is a name (`classifyJoinRefusal` →
+          // `DeviceNotRegistered`) so the latched refusal can say what
+          // happened instead of "The call couldn't be started right now".
           joinCallError = error;
           throw error;
         }
@@ -3530,6 +3651,7 @@ class Voice {
         deviceId: !!e2eeDeviceId,
         identityOk: e2eeIdentityOk,
         keysListenerBound,
+        deviceOwnedElsewhere: readiness === "owned_elsewhere",
       });
       if (
         setup.action === "session" &&
@@ -3750,6 +3872,7 @@ class Voice {
       // call's latched mode/roster/attribution (FE-9a).
       this.#setCallMode(undefined);
       this.#setCallE2EECapable(false);
+      this.#setCallEncryptionReadiness("unsupported");
       this.#setCallAnnouncedBy(undefined);
       this.#setCallRoster({ members: [], ghosts: [] });
       this.#setCallChannelHasOpenGroup(false);
@@ -7376,13 +7499,50 @@ class Voice {
    * latch's release (channel event or hold timer).
    */
   joinBlocked(channel: Channel): JoinBlockedReason | undefined {
+    const latch = this.#joinRefusals().get(channel.id);
     return joinBlockedReason({
       channelId: channel.id,
       now: Date.now(),
       channelVersion: this.#channelVersions.get(channel.id) ?? 0,
       inFlightChannelId: this.joinPending(),
-      latch: this.#joinRefusals().get(channel.id),
+      latch,
+      // A `DeviceNotRegistered` refusal is answered by the device claim that
+      // lands a beat later: once the corroborated verdict is in, the next
+      // attempt withholds the very device id the server rejected, so the
+      // server's answer WILL differ and holding the user for the rest of the
+      // 30 s is punishing them for a race. The claim needs two WS round trips
+      // plus an HTTP GET after `ready`, so a cold start straight into a call
+      // — the Answer button on a push notification — loses its first attempt
+      // every single time without this (media-e2ee-reviewer round 3,
+      // finding 4). Nothing here trusts the refusal itself: the release is
+      // driven by state the CLIENT corroborated.
+      // The scoping — only a latch the verdict PRECEDED — lives in
+      // `refusalSuperseded` with its own spec; this is the wiring.
+      superseded: refusalSuperseded(latch, this.#deviceRefusedAt()),
     });
+  }
+
+  /**
+   * WHEN the corroborated "the server does not accept this device" verdict was
+   * raised (`deviceOwnedElsewhere`), or undefined while it is not. Reactive —
+   * a `ReactiveMap` read — so everything derived from it re-runs when the
+   * device claim settles. The instant belongs to the VERDICT, stamped where it
+   * is written; a time stamped on first observation would make the
+   * refusal-supersession comparison depend on who happened to look.
+   */
+  #deviceRefusedAt(): number | undefined {
+    const bridge = this.getClient()?.e2ee as E2EEBridge | undefined;
+    // BOTH verdicts, earliest first. Only the server-derived one was read
+    // before, so a server that keeps answering the device directory "present"
+    // held `refusalSuperseded` off while the LOCAL verdict stood — and the
+    // client really does withhold the device id on the next attempt, so the
+    // user ate the full 30 s punish window on every join for an answer we
+    // already knew had changed (media-e2ee-reviewer, MEDIUM-7).
+    const times = [
+      bridge?.deviceOwnedElsewhere.get("state"),
+      bridge?.storeOwnedByAnotherAccount.get("state"),
+    ].filter((at): at is number => at !== undefined);
+    return times.length ? Math.min(...times) : undefined;
   }
 
   /**
@@ -7406,6 +7566,22 @@ class Voice {
         return t`You don't have permission to join calls in this channel.`;
       case "CannotJoinCall":
         return t`The call is full. Try again when someone leaves.`;
+      case "DeviceNotRegistered":
+        // 🔴 The specific sentence only when the CLAIM has corroborated it.
+        // On an inherited store the Encryption page reads "on" (the snapshot
+        // is the previous owner's), so "fix it there" means the disable flow —
+        // which wipes local E2EE state including stored encrypted messages.
+        // delta builds this refusal with a catch-all `map_err`, so a database
+        // blip says it too, and sending a user to destroy their history over
+        // a 400 ms hiccup is not something the app may do
+        // (media-e2ee-reviewer round 3, finding 3). Uncorroborated, we report
+        // the server's answer and nothing more; the corroborated case
+        // resolves itself within a reconnect anyway.
+        return this.#deviceRefusedAt() !== undefined
+          ? t`Encryption on this device isn't registered to your account, so calls can't be joined here. Open Settings → Encryption to fix it.`
+          : t`The call server wouldn't accept this device's encryption.`;
+      case "MediaE2EEDisabled":
+        return t`Encrypted calls are turned off on this server right now.`;
       default:
         // IsBot / FailedValidation / UnknownNode: nothing the user can act
         // on from here; the latch still stops the press-storm.
@@ -7557,7 +7733,36 @@ class Voice {
       localPublicationsEncrypted: localDeclared,
       rosterVerified: this.callRoster().members.map((m) => m.user_verified),
       channelHasOpenGroup: this.callChannelHasOpenGroup(),
-      capableAndEnabled: this.#settings.e2eeCallsEnabled,
+      // The connect-time capability, NOT `settings.e2eeCallsEnabled`: that
+      // accessor hard-returns true (media E2EE is mandatory), so passing it
+      // collapsed the chip's two no-session branches — a browser took the
+      // "capable shell, failed construction" arm. Both return not_encrypted,
+      // so the chip never moved; the banner now has to tell them apart.
+      // A LOCAL fact, so unlike the open-group probe it cannot go stale: this
+      // device could encrypt calls and is not set up to.
+      deviceNeedsSetup: encryptionSetupAvailable(
+        this.callEncryptionReadiness(),
+      ),
+      // ...and a LIVE one, so it says nothing on a call where there is no
+      // encryption to be left out of. A device-qualified identity is minted
+      // only for a participant that asked for one, which delta grants only
+      // after resolving that device for that user — so its presence is proof
+      // someone here can encrypt. Screen legs are their owner's device and
+      // count the same.
+      //
+      // 🔴 `isDeviceQualified`, not `includes(":")`: the leg grammar is always
+      // three segments, so a NON-device-qualified peer's leg is `"{user}::
+      // screen"` and contains a colon while proving the opposite. And the
+      // OWN-leg exclusion matters for the same reason it does in the publisher
+      // loop above — `remoteParticipants` contains our own leg, so without it
+      // a device that merely started a screen share would light its own chip
+      // (media-e2ee-reviewer round 4, MEDIUM).
+      peerCouldEncrypt: room
+        ? anyPeerCouldEncrypt(
+            [...room.remoteParticipants.values()].map((p) => p.identity),
+            room.localParticipant.identity,
+          )
+        : false,
     });
   }
 
@@ -7765,6 +7970,56 @@ class Voice {
       this.callEncryptionChip(),
       this.callEncryptionError() !== undefined,
     );
+  }
+
+  /**
+   * Whether the Room for THIS call was actually built with the `e2ee` option —
+   * i.e. both pieces it needs are present. Capability is not re-tested here
+   * because neither field is ever constructed outside the `if (e2eeCapable)`
+   * block that builds them.
+   *
+   * `callE2EECapable()` used to imply this — a provider or worker that failed
+   * to construct dropped capability with it. It no longer does: that failure
+   * is a loud HOLD now (see `connect()`), so a capable call can have no
+   * provider and no worker, and the Room is built without the option. The one
+   * reader that depends on the equivalence is `RoomAudioManager`'s
+   * missing-manager probe, which uses it to tell a benign absence from an SDK
+   * rename that would leave the arming transform installed and unreachable —
+   * a warning that must stay meaningful.
+   *
+   * Deliberately not reactive: both fields are set once during `connect()`,
+   * before anything that reads this runs, and every reader is inside an
+   * event-driven sweep rather than a tracked scope.
+   */
+  callE2EERoomArmed(): boolean {
+    return this.#mlsKeyProvider !== undefined && this.#e2eeWorker !== undefined;
+  }
+
+  /**
+   * Which banner the call card owes this call — the single derivation the
+   * banner component switches on, so the invariant it enforces (a red chip
+   * is never a dead end) is decided in one unit-tested place.
+   */
+  callBannerState(): CallBannerKind {
+    return callBannerState({
+      chip: this.callEncryptionChip(),
+      mode: this.callMode(),
+      latchedError: this.callEncryptionError() !== undefined,
+      readiness: this.callEncryptionReadiness(),
+    });
+  }
+
+  /**
+   * Whether the banner's plaintext release would release anything — the pure
+   * `plaintextReleaseAvailable` rule, which owns the reasoning and the spec.
+   */
+  callCanStayUnencrypted(): boolean {
+    return plaintextReleaseAvailable({
+      mode: this.callMode(),
+      hasSession: this.#mlsSession !== undefined,
+      e2eeCapable: this.callE2EECapable(),
+      latchedError: this.callEncryptionError() !== undefined,
+    });
   }
 
   /**

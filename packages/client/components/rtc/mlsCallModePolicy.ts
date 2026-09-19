@@ -3,7 +3,8 @@
  * payload parser — the PURE, session-independent core of slice 6.5's downgrade
  * UX, extracted from `mlsCallSession`/`state.tsx` so every transition and the
  * chip precedence table are unit-testable in isolation (the house no-vitest
- * split; this module must stay dependency-free so `node --test` can load it).
+ * split; this module must stay dependency-free so `node --test` can load it —
+ * the one import below is TYPE-ONLY and is erased, so nothing is loaded).
  *
  * Nothing here performs I/O or touches a Room: `callModeTransition` returns the
  * NEXT mode + the EFFECTS the session must run; `chipState` derives the visible
@@ -11,6 +12,8 @@
  * ctl-announce (default-closed forward-compat). The session owns the imperative
  * glue (native confirm dialog, pause gate, announce courier, timers).
  */
+
+import type { CallEncryptionReadiness } from "./e2eeDeviceReadiness.ts";
 
 // ---- Call mode (the §3.4 state machine) ------------------------------------
 
@@ -294,10 +297,35 @@ export interface ChipInputs {
   localPublicationsEncrypted: boolean;
   /** The VERIFIED MLS roster: every member's `user_verified` flag. */
   rosterVerified: readonly boolean[];
-  /** The channel has an open MLS group (the probe result — FE-7). */
+  /**
+   * The channel has an open MLS group — the FE-7 probe, answered ONCE at
+   * connect and never re-asked. That staleness is why it cannot be the only
+   * term below.
+   */
   channelHasOpenGroup: boolean;
-  /** This shell can do media E2EE (capable + toggle on). */
-  capableAndEnabled: boolean;
+  /**
+   * This shell COULD encrypt calls and this install is not set up for it —
+   * `encryptionSetupAvailable(readiness)`. A LOCAL fact, so unlike the probe
+   * it is always current. Without it a never-enrolled desktop that joined
+   * before the group opened stayed on chip `none` for the whole call — silent
+   * on the side whose media is in the clear, while every peer paused behind
+   * the mixed banner naming it (media-e2ee-reviewer, HIGH-4).
+   */
+  deviceNeedsSetup: boolean;
+  /**
+   * At least one OTHER participant is device-qualified on the SFU, i.e.
+   * someone here can encrypt. LIVE — re-read on every participants-version
+   * bump — which is what makes it usable where the open-group probe is not.
+   *
+   * It is what keeps `deviceNeedsSetup` from shouting on a call where nobody
+   * is encrypting: `shellSupported` is true on every Tauri desktop and every
+   * native Android build, not just the platforms media E2EE has shipped on,
+   * so an unqualified local term would have put a red chip and an
+   * undismissable strip on EVERY call for every install that never turned
+   * encryption on — including plain calls with nothing to downgrade
+   * (media-e2ee-reviewer round 3, finding 2).
+   */
+  peerCouldEncrypt: boolean;
 }
 
 /**
@@ -321,23 +349,25 @@ export function chipState(inputs: ChipInputs): ChipState {
   ) {
     return "not_encrypted";
   }
-  // Capable-but-failed construction in an E2EE-known call (ME-7/R2-4): a
-  // toggle-on capable shell with NO session but a channel that HAS an open
-  // group must not read as a quiet plain call — it is a downgrade the user
-  // can't see. (The session-present latched-error case is caught above.)
+  // NO SESSION. Two independent reasons this is a downgrade rather than a
+  // quiet plain call, and either is enough:
+  //
+  //  (a) the channel HAS an open group — someone is encrypting and we are not.
+  //      Covers ME-7/R2-4 (a capable shell whose session failed to construct,
+  //      a downgrade the user can't see) and the §0.2 #9 self-attribution for
+  //      a shell that can never encrypt. The old `capableAndEnabled` split of
+  //      this arm is gone: both halves always returned the same chip, and the
+  //      BANNER is what needs them told apart (`callBannerState` reads the
+  //      readiness).
+  //  (b) this device could encrypt, is not set up here, and someone else in
+  //      the call CAN encrypt. Local and live, so unlike (a) it cannot go
+  //      stale when the group opens after the probe answered — and unlike an
+  //      unqualified local term it says nothing on a call where there is no
+  //      encryption to be left out of.
   if (
     !inputs.hasSession &&
-    inputs.capableAndEnabled &&
-    inputs.channelHasOpenGroup
-  ) {
-    return "not_encrypted";
-  }
-  // Toggle-OFF self in a channel whose call IS E2EE (§0.2 #9 self-attribution):
-  // no session (we didn't attempt), capable shell present but calls disabled.
-  if (
-    !inputs.hasSession &&
-    !inputs.capableAndEnabled &&
-    inputs.channelHasOpenGroup
+    (inputs.channelHasOpenGroup ||
+      (inputs.deviceNeedsSetup && inputs.peerCouldEncrypt))
   ) {
     return "not_encrypted";
   }
@@ -419,6 +449,195 @@ export function isTerminalLoud(
   if (chip !== "not_encrypted") return false;
   if (mode?.kind === "negotiating") return true;
   return mode === undefined && latchedError;
+}
+
+// ---- Which banner a chip must carry (the no-dead-end invariant) ------------
+
+/**
+ * The banner the call card renders, or `none`.
+ *
+ * - `mixed` / `interlude` — the §3.4 downgrade states. Publishing is paused
+ *   (mixed) or explicitly resumed in plaintext (interlude); the escape is
+ *   "Turn off encryption" / "Resume unencrypted".
+ * - `device_not_set_up` — this shell COULD encrypt calls but this install is
+ *   not set up for the signed-in account: never enrolled, wiped, or holding a
+ *   device the server refuses. The cause and the remedy are the DEVICE's, so
+ *   it does not borrow the call-failure copy. Whether publishing is paused
+ *   differs by cause (see `callEncryptionCapable`), which is why the caller —
+ *   not this rule — decides whether to offer the plaintext release.
+ * - `device_unsupported` — this shell can never encrypt calls (a browser, an
+ *   unaudited build). Nothing to set up; the escape is Leave.
+ * - `terminal_loud` — ME-10: the DEVICE is fine and the CALL failed to secure.
+ *   Publishing is held by the `negotiating` gate; the escape is Leave / Stay
+ *   unencrypted (plus Reset encryption on a store-owner mismatch). Requires a
+ *   LATCHED error, because that is what makes its copy — "your audio and video
+ *   stay paused" — true.
+ * - `unencrypted_notice` — the honest floor: a red chip nothing above claimed,
+ *   with nothing latched, so no pause may be promised and no release offered.
+ *   Unreachable today (every red chip on a `ready` device latches); it exists
+ *   so the backstop cannot lie the way the previous one did.
+ */
+export type CallBannerKind =
+  | "none"
+  | "mixed"
+  | "interlude"
+  | "terminal_loud"
+  | "device_not_set_up"
+  | "device_unsupported"
+  | "unencrypted_notice";
+
+export interface CallBannerInputs {
+  /** The §4.4 chip, from `chipState`. */
+  chip: ChipState;
+  /** The §3.4 call mode (undefined before any verdict). */
+  mode: CallMode | undefined;
+  /**
+   * A structured call-encryption error is latched.
+   *
+   * Load-bearing, not decoration: on every reachable path the latch and the
+   * held `negotiating` gate are asserted together (`sessionSetupDecision`'s
+   * `hold_loud`, `#onLoud`), so it is the term that decides whether a banner
+   * may claim publishing is paused. It was accepted and ignored once, which
+   * is exactly how a red strip came to promise a pause over a live mic
+   * (media-e2ee-reviewer, MEDIUM-1).
+   */
+  latchedError: boolean;
+  /**
+   * WHY this device is or is not encrypting, from `e2eeDeviceReadiness` —
+   * the whole four-valued reason, deliberately not a boolean. Collapsing it
+   * made `unsupported` ("this app can't encrypt calls", a POSITIVE fact) the
+   * fallback for "we don't know", which is the most reassuring and least
+   * actionable thing to say to someone whose call just failed
+   * (media-e2ee-reviewer, F4).
+   */
+  readiness: CallEncryptionReadiness;
+}
+
+/**
+ * THE INVARIANT: `chipState(x) === "not_encrypted"` implies
+ * `callBannerState(...) !== "none"`, for every readiness. A red chip always
+ * carries a banner and an escape — enforced by an exhaustive spec over the
+ * chip's whole input space, not by inspection.
+ *
+ * It did not hold before. `isTerminalLoud` requires a latched error, and the
+ * chip's two NO-SESSION branches (ME-7 "capable, no session, open group" and
+ * the §0.2 #9 self-attribution) latch nothing — nobody attempted encryption,
+ * so nothing could fail. Those were read as attribution rather than failure and
+ * deliberately given no banner. For a browser that reading is right; for a
+ * desktop install that could encrypt and simply is not set up it is a downgrade
+ * with a one-click remedy the user is never shown, which is the §7.4
+ * observation this closes.
+ *
+ * 🔴 The invariant is about the chip, and the chip is not the whole story: both
+ * no-session branches are gated on `channelHasOpenGroup`, a server probe run
+ * ONCE at connect. A device that cannot encrypt, alone in a channel with no
+ * group yet, gets chip `none` and therefore no banner from this rule — so a
+ * device that must not go quiet has to stay E2EE-CAPABLE and latch, which puts
+ * its chip red through `latchedError` with no probe involved. That is what
+ * `callEncryptionCapable` does for `owned_elsewhere`, and it is the reason it
+ * is not simply "not an E2EE call". The remaining case — a never-enrolled
+ * install (`needs_setup`) in a channel whose group opens after the probe
+ * answered — is pre-existing on main and recorded as a follow-up, with a spec
+ * below that pins the gap rather than letting it hide.
+ */
+export function callBannerState(inputs: CallBannerInputs): CallBannerKind {
+  const mode = inputs.mode?.kind;
+  if (mode === "mixed") return "mixed";
+  if (mode === "interlude") return "interlude";
+  if (inputs.chip !== "not_encrypted") return "none";
+
+  // The device arms outrank the loud one: when the reason this call is not
+  // encrypted is the device, saying "this call could not be secured" and
+  // offering only a per-call escape sends the user round the loop again on
+  // their next call.
+  switch (inputs.readiness) {
+    case "unsupported":
+      return "device_unsupported";
+    case "needs_setup":
+    case "owned_elsewhere":
+      return "device_not_set_up";
+    case "ready":
+      break;
+  }
+
+  // A `ready` device with a red chip is a CALL failure. Everything left lands
+  // here — the two `isTerminalLoud` shapes, the `call_full` auto-leave, and any
+  // red state a future change invents — so nothing can return `none` from here
+  // by omission. `isTerminalLoud` is still the name for the two shapes it
+  // always covered (`callTerminalLoud`), not the gate for this.
+  //
+  // The latch is what makes the loud copy true. Every reachable red chip on a
+  // `ready` device has one: `sessionSetupDecision` latches on every
+  // capable-but-sessionless arm, `#onLoud` latches before `call_full`, and a
+  // session that reached `failed` came through `#onLoud`. An unlatched one
+  // would mean no gate is held, so it gets the floor instead of a promise.
+  return inputs.latchedError ? "terminal_loud" : "unencrypted_notice";
+}
+
+/**
+ * Whether a banner must park the Float-level Watch Together player host.
+ *
+ * The card banner sits at z5 INSIDE the call card and the player host floats
+ * above the card, so a banner the user is meant to read and act on has to
+ * displace it. That is true of the three §3.4 states — each has an in-call
+ * control that clears it, so the park is transient by construction.
+ *
+ * 🔴 It is NOT true of the device banners. `device_not_set_up`,
+ * `device_unsupported` and `unencrypted_notice` describe the DEVICE, and
+ * nothing in the call clears them: parking on those un-anchors the player for
+ * the entire call, with no control that brings it back and no copy that says
+ * why. Testing `!== "none"` did exactly that and is how this rule earned a name
+ * (media-e2ee-reviewer round 5, MEDIUM). They still need a z-order that beats
+ * the player; that is a layout fix, not a reason to hide the video.
+ */
+export function bannerParksFloat(kind: CallBannerKind): boolean {
+  return kind === "mixed" || kind === "interlude" || kind === "terminal_loud";
+}
+
+/**
+ * Whether the banner's plaintext release would release anything.
+ *
+ * With a session the session owns it (`confirmPlaintext`). Without one it is
+ * the R2-4 hold, whose terms `canConfirmNoSessionPlaintext` checks; the two
+ * here stand in for all of them, because the hold latches the error and
+ * asserts the `negotiating` gate in the same step and the only thing that
+ * empties the gate is `#confirmNoSessionPlaintext`, which flips the mode to a
+ * confirmed interlude — a different banner.
+ *
+ * Keeps the button off the banners where nothing is paused (a never-enrolled
+ * device, a shell that cannot encrypt), where pressing it is a silent no-op,
+ * and off `call_full`, which is terminal in the session so `confirmPlaintext`
+ * returns immediately. Lives here rather than on `Voice` because it is the
+ * rule that decides whether a user is offered a plaintext downgrade, and the
+ * Voice class cannot be loaded under `node --test`.
+ */
+export interface PlaintextReleaseInputs {
+  mode: CallMode | undefined;
+  hasSession: boolean;
+  /** The call's connect-time capability snapshot. */
+  e2eeCapable: boolean;
+  latchedError: boolean;
+}
+
+export function plaintextReleaseAvailable(
+  inputs: PlaintextReleaseInputs,
+): boolean {
+  const mode = inputs.mode?.kind;
+  if (mode === "call_full") return false;
+  if (inputs.hasSession) {
+    // With a session the session owns the release — but only where it has
+    // something to release. `mixed` and `interlude` are its own downgrade
+    // states and `negotiating` holds the gate; anything else needs the latch
+    // that proves a gate is held, or `confirmPlaintext` returns immediately
+    // and the button is the silent no-op this rule exists to prevent.
+    return (
+      mode === "mixed" ||
+      mode === "interlude" ||
+      mode === "negotiating" ||
+      inputs.latchedError
+    );
+  }
+  return inputs.e2eeCapable && inputs.latchedError;
 }
 
 // ---- ctl-announce payload parsing (default-closed forward-compat) ----------

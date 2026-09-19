@@ -30,9 +30,10 @@ const READY: SessionSetupInput = {
   deviceId: true,
   identityOk: true,
   keysListenerBound: true,
+  deviceOwnedElsewhere: false,
 };
 
-/** Every input the function can be given (2^7 = 128 shapes). */
+/** Every input the function can be given (2^8 = 256 shapes). */
 function* everyInput(): Generator<SessionSetupInput> {
   for (const e2eeCapable of BOOLS)
     for (const bridge of BOOLS)
@@ -41,15 +42,17 @@ function* everyInput(): Generator<SessionSetupInput> {
           for (const deviceId of BOOLS)
             for (const identityOk of BOOLS)
               for (const keysListenerBound of BOOLS)
-                yield {
-                  e2eeCapable,
-                  bridge,
-                  keyProvider,
-                  userId,
-                  deviceId,
-                  identityOk,
-                  keysListenerBound,
-                };
+                for (const deviceOwnedElsewhere of BOOLS)
+                  yield {
+                    e2eeCapable,
+                    bridge,
+                    keyProvider,
+                    userId,
+                    deviceId,
+                    identityOk,
+                    keysListenerBound,
+                    deviceOwnedElsewhere,
+                  };
 }
 
 test("a capable shell with every precondition met builds the session", () => {
@@ -101,6 +104,7 @@ test("non-capable shell → plain call, no gate — whatever else is missing", (
       deviceId: false,
       identityOk: false,
       keysListenerBound: false,
+      deviceOwnedElsewhere: false,
     }),
     { action: "plain" },
   );
@@ -118,6 +122,7 @@ test("PROOF: no capable input yields plain; only the fully-met input yields sess
     }
     assert.notEqual(decision.action, "plain", JSON.stringify(input));
     const allMet =
+      !input.deviceOwnedElsewhere &&
       input.bridge &&
       input.keyProvider &&
       input.userId &&
@@ -277,4 +282,41 @@ test("PROOF: the escape needs all four terms — any single missing term refuses
             JSON.stringify(input),
           );
         }
+});
+
+test("🔴 a device the server refuses HOLDS LOUD — it never falls through to plain", () => {
+  // `owned_elsewhere` stays E2EE-capable on purpose (see
+  // `callEncryptionCapable`), so it must land on a hold with a reason of its
+  // own: the caller withholds the refused device id, which without this arm
+  // would read as "this device's E2EE identity is not available yet" — wrong,
+  // and nothing the user can act on.
+  const d = sessionSetupDecision({
+    e2eeCapable: true,
+    bridge: true,
+    keyProvider: true,
+    userId: true,
+    deviceId: false,
+    identityOk: false,
+    keysListenerBound: true,
+    deviceOwnedElsewhere: true,
+  });
+  assert.equal(d.action, "hold_loud");
+  assert.match(
+    (d as { reason: string }).reason,
+    /not registered to the account you are signed in as/,
+  );
+});
+
+test("the refused-device arm is inert unless it is set", () => {
+  const d = sessionSetupDecision({
+    e2eeCapable: true,
+    bridge: true,
+    keyProvider: true,
+    userId: true,
+    deviceId: true,
+    identityOk: true,
+    keysListenerBound: true,
+    deviceOwnedElsewhere: false,
+  });
+  assert.deepEqual(d, { action: "session" });
 });

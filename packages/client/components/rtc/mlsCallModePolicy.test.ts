@@ -8,10 +8,13 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  type CallBannerInputs,
   type CallMode,
   type ChipInputs,
   type LoudHealInputs,
   MediaErrorLedger,
+  bannerParksFloat,
+  callBannerState,
   callModeTransition,
   chipState,
   classifyEncryptionError,
@@ -24,6 +27,7 @@ import {
   mixDetectedAction,
   modeUnderLoudLatch,
   parseCtlPayload,
+  plaintextReleaseAvailable,
   rotationWindowMs,
 } from "./mlsCallModePolicy.ts";
 
@@ -200,7 +204,8 @@ const baseChip = (over: Partial<ChipInputs>): ChipInputs => ({
   localPublicationsEncrypted: true,
   rosterVerified: [true, true],
   channelHasOpenGroup: true,
-  capableAndEnabled: true,
+  deviceNeedsSetup: false,
+  peerCouldEncrypt: true,
   ...over,
 });
 
@@ -407,13 +412,14 @@ test("chip plaintext/off/no-session with no open group → none", () => {
       localPublicationsEncrypted: true,
       rosterVerified: [],
       channelHasOpenGroup: false,
-      capableAndEnabled: false,
+      deviceNeedsSetup: false,
+      peerCouldEncrypt: true,
     }),
     "none",
   );
 });
 
-test("chip ME-7/R2-4: capable+enabled, NO session, open E2EE group ⇒ not_encrypted (silent-fail guard)", () => {
+test("chip ME-7/R2-4 + §0.2#9: NO session in a channel with an open group ⇒ not_encrypted", () => {
   assert.equal(
     chipState({
       hasSession: false,
@@ -426,13 +432,14 @@ test("chip ME-7/R2-4: capable+enabled, NO session, open E2EE group ⇒ not_encry
       localPublicationsEncrypted: true,
       rosterVerified: [],
       channelHasOpenGroup: true,
-      capableAndEnabled: true,
+      deviceNeedsSetup: false,
+      peerCouldEncrypt: true,
     }),
     "not_encrypted",
   );
 });
 
-test("chip §0.2#9 self-attribution: toggle-OFF self in an E2EE channel ⇒ not_encrypted", () => {
+test("chip: the open-group branch speaks for any shell, capable or not", () => {
   assert.equal(
     chipState({
       hasSession: false,
@@ -445,7 +452,8 @@ test("chip §0.2#9 self-attribution: toggle-OFF self in an E2EE channel ⇒ not_
       localPublicationsEncrypted: true,
       rosterVerified: [],
       channelHasOpenGroup: true,
-      capableAndEnabled: false,
+      deviceNeedsSetup: false,
+      peerCouldEncrypt: true,
     }),
     "not_encrypted",
   );
@@ -476,10 +484,12 @@ test("terminal-loud: refusal inside establish() — failed before ANY mode verdi
   assert.equal(isTerminalLoud(undefined, "not_encrypted", true), true);
 });
 
-test("terminal-loud: attribution chips without a latched error never raise the banner", () => {
+test("terminal-loud: attribution chips without a latched error are not a LOUD failure", () => {
   // chipState reads not_encrypted with NO session for the ME-7/§0.2#9
-  // branches (web participant, toggle-off self). Without a latched error
-  // that is attribution, not a failure — no banner.
+  // branches (web participant, a device with no encryption set up). Nothing
+  // was attempted, so nothing latched and nothing is paused — the loud
+  // banner's copy and its "Stay unencrypted" release would both be wrong.
+  // They are NOT bannerless: `callBannerState` gives them the device arms.
   assert.equal(isTerminalLoud(undefined, "not_encrypted", false), false);
 });
 
@@ -492,6 +502,477 @@ test("terminal-loud: any emitted mode verdict other than negotiating is not term
 test("terminal-loud: requires the loud chip", () => {
   assert.equal(isTerminalLoud(NEGOTIATING, "resecuring", true), false);
   assert.equal(isTerminalLoud(undefined, "none", true), false);
+});
+
+// ---- Which banner a chip carries (the no-dead-end invariant) ----------------
+
+const baseBanner = (over: Partial<CallBannerInputs>): CallBannerInputs => ({
+  chip: "not_encrypted",
+  mode: undefined,
+  latchedError: false,
+  readiness: "needs_setup",
+  ...over,
+});
+
+test("banner: the §3.4 downgrade modes keep their own banners", () => {
+  assert.equal(
+    callBannerState(baseBanner({ mode: MIXED, readiness: "ready" })),
+    "mixed",
+  );
+  assert.equal(
+    callBannerState(baseBanner({ mode: INTERLUDE_CONF, readiness: "ready" })),
+    "interlude",
+  );
+  assert.equal(
+    callBannerState(baseBanner({ mode: INTERLUDE_UNCONF, readiness: "ready" })),
+    "interlude",
+  );
+});
+
+test("banner: a ready device with a red chip is a CALL failure — terminal loud", () => {
+  assert.equal(
+    callBannerState(
+      baseBanner({ mode: NEGOTIATING, latchedError: true, readiness: "ready" }),
+    ),
+    "terminal_loud",
+  );
+  // The capable-but-sessionless R2-4 hold: `negotiating` is still in the
+  // publish gate and the error IS latched, so "your audio and video stay
+  // paused" is true.
+  assert.equal(
+    callBannerState(baseBanner({ latchedError: true, readiness: "ready" })),
+    "terminal_loud",
+  );
+});
+
+test("🔴 banner: call_full is no longer silent (it latches, and the gate is held)", () => {
+  // `#onCallFull` runs `#onLoud` before `#applyMode({type:"call_full"})`, so
+  // the error is latched and `loudModeFallback` has re-asserted the
+  // negotiating gate — the loud copy is true. `isTerminalLoud` returns false
+  // here (the mode is not negotiating), which is precisely why routing the
+  // banner through it left this red chip bare.
+  assert.equal(
+    isTerminalLoud({ kind: "call_full" }, "not_encrypted", true),
+    false,
+  );
+  assert.equal(
+    callBannerState(
+      baseBanner({
+        mode: { kind: "call_full" },
+        latchedError: true,
+        readiness: "ready",
+      }),
+    ),
+    "terminal_loud",
+  );
+});
+
+test("banner: a device that cannot encrypt owns the banner, whatever the call did", () => {
+  // Nothing about the CALL is the cause, so the loud copy and a per-call
+  // escape would both be wrong: this is the §7.4 red-chip-with-no-banner
+  // state. Holds even with a latched error, which `owned_elsewhere` always
+  // has (it stays capable and the setup decision holds it loud).
+  assert.equal(
+    callBannerState(baseBanner({ readiness: "needs_setup" })),
+    "device_not_set_up",
+  );
+  assert.equal(
+    callBannerState(
+      baseBanner({ readiness: "owned_elsewhere", latchedError: true }),
+    ),
+    "device_not_set_up",
+  );
+  assert.equal(
+    callBannerState(baseBanner({ readiness: "unsupported" })),
+    "device_unsupported",
+  );
+});
+
+test("🔴 banner: an unknown-cause red chip never falls back to 'this app can't encrypt'", () => {
+  // `unsupported` is a POSITIVE fact the shell knows about itself. Making it
+  // the fallback for "we don't know" tells someone whose call just failed the
+  // most reassuring and least actionable thing available (reviewer F4). The
+  // floor is the loud banner when something latched, and the no-claims notice
+  // when nothing did — never a statement about the shell.
+  for (const latchedError of [false, true])
+    assert.notEqual(
+      callBannerState(
+        baseBanner({ readiness: "ready", mode: { kind: "off" }, latchedError }),
+      ),
+      "device_unsupported",
+    );
+  assert.equal(
+    callBannerState(
+      baseBanner({
+        readiness: "ready",
+        mode: { kind: "off" },
+        latchedError: true,
+      }),
+    ),
+    "terminal_loud",
+  );
+});
+
+test("banner: nothing to say on a green, amber or chrome-less chip", () => {
+  for (const chip of ["e2ee", "e2ee_unverified", "resecuring", "none"] as const)
+    for (const readiness of [
+      "ready",
+      "needs_setup",
+      "owned_elsewhere",
+      "unsupported",
+    ] as const)
+      assert.equal(
+        callBannerState(baseBanner({ chip, mode: E2EE, readiness })),
+        "none",
+      );
+});
+
+test("🔴 a REFUSED device is loud with no dependence on the open-group probe", () => {
+  // The hole the first cut of this fix opened (reviewer F1, CRITICAL): a
+  // device treated as non-capable asserts no gate, latches nothing, and
+  // `chipState`'s no-session branches are gated on `channelHasOpenGroup` — so
+  // alone in a channel with no group yet it published plaintext under chip
+  // `none` with NO chrome at all. Staying CAPABLE is what fixes it: the setup
+  // decision holds loud, the error latches, and `latchedError` is the FIRST
+  // term of the chip, ahead of every probe-dependent branch.
+  for (const channelHasOpenGroup of [false, true]) {
+    const chip = chipState(
+      baseChip({
+        hasSession: false,
+        sessionState: undefined,
+        mode: undefined,
+        e2eeEnabled: false,
+        hasLocalKey: false,
+        latchedError: true,
+        rosterVerified: [],
+        channelHasOpenGroup,
+        deviceNeedsSetup: false,
+        peerCouldEncrypt: true,
+      }),
+    );
+    assert.equal(chip, "not_encrypted", `probe=${channelHasOpenGroup}`);
+    assert.equal(
+      callBannerState({
+        chip,
+        mode: undefined,
+        latchedError: true,
+        readiness: "owned_elsewhere",
+      }),
+      "device_not_set_up",
+    );
+  }
+});
+
+test("🔴 a device that could be set up is loud with NO open group, if a peer can encrypt", () => {
+  // Was a pinned KNOWN GAP. A never-enrolled desktop is not capable, so it
+  // latches nothing, and `channelHasOpenGroup` is probed ONCE at connect: if
+  // the group opened afterwards the device stayed on chip `none` for the whole
+  // call while every peer paused behind a banner naming it. `deviceNeedsSetup`
+  // is LOCAL and `peerCouldEncrypt` is LIVE, so together they cannot go stale.
+  for (const channelHasOpenGroup of [false, true]) {
+    const chip = chipState(
+      baseChip({
+        hasSession: false,
+        sessionState: undefined,
+        mode: undefined,
+        e2eeEnabled: false,
+        hasLocalKey: false,
+        rosterVerified: [],
+        channelHasOpenGroup,
+        deviceNeedsSetup: true,
+        peerCouldEncrypt: true,
+      }),
+    );
+    assert.equal(chip, "not_encrypted", `probe=${channelHasOpenGroup}`);
+    assert.equal(
+      callBannerState({
+        chip,
+        mode: undefined,
+        latchedError: false,
+        readiness: "needs_setup",
+      }),
+      "device_not_set_up",
+    );
+  }
+});
+
+test("🔴 ...and says NOTHING on a call where nobody can encrypt", () => {
+  // `shellSupported` is true on every Tauri desktop and every native Android
+  // build, not just where media E2EE has shipped, so an unqualified local term
+  // would put a red chip and an undismissable strip on EVERY call for every
+  // install that never turned encryption on — including plain calls with
+  // nothing to downgrade (media-e2ee-reviewer round 3, finding 2).
+  assert.equal(
+    chipState(
+      baseChip({
+        hasSession: false,
+        sessionState: undefined,
+        mode: undefined,
+        e2eeEnabled: false,
+        hasLocalKey: false,
+        rosterVerified: [],
+        channelHasOpenGroup: false,
+        deviceNeedsSetup: true,
+        peerCouldEncrypt: false,
+      }),
+    ),
+    "none",
+  );
+});
+
+test("a shell that can NEVER encrypt still rides the probe — no nagging on a plain call", () => {
+  // `unsupported` has nothing to set up, so telling it on every call in every
+  // channel would be noise. It speaks only when someone else in the call is
+  // actually encrypting, which is what the open-group probe answers.
+  const quiet = chipState(
+    baseChip({
+      hasSession: false,
+      sessionState: undefined,
+      mode: undefined,
+      e2eeEnabled: false,
+      hasLocalKey: false,
+      rosterVerified: [],
+      channelHasOpenGroup: false,
+      deviceNeedsSetup: false,
+      peerCouldEncrypt: true,
+    }),
+  );
+  assert.equal(quiet, "none");
+  assert.equal(
+    callBannerState({
+      chip: quiet,
+      mode: undefined,
+      latchedError: false,
+      readiness: "unsupported",
+    }),
+    "none",
+  );
+});
+
+test("🔴 an unlatched red chip on a ready device promises nothing (MEDIUM-1)", () => {
+  // The term that decides whether a banner may say "your audio and video stay
+  // paused". It was accepted and ignored once, and that is how a red strip
+  // came to promise a pause over a live, ungated mic.
+  assert.equal(
+    callBannerState(baseBanner({ readiness: "ready", latchedError: false })),
+    "unencrypted_notice",
+  );
+  assert.equal(
+    callBannerState(baseBanner({ readiness: "ready", latchedError: true })),
+    "terminal_loud",
+  );
+});
+
+// ---- who may be offered a plaintext release --------------------------------
+
+test("the release is offered with a session, and on the R2-4 hold", () => {
+  assert.equal(
+    plaintextReleaseAvailable({
+      mode: NEGOTIATING,
+      hasSession: true,
+      e2eeCapable: true,
+      latchedError: false,
+    }),
+    true,
+  );
+  assert.equal(
+    plaintextReleaseAvailable({
+      mode: undefined,
+      hasSession: false,
+      e2eeCapable: true,
+      latchedError: true,
+    }),
+    true,
+  );
+});
+
+test("🔴 a session alone is not enough — the gate must actually be held", () => {
+  // `hasSession` used to be the whole test, which would offer "Turn off
+  // encryption" on any session-bound red chip that had not latched: the same
+  // silent no-op the `call_full` arm exists to prevent, since
+  // `confirmPlaintext` returns immediately without a group or once terminal.
+  // The session's OWN downgrade states hold a gate by construction; anything
+  // else has to show the latch that proves one is held.
+  for (const mode of [MIXED, INTERLUDE_CONF, NEGOTIATING])
+    assert.equal(
+      plaintextReleaseAvailable({
+        mode,
+        hasSession: true,
+        e2eeCapable: true,
+        latchedError: false,
+      }),
+      true,
+    );
+  for (const mode of [E2EE, { kind: "off" } as const, undefined])
+    assert.equal(
+      plaintextReleaseAvailable({
+        mode,
+        hasSession: true,
+        e2eeCapable: true,
+        latchedError: false,
+      }),
+      false,
+    );
+  // ...and the latch restores it wherever the mode cannot vouch.
+  assert.equal(
+    plaintextReleaseAvailable({
+      mode: undefined,
+      hasSession: true,
+      e2eeCapable: true,
+      latchedError: true,
+    }),
+    true,
+  );
+});
+
+test("🔴 the release is NOT offered where nothing is paused, nor once terminal", () => {
+  // A never-enrolled device and an unsupported shell assert no gate, so the
+  // press is a silent no-op; `call_full` is terminal in the session, so
+  // `confirmPlaintext` returns immediately.
+  assert.equal(
+    plaintextReleaseAvailable({
+      mode: undefined,
+      hasSession: false,
+      e2eeCapable: false,
+      latchedError: false,
+    }),
+    false,
+  );
+  assert.equal(
+    plaintextReleaseAvailable({
+      mode: undefined,
+      hasSession: false,
+      e2eeCapable: true,
+      latchedError: false,
+    }),
+    false,
+  );
+  assert.equal(
+    plaintextReleaseAvailable({
+      mode: { kind: "call_full" },
+      hasSession: true,
+      e2eeCapable: true,
+      latchedError: true,
+    }),
+    false,
+  );
+});
+
+test("🔴 INVARIANT: every NOT-ENCRYPTED chip carries a banner (exhaustive)", () => {
+  // The design rule this whole change exists to make checkable: a red chip is
+  // never a dead end. Swept over every input that can PRODUCE a red chip —
+  // which is not the same as every input, and saying so matters: the sweep
+  // fixes `localPublicationsEncrypted: true` (it only ever downgrades a green
+  // chip to amber, never to red) and leaves the mode/state/latch/no-session
+  // axes free, because those are the ones that make it red. Written out rather
+  // than trusted to the handful of shapes anyone thought of, which is how the
+  // ME-7 and §0.2 #9 no-session branches sat bannerless through five reviews —
+  // and it is still no proof about a chip that is NEVER red, which is the hole
+  // that got through twice.
+  const MODES: (CallMode | undefined)[] = [
+    undefined,
+    NEGOTIATING,
+    { kind: "off" },
+    E2EE,
+    MIXED,
+    INTERLUDE_UNCONF,
+    INTERLUDE_CONF,
+    { kind: "call_full" },
+  ];
+  const STATES: ChipInputs["sessionState"][] = [
+    undefined,
+    "starting",
+    "active",
+    "plaintext",
+    "resecuring",
+    "failed",
+    "closed",
+  ];
+  const READINESS = [
+    "ready",
+    "needs_setup",
+    "owned_elsewhere",
+    "unsupported",
+  ] as const;
+  const BOOLS = [false, true];
+  const PUBLISHERS: { p: string[]; o: Map<string, boolean> }[] = [
+    { p: [], o: new Map() },
+    { p: ["u:d"], o: new Map([["u:d", true]]) },
+    { p: ["u:d"], o: new Map() },
+  ];
+
+  let red = 0;
+  for (const hasSession of BOOLS)
+    for (const sessionState of STATES)
+      for (const mode of MODES)
+        for (const e2eeEnabled of BOOLS)
+          for (const hasLocalKey of BOOLS)
+            for (const resecuring of BOOLS)
+              for (const latchedError of BOOLS)
+                for (const channelHasOpenGroup of BOOLS)
+                  for (const deviceNeedsSetup of BOOLS)
+                    for (const peerCouldEncrypt of BOOLS)
+                      for (const rosterVerified of [[], [true], [false]])
+                        for (const pub of PUBLISHERS) {
+                          const inputs: ChipInputs = {
+                            hasSession,
+                            sessionState,
+                            mode,
+                            e2eeEnabled,
+                            hasLocalKey,
+                            resecuring,
+                            latchedError,
+                            publishingIdentities: pub.p,
+                            observedEncrypted: pub.o,
+                            localPublicationsEncrypted: true,
+                            rosterVerified,
+                            channelHasOpenGroup,
+                            deviceNeedsSetup,
+                            peerCouldEncrypt,
+                          };
+                          if (chipState(inputs) !== "not_encrypted") continue;
+                          red++;
+                          for (const readiness of READINESS)
+                            assert.notEqual(
+                              callBannerState({
+                                chip: "not_encrypted",
+                                mode,
+                                latchedError,
+                                readiness,
+                              }),
+                              "none",
+                              `red chip with no banner: ${JSON.stringify({
+                                hasSession,
+                                sessionState,
+                                mode,
+                                latchedError,
+                                channelHasOpenGroup,
+                                deviceNeedsSetup,
+                                peerCouldEncrypt,
+                                readiness,
+                              })}`,
+                            );
+                        }
+  // A sweep that found no red chips would pass vacuously.
+  assert.ok(red > 1000, `expected a large red-chip sample, got ${red}`);
+});
+
+test("🔴 only a banner the user can clear parks the Watch Together player", () => {
+  // The player host floats above the card, so a banner the user must act on
+  // has to displace it — and each §3.4 state has an in-call control that
+  // clears it, so the park is transient by construction.
+  for (const kind of ["mixed", "interlude", "terminal_loud"] as const)
+    assert.equal(bannerParksFloat(kind), true, kind);
+  // The DEVICE banners describe the device; NOTHING in the call clears them,
+  // so parking on one un-anchors the video for the whole call with no control
+  // that brings it back and no copy that says why.
+  for (const kind of [
+    "device_not_set_up",
+    "device_unsupported",
+    "unencrypted_notice",
+    "none",
+  ] as const)
+    assert.equal(bannerParksFloat(kind), false, kind);
 });
 
 // ---- ctl parser (default-closed) -------------------------------------------
@@ -674,7 +1155,8 @@ test("chip: negotiating + latched error is loud; negotiating without one is ambe
     localPublicationsEncrypted: true,
     rosterVerified: [],
     channelHasOpenGroup: true,
-    capableAndEnabled: true,
+    deviceNeedsSetup: false,
+    peerCouldEncrypt: true,
   };
   assert.equal(chipState({ ...base, latchedError: true }), "not_encrypted");
   // The heal's intermediate: the latch is gone, the label is still folded
