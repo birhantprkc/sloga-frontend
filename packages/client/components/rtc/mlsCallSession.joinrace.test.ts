@@ -920,3 +920,127 @@ test("...but a pair filled BEFORE the latch is no witness at all", async (t) => 
   assert.deepEqual(world.clearsSince(before), []);
   assert.equal(world.session.callMode().kind, "negotiating");
 });
+
+test("🔴 gate (d): a peer whose frames the worker is DROPPING takes the chip amber with NO verdict object anywhere", async (t) => {
+  // This is the spec the whole change exists for. Six review rounds each found
+  // the same posture — a green chip while a peer's frames were being discarded
+  // at an index the worker had marked invalid — in a DIFFERENT place, because
+  // green was the DEFAULT: the chip went amber only while a verdict OBJECT
+  // happened to exist, so every defect was "a verdict was destroyed without
+  // evidence" or "one was never created".
+  //
+  // Here the session's verdict machinery is completely silent: no error was
+  // raised, no hold is open, no escalation is pending, nothing is latched. The
+  // chip goes amber anyway, on the worker's measurement alone.
+  const world = await threeParty(t, "ch-witness-drop");
+  const before = world.states.length;
+  const holdsBefore = world.holds.length;
+  assert.equal(world.chip(), "e2ee");
+
+  world.dropFrames(THIRD_ID);
+
+  assert.equal(
+    world.chip(),
+    "resecuring",
+    "the chip stayed green over frames the worker was discarding",
+  );
+  assert.deepEqual(world.loudSince(before), [], "gate (d) produced a verdict");
+  assert.deepEqual(world.clearsSince(before), []);
+  assert.equal(
+    world.holds.length,
+    holdsBefore,
+    "gate (d) armed a hold — it must only WITHHOLD the green",
+  );
+  assert.equal(world.session.callMode().kind, "e2ee");
+
+  // And it lifts the moment the worker stops discarding, without anything
+  // having to clear a verdict — there was never one to clear.
+  world.dropFrames();
+  assert.equal(world.chip(), "e2ee");
+});
+
+test("🔴 gate (d): losing the worker's heartbeat is AMBER, not green", async (t) => {
+  // A build that shipped without the livekit-client patch reaches exactly this
+  // state. It must cost the green, loudly, rather than silently removing the
+  // gate and leaving the chip reading exactly as it did before the fix.
+  const world = await threeParty(t, "ch-witness-lost");
+  assert.equal(world.chip(), "e2ee");
+  world.loseWitness();
+  assert.equal(
+    world.chip(),
+    "resecuring",
+    "a witness we cannot read was treated as a witness that passed",
+  );
+});
+
+test("gate (d) is independent of the join-race hold: a resolved hold still needs the witness", async (t) => {
+  // The two mechanisms must not stand in for each other. A hold that resolves
+  // correctly returns the chip to green ONLY because the witness is also clean;
+  // with the worker still discarding that peer's frames it stays amber.
+  const world = await threeParty(t, "ch-witness-vs-hold");
+  const before = world.states.length;
+  const error = await bystanderRaceAfterRejoin(world, 1);
+  assert.deepEqual(world.holds, [true]);
+  assert.equal(world.chip(), "resecuring");
+
+  // The worker is still dropping THIRD's frames when our install lands.
+  world.dropFrames(THIRD_ID);
+  await advance(t, 1_000);
+  await world.commit(1);
+  await flush();
+
+  assert.deepEqual(world.holds, [true, false], "the hold never resolved");
+  assert.deepEqual(world.loudSince(before), []);
+  assert.equal(
+    world.chip(),
+    "resecuring",
+    "a resolved hold took the chip green while frames were still being dropped",
+  );
+  void error;
+
+  world.dropFrames();
+  assert.equal(world.chip(), "e2ee");
+});
+
+test("🔴 gate (b): a publisher LiveKit has NOT vouched for holds the chip amber", async (t) => {
+  // Our OWN publication, which is the case that shipped green in desktop
+  // 0.57.0: the worker says the cryptor is on, the SFU's record says nothing,
+  // and every receiver arms from the SFU's record. This harness could not
+  // state it until the chip assembly was shared — its copy excluded SELF from
+  // the publishers gate (b) judges, so gate (b) was modelled over remotes only.
+  const world = await threeParty(t, "ch-unobserved");
+  assert.equal(world.chip(), "e2ee");
+
+  world.markUnobserved(SELF_ID);
+  assert.equal(
+    world.chip(),
+    "resecuring",
+    "a publisher with no observed status was vouched for anyway",
+  );
+});
+
+test("🔴 gate (c): an unverified roster member holds the lock open", async (t) => {
+  // Not a media-plane ladder — it is here because this harness could not
+  // EXPRESS it until the chip assembly was shared. It hardcoded every member
+  // verified, so every green these suites assert was taken with gate (c)
+  // pre-satisfied, and a regression that dropped the verification read would
+  // have been invisible to all of them.
+  const world = await threeParty(t, "ch-unverified");
+  assert.equal(world.chip(), "e2ee");
+
+  world.markUnverified(THIRD_ID);
+  assert.equal(
+    world.chip(),
+    "e2ee_unverified",
+    "an unverified member did not hold the verified lock open",
+  );
+
+  // ...and gate (c) only withholds the VERIFIED claim; the media plane's amber
+  // still outranks it.
+  world.dropFrames(THIRD_ID);
+  assert.equal(
+    world.chip(),
+    "resecuring",
+    "the media plane's amber must still win over an unverified lock",
+  );
+});

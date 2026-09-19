@@ -33,8 +33,6 @@
 # the executed count moves with every loop-generated spec, EXPECTED is the truth).
 set -uo pipefail
 
-ARGC=$# # captured before anything can shift it
-
 cd "$(dirname "$0")/.." || exit 99
 ROOT=../..
 LOG=$(mktemp -d)
@@ -98,10 +96,10 @@ EXPECTED=(
   "components/rtc/mlsAdmitGracePolicy.test.ts 18 0"
   "components/rtc/mlsAdmitPolicy.test.ts 15 0"
   "components/rtc/mlsCallKeys.test.ts 23 0"
-  "components/rtc/mlsCallModePolicy.test.ts 90 0"
+  "components/rtc/mlsCallModePolicy.test.ts 96 0"
   "components/rtc/mlsCallSession.falsered.test.ts 5 0"
   "components/rtc/mlsCallSession.heal.test.ts 7 0"
-  "components/rtc/mlsCallSession.joinrace.test.ts 30 0"
+  "components/rtc/mlsCallSession.joinrace.test.ts 35 0"
   "components/rtc/mlsCallSession.resecure.test.ts 23 0"
   "components/rtc/mlsDrainPolicy.test.ts 14 0"
   "components/rtc/mlsJoinRequestPolicy.test.ts 4 0"
@@ -116,6 +114,8 @@ EXPECTED=(
   "components/rtc/pauseVerdict.test.ts 10 0"
   "components/rtc/micPipelinePolicy.test.ts 4 0"
   "components/rtc/publishKickPolicy.test.ts 4 0"
+  "components/rtc/decodeWitnessListener.test.ts 42 0"
+  "components/rtc/chipInputs.test.ts 28 0"
 )
 
 counter() { # counter <log> <name> — the runner's own summary counter, or ""
@@ -187,20 +187,42 @@ check_counts() { # check_counts <spec> <log>
 # then skip it and report a clean gate with ZERO specs run — the same silent
 # pass this script exists to kill.
 shopt -s nullglob
-SPECS=("$@")
-if [ ${#SPECS[@]} -eq 0 ]; then
-  # Wider than the files this branch edits: a change to the session's error
-  # classification reaches the admit, rejoin, roster and publication-encryption
-  # policies too, and two reviewed defects ran through exactly those.
-  SPECS=(components/rtc/mls*.test.ts components/rtc/rosterReconcile.test.ts
-    components/rtc/localPublicationEncryption.test.ts
-    components/rtc/plaintextCryptorPolicy.test.ts
-    components/rtc/publishGate.test.ts
-    components/rtc/publishGateEpisode.test.ts
-    components/rtc/pauseVerdict.test.ts
-    components/rtc/micPipelinePolicy.test.ts
-    components/rtc/publishKickPolicy.test.ts)
-fi
+# Wider than the files this branch edits: a change to the session's error
+# classification reaches the admit, rejoin, roster and publication-encryption
+# policies too, and two reviewed defects ran through exactly those.
+SPECS=(components/rtc/mls*.test.ts components/rtc/rosterReconcile.test.ts
+  components/rtc/localPublicationEncryption.test.ts
+  components/rtc/plaintextCryptorPolicy.test.ts
+  components/rtc/publishGate.test.ts
+  components/rtc/publishGateEpisode.test.ts
+  components/rtc/pauseVerdict.test.ts
+  components/rtc/micPipelinePolicy.test.ts
+  components/rtc/publishKickPolicy.test.ts
+  components/rtc/decodeWitnessListener.test.ts
+  components/rtc/chipInputs.test.ts)
+# 🔴 Arguments ADD to that set; they do not replace it. They used to replace
+# it, so the natural invocation for this branch —
+#   rtc-gate.sh components/rtc/mls*.test.ts
+# — silently skipped decodeWitnessListener.test.ts, the ONLY spec that loads
+# the decode-witness listener, and printed a green gate over a gate (d) that
+# had not been exercised at all. Narrowing what runs is exactly the silent pass
+# this script exists to kill, so the narrowing is gone: pass a spec to make
+# sure it runs, never to make the others stop.
+for arg in "$@"; do
+  # 🔴 Paths are relative to packages/client, because this script cd'd there.
+  # `rtc-gate.sh packages/client/components/rtc/x.test.ts` — the same prefix as
+  # the command itself — used to match nothing and be silently dropped, so
+  # "pass a spec to make sure it runs" was not true.
+  if [ ! -e "$arg" ]; then
+    note_fail "spec argument '$arg' matches no file under $(pwd)"
+    continue
+  fi
+  seen=0
+  for s in "${SPECS[@]}"; do
+    if [ "$s" = "$arg" ]; then seen=1; fi
+  done
+  if [ $seen -eq 0 ]; then SPECS+=("$arg"); fi
+done
 if [ ${#SPECS[@]} -eq 0 ]; then
   echo ">>> GATE FAIL: no spec files matched — refusing to report a pass"
   exit 98
@@ -222,7 +244,11 @@ FILES=(components/rtc/mlsCallSession.ts components/rtc/mlsCallModePolicy.ts
   components/rtc/pauseVerdict.ts components/rtc/pauseVerdict.test.ts
   components/rtc/micPipelinePolicy.ts components/rtc/micPipelinePolicy.test.ts
   components/rtc/publishKickPolicy.ts components/rtc/publishKickPolicy.test.ts
-  components/rtc/mlsCallModePolicy.test.ts src/sentry.ts
+  components/rtc/mlsCallModePolicy.test.ts
+  components/rtc/decodeWitnessListener.ts
+  components/rtc/decodeWitnessListener.test.ts
+  components/rtc/chipInputs.ts
+  components/rtc/chipInputs.test.ts src/sentry.ts
   components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx)
 ran=0
 RAN_SPECS=()
@@ -246,19 +272,188 @@ if [ $ran -eq 0 ]; then
   exit 98
 fi
 
-# On a bare run the EXPECTED table is the manifest: every row must have been
-# reached. (With explicit spec arguments the caller has deliberately narrowed
-# the run, so only the rows they hit are checked — and arguments REPLACE the
-# list rather than adding to it, which is why CI must invoke this bare.)
-if [ "$ARGC" -eq 0 ]; then
-  for row in "${EXPECTED[@]}"; do
-    spec=${row%% *}
-    case " ${RAN_SPECS[*]} " in
-    *" $spec "*) ;;
-    *) note_fail "$spec has an EXPECTED row but never ran on a bare gate" ;;
-    esac
-  done
-fi
+# The EXPECTED table is the manifest: every row must have been reached.
+# Arguments only ever ADD to the default set, so this holds on every run.
+for row in "${EXPECTED[@]}"; do
+  spec=${row%% *}
+  case " ${RAN_SPECS[*]} " in
+  *" $spec "*) ;;
+  *) note_fail "$spec has an EXPECTED row but never ran" ;;
+  esac
+done
+# 🔴 Gate (d)'s call site. `decodeWitnessListener.test.ts` pins the VALUE of
+# DECODE_WITNESS_INITIAL and rtc-mutations.py flips it, but neither can see
+# whether `state.tsx` actually PASSES it to createSignal — that file imports
+# extensionless paths, Solid and LiveKit, and no spec can load it. Writing the
+# literal `{ available: true, dropping: [], live: [] }` there type-checks,
+# lints, formats and leaves every spec and every mutation green while restoring
+# green-by-default: the exact defect review round 2 found, which survived the
+# extraction because moving the constant did not guard the argument.
+#
+# Same reason the listener's two caller obligations are asserted here. The
+# module owns no timer and no worker, so "tick() is actually run" and "stop()
+# is actually called" are guarantees only this file can make, and only source
+# text can check.
+#
+# grep reads each file DIRECTLY. Never `cat "$f" | grep -q`: under `pipefail`
+# grep -q exits on the first match, the writer takes SIGPIPE, and the pipeline
+# reports failure BECAUSE the assertion matched.
+# Count occurrences of a literal in LIVE code: line comments are skipped, and
+# two occurrences on one line count as two.
+#
+# 🔴 Both properties were bugs. A review defeated every assertion below by
+# commenting the required line out and putting the fake one under it —
+# `grep -qF` matched the comment and the gate printed `ok:`. And `require_count`
+# used `grep -cF`, a LINE count, while its own comment and the commit message
+# both said occurrences.
+#
+# 🔴 What this still does NOT catch: a dead guard. `if (false) this.#arm...();`
+# is live code by this definition and counts. That is not fixable by reading
+# source text, and it is the reason the real answer is to move this assembly
+# into a module a spec can load rather than to keep adding assertions here.
+#
+# 🔴 This was awk, and awk cannot lex JavaScript. It skipped a line whose
+# FIRST non-space characters were `//`, which caught exactly one of the three
+# comment placements — a review defeated it with a trailing `//` on a live line
+# and again with a block comment whose interior lines are not `*`-prefixed. It
+# also skipped LIVE continuation lines beginning with `*`.
+#
+# Node is already a hard dependency of this gate (it runs every spec), so use
+# it: blank out comments with a scanner that understands strings, template
+# literals and regex-free JS well enough not to be fooled by `//` inside a
+# string, then count occurrences in what is left.
+count_live() { # count_live <file> <literal>
+  node -e '
+    const src = require("fs").readFileSync(process.argv[1], "utf8");
+    const needle = process.argv[2];
+    let out = "";
+    let i = 0;
+    while (i < src.length) {
+      const two = src.slice(i, i + 2);
+      if (two === "//") {
+        while (i < src.length && src[i] !== "\n") i++;
+        continue;
+      }
+      if (two === "/*") {
+        i += 2;
+        while (i < src.length && src.slice(i, i + 2) !== "*/") {
+          if (src[i] === "\n") out += "\n";
+          i++;
+        }
+        i += 2;
+        continue;
+      }
+      const q = src[i];
+      if (q === "\"" || q === "\x27" || q === "`") {
+        i++;
+        while (i < src.length && src[i] !== q) {
+          if (src[i] === "\\") i++;
+          i++;
+        }
+        i++;
+        continue;
+      }
+      out += src[i++];
+    }
+    let n = 0;
+    let at = out.indexOf(needle);
+    while (at !== -1) {
+      n++;
+      at = out.indexOf(needle, at + needle.length);
+    }
+    console.log(n);
+  ' "$1" "$2"
+}
+
+check_witness_call_site() {
+  local f=components/rtc/state.tsx rc=0
+  require() { # require <exact source text> <what it guarantees>
+    if [ "$(count_live "$f" "$1")" -ge 1 ]; then
+      echo "ok:   $2"
+    else
+      echo "FAIL: $2"
+      echo "      $f has no LIVE occurrence of: $1"
+      rc=1
+    fi
+  }
+  # 🔴 `require` pins a DEFINITION. `require_count` pins the INVOCATIONS, and
+  # the difference is not academic: a review deleted the `#armDecodeWitness`
+  # and `#disarmDecodeWitness` CALLS while every definition-shaped assertion
+  # here still printed `ok:`. An assertion that reports a guarantee it does not
+  # check is worse than no assertion.
+  require_count() { # require_count <what it guarantees> <exact source text> <n>
+    local n
+    n=$(count_live "$f" "$2")
+    if [ "$n" -eq "$3" ]; then
+      echo "ok:   $1"
+    else
+      echo "FAIL: $1"
+      echo "      $f contains $n of: $2"
+      echo "      expected exactly $3"
+      rc=1
+    fi
+  }
+  require 'createSignal<DecodeWitness>(DECODE_WITNESS_INITIAL, {' \
+    "the witness signal is seeded UNAVAILABLE, from the spec'd constant"
+  # 🔴 Solid SKIPS the write when the comparator returns true, so a loosened
+  # one freezes the chip on its last value — green, over a peer whose frames
+  # are being discarded. Pinned by NAME so the implementation stays in a file
+  # a spec can load.
+  require 'equals: sameWitness,' \
+    "the witness signal's equality is the spec'd comparator"
+  # 🔴 The seed is not the read. A round-4 review replaced the chip's read of
+  # the signal with an available literal and the gate, every mutation, tsc,
+  # eslint and prettier stayed green. Round 5 then measured EIGHT more one-line
+  # edits in the same literal that each turned an honest amber or red green.
+  #
+  # That literal is gone: the derivation now lives in `chipInputs.ts`, which
+  # `node --test` loads and `rtc-mutations.py` breaks. What is left in this
+  # file is one binding per field with nothing computed among them, so these
+  # two assertions are what remains of the six — the assembly is actually used,
+  # and gate (d)'s field is bound to the signal.
+  #
+  # 🔴 NOT closed, and not claimed to be: a lying binding (`rosterVerified:
+  # () => []`) is still unreachable by any spec. Taking accessors makes that a
+  # function somebody has to write rather than a literal they type, and the
+  # surface is 14 one-line bindings instead of 45 lines of derivation — but it
+  # is a smaller last mile, not no last mile.
+  # 🔴 The composition, not just the call. Asserting `chipInputsFrom({` left
+  # the returned object unwatched, and spreading it into a literal that
+  # overrode `decodeWitness` and `rosterVerified` passed every assertion here.
+  # `chipStateFrom` assembles and judges in one call, so this one literal
+  # covers both halves and there is no value in `state.tsx` to intercept.
+  require_count "the chip is assembled AND judged by the spec'd module" \
+    'return chipStateFrom({' 1
+  require 'decodeWitness: () => this.callDecodeWitness(),' \
+    "gate (d)'s input is bound to the witness signal, not to a literal"
+  require 'const stale = setInterval(() => listener.tick(), listener.checkMs);' \
+    "the staleness sweep is started, at the listener's own interval"
+  require 'listener.stop();' \
+    "teardown tells the listener, so the last sample stops standing"
+  require_count "the listener is ARMED when a session is created" \
+    'this.#armDecodeWitness(session);' 1
+  # THREE sites: the head of #armDecodeWitness, disconnect(), and the room's
+  # "disconnected" listener — the last because the SFU dropping us does not run
+  # disconnect(), and the witness would otherwise keep refreshing a green over
+  # a dead room. Deleting any one of them leaves every definition-shaped
+  # assertion above happy, which is why this is a count.
+  require_count "re-arm, disconnect() and the SFU drop all DISARM the witness" \
+    'this.#disarmDecodeWitness();' 3
+  return $rc
+}
+run "gate (d) call site in state.tsx" 12 check_witness_call_site
+
+# 🔴 The e2ee-worker patch check does NOT live here — see
+# scripts/rtc-build-preflight.sh, and run it before any build or live leg.
+#
+# It was here for one round and that was wrong. This gate judges TREE state:
+# every check it runs can be made to pass by editing the commit. Whether the
+# shared node_modules resolved a patched package is ENVIRONMENT state, which no
+# commit can fix — so parking it here made the gate permanently exit 1 on the
+# only box that runs it, and a gate that is always red teaches everyone to read
+# "1 failing check" as "the worker thing" and skip past a real second failure.
+# That is the same learned-blindness this script's header exists to prevent,
+# arrived at from the other direction.
 
 run "tsc --noEmit" 25 "$ROOT/node_modules/.pnpm/node_modules/.bin/tsc" --noEmit
 # --check, never --write: reformatting a tracked file sweeps up code this
@@ -283,4 +478,9 @@ run "eslint" 30 "$ROOT/node_modules/.bin/eslint" "${FILES[@]}"
 
 echo
 echo "################ GATE SUMMARY: $fails failing check(s) ################"
+# Printed unconditionally, pass or fail: this gate cannot see whether the build
+# would actually carry the decode witness, and a green tree over an unpatched
+# worker is gate (d) silently absent.
+echo "NOTE: tree state only. Before any build or live leg, also run:"
+echo "      bash scripts/rtc-build-preflight.sh"
 exit $fails

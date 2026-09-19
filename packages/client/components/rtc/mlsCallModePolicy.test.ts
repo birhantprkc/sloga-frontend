@@ -11,6 +11,7 @@ import {
   type CallBannerInputs,
   type CallMode,
   type ChipInputs,
+  type DecodeWitness,
   type LoudHealInputs,
   MediaErrorLedger,
   bannerParksFloat,
@@ -29,6 +30,7 @@ import {
   parseCtlPayload,
   plaintextReleaseAvailable,
   rotationWindowMs,
+  summarizeDecodeWitness,
 } from "./mlsCallModePolicy.ts";
 
 const NEGOTIATING: CallMode = { kind: "negotiating" };
@@ -206,6 +208,7 @@ const baseChip = (over: Partial<ChipInputs>): ChipInputs => ({
   channelHasOpenGroup: true,
   deviceNeedsSetup: false,
   peerCouldEncrypt: true,
+  decodeWitness: { available: true, dropping: [], live: [] },
   ...over,
 });
 
@@ -414,6 +417,7 @@ test("chip plaintext/off/no-session with no open group → none", () => {
       channelHasOpenGroup: false,
       deviceNeedsSetup: false,
       peerCouldEncrypt: true,
+      decodeWitness: { available: true, dropping: [], live: [] },
     }),
     "none",
   );
@@ -434,6 +438,7 @@ test("chip ME-7/R2-4 + §0.2#9: NO session in a channel with an open group ⇒ n
       channelHasOpenGroup: true,
       deviceNeedsSetup: false,
       peerCouldEncrypt: true,
+      decodeWitness: { available: true, dropping: [], live: [] },
     }),
     "not_encrypted",
   );
@@ -454,6 +459,7 @@ test("chip: the open-group branch speaks for any shell, capable or not", () => {
       channelHasOpenGroup: true,
       deviceNeedsSetup: false,
       peerCouldEncrypt: true,
+      decodeWitness: { available: true, dropping: [], live: [] },
     }),
     "not_encrypted",
   );
@@ -862,8 +868,9 @@ test("🔴 INVARIANT: every NOT-ENCRYPTED chip carries a banner (exhaustive)", (
   // The design rule this whole change exists to make checkable: a red chip is
   // never a dead end. Swept over every input that can PRODUCE a red chip —
   // which is not the same as every input, and saying so matters: the sweep
-  // fixes `localPublicationsEncrypted: true` (it only ever downgrades a green
-  // chip to amber, never to red) and leaves the mode/state/latch/no-session
+  // fixes `localPublicationsEncrypted: true` and a clean `decodeWitness` (each
+  // only ever downgrades a green chip to amber, never to red — gate (d) may
+  // only WITHHOLD green) and leaves the mode/state/latch/no-session
   // axes free, because those are the ones that make it red. Written out rather
   // than trusted to the handful of shapes anyone thought of, which is how the
   // ME-7 and §0.2 #9 no-session branches sat bannerless through five reviews —
@@ -929,6 +936,11 @@ test("🔴 INVARIANT: every NOT-ENCRYPTED chip carries a banner (exhaustive)", (
                             channelHasOpenGroup,
                             deviceNeedsSetup,
                             peerCouldEncrypt,
+                            decodeWitness: {
+                              available: true,
+                              dropping: [],
+                              live: [],
+                            },
                           };
                           if (chipState(inputs) !== "not_encrypted") continue;
                           red++;
@@ -1157,6 +1169,7 @@ test("chip: negotiating + latched error is loud; negotiating without one is ambe
     channelHasOpenGroup: true,
     deviceNeedsSetup: false,
     peerCouldEncrypt: true,
+    decodeWitness: { available: true, dropping: [], live: [] },
   };
   assert.equal(chipState({ ...base, latchedError: true }), "not_encrypted");
   // The heal's intermediate: the latch is gone, the label is still folded
@@ -1543,4 +1556,113 @@ test("a mix found in an interlude only runs the machine (re-upgrade cancel)", ()
 test("a mix is ignored on a plain call and after call_full", () => {
   assert.equal(mixDetectedAction({ kind: "off" }), "ignore");
   assert.equal(mixDetectedAction({ kind: "call_full" }), "ignore");
+});
+
+// ---- Gate (d): the decode witness -------------------------------------------
+
+const witness = (over: Partial<DecodeWitness> = {}): DecodeWitness => ({
+  available: true,
+  dropping: [],
+  live: [],
+  ...over,
+});
+
+test("gate (d): a sender whose frames are being DROPPED takes the chip amber", () => {
+  // Every other gate is satisfied: native healthy, every publisher observed
+  // encrypted, our own declarations GCM, roster verified. Before gate (d) this
+  // was green — and it was green in exactly the case the worker was discarding
+  // a peer's every frame at an index it had marked invalid.
+  assert.equal(
+    chipState(
+      baseChip({
+        publishingIdentities: ["bob:d1"],
+        observedEncrypted: new Map([["bob:d1", true]]),
+      }),
+    ),
+    "e2ee",
+  );
+  assert.equal(
+    chipState(
+      baseChip({
+        publishingIdentities: ["bob:d1"],
+        observedEncrypted: new Map([["bob:d1", true]]),
+        decodeWitness: witness({ dropping: ["bob:d1"], live: [] }),
+      }),
+    ),
+    "resecuring",
+  );
+});
+
+test("🔴 gate (d): NO witness is amber, never green", () => {
+  // The heartbeat is the whole mechanism. A build that lost the worker patch,
+  // a dead worker, a listener never armed — each stops the sample, and each
+  // must degrade the chip rather than quietly remove the gate. Exempting on
+  // "no evidence" is the reasoning that produced the silent green six review
+  // rounds kept finding somewhere new.
+  assert.equal(
+    chipState(baseChip({ decodeWitness: witness({ available: false }) })),
+    "resecuring",
+  );
+});
+
+test("🔴 gate (d) can only WITHHOLD green — it never produces a red", () => {
+  // One-way, by construction: the witness may cost a green and may not mint a
+  // loud verdict. Two earlier attempts at this area died of a FALSE RED, so
+  // this is pinned rather than left to reading the code.
+  for (const w of [
+    witness({ available: false }),
+    witness({ dropping: ["bob:d1"] }),
+  ]) {
+    assert.equal(chipState(baseChip({ decodeWitness: w })), "resecuring");
+  }
+  // ...and it cannot mask one either: a latched error still reads loud.
+  assert.equal(
+    chipState(
+      baseChip({
+        latchedError: true,
+        decodeWitness: witness({ available: false }),
+      }),
+    ),
+    "not_encrypted",
+  );
+});
+
+test("summarizeDecodeWitness: dropped counts as dropping, delivered counts as live", () => {
+  const w = summarizeDecodeWitness([
+    { identity: "bob:d1", indexes: [{ keyIndex: 3, seen: 30, dropped: 30 }] },
+    { identity: "carol:d1", indexes: [{ keyIndex: 3, seen: 30, dropped: 0 }] },
+  ]);
+  assert.deepEqual(w.dropping, ["bob:d1"]);
+  assert.deepEqual(w.live, ["carol:d1"]);
+  assert.equal(w.available, true);
+});
+
+test("summarizeDecodeWitness: a sender mid-rotation is BOTH, and dropping is what gates", () => {
+  // Two indexes in flight at once: the new one gets through, the old one is
+  // still being discarded. The gate must read the drop — the sender is still
+  // sending frames this device cannot read.
+  const w = summarizeDecodeWitness([
+    {
+      identity: "bob:d1",
+      indexes: [
+        { keyIndex: 2, seen: 5, dropped: 5 },
+        { keyIndex: 3, seen: 25, dropped: 0 },
+      ],
+    },
+  ]);
+  assert.deepEqual(w.dropping, ["bob:d1"]);
+  assert.deepEqual(w.live, ["bob:d1"]);
+  assert.equal(
+    chipState(baseChip({ decodeWitness: w })),
+    "resecuring",
+    "a live new index excused a dead old one",
+  );
+});
+
+test("summarizeDecodeWitness: an empty window is available and clean", () => {
+  // Nothing arriving is not a failure — nothing is being dropped. The
+  // heartbeat itself is what proves the witness is wired.
+  const w = summarizeDecodeWitness([]);
+  assert.deepEqual(w, { available: true, dropping: [], live: [] });
+  assert.equal(chipState(baseChip({ decodeWitness: w })), "e2ee");
 });

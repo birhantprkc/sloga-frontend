@@ -229,6 +229,8 @@ EPISODE = "publishGateEpisode.ts"
 VERDICT = "pauseVerdict.ts"
 MIC_POLICY = "micPipelinePolicy.ts"
 KICK_POLICY = "publishKickPolicy.ts"
+WITNESS = "decodeWitnessListener.ts"
+CHIP = "chipInputs.ts"
 
 JOINRACE_SPEC = "components/rtc/mlsCallSession.joinrace.test.ts"
 HEAL_SPEC = "components/rtc/mlsCallSession.heal.test.ts"
@@ -240,6 +242,8 @@ VERDICT_SPEC = "components/rtc/pauseVerdict.test.ts"
 RESECURE_SPEC = "components/rtc/mlsCallSession.resecure.test.ts"
 MIC_POLICY_SPEC = "components/rtc/micPipelinePolicy.test.ts"
 KICK_POLICY_SPEC = "components/rtc/publishKickPolicy.test.ts"
+WITNESS_SPEC = "components/rtc/decodeWitnessListener.test.ts"
+CHIP_SPEC = "components/rtc/chipInputs.test.ts"
 ALL_SPECS = [POLICY_SPEC, HEAL_SPEC, JOINRACE_SPEC]
 
 
@@ -257,6 +261,17 @@ class Mutation:
     #:           reason: the mutation is a UX/behaviour choice, not a posture)
     expect: str = "red"
     why_green: str = ""
+    #: Specs that must go red INDIVIDUALLY, each judged on its own.
+    #:
+    #: 🔴 `specs` above is judged as a whole and `judge` returns on the FIRST
+    #: non-green spec, so a spec listed there is invisible to the verdict
+    #: whenever an earlier one already fails. A claim about a SPECIFIC spec —
+    #: "this mutation proves the session harness runs the real assembly" — is
+    #: therefore unprovable through `specs` and belongs here. Round 7 learned
+    #: this the expensive way: it pinned three mutations to JOINRACE_SPEC
+    #: alongside a CHIP_SPEC that always reddens, and the pin was measured
+    #: inert.
+    must_red: list[str] = field(default_factory=list)
 
 
 MUTATIONS: list[Mutation] = []
@@ -436,7 +451,7 @@ def baseline_green(mutations: list[Mutation]) -> bool:
     measured here rather than committed, so there is nothing in this file to go
     stale against `rtc-gate.sh`'s EXPECTED table.
     """
-    specs = sorted({spec for m in mutations for spec in m.specs})
+    specs = sorted({spec for m in mutations for spec in [*m.specs, *m.must_red]})
     print(f"=============== baseline: {len(specs)} spec file(s) ===============")
     for spec in specs:
         r = run_spec(spec)
@@ -601,9 +616,18 @@ def main() -> int:
             original = apply(m)
             try:
                 got, why = judge(m.specs)
+                # Each `must_red` spec on its own — see the field's comment.
+                # 🔴 INSIDE the try, while the mutation is still applied.
+                # Judging after the `finally` runs the specs against the
+                # RESTORED tree, where they are green by construction.
+                pinned = [(spec, *judge([spec])) for spec in m.must_red]
             finally:
                 path.write_text(original, encoding="utf-8")
             print(f"    {why}")
+            unmet = [(spec, g, w) for spec, g, w in pinned if g != RED]
+            for spec, g, w in unmet:
+                print(f"    >>> but {spec} went {g}, and this mutation asserts "
+                      f"that it must go red on its own: {w}")
             if got == PROBLEM:
                 # NOT a catch, and deliberately not phrased as one: the entry
                 # measured nothing, which is worse than a mutation that went
@@ -611,7 +635,7 @@ def main() -> int:
                 print(f">>> PROBLEM: {m.id} measured nothing — see the line above")
                 failures.append(f"{m.id} (PROBLEM: the mutant never ran the suite)")
                 continue
-            ok = got == m.expect
+            ok = got == m.expect and not unmet
             print(f">>> {'OK  ' if ok else 'FAIL'}: expected {m.expect}, specs went {got}")
             if not ok:
                 failures.append(m.id)
@@ -2114,6 +2138,452 @@ MUTATIONS += [
         search="""  return "none";""",
         replace="""  return "resumeLanded";""",
         specs=[KICK_POLICY_SPEC],
+    ),
+]
+
+
+# --- Gate (d), the decode witness, and the chip's input assembly -------------
+#
+# From `fix/mls-decode-witness-exit-tally`. The 18 entries that branch shared
+# with main are above, in main's form.
+
+MUTATIONS += [
+    Mutation(
+        id="gate-d-removed",
+        what="chipState ignores the decode witness entirely (green by default again)",
+        file=POLICY,
+        search="""  if (
+    !mediaObserved ||
+    !inputs.localPublicationsEncrypted ||
+    !decodeWitnessed
+  ) {""",
+        replace="""  if (!mediaObserved || !inputs.localPublicationsEncrypted) {""",
+    ),
+    Mutation(
+        id="witness-unavailable-is-green",
+        what="a missing worker heartbeat is treated as a witness that passed",
+        file=POLICY,
+        search="""  const decodeWitnessed =
+    inputs.decodeWitness.available &&
+    inputs.decodeWitness.dropping.length === 0;""",
+        replace="""  const decodeWitnessed =
+    !inputs.decodeWitness.available ||
+    inputs.decodeWitness.dropping.length === 0;""",
+    ),
+    Mutation(
+        id="dropping-ignored",
+        what="the gate checks only that a sample arrived, not what it said",
+        file=POLICY,
+        search="""  const decodeWitnessed =
+    inputs.decodeWitness.available &&
+    inputs.decodeWitness.dropping.length === 0;""",
+        replace="""  const decodeWitnessed = inputs.decodeWitness.available;""",
+    ),
+    Mutation(
+        id="empty-roster-vouches",
+        what="an EMPTY verified roster reads as all-verified, manufacturing a green lock nobody verified",
+        file=POLICY,
+        search="""  const allVerified =
+    inputs.rosterVerified.length > 0 && inputs.rosterVerified.every((v) => v);""",
+        replace="""  const allVerified = inputs.rosterVerified.every((v) => v);""",
+        specs=[POLICY_SPEC, CHIP_SPEC],
+    ),
+    Mutation(
+        id="summarize-ignores-drops",
+        what="summarizeDecodeWitness never reports a sender as dropping",
+        file=POLICY,
+        search="""      if (tally.dropped > 0) drop = true;""",
+        replace="""      if (tally.dropped < 0) drop = true;""",
+    ),
+    Mutation(
+        id="live-excuses-drop",
+        what="a sender with ANY index getting through is excused its dropped one",
+        file=POLICY,
+        search="""    if (drop) dropping.push(participant.identity);
+    if (ok) live.push(participant.identity);""",
+        replace="""    if (drop && !ok) dropping.push(participant.identity);
+    if (ok) live.push(participant.identity);""",
+    ),
+    Mutation(
+        id="witness-arms-a-verdict",
+        what="gate (d) is allowed to produce a red instead of only withholding green",
+        file=POLICY,
+        search="""  const decodeWitnessed =
+    inputs.decodeWitness.available &&
+    inputs.decodeWitness.dropping.length === 0;""",
+        replace="""  const decodeWitnessed =
+    inputs.decodeWitness.available &&
+    inputs.decodeWitness.dropping.length === 0;
+  if (inputs.decodeWitness.dropping.length > 0) return "not_encrypted";""",
+    ),
+    Mutation(
+        id="witness-initial-available",
+        what="the chip's witness signal starts AVAILABLE, so a call that never armed the witness reads green",
+        file=WITNESS,
+        search="""export const DECODE_WITNESS_INITIAL: DecodeWitness = DECODE_WITNESS_UNAVAILABLE;""",
+        replace="""export const DECODE_WITNESS_INITIAL: DecodeWitness = {
+  available: true,
+  dropping: [],
+  live: [],
+};""",
+        specs=[WITNESS_SPEC],
+    ),
+    Mutation(
+        id="witness-never-goes-stale",
+        what="the staleness comparison has its operands the wrong way round, so the witness never expires",
+        file=WITNESS,
+        search="""      if (now() - lastAt <= staleMs) return;""",
+        replace="""      if (lastAt - now() <= staleMs) return;""",
+        specs=[WITNESS_SPEC],
+    ),
+    Mutation(
+        id="witness-stale-threshold-widened",
+        what="the staleness threshold is a hundred times the three-beat bound, so a dead worker holds its green for minutes",
+        file=WITNESS,
+        search="""export const DECODE_WITNESS_STALE_MS = 3 * DECODE_WITNESS_CHECK_MS;""",
+        replace="""export const DECODE_WITNESS_STALE_MS = 300 * DECODE_WITNESS_CHECK_MS;""",
+        specs=[WITNESS_SPEC],
+    ),
+    Mutation(
+        id="witness-teardown-keeps-standing",
+        what="teardown leaves the last sample standing instead of writing UNAVAILABLE",
+        file=WITNESS,
+        search="""      onWitness(DECODE_WITNESS_UNAVAILABLE);
+      stopped = true;
+    },""",
+        replace="""      stopped = true;
+    },""",
+        specs=[WITNESS_SPEC],
+    ),
+    Mutation(
+        id="witness-kind-guard-presence-only",
+        what="the message-kind guard checks that a kind is PRESENT, not that it is ours — livekit's own worker posts are read as witnesses",
+        file=WITNESS,
+        search="""  return isRecord(data) && data.kind === DECODE_WITNESS_KIND;""",
+        replace="""  return isRecord(data) && data.kind !== undefined;""",
+        specs=[WITNESS_SPEC],
+    ),
+    Mutation(
+        id="witness-malformed-promotes",
+        what="a malformed sample is coerced to an EMPTY window, and summarizing an empty window returns available:true",
+        file=WITNESS,
+        search="""  if (!Array.isArray(participants)) return null;""",
+        replace="""  if (!Array.isArray(participants)) return [];""",
+        specs=[WITNESS_SPEC],
+    ),
+    Mutation(
+        id="witness-clock-credited-before-write",
+        what="the staleness clock is credited on message ARRIVAL, so a witness the chip never received still counts as a heartbeat",
+        file=WITNESS,
+        search="""      onWitness(summarizeDecodeWitness(participants));
+      // 🔴 Credited AFTER the write, never before it.""",
+        replace="""      lastAt = now();
+      onWitness(summarizeDecodeWitness(participants));
+      // 🔴 Credited AFTER the write, never before it.""",
+        specs=[WITNESS_SPEC],
+    ),
+    Mutation(
+        id="witness-stop-not-terminal",
+        what="a sample arriving after teardown promotes the witness again",
+        file=WITNESS,
+        search="""    onMessage(data: unknown): void {
+      if (stopped) return;""",
+        replace="""    onMessage(data: unknown): void {""",
+        specs=[WITNESS_SPEC],
+    ),
+    Mutation(
+        id="witness-tick-not-terminal",
+        what="the staleness sweep keeps writing after teardown",
+        file=WITNESS,
+        search="""    tick(): void {
+      if (stopped) return;""",
+        replace="""    tick(): void {""",
+        specs=[WITNESS_SPEC],
+    ),
+    Mutation(
+        id="witness-counts-may-be-negative",
+        what="tally counts are merely finite, so {seen:-10, dropped:-10} summarizes to a CLEAN read",
+        file=WITNESS,
+        search="""const isCount = (value: unknown): value is number =>
+  isInteger(value) && value >= 0;""",
+        replace="""const isCount = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value);""",
+        specs=[WITNESS_SPEC],
+    ),
+    Mutation(
+        id="witness-drops-may-exceed-arrivals",
+        what="a window claiming more frames thrown away than ever arrived is accepted",
+        file=WITNESS,
+        search="""      if (dropped > seen) return null;""",
+        replace="""      if (false) return null;""",
+        specs=[WITNESS_SPEC],
+    ),
+    Mutation(
+        id="witness-bad-entry-skipped",
+        what="a malformed participant entry is SKIPPED rather than disqualifying the window, so garbage summarizes clean",
+        file=WITNESS,
+        search="""    if (!isRecord(entry)) return null;""",
+        replace="""    if (!isRecord(entry)) continue;""",
+        specs=[WITNESS_SPEC],
+    ),
+    Mutation(
+        id="witness-identity-unchecked",
+        what="an entry with no identity is skipped instead of disqualifying the window",
+        file=WITNESS,
+        search="""    if (typeof identity !== "string") return null;""",
+        replace="""    if (typeof identity !== "string") continue;""",
+        specs=[WITNESS_SPEC],
+    ),
+    Mutation(
+        id="witness-indexes-unchecked",
+        what="an entry with no indexes array is skipped instead of disqualifying the window",
+        file=WITNESS,
+        search="""    if (!Array.isArray(indexes)) return null;""",
+        replace="""    if (!Array.isArray(indexes)) continue;""",
+        specs=[WITNESS_SPEC],
+    ),
+    Mutation(
+        id="witness-bad-tally-skipped",
+        what="a tally that is not an object is skipped, so a sender's real drops can be summarized away",
+        file=WITNESS,
+        search="""      if (!isRecord(tally)) return null;""",
+        replace="""      if (!isRecord(tally)) continue;""",
+        specs=[WITNESS_SPEC],
+    ),
+    Mutation(
+        id="witness-stop-latches-before-write",
+        what="stop() latches before its write, so an undelivered UNAVAILABLE leaves the listener permanently inert",
+        file=WITNESS,
+        search="""      onWitness(DECODE_WITNESS_UNAVAILABLE);
+      stopped = true;
+    },""",
+        replace="""      stopped = true;
+      onWitness(DECODE_WITNESS_UNAVAILABLE);
+    },""",
+        specs=[WITNESS_SPEC],
+    ),
+    Mutation(
+        id="witness-sweep-invariant-removed",
+        what="the sweep interval may be slower than the staleness threshold, so a dead worker holds its green for most of it",
+        file=WITNESS,
+        search="""  if (!(staleMs >= 2 * checkMs)) {""",
+        replace="""  if (false) {""",
+        specs=[WITNESS_SPEC],
+    ),
+    Mutation(
+        id="witness-skew-warning-silent",
+        what="a worker posting a shape this build cannot read says nothing, and the staleness warning then blames the missing patch",
+        file=WITNESS,
+        search="""        if (isDecodeWitnessKind(data) && !skewWarned) {""",
+        replace="""        if (false && !skewWarned) {""",
+        specs=[WITNESS_SPEC],
+    ),
+    Mutation(
+        id="witness-equality-ignores-drops",
+        what="the signal comparator ignores WHO is dropping, so Solid skips the write and the chip freezes green",
+        file=WITNESS,
+        search="""    a.available === b.available &&
+    a.dropping.length === b.dropping.length &&
+    a.dropping.every((id, i) => id === b.dropping[i])""",
+        replace="""    a.available === b.available""",
+        specs=[WITNESS_SPEC],
+    ),
+    Mutation(
+        id="witness-equality-ignores-identity",
+        what="the comparator checks only the COUNT of dropping senders, not which ones",
+        file=WITNESS,
+        search="""    a.dropping.every((id, i) => id === b.dropping[i])""",
+        replace="""    true""",
+        specs=[WITNESS_SPEC],
+    ),
+    Mutation(
+        id="witness-session-guard-removed",
+        what="a disposed session's queued post writes the newer call's witness",
+        file=WITNESS,
+        search="""      if (!isCurrentSession()) return;""",
+        replace="""      isCurrentSession();""",
+        specs=[WITNESS_SPEC],
+    ),
+    Mutation(
+        id="chip-no-publishers-judged",
+        what="gate (b) judges nobody, so a publisher LiveKit never vouched for reads green",
+        file=CHIP,
+        search="""  if (!room) return [];""",
+        replace="""  if (room) return [];""",
+        # Gate (b) is reachable from the session suite now that the
+        # harness can express an unvouched-for publisher. `must_red`
+        # so the claim is checked on its own rather than masked by
+        # CHIP_SPEC, which reddens for this unconditionally.
+        specs=[CHIP_SPEC, JOINRACE_SPEC],
+        must_red=[JOINRACE_SPEC],
+    ),
+    Mutation(
+        id="chip-own-screen-leg-judged",
+        what="our own screen leg is judged, pinning the sharer's own device amber for the whole share",
+        file=CHIP,
+        search="""    ) {
+      continue;
+    }""",
+        replace="""    ) {
+      publishing.push(participant.identity);
+    }""",
+        specs=[CHIP_SPEC],
+    ),
+    Mutation(
+        id="chip-trackless-listener-judged",
+        what="a participant publishing nothing is judged, though it never reports a status (FE-2)",
+        file=CHIP,
+        search="""    if (participant.publicationCount > 0) publishing.push(participant.identity);""",
+        replace="""    publishing.push(participant.identity);""",
+        specs=[CHIP_SPEC],
+    ),
+    Mutation(
+        id="chip-missing-status-defaults-encrypted",
+        what="a publisher with no observed status is entered as ENCRYPTED — an absence read as a pass",
+        file=CHIP,
+        search="""    if (status !== undefined) observed.set(identity, status);""",
+        replace="""    observed.set(identity, status ?? true);""",
+        # Gate (b) is reachable from the session suite now that the
+        # harness can express an unvouched-for publisher. `must_red`
+        # so the claim is checked on its own rather than masked by
+        # CHIP_SPEC, which reddens for this unconditionally.
+        specs=[CHIP_SPEC, JOINRACE_SPEC],
+        must_red=[JOINRACE_SPEC],
+    ),
+    Mutation(
+        id="chip-local-declaration-assumed",
+        what="our own publications are assumed declared GCM instead of being read from the SFU's record",
+        file=CHIP,
+        search="""    localPublicationsEncrypted: room
+      ? localPublicationsEncrypted(room.localPublications)
+      : true,""",
+        replace="""    localPublicationsEncrypted: true,""",
+        specs=[CHIP_SPEC],
+    ),
+    Mutation(
+        id="chip-roster-emptied",
+        what="the verified roster is read as EMPTY, and [].every(v => v) manufactures a verified lock",
+        file=CHIP,
+        search="""    rosterVerified: sources.rosterVerified(),""",
+        replace="""    rosterVerified: [],""",
+        # JOINRACE too: measurably reachable from the session suite,
+        # which is the standing proof that the harness runs the REAL
+        # assembly rather than a copy of it. If it is ever reverted to
+        # a hand-built literal this stops turning that suite red, and
+        # the runner reports the unexpected "green" as a hard failure.
+        specs=[CHIP_SPEC, JOINRACE_SPEC],
+        must_red=[JOINRACE_SPEC],
+    ),
+    Mutation(
+        id="chip-witness-literal",
+        what="gate (d) is handed an available literal instead of the witness — round 4's CRITICAL, now reachable",
+        file=CHIP,
+        search="""    decodeWitness: sources.decodeWitness(),""",
+        replace="""    decodeWitness: { available: true, dropping: [], live: [] },""",
+        # JOINRACE too: measurably reachable from the session suite,
+        # which is the standing proof that the harness runs the REAL
+        # assembly rather than a copy of it. If it is ever reverted to
+        # a hand-built literal this stops turning that suite red, and
+        # the runner reports the unexpected "green" as a hard failure.
+        specs=[CHIP_SPEC, JOINRACE_SPEC],
+        must_red=[JOINRACE_SPEC],
+    ),
+    Mutation(
+        id="chip-media-hold-ignored",
+        what="a rotation-window media hold does not reach the chip",
+        file=CHIP,
+        search="""    resecuring: sessionState === "resecuring" || sources.mediaHold(),""",
+        replace="""    resecuring: sessionState === "resecuring",""",
+        # JOINRACE too: measurably reachable from the session suite,
+        # which is the standing proof that the harness runs the REAL
+        # assembly rather than a copy of it. If it is ever reverted to
+        # a hand-built literal this stops turning that suite red, and
+        # the runner reports the unexpected "green" as a hard failure.
+        specs=[CHIP_SPEC, JOINRACE_SPEC],
+        must_red=[JOINRACE_SPEC],
+    ),
+    Mutation(
+        id="chip-latched-error-ignored",
+        what="a latched structured error does not reach the chip",
+        file=CHIP,
+        search="""    latchedError: sources.latchedError(),""",
+        replace="""    latchedError: false,""",
+        specs=[CHIP_SPEC],
+    ),
+    Mutation(
+        id="chip-has-session-assumed",
+        what="a session is assumed to exist, so the ME-7 silent-fail guard degrades to a quiet amber",
+        file=CHIP,
+        search="""    hasSession: sources.hasSession(),""",
+        replace="""    hasSession: true,""",
+        specs=[CHIP_SPEC],
+    ),
+    Mutation(
+        id="chip-open-group-assumed-absent",
+        what="the open-group probe is read as false, HIDING the chip entirely on a failed E2EE call",
+        file=CHIP,
+        search="""    channelHasOpenGroup: sources.channelHasOpenGroup(),""",
+        replace="""    channelHasOpenGroup: false,""",
+        specs=[CHIP_SPEC],
+    ),
+    Mutation(
+        id="chip-device-setup-assumed-done",
+        what="the device-needs-setup fact is hardcoded false, silencing a never-enrolled device's chip",
+        file=CHIP,
+        search="""    deviceNeedsSetup: sources.deviceNeedsSetup(),""",
+        replace="""    deviceNeedsSetup: false,""",
+        specs=[CHIP_SPEC],
+    ),
+    Mutation(
+        id="chip-peer-encrypt-assumed",
+        what="a peer is assumed able to encrypt, reddening a plain call on an unenrolled device",
+        file=CHIP,
+        search="""    peerCouldEncrypt: sources.peerCouldEncrypt(),""",
+        replace="""    peerCouldEncrypt: true,""",
+        specs=[CHIP_SPEC],
+    ),
+    Mutation(
+        id="chip-mode-assumed-e2ee",
+        what="the call mode is assumed e2ee, so a negotiating call reads enabled and keyed",
+        file=CHIP,
+        search="""  const mode = sources.mode();""",
+        replace="""  const mode = { kind: "e2ee" } as const;
+  void sources.mode;""",
+        specs=[CHIP_SPEC],
+    ),
+    Mutation(
+        id="chip-seam-reopened",
+        what="the assembled inputs escape to the caller, which can then override any field",
+        file=CHIP,
+        search="""export function chipStateFrom(sources: ChipSources): ChipState {
+  return chipState(chipInputsFrom(sources));
+}""",
+        replace="""export function chipStateFrom(sources: ChipSources): ChipState {
+  return chipState({
+    ...chipInputsFrom(sources),
+    decodeWitness: { available: true, dropping: [], live: [] },
+  });
+}""",
+        specs=[CHIP_SPEC],
+    ),
+    Mutation(
+        id="chip-observed-accessor-detached",
+        what="the observed-status accessor is passed detached, losing its receiver",
+        file=CHIP,
+        search="""    observedEncrypted: observedEncryptionMap(publishing, (identity) =>
+      sources.observedEncryption(identity),
+    ),""",
+        replace="""    observedEncrypted: observedEncryptionMap(publishing, () => true),""",
+        specs=[CHIP_SPEC],
+    ),
+    Mutation(
+        id="chip-session-state-assumed-active",
+        what="the session state is assumed ACTIVE, so a FAILED session reads green",
+        file=CHIP,
+        search="""  const sessionState = sources.sessionState();""",
+        replace="""  const sessionState = "active" as const;
+  void sources.sessionState;""",
+        specs=[CHIP_SPEC],
     ),
 ]
 

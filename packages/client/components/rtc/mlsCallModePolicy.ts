@@ -255,6 +255,104 @@ export type ChipState =
   | "resecuring"
   | "not_encrypted";
 
+// ---- Gate (d): the decode witness ------------------------------------------
+
+/**
+ * One sender's arrival tally at one key index, as the E2EE worker reports it.
+ *
+ * The worker reads the key index off EVERY arriving frame before it decides
+ * whether to drop it, so this is the one witness that is both a LOCAL fact and
+ * INDEX-scoped. `RTCRtpReceiver.getStats()` is neither: `framesDecoded` and
+ * `totalSamplesReceived - concealedSamples` are counted after the worker's
+ * server-injected-frame passthrough, so SFU-injected blank and Opus-silence
+ * frames advance them for a participant whose real frames are being dropped
+ * (M10), and they name a participant rather than an index.
+ */
+export interface DecodeIndexTally {
+  keyIndex: number;
+  /** Frames that ARRIVED at this index during the window. */
+  seen: number;
+  /**
+   * Of those, how many the worker threw away because it had marked that index
+   * invalid. Non-zero is not an absence of evidence — it is the failure
+   * itself, measured: this device is being sent frames it silently discards.
+   */
+  dropped: number;
+}
+
+/** One sender's tallies in one window. */
+export interface DecodeWitnessSample {
+  identity: string;
+  indexes: readonly DecodeIndexTally[];
+}
+
+/** Gate (d)'s input: the latest window the worker reported. */
+export interface DecodeWitness {
+  /**
+   * A sample arrived recently enough to judge on.
+   *
+   * 🔴 FALSE IS AMBER, and that is the whole inversion. A build that lost the
+   * patch, a worker that died, a listener that was never armed — each stops
+   * the heartbeat, and the chip degrades to amber instead of quietly losing
+   * the gate. Exempting on "no evidence" is the reasoning that produced the
+   * silent green six review rounds kept finding in a new place.
+   *
+   * 🔴 What it does NOT prove. The worker posts on an interval at module
+   * scope, before `init` and independently of whether any transform is
+   * installed or any frame has ever been seen. `available: true` therefore
+   * means "the patched worker is in this bundle" and nothing more — never
+   * "this peer is being witnessed". Only a non-empty `dropping` is positive
+   * evidence of anything, and only about the senders it names.
+   */
+  available: boolean;
+  /**
+   * Senders whose frames ARRIVED and were DROPPED at an index this device
+   * silenced — "the sender is still using an index we cannot read".
+   */
+  dropping: readonly string[];
+  /** Senders whose frames arrived and got through. Diagnostic, not a gate. */
+  live: readonly string[];
+}
+
+/** No sample: gate (d) cannot judge, so it holds the chip amber. */
+// Frozen: this exact object is the signal's initial value, is re-handed on
+// every stale tick and on teardown, and is aliased by DECODE_WITNESS_INITIAL.
+// One consumer mutating `dropping` in place would poison the amber sentinel
+// for the life of the process. Nothing does today; freezing keeps it that way
+// loudly rather than by convention.
+export const DECODE_WITNESS_UNAVAILABLE: DecodeWitness = Object.freeze({
+  available: false,
+  dropping: Object.freeze([]),
+  live: Object.freeze([]),
+});
+
+/**
+ * Reduce a window of worker tallies to gate (d)'s input.
+ *
+ * A sender counts as `dropping` if ANY of its indexes lost a frame, and as
+ * `live` if any index got one through. Both can be true at once — a sender
+ * mid-rotation is briefly sending at two indexes — and `dropping` is what the
+ * gate reads, because a sender whose new index we can read is still having its
+ * old-index frames discarded until it stops using that index.
+ */
+export function summarizeDecodeWitness(
+  participants: readonly DecodeWitnessSample[],
+): DecodeWitness {
+  const dropping: string[] = [];
+  const live: string[] = [];
+  for (const participant of participants) {
+    let drop = false;
+    let ok = false;
+    for (const tally of participant.indexes) {
+      if (tally.dropped > 0) drop = true;
+      if (tally.seen > tally.dropped) ok = true;
+    }
+    if (drop) dropping.push(participant.identity);
+    if (ok) live.push(participant.identity);
+  }
+  return { available: true, dropping, live };
+}
+
 /** A snapshot of everything the chip derivation reads. */
 export interface ChipInputs {
   /** No session at all (non-capable shell / never constructed). */
@@ -326,6 +424,12 @@ export interface ChipInputs {
    * (media-e2ee-reviewer round 3, finding 2).
    */
   peerCouldEncrypt: boolean;
+  /**
+   * Gate (d) — the worker's decode witness. Required, never optional: a
+   * permissive default would restore green-by-default at the one place this
+   * whole change exists to remove it.
+   */
+  decodeWitness: DecodeWitness;
 }
 
 /**
@@ -406,7 +510,32 @@ export function chipState(inputs: ChipInputs): ChipState {
   const mediaObserved = inputs.publishingIdentities.every(
     (identity) => inputs.observedEncrypted.get(identity) === true,
   );
-  if (!mediaObserved || !inputs.localPublicationsEncrypted) {
+  // Media-plane gate (d): a FRESH worker sample, in which no sender's frames
+  // are being discarded by the decode path.
+  //
+  // 🔴 Scope, stated where the gate is. RECEIVE-SIDE only: it witnesses frames
+  // arriving at this device, so a local send-index regression (the `getKeys()`
+  // replay past the key-ring wrap) is invisible here — every peer goes amber
+  // and the sender stays green. It covers only senders CURRENTLY sending: a
+  // muted, unsubscribed, or SFU-withheld peer owes no witness and is exempt by
+  // construction. It is a positive measurement of discards, not a proof of
+  // authenticated decryption.
+  //
+  // This is the gate that inverts the default. Gates (a)-(c) are all read from
+  // objects whose absence means "fine": a verdict that was destroyed without
+  // evidence, or never created, reads as green through every one of them, which
+  // is how six review rounds each found the same silent green in a different
+  // place. This one needs a positive measurement, refreshed every second, of
+  // the frames actually arriving. It can only ever withhold a green — it never
+  // latches, never clears, and never promotes.
+  const decodeWitnessed =
+    inputs.decodeWitness.available &&
+    inputs.decodeWitness.dropping.length === 0;
+  if (
+    !mediaObserved ||
+    !inputs.localPublicationsEncrypted ||
+    !decodeWitnessed
+  ) {
     // (a) holds but (b) not yet satisfied for a publishing participant, or
     // one of OUR OWN publications is not on record as GCM — bounded amber
     // (the session arms the 10 s escalation → loud, R2-2, and republishes
@@ -415,7 +544,23 @@ export function chipState(inputs: ChipInputs): ChipState {
   }
 
   // Verification gate (c).
-  const allVerified = inputs.rosterVerified.every((v) => v);
+  //
+  // 🔴 A non-empty roster is REQUIRED, not incidental. `[].every(v => v)` is
+  // `true`, so an empty read used to promote `e2ee_unverified` straight to
+  // `e2ee` — a VERIFIED lock, the strongest claim the product makes, resting
+  // on nobody having been verified. It is reachable in a legitimate call:
+  // `callRoster` is seeded empty and is only written by `#reconcileOnce`,
+  // which returns early unless the session is `active`, so there is a window
+  // on every call before the first native `callState()` round-trip resolves —
+  // and if that bridge call keeps throwing (store-owner mismatch, a native
+  // panic, a lost group id) it is swallowed and the roster stays empty for the
+  // life of the call while the session stays active.
+  //
+  // §4.4 requires "all leaf bindings verified" for green. An unloaded roster
+  // has verified no leaf bindings, so it cannot vouch. A healthy MLS group
+  // always contains at least our own leaf.
+  const allVerified =
+    inputs.rosterVerified.length > 0 && inputs.rosterVerified.every((v) => v);
   return allVerified ? "e2ee" : "e2ee_unverified";
 }
 

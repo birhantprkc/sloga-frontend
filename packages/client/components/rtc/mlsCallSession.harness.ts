@@ -38,15 +38,17 @@ import type {
 } from "@revolt/client";
 
 import { classifyEnvelopeError } from "../client/mlsEnvelopeClassify.ts";
+import { chipStateFrom } from "./chipInputs.ts";
 import {
   type LocalPublicationEncryption,
   ENCRYPTION_TYPE_GCM,
-  localPublicationsEncrypted,
 } from "./localPublicationEncryption.ts";
 import {
   type ChipState,
-  chipState,
+  type DecodeWitness,
+  DECODE_WITNESS_UNAVAILABLE,
   isTerminalLoud,
+  summarizeDecodeWitness,
 } from "./mlsCallModePolicy.ts";
 import type {
   KeyInstaller,
@@ -671,6 +673,95 @@ export class World {
    * only thing separating a deferral from an invisible green.
    */
   holdsSupported = true;
+
+  /**
+   * Gate (d) — the senders whose frames the worker is currently DROPPING at an
+   * index this device silenced. Empty by default: an ordinary healthy call has
+   * nothing being discarded, and a spec that wants gate (d) to bite says so
+   * with `dropFrames()`.
+   *
+   * The opposite default to `observedEncrypted`, which is modelled all-true
+   * because it is the SFU's DECLARATION and structurally cannot witness this
+   * class. The decode witness is a LOCAL measurement of frames that actually
+   * arrived, so for a healthy call it genuinely holds.
+   */
+  #dropping: string[] = [];
+  /** Whether the worker's heartbeat is arriving at all (fail-closed when not). */
+  witnessAvailable = true;
+
+  /** The worker is dropping these senders' frames at a silenced index. */
+  dropFrames(...identities: string[]): void {
+    for (const identity of identities) {
+      // The witness is built from the SFU set, so naming somebody who is not
+      // in it would silently model NO drops — a spec that reads green for the
+      // wrong reason.
+      assert.ok(
+        this.sfu.includes(identity),
+        `dropFrames(${identity}): not in the SFU set, so it owes no witness`,
+      );
+    }
+    this.#dropping = identities;
+  }
+
+  /** The worker's heartbeat stopped — the patch is missing, or the worker died. */
+  loseWitness(): void {
+    this.witnessAvailable = false;
+  }
+
+  /**
+   * Gate (d)'s input, built by handing a modelled worker window to the REAL
+   * `summarizeDecodeWitness`.
+   *
+   * 🔴 It used to hand-build the `DecodeWitness` result instead, which meant
+   * the reducer every one of these specs depends on was never exercised by
+   * them — a second implementation of the thing under test, agreeing with
+   * itself. Same shape as the chip assembly below.
+   */
+  decodeWitness(): DecodeWitness {
+    if (!this.witnessAvailable) return DECODE_WITNESS_UNAVAILABLE;
+    const remotes = this.sfu.filter((id) => id !== SELF_ID);
+    return summarizeDecodeWitness(
+      remotes.map((identity) => {
+        const dropped = this.#dropping.includes(identity) ? 10 : 0;
+        return { identity, indexes: [{ keyIndex: 1, seen: 10, dropped }] };
+      }),
+    );
+  }
+
+  /**
+   * Roster members this device has NOT verified (gate c). Empty by default:
+   * the ladders these specs drive are about the media plane, and an
+   * unverified member is a separate axis. It exists so the axis is
+   * EXPRESSIBLE — the harness used to hardcode every member verified, so no
+   * spec could state a gate-(c) hold even if it wanted one.
+   */
+  unverified = new Set<string>();
+
+  /** Mark roster members unverified for gate (c). */
+  markUnverified(...identities: string[]): void {
+    for (const identity of identities) this.unverified.add(identity);
+  }
+
+  /**
+   * Participants LiveKit has reported no encryption status for (gate b).
+   *
+   * 🔴 Empty by default, and `observedEncryption` otherwise answers TRUE for
+   * everyone, because that is the SFU's DECLARATION and a peer whose frames
+   * this device cannot decrypt still reports encrypted — which is exactly why
+   * gate (b) cannot see the media plane and gate (d) exists.
+   *
+   * It is an axis at all because routing the harness through the real
+   * assembly was only half the fix: the assembly now includes SELF in
+   * `publishingIdentities` as production does, but with every identity
+   * hardcoded observed-true, "our own publication is not observed encrypted"
+   * — the desktop 0.57.0 defect — was still inexpressible here.
+   */
+  unobserved = new Set<string>();
+
+  /** LiveKit has vouched for nothing about these identities. */
+  markUnobserved(...identities: string[]): void {
+    for (const identity of identities) this.unobserved.add(identity);
+  }
   session!: MlsCallSession;
 
   readonly role: "creator" | "joiner";
@@ -880,10 +971,18 @@ export class World {
    * IDENTITY, so a `loud` under an existing latch is a no-op and a following
    * `clear` of the superseded error wipes the signal outright.
    *
-   * `observedEncrypted` is modelled as ALL TRUE on purpose. It is the SFU's
+   * `observedEncryption` is modelled as ALL TRUE on purpose. It is the SFU's
    * declaration, not a decrypt: a peer whose frames this device cannot decrypt
    * still reports encrypted, which is exactly why gate (b) cannot see any of
    * this and why the media plane has to.
+   *
+   * 🔴 It goes through the REAL `chipStateFrom`. It used to hand-build the
+   * `ChipInputs` literal, and that copy had drifted: it excluded SELF from
+   * `publishingIdentities` entirely, where production includes the local
+   * participant and excludes only our OWN screen leg — so no spec here could
+   * express "our own publication is not observed encrypted", and every gate-(b)
+   * assertion in these suites was evidence about a second implementation. The
+   * whole point of the `chipInputs` extraction was that there be exactly one.
    */
   /**
    * Whether the session is HOLDING the publish gate — literally
@@ -931,26 +1030,33 @@ export class World {
     const { latchedError, mediaHold } = this.#replay();
     const mode = this.session.callMode();
     const sessionState = this.session.state();
-    const publishing = this.sfu.filter((id) => id !== SELF_ID);
-    return chipState({
-      hasSession: true,
-      sessionState,
-      mode,
-      e2eeEnabled: mode.kind === "e2ee",
-      hasLocalKey: mode.kind === "e2ee",
-      resecuring: sessionState === "resecuring" || mediaHold,
-      latchedError: latchedError !== undefined,
-      publishingIdentities: publishing,
-      observedEncrypted: new Map(publishing.map((id) => [id, true])),
-      localPublicationsEncrypted: localPublicationsEncrypted(
-        this.localPublications,
-      ),
-      rosterVerified: this.roster.map(() => true),
-      channelHasOpenGroup: true,
+    return chipStateFrom({
+      hasSession: () => true,
+      sessionState: () => sessionState,
+      mode: () => mode,
+      mediaHold: () => mediaHold,
+      latchedError: () => latchedError !== undefined,
+      rosterVerified: () =>
+        this.roster.map((m) => !this.unverified.has(identityOf(m))),
+      channelHasOpenGroup: () => true,
       // Both read only on the no-session path; a device running a session
       // is enrolled, and its peers are the ones publishing.
-      deviceNeedsSetup: false,
-      peerCouldEncrypt: publishing.length > 0,
+      deviceNeedsSetup: () => false,
+      peerCouldEncrypt: () => this.sfu.some((id) => id !== SELF_ID),
+      decodeWitness: () => this.decodeWitness(),
+      observedEncryption: (identity) =>
+        this.unobserved.has(identity) ? undefined : true,
+      // Every SFU participant publishes one track, INCLUDING self. The
+      // production assembly excludes only our own screen leg, and these
+      // ladders have none.
+      room: () => ({
+        localIdentity: SELF_ID,
+        participants: this.sfu.map((identity) => ({
+          identity,
+          publicationCount: 1,
+        })),
+        localPublications: [...this.localPublications],
+      }),
     });
   }
 

@@ -215,10 +215,16 @@ import {
 } from "./cameraEffects";
 import { createCaptionEngine } from "./captions/captionEngine";
 import { LiveCaptions } from "./captions/liveCaptions";
+import { chipStateFrom } from "./chipInputs.ts";
 import { CaptionPublisher } from "./components/CaptionPublisher";
 import { CaptionSpeaker } from "./components/CaptionSpeaker";
 import { InRoom } from "./components/InRoom";
 import { RoomAudioManager } from "./components/RoomAudioManager";
+import {
+  createDecodeWitnessListener,
+  DECODE_WITNESS_INITIAL,
+  sameWitness,
+} from "./decodeWitnessListener.ts";
 import { isDiceRollMessage, summariseDiceRoll } from "./diceRoll";
 import {
   type CallEncryptionReadiness,
@@ -227,15 +233,14 @@ import {
   encryptionSetupAvailable,
 } from "./e2eeDeviceReadiness";
 import { faceSettingsActive } from "./faceFilterCatalog";
-import { localPublicationsEncrypted } from "./localPublicationEncryption";
 import { micPipelineAction } from "./micPipelinePolicy";
 import { MlsKeyProvider } from "./mlsCallKeys";
 import {
   type CallBannerKind,
   type CallMode,
   type ChipState,
+  type DecodeWitness,
   callBannerState,
-  chipState,
   isTerminalLoud,
   plaintextReleaseAvailable,
 } from "./mlsCallModePolicy";
@@ -711,6 +716,9 @@ class Voice {
   // undefined on unsupported/web shells (treated as non-enrolled).
   #mlsKeyProvider: MlsKeyProvider | undefined;
   #e2eeWorker: Worker | undefined;
+  /** Tear down the decode-witness listener + staleness timer (gate d). */
+  #decodeWitnessStop: (() => void) | undefined;
+  #setCallDecodeWitness!: Setter<DecodeWitness>;
   /**
    * The shared web-audio context handed to livekit via
    * `webAudioMix: { audioContext }`. Owned HERE, not by the SDK — livekit
@@ -934,6 +942,13 @@ class Voice {
    * AMBER for exactly as long as the verdict is open.
    */
   callMediaHold: Accessor<boolean>;
+  /**
+   * Gate (d): the E2EE worker's decode witness for the current window — which
+   * senders' frames are arriving and being DROPPED at an index this device
+   * silenced. `available: false` while no heartbeat is arriving, which the chip
+   * reads as amber.
+   */
+  callDecodeWitness: Accessor<DecodeWitness>;
   #setCallMediaHold: Setter<boolean>;
   /**
    * The ONLY writer of the one signal behind {@link callPauseDisproved} and
@@ -1610,6 +1625,27 @@ class Voice {
 
     const [callMediaHold, setCallMediaHold] = createSignal(false);
     this.callMediaHold = callMediaHold;
+    // Starts UNAVAILABLE, so a call that never arms the witness reads amber
+    // rather than green (gate d is fail-closed by construction). The value is
+    // imported rather than written here because THIS file has no spec: a
+    // reviewer flipped it to an available witness and every spec stayed green.
+    const [callDecodeWitness, setCallDecodeWitness] =
+      createSignal<DecodeWitness>(DECODE_WITNESS_INITIAL, {
+        // The worker posts a NEW object every second, and Solid's default
+        // equality is reference identity — so without this the chip, which
+        // walks every participant and every publication, re-ran once a second
+        // for the life of every call, defeating the `callParticipantsVersion`
+        // dependency that exists to stop exactly that. Only a change in what
+        // the witness SAYS is a change.
+        //
+        // 🔴 The comparator itself is in `decodeWitnessListener.ts`, where a
+        // spec can load it: Solid SKIPS the write when it returns true, so
+        // loosening it freezes the chip green over a peer whose frames are
+        // being discarded.
+        equals: sameWitness,
+      });
+    this.callDecodeWitness = callDecodeWitness;
+    this.#setCallDecodeWitness = setCallDecodeWitness;
     this.#setCallMediaHold = setCallMediaHold;
     // ONE signal for the whole verdict. Both public readers are derived off
     // it, so the alarm and its confidence are written together or not at all.
@@ -2590,11 +2626,34 @@ class Voice {
     const callAudioContext = webAudioMix ? new AudioContext() : undefined;
     this.#callAudioContext = callAudioContext;
 
+    const e2eeRoom = !!(
+      e2eeCapable &&
+      this.#mlsKeyProvider &&
+      this.#e2eeWorker
+    );
     const room = new Room({
-      e2ee:
-        e2eeCapable && this.#mlsKeyProvider && this.#e2eeWorker
-          ? { keyProvider: this.#mlsKeyProvider, worker: this.#e2eeWorker }
-          : undefined,
+      e2ee: e2eeRoom
+        ? { keyProvider: this.#mlsKeyProvider!, worker: this.#e2eeWorker! }
+        : undefined,
+      publishDefaults: {
+        // E2EE INVARIANT, not a bandwidth knob — the same rule the
+        // ScreenShareAudio publish states at its own call site (§7/E5), which
+        // the microphone was never given. Empty DTX frames take the
+        // zero-length passthrough in the worker (`encodedFrame.data.byteLength
+        // === 0` returns before both the encrypt and decrypt paths), so they
+        // are never encrypted: per-participant speech/silence timing rides on
+        // the wire in cleartext for the whole call.
+        //
+        // livekit already forces `disableRed` whenever E2EE is on
+        // (`LocalParticipant`: `disableRed: this.isE2EEEnabled || ...`) but
+        // applies no such rule to DTX (`disableDtx` reads `opts.dtx` alone,
+        // default true), so RED is handled for us and DTX has to be set here.
+        // Setting `red: false` as well would only degrade PLAINTEXT calls.
+        //
+        // Scoped to E2EE-capable calls: on a plain voice call there is no
+        // timing to protect and DTX is exactly the saving it is meant to be.
+        ...(e2eeRoom ? { dtx: false } : {}),
+      },
       // Stop pushing upstream for tracks nobody is subscribed to — trims
       // wasted bitrate on the (relayed) publisher path. Safe with the manual
       // autoSubscribe:false flow below. adaptiveStream is intentionally left
@@ -2858,6 +2917,32 @@ class Voice {
     });
 
     room.addListener("disconnected", (reason) => {
+      // 🔴 The SFU dropped us, and this path does NOT run `disconnect()`. The
+      // patched worker's heartbeat is a module-scope interval that keeps
+      // posting `{participants: []}` regardless, and an empty window
+      // summarizes to `available: true`; LiveKit meanwhile clears the remote
+      // participants and unpublishes our tracks, so gate (b) goes vacuous and
+      // the local declaration vacuously true. The roster stays populated and
+      // verified and the session stays `active`. Net: a green VERIFIED lock
+      // over a call that is no longer connected, refreshed once a second for
+      // as long as it lasts. Gate (d) exists to stop a green outliving its
+      // evidence, so it must be disarmed here even though the session is not.
+      //
+      // 🔴 Guarded by the connect generation. LiveKit emits `disconnected`
+      // asynchronously (after an awaited `sendLeave()`), so a SUPERSEDED
+      // room's late event can land during the next call — and since
+      // `#armDecodeWitness` runs once per call and nothing re-arms, an
+      // unguarded disarm here would pin the NEW call's chip amber for its
+      // whole life. The state write below is unguarded too, but its effect is
+      // transient and pre-existing; this one is not. An auto-rejoin re-arms
+      // through `connect()`, which arms a fresh witness for its new session.
+      if (gen === this.#connectGen) {
+        try {
+          this.#disarmDecodeWitness();
+        } catch {
+          /* teardown must not be abortable by a chip-derivation throw */
+        }
+      }
       nativeCallServiceStop();
       // Kick / `force_disconnect`: the server will remove the leg anyway
       // (ingress primary-left), but the native side should not wait for the
@@ -3677,6 +3762,7 @@ class Voice {
         session.bindMedia(this.#buildMediaBinding(room, this.#mlsKeyProvider));
         this.#mlsSession = session;
         this.#setCallSessionState(session.state());
+        this.#armDecodeWitness(session);
         void session.start();
       } else if (e2eeCapable) {
         // Capable shell, no session — R2-4, withdrawn 2026-09-06 under the
@@ -3828,6 +3914,19 @@ class Voice {
         /* see above */
       }
       this.#unlistenCallKeys = undefined;
+      // 🔴 Guarded for the same reason as the unlisten above. Disarming writes
+      // UNAVAILABLE through a Solid setter, which synchronously re-runs the
+      // chip derivation over the SFU's participants and publications. A throw
+      // out of a half-disposed room would land in this method's single catch
+      // and skip everything below — the worker would survive with its
+      // per-participant key sets (the §7.2 bound this teardown exists to
+      // enforce), and `room.disconnect()` would never run, so hanging up would
+      // not actually hang up.
+      try {
+        this.#disarmDecodeWitness();
+      } catch {
+        /* see above */
+      }
       this.#e2eeWorker?.terminate();
       this.#e2eeWorker = undefined;
       this.#mlsKeyProvider = undefined;
@@ -7664,6 +7763,49 @@ class Voice {
   }
 
   /**
+   * Gate (d): listen for the E2EE worker's decode witness.
+   *
+   * All of the judgement — the message-kind and session guards, the sample
+   * parse, the three-beat staleness threshold, the one-time console warn and
+   * the recovery line — lives in `decodeWitnessListener.ts`, which is pure and
+   * loadable by `node --test`. This method is only the wiring that has to
+   * touch a `Worker`, a timer and a Solid setter, because a reviewer showed
+   * that anything left in THIS file is unspecced and unmutated: gate (d)'s
+   * initial value was flipped to an available witness — green by default, the
+   * posture the gate exists to remove — with every spec and every mutation
+   * still passing.
+   *
+   * 🔴 ONE-WAY. This may withhold a green. It never resolves a hold, cancels an
+   * escalation, clears a latch or promotes anything.
+   */
+  #armDecodeWitness(session: MlsCallSession): void {
+    this.#disarmDecodeWitness();
+    const worker = this.#e2eeWorker;
+    if (!worker) return;
+    const listener = createDecodeWitnessListener({
+      now: () => performance.now(),
+      onWitness: (witness) => this.#setCallDecodeWitness(witness),
+      // Guarded by session identity so a disposed session's queued post can
+      // never clobber a newer call's witness.
+      isCurrentSession: () => this.#mlsSession === session,
+    });
+    const onMessage = (ev: MessageEvent) => listener.onMessage(ev.data);
+    worker.addEventListener("message", onMessage);
+    const stale = setInterval(() => listener.tick(), listener.checkMs);
+    this.#decodeWitnessStop = () => {
+      worker.removeEventListener("message", onMessage);
+      clearInterval(stale);
+      listener.stop();
+    };
+  }
+
+  #disarmDecodeWitness(): void {
+    const stop = this.#decodeWitnessStop;
+    this.#decodeWitnessStop = undefined;
+    stop?.();
+  }
+
+  /**
    * The §4.4 dual-gated encryption chip state (slice 6.5). Derived from the
    * session mode/state, LiveKit's observed per-participant encryption, the
    * verified MLS roster, the latched error, and the open-group probe — via the
@@ -7674,65 +7816,32 @@ class Voice {
     this.callParticipantsVersion(); // reactive dependency (FE-8/R2-3)
     const room = this.room();
     const session = this.#mlsSession;
-    const mode = this.callMode();
-    // Rejoin plan §4.5: the session state via its SIGNAL (driven by
-    // `onStateChange`), so a resecuring/failed flip re-runs this — a bare
-    // `session.state()` read is non-reactive and left the chip stale.
-    const sessionState = this.callSessionState() ?? session?.state();
-    const publishing: string[] = [];
-    if (room) {
-      const localIdentity = room.localParticipant.identity;
-      for (const [identity, p] of [
-        [localIdentity, room.localParticipant] as const,
-        ...[...room.remoteParticipants.values()].map(
-          (p) => [p.identity, p] as const,
-        ),
-      ]) {
-        // Our OWN screen leg is excluded (plan §6.7). This device minted the
-        // leg's key and does not subscribe to it (§0.9), so LiveKit never
-        // reports an encryption status for it — leaving it in `publishing`
-        // with nothing in `observed` reads as "a publisher we cannot vouch
-        // for" and pins the sharer's own phone at amber "re-securing" for the
-        // whole share. Compared by DEVICE, not user: another of our devices'
-        // legs is a genuine remote publisher we DO observe.
-        if (isScreenLeg(identity) && stripLeg(identity) === localIdentity)
-          continue;
-        // Only participants with ≥1 published track ever report an encryption
-        // status (FE-2); trackless listeners are covered by MLS membership.
-        if (p.trackPublications.size > 0) publishing.push(identity);
-      }
-    }
-    const observed = new Map<string, boolean>();
-    for (const identity of publishing) {
-      const v = this.callEncryption.get(identity);
-      if (v !== undefined) observed.set(identity, v);
-    }
-    // The worker's "encrypted" status for OUR identity says the cryptor is
-    // on, not what the SFU was told; the declaration receivers arm from is
-    // `trackInfo.encryption` on our own publications. Re-read on every
-    // participants-version bump (a republish registers a new publication).
-    const localDeclared = room
-      ? localPublicationsEncrypted(
-          [...room.localParticipant.trackPublications.values()].map((pub) => ({
-            trackSid: pub.trackSid,
-            source: pub.source,
-            encryption: pub.trackInfo?.encryption,
-          })),
-        )
-      : true;
-    return chipState({
-      hasSession: !!session,
-      sessionState,
-      mode,
-      e2eeEnabled: mode?.kind === "e2ee",
-      hasLocalKey: mode?.kind === "e2ee",
-      resecuring: sessionState === "resecuring" || this.callMediaHold(),
-      latchedError: this.callEncryptionError() !== undefined,
-      publishingIdentities: publishing,
-      observedEncrypted: observed,
-      localPublicationsEncrypted: localDeclared,
-      rosterVerified: this.callRoster().members.map((m) => m.user_verified),
-      channelHasOpenGroup: this.callChannelHasOpenGroup(),
+    // 🔴 BINDINGS ONLY — nothing is derived here any more. The screen-leg
+    // exclusion, the FE-2 publication filter, the observed map, the local
+    // declaration and the resecuring disjunction all moved to `chipInputs.ts`,
+    // where `node --test` can load them and `rtc-mutations.py` can break them.
+    // Three consecutive review rounds found the same defect one line further
+    // down the object literal that used to sit here, because nothing in this
+    // file is reachable by a spec; the derivation is no longer in it.
+    //
+    // Accessors rather than values so every signal read still happens inside
+    // this memo's tracking scope, exactly where it did when this was inline.
+    // 🔴 ONE call, no intermediate value. `chipStateFrom` assembles AND
+    // judges, because a `chipInputsFrom(...)` result held here could be spread
+    // into a literal that overrides any field — which passed every assertion
+    // and every mutation for exactly one commit.
+    return chipStateFrom({
+      hasSession: () => !!session,
+      // Rejoin plan §4.5: the session state via its SIGNAL (driven by
+      // `onStateChange`), so a resecuring/failed flip re-runs this — a bare
+      // `session.state()` read is non-reactive and left the chip stale.
+      sessionState: () => this.callSessionState() ?? session?.state(),
+      mode: () => this.callMode(),
+      mediaHold: () => this.callMediaHold(),
+      latchedError: () => this.callEncryptionError() !== undefined,
+      rosterVerified: () =>
+        this.callRoster().members.map((m) => m.user_verified),
+      channelHasOpenGroup: () => this.callChannelHasOpenGroup(),
       // The connect-time capability, NOT `settings.e2eeCallsEnabled`: that
       // accessor hard-returns true (media E2EE is mandatory), so passing it
       // collapsed the chip's two no-session branches — a browser took the
@@ -7740,9 +7849,8 @@ class Voice {
       // so the chip never moved; the banner now has to tell them apart.
       // A LOCAL fact, so unlike the open-group probe it cannot go stale: this
       // device could encrypt calls and is not set up to.
-      deviceNeedsSetup: encryptionSetupAvailable(
-        this.callEncryptionReadiness(),
-      ),
+      deviceNeedsSetup: () =>
+        encryptionSetupAvailable(this.callEncryptionReadiness()),
       // ...and a LIVE one, so it says nothing on a call where there is no
       // encryption to be left out of. A device-qualified identity is minted
       // only for a participant that asked for one, which delta grants only
@@ -7757,12 +7865,42 @@ class Voice {
       // loop above — `remoteParticipants` contains our own leg, so without it
       // a device that merely started a screen share would light its own chip
       // (media-e2ee-reviewer round 4, MEDIUM).
-      peerCouldEncrypt: room
-        ? anyPeerCouldEncrypt(
-            [...room.remoteParticipants.values()].map((p) => p.identity),
-            room.localParticipant.identity,
-          )
-        : false,
+      peerCouldEncrypt: () =>
+        room
+          ? anyPeerCouldEncrypt(
+              [...room.remoteParticipants.values()].map((p) => p.identity),
+              room.localParticipant.identity,
+            )
+          : false,
+      decodeWitness: () => this.callDecodeWitness(),
+      observedEncryption: (identity) => this.callEncryption.get(identity),
+      // Re-read on every participants-version bump above: a republish
+      // registers a new publication, and `trackInfo.encryption` is the
+      // declaration receivers arm their cryptors from.
+      room: () =>
+        room
+          ? {
+              localIdentity: room.localParticipant.identity,
+              participants: [
+                {
+                  identity: room.localParticipant.identity,
+                  publicationCount:
+                    room.localParticipant.trackPublications.size,
+                },
+                ...[...room.remoteParticipants.values()].map((p) => ({
+                  identity: p.identity,
+                  publicationCount: p.trackPublications.size,
+                })),
+              ],
+              localPublications: [
+                ...room.localParticipant.trackPublications.values(),
+              ].map((pub) => ({
+                trackSid: pub.trackSid,
+                source: pub.source,
+                encryption: pub.trackInfo?.encryption,
+              })),
+            }
+          : undefined,
     });
   }
 
