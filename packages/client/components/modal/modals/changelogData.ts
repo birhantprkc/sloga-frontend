@@ -8,6 +8,33 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // v0.60.3 (2026-09-19). Copy constraints, load-bearing:
+  // - Web and the server only. The desktop and Android apps bundle their own
+  //   copy of the client, so they get this with their next build; the entry
+  //   must not promise it everywhere.
+  // - "Never" is a real option (0 minutes on the wire). Say it plainly.
+  // - Existing forums become 7 days for NEW posts. That is a behaviour change
+  //   for every forum that never chose one, so it is stated.
+  // - Who can change a post's setting is exact: its author, or anyone with
+  //   Manage Channel. An author who cannot post in the forum cannot change it
+  //   either — the server refuses, so do not imply otherwise.
+  // - No live click-through was done before this shipped. Nothing here may
+  //   claim one.
+  {
+    id: "sloga-2026-09-19b",
+    title: "Patch Notes",
+    published_at: "2026-09-19T21:00:00.000Z",
+    web_version: "0.60.3",
+    markdown_content: `## v0.60.3 — Forum posts can stay open for 90 days, or forever
+
+### 💬 Forums
+- **Posts no longer close after a day.** Every forum post used to archive after one day without a reply. You can now pick **1 hour, 1 day, 3 days, 7 days, 30 days, 90 days, or Never** when you start a post.
+- **Each forum sets its own default.** In **forum settings → Default auto-archive for new posts**. Forums that never chose one now use 7 days, so new posts stay open a week instead of a day.
+- **You can change a post after it starts.** Open the post and use the **Auto-archive** menu in its header. The post's author can change it, and so can anyone with Manage Channel.
+- **Busy forums no longer fill up.** Open posts used to count against a limit of 100 open posts per forum. They no longer do.
+- **Reopening a post keeps it open.** Unarchiving a quiet post used to archive it again within a minute. Fixed.
+`,
+  },
   // v0.60.2 (2026-09-19). Copy constraints, load-bearing:
   // - Also covers v0.60.1 (voice auto-rejoin), which shipped with no entry.
   // - The lock bullet claims only what gate (d) witnesses: nothing anyone
