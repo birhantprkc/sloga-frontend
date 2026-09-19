@@ -98,6 +98,7 @@ import {
   enrolmentVerdict,
   isAdmitTargetRefusal,
 } from "./mlsAdmitPolicy";
+import { MissingLocalFrameKeyError } from "./mlsCallKeys";
 import {
   type CallMode,
   type CallModeEvent,
@@ -670,6 +671,8 @@ export interface KeyInstaller {
   ): Promise<void>;
   /** Install the local send key — the deferred Add-grace switch. */
   applyLocalKey(frameKeys: MlsFrameKeys, localIdentity: string): Promise<void>;
+  /** Drop every key held for the group being REPLACED. */
+  resetForGroup(): void;
 }
 
 /** The media-plane loud-state the session surfaces for the 6.5 chip. */
@@ -3664,11 +3667,15 @@ export class MlsCallSession {
     // (an equal epoch is an idempotent reconnect re-assert, allowed).
     if (epoch < this.#installEpoch) return;
 
+    // NEW-1: a newer epoch supersedes any pending Add-grace local install.
+    // BEFORE the identity guard below: a push we drop must still retire the
+    // pending grace, or that timer survives with `#installEpoch` still on the
+    // OLD epoch, passes its own fence, and installs a superseded local send
+    // key — the very regression the fence exists to stop.
+    this.#cancelGrace();
+
     const identity = media.localIdentity();
     if (!identity) return; // token identity not yet minted — cannot match local-last
-
-    // NEW-1: a newer epoch supersedes any pending Add-grace local install.
-    this.#cancelGrace();
 
     // Classify + open the §4.4 rotation window BEFORE fetching keys: we are
     // mid-rotation the moment keys-changed fires, so a transient error on the
@@ -3694,6 +3701,17 @@ export class MlsCallSession {
     }
     // Re-check across the await: a group transition / dispose may have raced.
     if (this.#terminal() || groupId !== this.#groupId) return;
+    // …and so may a NEWER EPOCH. This method is driven fire-and-forget from the
+    // native push and is not serialized, so two pushes (an Add at N+1, a Remove
+    // at N+2) each await `callFrameKeys` independently and their replies can
+    // land out of order. Installing a superseded egress here would walk the
+    // send index BACK onto an epoch the member N+2 removed still holds — the
+    // same regression the provider's `getKeys()` override closes on the replay
+    // side, arriving by a different door. `#installEpoch` has already moved to
+    // the newest epoch seen (set before the await), so it is the fence. The
+    // Add-grace path double-guards on the same value in `#scheduleGraceLocal`;
+    // the immediate path used to have nothing.
+    if (this.#installEpoch !== epoch) return;
 
     // R-1 receive-gap (§7.3): time to install the REMOTE keys is when THIS
     // client becomes able to decrypt peers' new-epoch frames — the observable
@@ -3738,8 +3756,39 @@ export class MlsCallSession {
         this.#scheduleGraceLocal(frameKeys, identity, epoch);
       }
     } catch (error) {
-      this.#onMediaError(error);
+      this.#onRotationError(error);
     }
+  }
+
+  /**
+   * Route a failure on the rotation install path.
+   *
+   * Everything transient takes the §4.4 re-securing debounce — a fetch blip
+   * inside a rotation window must not stick the chip loud. ONE failure does
+   * not: an egress with no frame key for this device is native affirmatively
+   * saying we are not a sender at this epoch, which is the shape a REMOVED leaf
+   * takes. Retrying cannot change that answer, and the debounce would be wrong
+   * twice over — `noteEncryptionRecovered` clears an amber on ANY remote's
+   * encrypted status (a remote publishing a track is enough, and the same
+   * `enable` ack replays our keys), and amber keeps publishing meanwhile, under
+   * the PREVIOUS epoch's key that the removing members hold.
+   *
+   * So it goes straight to the terminus: `#dropModeToNegotiating` re-asserts
+   * the negotiating publish gate in lockstep (nothing more goes out under the
+   * superseded key) and the latch takes a CONTROL origin, which the heal never
+   * clears. Both together are what `isTerminalLoud` needs to render the
+   * Leave / "Stay unencrypted" banner, so this is a terminus the user can act
+   * on rather than a hang.
+   */
+  #onRotationError(error: unknown): void {
+    if (!(error instanceof MissingLocalFrameKeyError)) {
+      this.#onMediaError(error);
+      return;
+    }
+    console.error("[mls] no local frame key for the current epoch", error);
+    this.#lastError = error;
+    this.#dropModeToNegotiating();
+    this.#latchLoud(error, "control");
   }
 
   /**
@@ -3827,7 +3876,7 @@ export class MlsCallSession {
         await this.#media?.installer.applyLocalKey(frameKeys, identity);
         this.#onLocalKeyInstalled();
       } catch (error) {
-        this.#onMediaError(error);
+        this.#onRotationError(error);
       }
     }, ADD_GRACE_MS);
     this.#graceTimer = timer;
@@ -4777,6 +4826,12 @@ export class MlsCallSession {
     // for one of the old group's pairs would otherwise hold every later latch
     // until an install that can never come.
     this.#mediaErrors.reset();
+    // The group is being REPLACED, so the provider must stop holding its keys:
+    // otherwise `getKeys()` keeps serving the outgoing group's local send key
+    // — the one the members who removed us hold — and every LiveKit `enable`
+    // ack re-arms the encoder onto it for the whole negotiating window. The
+    // publish gate stands in front of that; not holding the key is stronger.
+    this.#media?.installer.resetForGroup();
     this.#installEpoch = -1;
     this.#hasLocalKey = false;
     this.#lastOwnWon = null;

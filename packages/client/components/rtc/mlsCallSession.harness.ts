@@ -990,6 +990,7 @@ function fakeInstaller(world: World): KeyInstaller {
     applyKeys: install,
     applyRemoteKeys: install,
     applyLocalKey: install,
+    resetForGroup: () => {},
   };
 }
 

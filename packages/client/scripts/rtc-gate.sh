@@ -97,6 +97,7 @@ run() { # run <label> <tail-lines> <cmd...>
 EXPECTED=(
   "components/rtc/mlsAdmitGracePolicy.test.ts 18 0"
   "components/rtc/mlsAdmitPolicy.test.ts 15 0"
+  "components/rtc/mlsCallKeys.test.ts 23 0"
   "components/rtc/mlsCallModePolicy.test.ts 74 0"
   "components/rtc/mlsCallSession.falsered.test.ts 5 0"
   "components/rtc/mlsCallSession.heal.test.ts 7 0"
