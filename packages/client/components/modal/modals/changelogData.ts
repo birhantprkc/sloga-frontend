@@ -8,6 +8,42 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // v0.60.2 (2026-09-19). Copy constraints, load-bearing:
+  // - Also covers v0.60.1 (voice auto-rejoin), which shipped with no entry.
+  // - The lock bullet claims only what gate (d) witnesses: nothing anyone
+  //   sends is FAILING to decrypt on this device. It is receive-side and
+  //   measures discards, so never "proves the call is encrypted" or "verified".
+  // - The removed-member bullet says "in some cases" on purpose: it needed a
+  //   long call (16+ key changes) plus a reconnect or an unmute to trigger.
+  // - The speaking/silent bullet is the DTX fix. It costs a little bandwidth
+  //   on encrypted calls, which is said rather than discovered.
+  // - Account switch: say what the user sees and where the fix is. Never quote
+  //   the banner sentences — they are build-gate markers.
+  // - The unread-count line names Windows and Linux only: macOS is held at
+  //   0.59.0 and does not ship this build.
+  // - NONE of these four encryption changes has had a live two-device test.
+  //   Nothing here may claim one.
+  {
+    id: "sloga-2026-09-19",
+    title: "Patch Notes",
+    published_at: "2026-09-19T12:00:00.000Z",
+    web_version: "0.60.2",
+    markdown_content: `## v0.60.2 — Encrypted call fixes, and unread counts on your app icon
+
+### 🔒 Encrypted calls
+- **The server can no longer tell when you are talking.** When you went quiet, your microphone sent short silence packets that were not encrypted, so anyone watching the connection could see when each person in an encrypted call was speaking and when they were silent. Those packets are encrypted now. Encrypted calls use slightly more data while you are silent as a result.
+- **Someone removed from a long encrypted call can no longer read it again.** After many people had joined and left, a reconnect or an unmute could, in some cases, put your device back on an older key that a removed member still held. Fixed.
+- **The lock now waits for evidence.** It used to show the call as encrypted by default. It now appears only once your device can see that nothing anyone in the call sends is failing to decrypt, so it may take a moment longer to show up.
+- **Switching accounts in the desktop app no longer silently breaks voice.** If encryption on your computer had been set up by a different account, joining a voice channel just failed with no reason given. Sloga now explains what happened and takes you to **Settings → Encryption** to set it up for the account you are signed in as.
+
+### 🎙️ Calls
+- **Voice calls reconnect on their own.** If your connection drops during a call, Sloga now rejoins it for you instead of leaving you disconnected. If it cannot get back in, the call card shows a **Rejoin** button.
+
+### 🔔 Unread counts
+- **Your unread count now shows on the app icon**: on the taskbar on Windows, and in the launcher on Linux where your desktop supports it. It is the same number the server list shows, and muted servers are left out. When Sloga is hidden to the tray, the tray icon shows a dot.
+- In a browser tab, the count shows in the tab title.
+`,
+  },
   // v0.60.0 (2026-09-16). Copy constraints, load-bearing:
   // - The keybinds platform line is exact and must stay exact: on macOS,
   //   Linux and web there is NO native bridge, so the nine system-wide rows
