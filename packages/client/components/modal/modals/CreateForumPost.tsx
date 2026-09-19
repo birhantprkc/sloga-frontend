@@ -4,8 +4,10 @@ import { createFormControl, createFormGroup } from "solid-forms";
 
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
 
+import { resolvePostDefault } from "@revolt/common";
 import { useNavigate } from "@revolt/routing";
 import { Column, Dialog, DialogProps, Form2 } from "@revolt/ui";
+import { AutoArchiveMenuItems } from "@revolt/ui/components/utils/AutoArchiveMenuItems";
 
 import { useModals } from "..";
 import { Modals } from "../types";
@@ -27,6 +29,13 @@ export function CreateForumPostModal(
   const group = createFormGroup({
     title: createFormControl("", { required: true }),
     content: createFormControl("", { required: true }),
+    // Pre-selected to the forum's own default; the resolver maps a missing
+    // or out-of-range value to 7 days (the server's own fallback) and keeps
+    // 0 (never) — so no `??`/`||` on the raw value.
+    autoArchiveMinutes: createFormControl(
+      // eslint-disable-next-line solid/reactivity -- snapshot of the forum default when the modal opens
+      String(resolvePostDefault(props.channel.defaultAutoArchiveMinutes)),
+    ),
   });
 
   // Moderated tags are only offered to members who can actually apply them.
@@ -55,6 +64,7 @@ export function CreateForumPostModal(
         title: group.controls.title.value.trim(),
         tags: selectedTags(),
         message: { content: group.controls.content.value },
+        auto_archive_minutes: Number(group.controls.autoArchiveMinutes.value),
       });
 
       navigate(post.path);
@@ -168,6 +178,13 @@ export function CreateForumPostModal(
               </Switch>
             </small>
           </Show>
+
+          <Form2.Select
+            label={t`Auto-archive after inactivity`}
+            control={group.controls.autoArchiveMinutes}
+          >
+            <AutoArchiveMenuItems />
+          </Form2.Select>
         </Column>
       </form>
     </Dialog>

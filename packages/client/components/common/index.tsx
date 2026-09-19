@@ -1,5 +1,15 @@
 export * from "./Device";
 export { appOrigin, inviteUrl } from "./lib/appOrigin";
+export {
+  AUTO_ARCHIVE_NEVER,
+  AUTO_ARCHIVE_OPTIONS,
+  FORUM_DEFAULT_AUTO_ARCHIVE_MINUTES,
+  THREAD_DEFAULT_AUTO_ARCHIVE_MINUTES,
+  isAutoArchiveMinutes,
+  resolveCurrent,
+  resolvePostDefault,
+} from "./lib/autoArchive";
+export type { AutoArchiveMinutes } from "./lib/autoArchive";
 export { debounce } from "./lib/debounce";
 export {
   desktopUpdateInstalling,

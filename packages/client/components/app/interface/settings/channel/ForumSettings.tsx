@@ -4,6 +4,7 @@ import { createStore, produce } from "solid-js/store";
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import { styled } from "styled-system/jsx";
 
+import { resolvePostDefault } from "@revolt/common";
 import { TextWithEmoji } from "@revolt/markdown";
 import { startsWithPackPUA } from "@revolt/markdown/emoji/UnicodeEmoji";
 import { useModals } from "@revolt/modal";
@@ -16,9 +17,11 @@ import {
   Checkbox,
   Column,
   CompositionMediaPicker,
+  FloatingSelect,
   Row,
   Text,
 } from "@revolt/ui";
+import { AutoArchiveMenuItems } from "@revolt/ui/components/utils/AutoArchiveMenuItems";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
 import { ChannelSettingsProps } from "../ChannelSettings";
@@ -64,6 +67,11 @@ export default function ForumSettings(props: ChannelSettingsProps) {
   const [defaultSort, setDefaultSort] = createSignal<string>(
     props.channel.defaultSort,
   );
+  // minutes as a string, the form `FloatingSelect` works in; a missing or
+  // invalid forum default shows as the fallback new posts would get anyway
+  const [defaultAutoArchive, setDefaultAutoArchive] = createSignal<string>(
+    String(resolvePostDefault(props.channel.defaultAutoArchiveMinutes)),
+  );
   /* eslint-enable solid/reactivity */
 
   const [saving, setSaving] = createSignal(false);
@@ -80,8 +88,9 @@ export default function ForumSettings(props: ChannelSettingsProps) {
     setSaving(true);
     try {
       await props.channel.edit({
-        // `tags`/`require_tag`/`default_sort` are additive fields the typed
-        // client predates; the PATCH route passes them through verbatim.
+        // `tags`/`require_tag`/`default_sort`/`default_auto_archive_minutes`
+        // are additive fields the typed client predates; the PATCH route
+        // passes them through verbatim.
         tags: tags.map((tag) => ({
           id: tag.id,
           name: tag.name.trim(),
@@ -90,6 +99,7 @@ export default function ForumSettings(props: ChannelSettingsProps) {
         })),
         require_tag: requireTag(),
         default_sort: defaultSort(),
+        default_auto_archive_minutes: Number(defaultAutoArchive()),
       } as Parameters<typeof props.channel.edit>[0]);
     } catch (error) {
       showError(error);
@@ -260,6 +270,30 @@ export default function ForumSettings(props: ChannelSettingsProps) {
             <Trans>Creation date</Trans>
           </Button>
         </Row>
+      </Column>
+
+      <Column>
+        <Text class="label">
+          <Trans>Default auto-archive for new posts</Trans>
+        </Text>
+        <Text>
+          <Trans>
+            New posts archive after this long without activity. You can change
+            it on each post.
+          </Trans>
+        </Text>
+        <FloatingSelect
+          value={defaultAutoArchive()}
+          onChange={(e) => {
+            // mdui types `value` as optional; every item carries one, and an
+            // empty string must never reach the save (`Number("")` is 0,
+            // which means "Never")
+            const value = e.currentTarget.value;
+            if (value) setDefaultAutoArchive(value);
+          }}
+        >
+          <AutoArchiveMenuItems />
+        </FloatingSelect>
       </Column>
 
       <Row>

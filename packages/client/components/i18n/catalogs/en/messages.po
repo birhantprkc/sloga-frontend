@@ -516,6 +516,7 @@ msgstr "<0>{0}</0> used <1>/{1}</1>"
 msgid "<0>Be careful!</0><1/>This is not the same as the link that was displayed:"
 msgstr "<0>Be careful!</0><1/>This is not the same as the link that was displayed:"
 
+#: components/ui/components/utils/AutoArchiveMenuItems.tsx
 #: components/modal/modals/SuspendUser.tsx
 #: components/modal/modals/BanMember.tsx
 msgid "1 day"
@@ -523,6 +524,7 @@ msgstr "1 day"
 
 #: src/interface/channels/text/Composition.tsx
 #: src/interface/channels/text/Composition.tsx
+#: components/ui/components/utils/AutoArchiveMenuItems.tsx
 #: components/modal/modals/CreateThread.tsx
 #: components/modal/modals/CreatePoll.tsx
 #: components/modal/modals/BanMember.tsx
@@ -574,6 +576,7 @@ msgstr "2 weeks"
 msgid "24 hours"
 msgstr "24 hours"
 
+#: components/ui/components/utils/AutoArchiveMenuItems.tsx
 #: components/modal/modals/SuspendUser.tsx
 #: components/modal/modals/CreateThread.tsx
 #: components/modal/modals/CreatePoll.tsx
@@ -581,6 +584,7 @@ msgstr "24 hours"
 msgid "3 days"
 msgstr "3 days"
 
+#: components/ui/components/utils/AutoArchiveMenuItems.tsx
 #: components/modal/modals/SuspendUser.tsx
 msgid "30 days"
 msgstr "30 days"
@@ -618,6 +622,7 @@ msgstr "5 seconds"
 msgid "6 hours"
 msgstr "6 hours"
 
+#: components/ui/components/utils/AutoArchiveMenuItems.tsx
 #: components/modal/modals/SuspendUser.tsx
 #: components/modal/modals/CreateThread.tsx
 #: components/modal/modals/BanMember.tsx
@@ -627,6 +632,10 @@ msgstr "7 days"
 #: components/modal/modals/CreatePoll.tsx
 msgid "8 hours"
 msgstr "8 hours"
+
+#: components/ui/components/utils/AutoArchiveMenuItems.tsx
+msgid "90 days"
+msgstr "90 days"
 
 #: components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
 msgid "A participant turned off encryption for this call. Resume to be heard — the server will be able to read this call."
@@ -1076,7 +1085,12 @@ msgstr "Auto (lowest latency)"
 msgid "Auto keeps the member list with the channels, unless Ultrawide layout moves it to the other side. Applies to this device only."
 msgstr "Auto keeps the member list with the channels, unless Ultrawide layout moves it to the other side. Applies to this device only."
 
+#: src/interface/channels/text/TextChannel.tsx
+msgid "Auto-archive"
+msgstr "Auto-archive"
+
 #: components/modal/modals/CreateThread.tsx
+#: components/modal/modals/CreateForumPost.tsx
 msgid "Auto-archive after inactivity"
 msgstr "Auto-archive after inactivity"
 
@@ -2306,6 +2320,10 @@ msgstr "Deep"
 #: components/app/menus/shared/NotificationContextMenu.tsx
 msgid "Default"
 msgstr "Default"
+
+#: components/app/interface/settings/channel/ForumSettings.tsx
+msgid "Default auto-archive for new posts"
+msgstr "Default auto-archive for new posts"
 
 #: components/app/interface/settings/ServerSettings.tsx
 #: components/app/interface/settings/ChannelSettings.tsx
@@ -4528,6 +4546,10 @@ msgstr "Narrow and squashed, like a walkie-talkie or dispatch call."
 msgid "Neutral"
 msgstr "Neutral"
 
+#: components/ui/components/utils/AutoArchiveMenuItems.tsx
+msgid "Never"
+msgstr "Never"
+
 #: components/ui/components/features/messaging/elements/MessageDivider.tsx
 msgid "NEW"
 msgstr "NEW"
@@ -4565,6 +4587,10 @@ msgstr "New post"
 #: src/interface/channels/forum/ForumChannel.tsx
 msgid "New Post"
 msgstr "New Post"
+
+#: components/app/interface/settings/channel/ForumSettings.tsx
+msgid "New posts archive after this long without activity. You can change it on each post."
+msgstr "New posts archive after this long without activity. You can change it on each post."
 
 #. placeholder {0}: props.channel.name ?? props.channel.id
 #: components/modal/modals/FollowChannel.tsx

@@ -8,13 +8,14 @@ import {
   onCleanup,
 } from "solid-js";
 
-import { Trans } from "@lingui-solid/solid/macro";
+import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import { cva } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 import { decodeTime, ulid } from "ulid";
 
 import { DraftMessages, Messages, ScheduledMessagesBar } from "@revolt/app";
 import { useClient } from "@revolt/client";
+import { resolveCurrent } from "@revolt/common";
 import { Keybind, KeybindAction, createKeybind } from "@revolt/keybinds";
 import { useModals } from "@revolt/modal";
 import { useNavigate, useSmartParams } from "@revolt/routing";
@@ -23,6 +24,7 @@ import { LAYOUT_SECTIONS } from "@revolt/state/stores/Layout";
 import {
   BelowFloatingHeader,
   Button,
+  FloatingSelect,
   Header,
   NewMessages,
   Text,
@@ -32,6 +34,7 @@ import {
 } from "@revolt/ui";
 import { VoiceChannelCallCardMount } from "@revolt/ui/components/features/voice/callCard/VoiceCallCard";
 import { SlideState } from "@revolt/ui/components/navigation/SlideDrawer";
+import { AutoArchiveMenuItems } from "@revolt/ui/components/utils/AutoArchiveMenuItems";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
 import { ChannelHeader } from "../ChannelHeader";
@@ -401,6 +404,7 @@ export function TextChannel(props: ChannelPageProps) {
  */
 function ThreadBanner(props: { channel: Channel }) {
   const client = useClient();
+  const { t } = useLingui();
   const { showError } = useModals();
 
   // Refresh membership whenever we navigate into a thread so the
@@ -426,6 +430,15 @@ function ThreadBanner(props: { channel: Channel }) {
   const canUnarchive = () =>
     props.channel.havePermission("ManageChannel") ||
     props.channel.creatorId === client().user?.id;
+
+  /**
+   * Whether we may change the auto-archive duration, mirroring the backend:
+   * ManageChannel, or being the creator while still holding SendMessage
+   */
+  const canSetAutoArchive = () =>
+    props.channel.havePermission("ManageChannel") ||
+    (props.channel.creatorId === client().user?.id &&
+      props.channel.havePermission("SendMessage"));
 
   return (
     <ThreadBannerBase>
@@ -454,6 +467,31 @@ function ThreadBanner(props: { channel: Channel }) {
         </Show>
       </Show>
       <Show when={!props.channel.archived}>
+        {/* ManageChannel, or creator with SendMessage, may change the duration */}
+        <Show when={canSetAutoArchive()}>
+          <ThreadBannerSelect>
+            <FloatingSelect
+              label={t`Auto-archive`}
+              value={String(resolveCurrent(props.channel.autoArchiveMinutes))}
+              onChange={(e) => {
+                // Skip no-op PATCHes when the current duration is re-picked
+                if (
+                  Number(e.currentTarget.value) ===
+                  resolveCurrent(props.channel.autoArchiveMinutes)
+                )
+                  return;
+
+                props.channel
+                  .edit({
+                    auto_archive_minutes: Number(e.currentTarget.value),
+                  } as never)
+                  .catch(showError);
+              }}
+            >
+              <AutoArchiveMenuItems />
+            </FloatingSelect>
+          </ThreadBannerSelect>
+        </Show>
         <Show
           when={joined()}
           fallback={
@@ -484,8 +522,10 @@ function ThreadBanner(props: { channel: Channel }) {
 const ThreadBannerBase = styled("div", {
   base: {
     display: "flex",
+    flexWrap: "wrap",
     alignItems: "center",
     gap: "var(--gap-md)",
+    rowGap: "var(--gap-sm)",
     paddingInline: "var(--gap-lg)",
     paddingBlock: "var(--gap-sm)",
     color: "var(--md-sys-color-on-surface)",
@@ -516,6 +556,17 @@ const ThreadBannerNotice = styled("span", {
     alignItems: "center",
     gap: "var(--gap-sm)",
     color: "var(--md-sys-color-on-surface-variant)",
+  },
+});
+
+/**
+ * Compact wrapper for the auto-archive duration select
+ */
+const ThreadBannerSelect = styled("div", {
+  base: {
+    width: "160px",
+    minWidth: "128px",
+    flexShrink: 0,
   },
 });
 
