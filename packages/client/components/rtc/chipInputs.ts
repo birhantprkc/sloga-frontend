@@ -47,6 +47,7 @@ import {
 import {
   type CallMode,
   type ChipInputs,
+  type ChipLatch,
   type ChipState,
   type DecodeWitness,
   chipState,
@@ -95,8 +96,18 @@ export interface ChipSources {
   mode: () => CallMode | undefined;
   /** The media-plane hold (rotation-window debounce). */
   mediaHold: () => boolean;
-  /** A structured call-encryption error is latched. */
-  latchedError: () => boolean;
+  /**
+   * The latched call-encryption error, reduced to what the chip judges, or
+   * undefined when nothing is latched. `origin` is undefined for the two
+   * direct `state.tsx` writers (identity mismatch, `hold_loud`), which carry
+   * no session meta. `mediaKeyed` is the session's SEND-SIDE witness, taken
+   * by `#latchLoud` at the latch instant: was this device holding a usable
+   * frame key for the current epoch when the loud fired? It is the one fact
+   * the mode cannot carry — under any latch the mode has already folded to
+   * `negotiating`, so the mode-derived `e2eeEnabled`/`hasLocalKey` aliases
+   * read false there regardless of what was keyed.
+   */
+  latch: () => ChipLatch | undefined;
   /** Every verified MLS roster member's `user_verified` flag. */
   rosterVerified: () => readonly boolean[];
   channelHasOpenGroup: () => boolean;
@@ -196,13 +207,22 @@ export function chipInputsFrom(sources: ChipSources): ChipInputs {
     hasSession: sources.hasSession(),
     sessionState,
     mode,
+    // Mode ALIASES, not the session's own fields. Under any latch the mode has
+    // folded to `negotiating` (`loudModeFallback`), so both read false there
+    // whatever the session held; the send-side fact the chip needs under a
+    // latch is `latch.mediaKeyed`, snapshotted by `#latchLoud` BEFORE that
+    // fallback. Do not "repair" these by reading the session: that would put
+    // a keyed read back over a plane that already failed.
     e2eeEnabled: mode?.kind === "e2ee",
     hasLocalKey: mode?.kind === "e2ee",
     // Short-circuits exactly as the inline version did: when the session is
     // already resecuring the hold is not read. The memo re-runs when the
     // session state changes, so the dependency is picked up then.
     resecuring: sessionState === "resecuring" || sources.mediaHold(),
-    latchedError: sources.latchedError(),
+    // Passed through whole. `chipState` reads origin and mediaKeyed together
+    // (its order of record, rows 2–5); collapsing the latch to a boolean here
+    // would make the split unreachable from any spec.
+    latch: sources.latch(),
     publishingIdentities: publishing,
     // Called THROUGH `sources`, not passed as a bare property value: every
     // other accessor is invoked as `sources.foo()`, and handing this one over

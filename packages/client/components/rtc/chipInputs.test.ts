@@ -17,7 +17,9 @@
 //   (d) the witness stale                     honest = resecuring
 //   (d) the worker dropping a sender's frames honest = resecuring
 //       a media hold / rotation window        honest = resecuring
-//       a latched structured error            honest = not_encrypted
+//       a latched error (bare / media / un-keyed control)
+//                                             honest = not_encrypted
+//       a KEYED control latch, media intact   honest = cannot_verify
 //       the session failed                    honest = not_encrypted
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -30,7 +32,11 @@ import {
   observedEncryptionMap,
   publishingIdentities,
 } from "./chipInputs.ts";
-import { type ChipState, chipState } from "./mlsCallModePolicy.ts";
+import {
+  type ChipLatch,
+  type ChipState,
+  chipState,
+} from "./mlsCallModePolicy.ts";
 
 const ME = "me:d1";
 const BOB = "bob:d1";
@@ -51,7 +57,7 @@ const sources = (over: Partial<ChipSources> = {}): ChipSources => ({
   sessionState: () => "active",
   mode: () => ({ kind: "e2ee" }),
   mediaHold: () => false,
-  latchedError: () => false,
+  latch: () => undefined,
   rosterVerified: () => [true, true],
   channelHasOpenGroup: () => true,
   deviceNeedsSetup: () => false,
@@ -175,7 +181,115 @@ test("🔴 a media hold holds the chip amber", () => {
 });
 
 test("🔴 a latched structured error is NOT_ENCRYPTED", () => {
-  assert.equal(chip({ latchedError: () => true }), "not_encrypted");
+  // The latch is a RECORD now, not a boolean, and the chip splits it by
+  // origin and by whether the send side was keyed. Every shape that is not
+  // the one keyed-control case reads loud-plain: a media latch (the plane
+  // itself failed) and an UN-KEYED control latch (a spent join ladder, the
+  // declaration seam, a media→control upgrade — `mediaKeyed: false`).
+  assert.equal(
+    chip({ latch: () => ({ origin: "media", mediaKeyed: false }) }),
+    "not_encrypted",
+  );
+  assert.equal(
+    chip({ latch: () => ({ origin: "media", mediaKeyed: true }) }),
+    "not_encrypted",
+  );
+  assert.equal(
+    chip({ latch: () => ({ origin: "control", mediaKeyed: false }) }),
+    "not_encrypted",
+  );
+});
+
+test("🔴 a BARE latch (origin undefined) is NOT_ENCRYPTED, and no latch is not", () => {
+  // The two direct `state.tsx` writers — the store-owner identity mismatch
+  // and `sessionSetupDecision`'s `hold_loud` — never went through
+  // `#latchLoud`, so the binding narrows them to exactly this shape:
+  // `{ origin: undefined, mediaKeyed: false }` (`mediaKeyed ?? false`).
+  // There is no snapshot to split on, so they read loud-plain
+  // unconditionally. This is the control that kills an assembly mapping the
+  // latch to `undefined`: with the latch dropped, the same sources read a
+  // green VERIFIED lock.
+  const bare: ChipLatch = { origin: undefined, mediaKeyed: false };
+  assert.equal(chip({ latch: () => bare }), "not_encrypted");
+  // ...and the origin-less shape can never be softened by a keyed snapshot,
+  // because nobody took one.
+  assert.equal(
+    chip({ latch: () => ({ origin: undefined, mediaKeyed: true }) }),
+    "not_encrypted",
+  );
+  // The un-latched reading of the SAME sources, so the assertion above is
+  // known to be carried by the latch and nothing else.
+  assert.equal(chip({ latch: () => undefined }), "e2ee");
+});
+
+test("the assembly passes the latch record through UNCHANGED", () => {
+  // `chipState` reads `origin` and `mediaKeyed` together (rows 2–5 of its
+  // order of record). An assembly that collapsed the record to a boolean,
+  // dropped a field, or rebuilt it with a default would make the split
+  // unreachable from any spec — so every combination must survive the
+  // mapping byte-for-byte, and the absence of a latch must stay `undefined`.
+  const shapes: ChipLatch[] = [
+    { origin: "control", mediaKeyed: true },
+    { origin: "control", mediaKeyed: false },
+    { origin: "media", mediaKeyed: true },
+    { origin: "media", mediaKeyed: false },
+    { origin: undefined, mediaKeyed: false },
+  ];
+  for (const latch of shapes) {
+    assert.deepEqual(
+      chipInputsFrom(sources({ latch: () => latch })).latch,
+      latch,
+    );
+  }
+  assert.equal(
+    chipInputsFrom(sources({ latch: () => undefined })).latch,
+    undefined,
+  );
+});
+
+test("🔴 a KEYED control latch with media intact reads CANNOT_VERIFY end-to-end", () => {
+  // The whole `sources → inputs → chip` path for the new state, in the shape
+  // `#onLoud` leaves the session in: the mode folded to `negotiating`, the
+  // lifecycle state `failed`, and a control-origin latch whose snapshot says
+  // this device WAS keyed when the loud fired. With every local publication
+  // declared GCM and the witness dropping nobody, the group can no longer be
+  // vouched for but nothing says the media plane failed — "we can't
+  // confirm", not "not encrypted". `failed` alone (row 6) must not win over
+  // this: it is set BEFORE `#latchLoud` on every `#onLoud` path.
+  const keyedControl = (over: Partial<ChipSources> = {}): ChipState =>
+    chip({
+      sessionState: () => "failed",
+      mode: () => ({ kind: "negotiating" }),
+      latch: () => ({ origin: "control", mediaKeyed: true }),
+      ...over,
+    });
+  assert.equal(keyedControl(), "cannot_verify");
+  // Both media-plane conjuncts are DERIVED by this module, so each is
+  // exercised through the assembly rather than handed to `chipState` as a
+  // value. The witness may only CONTRADICT: a sender being dropped is the
+  // media plane failing, and the honest reading is loud-plain...
+  assert.equal(
+    keyedControl({
+      decodeWitness: () => ({ available: true, dropping: [BOB], live: [ME] }),
+    }),
+    "not_encrypted",
+  );
+  // ...and so is our own publication on the SFU's record as NONE.
+  assert.equal(
+    keyedControl({
+      room: () =>
+        room({ localPublications: [{ trackSid: "TR_a", encryption: 0 }] }),
+    }),
+    "not_encrypted",
+  );
+  // An `unavailable` witness is not a contradiction — it cannot support the
+  // POSITIVE claim "Not encrypted" either.
+  assert.equal(
+    keyedControl({
+      decodeWitness: () => ({ available: false, dropping: [], live: [] }),
+    }),
+    "cannot_verify",
+  );
 });
 
 test("🔴 a FAILED session is NOT_ENCRYPTED", () => {
@@ -372,7 +486,7 @@ test("every accessor is called exactly once per assembly", () => {
     sessionState: count("sessionState", "active"),
     mode: count("mode", { kind: "e2ee" as const }),
     mediaHold: count("mediaHold", false),
-    latchedError: count("latchedError", false),
+    latch: count("latch", undefined),
     rosterVerified: count("rosterVerified", [true]),
     channelHasOpenGroup: count("channelHasOpenGroup", true),
     deviceNeedsSetup: count("deviceNeedsSetup", false),
@@ -390,7 +504,7 @@ test("every accessor is called exactly once per assembly", () => {
     sessionState: 1,
     mode: 1,
     mediaHold: 1,
-    latchedError: 1,
+    latch: 1,
     rosterVerified: 1,
     channelHasOpenGroup: 1,
     deviceNeedsSetup: 1,

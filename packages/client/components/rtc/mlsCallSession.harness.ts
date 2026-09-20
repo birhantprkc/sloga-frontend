@@ -44,8 +44,11 @@ import {
   ENCRYPTION_TYPE_GCM,
 } from "./localPublicationEncryption.ts";
 import {
+  type CallMode,
+  type ChipLatch,
   type ChipState,
   type DecodeWitness,
+  type LoudLatchMeta,
   DECODE_WITNESS_UNAVAILABLE,
   isTerminalLoud,
   summarizeDecodeWitness,
@@ -139,6 +142,16 @@ export function groupNotFound(groupId: string): Error {
   });
 }
 
+/**
+ * Native's `declined`: the user cancelled the BLOCKING downgrade dialog
+ * (`e2ee_call_confirm_downgrade`). Crosses IPC as `{ type: "declined" }`;
+ * raised here as an `Error` carrying it, as every native failure in this
+ * world is. The session discriminates on `type` only.
+ */
+export function declined(): Error {
+  return Object.assign(new Error("declined"), { type: "declined" });
+}
+
 /** Native's `Error::Mls { code }` (e2ee-core `mls_err`). */
 function mlsCode(code: string): Error {
   return Object.assign(new Error(`mls: ${code}`), { type: "mls", code });
@@ -157,8 +170,28 @@ function epochGap(groupId: string, expected: number, got: number): Error {
   });
 }
 
+/**
+ * What rides every `"loud"` emission (`LoudLatchMeta`), plus the error a
+ * media→control UPGRADE names as the one it supersedes. `"clear"` and
+ * `"resecuring"` carry none.
+ */
+export type EncryptionStateMeta = LoudLatchMeta & { replaces?: unknown };
+
 export interface EncryptionStateCall {
   state: MediaEncryptionState;
+  error: unknown;
+  /** Present exactly when the session passed one (never an `undefined` key). */
+  meta?: EncryptionStateMeta;
+}
+
+/**
+ * `state.tsx`'s `callEncryptionLatch`, as `#replay` rebuilds it: the latched
+ * error plus whatever meta rode the emission that latched it. `origin` is
+ * absent for a latch the session did not stamp (the two direct `state.tsx`
+ * writers have no counterpart here, so in this world only a pre-meta emission
+ * produces one).
+ */
+export interface ReplayedLatch extends Partial<EncryptionStateMeta> {
   error: unknown;
 }
 
@@ -199,8 +232,9 @@ export class World {
   holds: boolean[] = [];
   /**
    * The media-plane state changes and the amber edges INTERLEAVED, in the
-   * order the session emitted them. `state.tsx` writes `callEncryptionError`
-   * and `callMediaHold` in separate, unbatched Solid setters, so the order
+   * order the session emitted them. `state.tsx` writes `callEncryptionLatch`
+   * (the one composite signal; `callEncryptionError` is a memo over it) and
+   * `callMediaHold` in separate, unbatched Solid setters, so the order
    * matters: between dropping the amber and reporting loud the chip has
    * neither and computes a green, which an effect or a live-leg sampler can
    * read even though no paint happens between them.
@@ -208,7 +242,12 @@ export class World {
   events: string[] = [];
   /** The same stream WITH payloads, for `chip()`. */
   journal: (
-    | { kind: "state"; state: MediaEncryptionState; error: unknown }
+    | {
+        kind: "state";
+        state: MediaEncryptionState;
+        error: unknown;
+        meta?: EncryptionStateMeta;
+      }
     | { kind: "hold"; active: boolean }
   )[] = [];
   modes: string[] = [];
@@ -231,6 +270,13 @@ export class World {
   bridgeCalls: string[] = [];
   /** Injected by the fake installer between its two awaits, once. */
   midInstallError: Error | null = null;
+  /**
+   * What the next `applyLocalKey` throws INSTEAD of installing, once. Set by
+   * `failLocalKeyOnce`; the installer nulls it as it takes it, so a spec
+   * asserts `null` afterwards to know the throw fired (as the heal spec does
+   * for `midInstallError`).
+   */
+  localKeyFailure: Error | null = null;
   /** The Room's `Connected` state as the binding reports it. */
   connected = true;
   /**
@@ -349,6 +395,30 @@ export class World {
   leaveCleanupFailure: { groupId: string; error: unknown } | null = null;
   /** Set by `createNextGroupOnce`: the next establish mints and creates it. */
   nextGroup: string | null = null;
+  /**
+   * What the next `callConfirmDowngrade` does INSTEAD of resolving (the
+   * user pressed Ok): `declined` rejects with native's `{ type: "declined" }`
+   * (the user cancelled); `error` rejects with anything else (the dialog
+   * could not be shown — no window, a dead plugin). Taken by the first call;
+   * later calls resolve. Set by `declineDowngradeOnce` /
+   * `failConfirmDowngradeOnce`.
+   */
+  confirmDowngradeOutcome:
+    | { kind: "declined" }
+    | { kind: "error"; error: unknown }
+    | null = null;
+  /**
+   * Every `callConfirmDowngrade` — the native BLOCKING dialog — with the
+   * arguments the session passed, in order. A spec asserting "exactly one
+   * dialog" / "no dialog" reads `confirmDowngrades()`.
+   */
+  confirmDowngradeCalls: {
+    groupId: string;
+    sfuParticipants: string[];
+    displayNames: Record<string, string>;
+  }[] = [];
+  /** The group of every `callClearDowngrade` (the T6 re-upgrade), in order. */
+  clearDowngradeCalls: string[] = [];
   /**
    * The commit native holds staged, per group, as `callAdmit` staged it.
    * `callCommitLost` drops it, and `callLeaveCleanup` marks it `"left"`,
@@ -577,6 +647,71 @@ export class World {
   /** Every `mlsSubmitCommit` recorded so far, suspended ones included. */
   submits(): number {
     return this.bridgeCalls.filter((n) => n === "mlsSubmitCommit").length;
+  }
+  /**
+   * The next `callConfirmDowngrade` rejects as native does when the user
+   * CANCELS the blocking dialog (`declined()`), instead of resolving. The
+   * call is still recorded first. Later calls resolve. Scripting it while
+   * an outcome is unspent fails the spec: both would decide the same call.
+   */
+  declineDowngradeOnce(): void {
+    assert.equal(
+      this.confirmDowngradeOutcome,
+      null,
+      "a callConfirmDowngrade outcome is already scripted",
+    );
+    this.confirmDowngradeOutcome = { kind: "declined" };
+  }
+  /**
+   * The next `callConfirmDowngrade` rejects with `error` — anything BUT a
+   * decline: the dialog never showed. The session must not read it as the
+   * user's answer. The call is still recorded first. Later calls resolve.
+   */
+  failConfirmDowngradeOnce(error: unknown): void {
+    assert.equal(
+      this.confirmDowngradeOutcome,
+      null,
+      "a callConfirmDowngrade outcome is already scripted",
+    );
+    this.confirmDowngradeOutcome = { kind: "error", error };
+  }
+  /**
+   * The next `applyLocalKey` throws `error` before installing anything; later
+   * calls install. Scripting it while one is still unspent fails the spec:
+   * both would decide the same call.
+   *
+   * The one control-origin site this world could not otherwise reach: the
+   * real installer throws `MissingLocalFrameKeyError` from `applyLocalKey`
+   * when the egress carries no entry for this device (`mlsCallKeys.ts`), and
+   * the session routes that class — and ONLY that class — past the media
+   * debounce to `#onRotationError` → `#dropModeToNegotiating` +
+   * `#latchLoud(error, "control")`. `applyLocalKey` runs on the Add-grace
+   * path alone (`#scheduleGraceLocal`; the immediate path installs the local
+   * key inside `applyKeys`), so the driver is a plain Add commit on a device
+   * that already holds a key, then the grace:
+   *
+   *   world.failLocalKeyOnce(new MissingLocalFrameKeyError(GROUP, 1));
+   *   await world.commit(1);        // Add-grace: remotes now, local deferred
+   *   await advance(t, 2_000);      // ADD_GRACE_MS — the fenced timer fires
+   *
+   * Any other class handed here reaches `#onMediaError` (the media debounce)
+   * instead, which is the session's routing to assert, not a harness fact.
+   */
+  failLocalKeyOnce(error: Error): void {
+    assert.equal(
+      this.localKeyFailure,
+      null,
+      "an applyLocalKey failure is already scripted",
+    );
+    this.localKeyFailure = error;
+  }
+  /** Every `callConfirmDowngrade` (native dialog) recorded so far. */
+  confirmDowngrades(): number {
+    return this.confirmDowngradeCalls.length;
+  }
+  /** Every `callClearDowngrade` recorded so far. */
+  clearDowngrades(): number {
+    return this.clearDowngradeCalls.length;
   }
   /**
    * The next `callLeaveCleanup` of `groupId` rejects with `error`, AFTER any
@@ -967,9 +1102,10 @@ export class World {
    * Every other accessor here reports what the session SAID. Five of the six
    * defects six review rounds found lived in the gap between that and what the
    * chip shows, and none of them was visible to a spec asserting on the
-   * callback stream: `state.tsx` latches `prev ?? error` and clears on object
-   * IDENTITY, so a `loud` under an existing latch is a no-op and a following
-   * `clear` of the superseded error wipes the signal outright.
+   * callback stream: `state.tsx` latches first-wins (a `loud` under an
+   * existing latch is a no-op unless its meta names the latched error as the
+   * one it `replaces`) and clears on object IDENTITY, so a `clear` of a
+   * superseded error that was never replaced wipes the signal outright.
    *
    * `observedEncryption` is modelled as ALL TRUE on purpose. It is the SFU's
    * declaration, not a decrypt: a peer whose frames this device cannot decrypt
@@ -1001,49 +1137,100 @@ export class World {
   /**
    * `state.tsx`'s `callTerminalLoud()` — the ONE condition the ME-10 banner
    * renders on, and with it the sentence "Your audio and video stay paused".
+   *
+   * `mode` defaults to the LIVE mode; passing `undefined` explicitly drives
+   * `isTerminalLoud`'s `mode === undefined` arm (a latch with no session
+   * mode), which `state.tsx` reaches but no ladder here can. A rest tuple
+   * rather than a default parameter, because a default would swallow an
+   * explicit `undefined` and make that arm undrivable again.
    */
-  terminalLoud(): boolean {
+  terminalLoud(...args: [mode?: CallMode | undefined]): boolean {
+    const mode = args.length === 0 ? this.session.callMode() : args[0];
     return isTerminalLoud(
-      this.session.callMode(),
+      mode,
       this.chip(),
-      this.#replay().latchedError !== undefined,
+      this.#replay().latch !== undefined,
     );
   }
 
-  /** `state.tsx`'s latch protocol over the media-plane callbacks, replayed. */
-  #replay(): { latchedError: unknown; mediaHold: boolean } {
-    let latchedError: unknown;
+  /**
+   * `state.tsx`'s latch protocol over the media-plane callbacks, replayed —
+   * VERBATIM its `onEncryptionState` binding over `callEncryptionLatch`:
+   *
+   *   "loud"  → latch === undefined || latch.error === meta?.replaces
+   *               ? { error, ...meta } : latch
+   *   "clear" → latch?.error === error ? undefined : latch
+   *
+   * First-wins, except that an emission naming the latched error as the one
+   * it `replaces` (the media→control upgrade) takes over in ONE write; the
+   * clear is identity-matched on `.error`. A bare `"clear"` (no error) touches
+   * nothing, as the binding's does. Without this mirror every session spec
+   * would measure the harness instead of the product.
+   */
+  #replay(): { latch: ReplayedLatch | undefined; mediaHold: boolean } {
+    let latch: ReplayedLatch | undefined;
     let mediaHold = false;
     for (const entry of this.journal) {
       if (entry.kind === "hold") {
         mediaHold = entry.active;
       } else if (entry.state === "loud" && entry.error !== undefined) {
-        latchedError = latchedError ?? entry.error;
+        latch =
+          latch === undefined || latch.error === entry.meta?.replaces
+            ? { error: entry.error, ...(entry.meta ?? {}) }
+            : latch;
       } else if (entry.state === "clear" && entry.error !== undefined) {
-        if (latchedError === entry.error) latchedError = undefined;
+        latch = latch?.error === entry.error ? undefined : latch;
       }
     }
-    return { latchedError, mediaHold };
+    return { latch, mediaHold };
   }
 
-  chip(): ChipState {
-    const { latchedError, mediaHold } = this.#replay();
+  /**
+   * `overrides` replace inputs this world otherwise holds fixed: a device
+   * running a session has one (`hasSession`), its channel has an open group,
+   * it needs no setup, and gate (d) reads the modelled worker window through
+   * the real `summarizeDecodeWitness` (`decodeWitness()`). A spec overriding
+   * `decodeWitness` hands the chip a verdict the modelled window did not
+   * produce, so it is for driving the chip's ARMS, not for evidence about the
+   * witness.
+   */
+  chip(
+    overrides: Partial<{
+      hasSession: boolean;
+      channelHasOpenGroup: boolean;
+      deviceNeedsSetup: boolean;
+      decodeWitness: DecodeWitness;
+    }> = {},
+  ): ChipState {
+    const { latch, mediaHold } = this.#replay();
     const mode = this.session.callMode();
     const sessionState = this.session.state();
+    const {
+      hasSession = true,
+      channelHasOpenGroup = true,
+      deviceNeedsSetup = false,
+      decodeWitness = this.decodeWitness(),
+    } = overrides;
     return chipStateFrom({
-      hasSession: () => true,
+      hasSession: () => hasSession,
       sessionState: () => sessionState,
       mode: () => mode,
       mediaHold: () => mediaHold,
-      latchedError: () => latchedError !== undefined,
+      // The `ChipLatch` shape `state.tsx` feeds: origin and keyed-ness only,
+      // never the error or what it replaced.
+      latch: (): ChipLatch | undefined =>
+        latch && {
+          origin: latch.origin,
+          mediaKeyed: latch.mediaKeyed ?? false,
+        },
       rosterVerified: () =>
         this.roster.map((m) => !this.unverified.has(identityOf(m))),
-      channelHasOpenGroup: () => true,
+      channelHasOpenGroup: () => channelHasOpenGroup,
       // Both read only on the no-session path; a device running a session
       // is enrolled, and its peers are the ones publishing.
-      deviceNeedsSetup: () => false,
+      deviceNeedsSetup: () => deviceNeedsSetup,
       peerCouldEncrypt: () => this.sfu.some((id) => id !== SELF_ID),
-      decodeWitness: () => this.decodeWitness(),
+      decodeWitness: () => decodeWitness,
       observedEncryption: (identity) =>
         this.unobserved.has(identity) ? undefined : true,
       // Every SFU participant publishes one track, INCLUDING self. The
@@ -1060,12 +1247,31 @@ export class World {
     });
   }
 
+  /**
+   * The `(state, error)` PROJECTION of every `"clear"` since `index` — which
+   * error was named, and when. `meta` is deliberately not in it: a `"clear"`
+   * never carries one, and `loudSince` below is the same projection so the
+   * two read alike. The meta a `"loud"` carried is asserted on `states`
+   * itself (`latchLoud`) or read through `chip()`.
+   */
   clearsSince(index: number): EncryptionStateCall[] {
-    return this.states.slice(index).filter((s) => s.state === "clear");
+    return this.#project(index, "clear");
   }
 
+  /**
+   * The `(state, error)` projection of every `"loud"` since `index`: WHICH
+   * error latched and WHEN. The meta that rode it is not in the projection —
+   * see `clearsSince`.
+   */
   loudSince(index: number): EncryptionStateCall[] {
-    return this.states.slice(index).filter((s) => s.state === "loud");
+    return this.#project(index, "loud");
+  }
+
+  #project(index: number, state: MediaEncryptionState): EncryptionStateCall[] {
+    return this.states
+      .slice(index)
+      .filter((s) => s.state === state)
+      .map((s) => ({ state: s.state, error: s.error }));
   }
 
   /** The key index a sender publishes at for `epoch` (`epoch mod 16`). */
@@ -1083,7 +1289,11 @@ export class World {
 
 /**
  * An installer that, like `MlsKeyProvider.#install`, posts entries and awaits
- * between them — and can raise an InvalidKey in that gap, exactly once.
+ * between them — and can raise an InvalidKey in that gap, exactly once. Its
+ * `applyLocalKey` can instead THROW a scripted error (`failLocalKeyOnce`)
+ * before posting anything, where the real one throws
+ * `MissingLocalFrameKeyError` — ahead of its first await, so the rejection
+ * reaches the caller's `catch` with no microtask gap, as the real one does.
  */
 function fakeInstaller(world: World): KeyInstaller {
   const install = async () => {
@@ -1095,10 +1305,18 @@ function fakeInstaller(world: World): KeyInstaller {
     }
     await Promise.resolve(); // second entry
   };
+  const applyLocalKey = async () => {
+    const failure = world.localKeyFailure;
+    if (failure) {
+      world.localKeyFailure = null;
+      throw failure;
+    }
+    await install();
+  };
   return {
     applyKeys: install,
     applyRemoteKeys: install,
-    applyLocalKey: install,
+    applyLocalKey,
     resetForGroup: () => {},
   };
 }
@@ -1129,10 +1347,15 @@ function fakeMedia(world: World): MlsMediaBinding {
       world.gate.delete(reason);
       world.gateLog.push(`-${reason}`);
     },
-    onEncryptionState: (state, error) => {
-      world.states.push({ state, error });
+    onEncryptionState: (state, error, meta) => {
+      // `meta` is added as a key only when the session passed one: a strict
+      // deepEqual treats `{ meta: undefined }` and `{}` as different objects,
+      // and every exact-shape `"clear"` assertion is written without it.
+      const call: EncryptionStateCall =
+        meta === undefined ? { state, error } : { state, error, meta };
+      world.states.push(call);
       world.events.push(`state:${state}`);
-      world.journal.push({ kind: "state", state, error });
+      world.journal.push({ kind: "state", ...call });
     },
     ...(world.holdsSupported
       ? {
@@ -1449,6 +1672,34 @@ function bridgeFor(world: World): E2EEBridge {
       }
       world.stagedCommits.delete(groupId);
     }),
+    // ---- The plaintext escape: the native BLOCKING confirm dialog ----
+    //
+    // `e2ee_call_confirm_downgrade`: resolves on Ok, rejects `declined` on
+    // cancel, and rejects with anything else when the dialog could not be
+    // shown at all. Recorded (with its arguments) BEFORE the scripted
+    // outcome is taken, so a declined or failed dialog still counts as one
+    // the session asked for. With nothing scripted it resolves: Ok.
+    callConfirmDowngrade: record(
+      "callConfirmDowngrade",
+      async (groupId, sfuParticipants, displayNames) => {
+        world.confirmDowngradeCalls.push({
+          groupId,
+          sfuParticipants: [...sfuParticipants],
+          displayNames: { ...displayNames },
+        });
+        const outcome = world.confirmDowngradeOutcome;
+        if (outcome) {
+          world.confirmDowngradeOutcome = null;
+          throw outcome.kind === "declined" ? declined() : outcome.error;
+        }
+      },
+    ),
+    // `e2ee_call_clear_downgrade`: the T6 re-upgrade after a confirmed
+    // interlude clears the native grant, best-effort (the session swallows a
+    // rejection). Resolves; recorded by group.
+    callClearDowngrade: record("callClearDowngrade", async (groupId) => {
+      world.clearDowngradeCalls.push(groupId);
+    }),
   };
   return fakeBridge(stubs);
 }
@@ -1562,14 +1813,29 @@ export async function bringUpJoiner(
   assert.equal(world.session.callMode().kind, "e2ee");
 }
 
-/** An InvalidKey outside every rotation window: the media latch goes loud. */
+/**
+ * An InvalidKey outside every rotation window: the media latch goes loud.
+ *
+ * The emission's meta is pinned exactly. `origin: "media"` — the path is
+ * `noteEncryptionError` → `#latchLoud(error, "media")`, never the control
+ * default. `mediaKeyed: true` — the snapshot `#latchLoud` takes BEFORE
+ * `loudModeFallback` reads `#e2eeEnabled && #hasLocalKey &&
+ * !#localDeclarationPlain && !(error instanceof MissingLocalFrameKeyError)`,
+ * and on this path every conjunct holds: the bring-up enabled E2EE and
+ * installed a local key, nothing declared plaintext, and the error is a
+ * bare `Error`. A media latch says the RECEIVE side failed; the send-side
+ * witness is a separate fact, and the chip's media arm ignores it either
+ * way (`origin === "media"` reads `not_encrypted` regardless).
+ */
 export async function latchLoud(t: TestContext, world: World): Promise<Error> {
   await advance(t, 3_000); // past the immediate-install rotation settle (2 s)
   const before = world.states.length;
   const error = new Error("InvalidKey: Decryption failed: x");
   world.session.noteEncryptionError(error);
   await flush();
-  assert.deepEqual(world.states.slice(before), [{ state: "loud", error }]);
+  assert.deepEqual(world.states.slice(before), [
+    { state: "loud", error, meta: { origin: "media", mediaKeyed: true } },
+  ]);
   assert.equal(world.session.callMode().kind, "negotiating");
   return error;
 }

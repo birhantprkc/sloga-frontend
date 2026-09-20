@@ -27,7 +27,18 @@ export type CallMode =
   // Non-enrolled present (post grace) — publishing PAUSED, banner shown.
   | { kind: "mixed" }
   // A confirmed plaintext window is open; `localConfirmed` is THIS device's.
-  | { kind: "interlude"; localConfirmed: boolean }
+  // `confirmedVia` records WHO authorized a local confirm: `native` is the
+  // group-bound dialog (invariant 1's per-device confirmation, sticky across a
+  // re-secure); `app` is the in-app confirm the escape falls back to when no
+  // usable group exists or the native dialog fails for a reason other than a
+  // decline — it authorizes THIS plaintext window only and is withdrawn by the
+  // next re-secure (`interludeStickyAcrossResecure`). Absent on an
+  // unconfirmed interlude (T4 remote announce).
+  | {
+      kind: "interlude";
+      localConfirmed: boolean;
+      confirmedVia?: "native" | "app";
+    }
   // Terminal joiner-side A3 refusal (auto-leave).
   | { kind: "call_full" };
 
@@ -45,8 +56,10 @@ export type CallModeEvent =
   | { type: "mix_detected" }
   // The last non-enrolled participant left (drives T2 / T6 after hysteresis).
   | { type: "mix_cleared" }
-  // This device's user confirmed plaintext in the native dialog (T3 / T5).
-  | { type: "local_confirm" }
+  // This device's user confirmed plaintext (T3 / T5). `via` names the route:
+  // `native` (default) is the group-bound native dialog; `app` is the in-app
+  // confirm the escape routes to when no usable group exists.
+  | { type: "local_confirm"; via?: "native" | "app" }
   // A verified member announced plaintext for this call (T4). Never resumes.
   | { type: "remote_announce" }
   // join_intent returned MlsCallFull (T7 — joiner side only).
@@ -178,16 +191,32 @@ export function callModeTransition(
       }
       return keep();
 
-    case "local_confirm":
-      // T3 / T5 — the user confirmed plaintext (native dialog already Ok).
-      // set_e2ee(false) STRICTLY before resume. Announce is best-effort.
-      // Reachable from `mixed` (T3) or `interlude(localConfirmed:false)` (T5).
+    case "local_confirm": {
+      // T3 / T5 — the user confirmed plaintext (the dialog already returned
+      // Ok). set_e2ee(false) STRICTLY before resume. Announce is best-effort.
+      // Reachable from `mixed` (T3), `interlude(localConfirmed:false)` (T5)
+      // or `negotiating` (ME-10, below).
+      //
+      // `via` stamps the interlude's provenance (`confirmedVia`). The in-app
+      // route (`via: "app"`) OMITS `announce`: `callAnnounce` is native-gated
+      // on `mls_not_confirmed`, and the in-app route never armed a grant, so
+      // the announce would be refused (and a later T6 `callClearDowngrade`
+      // would run against a grant that never existed). Nothing else differs —
+      // E2EE-off, the gate releases and the re-upgrade cancel are the same.
+      const via = event.via ?? "native";
+      const confirmed: CallMode = {
+        kind: "interlude",
+        localConfirmed: true,
+        confirmedVia: via,
+      };
+      const announce: CallModeEffect[] =
+        via === "app" ? [] : [{ do: "announce" }];
       if (
         mode.kind === "mixed" ||
         (mode.kind === "interlude" && !mode.localConfirmed)
       ) {
         return {
-          mode: { kind: "interlude", localConfirmed: true },
+          mode: confirmed,
           effects: [
             { do: "set_e2ee", enabled: false },
             { do: "resume", reason: "mixed" },
@@ -197,31 +226,43 @@ export function callModeTransition(
             // user who just confirmed "resume unencrypted" stays paused
             // forever. Releasing an un-held reason is a no-op.
             { do: "resume", reason: "enable-window" },
-            { do: "announce" },
+            ...announce,
             { do: "cancel_reupgrade" },
           ],
         };
       }
       // ME-10 terminal-loud escape: a call that FAILED to secure (retry
       // exhaustion / loud failure while still `negotiating`) may be resumed
-      // as plaintext by the SAME native-confirmed path — "Stay unencrypted".
+      // as plaintext by the SAME confirmed path — "Stay unencrypted".
       // No explicit `negotiating` resume: the session's mode lockstep releases
       // that gate AFTER these effects run (E2EE-off still strictly first);
       // `enable-window` (held by a failed enable) IS released explicitly
       // (re-verify MED-B). The caller gates reachability on a
       // failed/re-securing/latched-loud session.
+      //
+      // `mixed` IS released here too (lane-3 C1): after a mix was declared
+      // (`#onMixDetected` held `mixed`) and a re-establish ran,
+      // `#resetEnableState` drops `#mixPaused` WITHOUT releasing the `mixed`
+      // gate reason, so a terminal confirm from `negotiating` used to release
+      // `enable-window` + `negotiating` and leave `mixed` held — fail-closed,
+      // while the banner said the media was being sent. Releasing an un-held
+      // reason is a no-op on the reason set, and `negotiating` itself stays
+      // held until `#setMode` runs after these effects, so this cannot
+      // produce a premature 1→0 edge.
       if (mode.kind === "negotiating") {
         return {
-          mode: { kind: "interlude", localConfirmed: true },
+          mode: confirmed,
           effects: [
             { do: "set_e2ee", enabled: false },
+            { do: "resume", reason: "mixed" },
             { do: "resume", reason: "enable-window" },
-            { do: "announce" },
+            ...announce,
             { do: "cancel_reupgrade" },
           ],
         };
       }
       return keep();
+    }
 
     case "remote_announce":
       // T4 — a verified member announced plaintext. Publishing STAYS PAUSED
@@ -246,6 +287,35 @@ export function callModeTransition(
   }
 }
 
+/**
+ * Whether a confirmed interlude survives a control-plane re-secure — the
+ * invariant-1 withdrawal rule. Consumed at exactly two sites in
+ * `mlsCallSession`: `#dropModeToNegotiating` (the `#rejoinFresh` /
+ * `#poisonedSuccessor` / `#onRemovedSelf` entry, which otherwise folds the
+ * mode to `negotiating` and re-asserts its gate) and `#resetEnableState`
+ * (which otherwise drops `#e2eeEnabled` / the enable window for the new
+ * group). Both used to test `interlude && localConfirmed` inline.
+ *
+ * A NATIVE confirm is the per-device, group-bound authorization invariant 1
+ * names; it stays sticky, because its grant was made against the group and
+ * the user keeps publishing plaintext on their own authority. An APP confirm
+ * was made where no usable group existed (or the native dialog failed for a
+ * reason other than a decline): it authorized THIS plaintext window and
+ * nothing about the group the re-secure is about to establish, so the
+ * re-secure withdraws it — the mode drops to `negotiating`, the gate holds,
+ * and the user is asked again if the next group fails too. Without this the
+ * in-app route would mint a second, permanently sticky interlude.
+ */
+export function interludeStickyAcrossResecure(
+  mode: CallMode | undefined,
+): boolean {
+  return (
+    mode?.kind === "interlude" &&
+    mode.localConfirmed &&
+    mode.confirmedVia !== "app"
+  );
+}
+
 // ---- The §4.4 dual-gated chip ----------------------------------------------
 
 export type ChipState =
@@ -253,6 +323,14 @@ export type ChipState =
   | "e2ee"
   | "e2ee_unverified"
   | "resecuring"
+  // A CONTROL-plane latch on a device that still holds a live send key, with
+  // every local publication declared GCM and the decode witness reporting
+  // nothing dropping: the media plane never failed, but the group can no
+  // longer be vouched for. "We can't confirm" — loud (the gate is HELD, the
+  // banner offers Rejoin / Leave / Stay unencrypted), but not the positive
+  // claim "not encrypted", which the 09-08 reading made over frames every
+  // peer was decrypting fine.
+  | "cannot_verify"
   | "not_encrypted";
 
 // ---- Gate (d): the decode witness ------------------------------------------
@@ -353,6 +431,25 @@ export function summarizeDecodeWitness(
   return { available: true, dropping, live };
 }
 
+/**
+ * What the chip knows about a latched call-encryption error: where it came
+ * from and whether this device was KEYED when it latched.
+ *
+ * `origin` is `undefined` for the two latches `state.tsx` writes directly
+ * (the store-owner identity mismatch and `sessionSetupDecision`'s
+ * `hold_loud`) — neither went through `#latchLoud`, so neither carries a
+ * `LoudLatchMeta`; they read `not_encrypted` unconditionally. `mediaKeyed`
+ * is `#latchLoud`'s snapshot at latch time: E2EE on, a local send key held,
+ * the local declaration not plaintext, and the error not a
+ * `MissingLocalFrameKeyError` (which reads keyed while the CURRENT epoch key
+ * is absent). A media→control upgrade emits `mediaKeyed: false` — a plane
+ * that already failed never reads keyed.
+ */
+export interface ChipLatch {
+  origin: LoudLatchOrigin | undefined;
+  mediaKeyed: boolean;
+}
+
 /** A snapshot of everything the chip derivation reads. */
 export interface ChipInputs {
   /** No session at all (non-capable shell / never constructed). */
@@ -372,8 +469,15 @@ export interface ChipInputs {
   hasLocalKey: boolean;
   /** A rotation-window RE-SECURING is active (media-plane debounce). */
   resecuring: boolean;
-  /** A structured call-encryption error is latched. */
-  latchedError: boolean;
+  /**
+   * The latched call-encryption error's provenance, or `undefined` when
+   * nothing is latched. Replaces the boolean it used to be: the chip now
+   * splits a latch by origin and by whether the send side was keyed, so it
+   * needs the record, not the fact of one. The banner and the release rule
+   * still take the boolean ("a gate is held") — `CallBannerInputs` /
+   * `PlaintextReleaseInputs`.
+   */
+  latch: ChipLatch | undefined;
   /**
    * The current SFU participants WITH ≥1 published track (FE-2: only these
    * ever report a LiveKit encryption status; trackless listeners are covered
@@ -438,21 +542,66 @@ export interface ChipInputs {
  * encryption over TRACK-PUBLISHING participants AND every local publication
  * declared GCM to the SFU, (c) every roster member user-verified. Neither gate alone is green; either's absence drops to
  * resecuring/not_encrypted (fail-closed). Server flags can never promote.
- * Precedence: not_encrypted > resecuring > e2ee_unverified > e2ee > none.
+ * Precedence: not_encrypted / cannot_verify (the two LOUD values, ordered by
+ * the rows below) > resecuring > e2ee_unverified > e2ee > none.
  */
 export function chipState(inputs: ChipInputs): ChipState {
   const mode = inputs.mode?.kind;
+  const latch = inputs.latch;
 
-  // ---- not_encrypted (loud) — highest precedence -------------------------
-  if (
-    mode === "mixed" ||
-    mode === "interlude" ||
-    mode === "call_full" ||
-    inputs.sessionState === "failed" ||
-    inputs.latchedError
-  ) {
+  // ---- loud — highest precedence. The order of record (rows 1–6) ----------
+  //
+  // Rows 1–6 read ONLY `mode`, `latch`, `sessionState === "failed"` and,
+  // under row 4, `localPublicationsEncrypted` + the decode witness. Every
+  // other input reaches the no-session arm below exactly as before.
+  // `pauseDisproved` is NOT an input here: it is a withdrawal-only signal by
+  // pinned design (it may contradict a claimed pause, never escalate a chip).
+  //
+  // Row 1 — the §3.4 downgrade modes. Plaintext is live or being offered.
+  if (mode === "mixed" || mode === "interlude" || mode === "call_full") {
     return "not_encrypted";
   }
+  // Row 2 — a latch with no origin: the two direct `state.tsx` writers (the
+  // store-owner identity mismatch, `sessionSetupDecision`'s `hold_loud`).
+  // Neither came through `#latchLoud`, so there is no snapshot to split on.
+  if (latch !== undefined && latch.origin === undefined) {
+    return "not_encrypted";
+  }
+  // Row 3 — a MEDIA latch: frames failed to decrypt outside every window, or a
+  // re-securing that never resolved. The media plane itself is broken.
+  if (latch?.origin === "media") return "not_encrypted";
+  // Row 4 — the ONE rule that yields `cannot_verify`: a CONTROL latch taken
+  // while this device was KEYED (`mediaKeyed` — see `ChipLatch`), with every
+  // local publication on the SFU's record as GCM and the decode witness
+  // reporting no sender's frames being dropped. The group can no longer be
+  // vouched for, but nothing says the media plane failed — "we can't
+  // confirm", not "not encrypted". No `decodeWitness.available` conjunct: a
+  // seat whose witness is `unavailable` (unpatched bundle, dead worker, stale
+  // tick) cannot support the POSITIVE claim "Not encrypted" either — "we
+  // can't confirm" is exactly what `unavailable` means. First-join control
+  // latches are un-keyed regardless (`#hasLocalKey` is only set after a
+  // Welcome install), so this cannot soften a first-join failure.
+  if (
+    latch?.origin === "control" &&
+    latch.mediaKeyed &&
+    inputs.localPublicationsEncrypted &&
+    inputs.decodeWitness.dropping.length === 0
+  ) {
+    return "cannot_verify";
+  }
+  // Row 5 — any other latch (an un-keyed control latch: a spent join ladder,
+  // the local-declaration seam, a media→control upgrade, a re-establish cap
+  // reached after `#resetRotationState` wiped the keys).
+  if (latch !== undefined) return "not_encrypted";
+  // Row 6 — `failed` with NO latch: the fail-closed backstop for any path to
+  // `failed` that skipped `#latchLoud`. It sits BELOW the latch rules on
+  // purpose: `#onLoud` sets `failed` BEFORE it calls `#latchLoud` — the ONLY
+  // `#setState("failed")` in the session — so every `#onLoud` caller latches
+  // with `sessionState === "failed"`, and the keyed mid-call control sites
+  // (a native build that threw, a DS commit arbitration classified failed, a
+  // destroyed envelope) must reach row 4. `failed` is decided by the latch
+  // rules; this row only catches a `failed` nothing latched.
+  if (inputs.sessionState === "failed") return "not_encrypted";
   // NO SESSION. Two independent reasons this is a downgrade rather than a
   // quiet plain call, and either is enough:
   //
@@ -585,13 +734,18 @@ export function chipState(inputs: ChipInputs): ChipState {
  * mode back to `negotiating` (re-asserting the negotiating publish gate in
  * lockstep), so the same banner, the same "Stay unencrypted" / Leave escape
  * and the same `confirmPlaintext` guard serve it.
+ *
+ * Both LOUD chip values count: `cannot_verify` is a control latch taken while
+ * keyed, which `#onLoud` folds to `negotiating` (or leaves before any
+ * verdict) exactly like `not_encrypted`; the gate is held either way and the
+ * same escape serves it.
  */
 export function isTerminalLoud(
   mode: CallMode | undefined,
   chip: ChipState,
   latchedError: boolean,
 ): boolean {
-  if (chip !== "not_encrypted") return false;
+  if (chip !== "not_encrypted" && chip !== "cannot_verify") return false;
   if (mode?.kind === "negotiating") return true;
   return mode === undefined && latchedError;
 }
@@ -621,6 +775,12 @@ export function isTerminalLoud(
  *   with nothing latched, so no pause may be promised and no release offered.
  *   Unreachable today (every red chip on a `ready` device latches); it exists
  *   so the backstop cannot lie the way the previous one did.
+ * - `cannot_verify` — the chip's `cannot_verify`: a control latch taken while
+ *   this device was keyed, media plane clean. Publishing is held by the
+ *   `negotiating` gate (`loudModeFallback` / `#onLoud`); the copy says the
+ *   group can't be confirmed, never "not encrypted" or "could not be
+ *   secured". The escape is Rejoin / Leave / Stay unencrypted. Only ever
+ *   reached WITH a session, so the device is `ready` by construction.
  */
 export type CallBannerKind =
   | "none"
@@ -629,7 +789,8 @@ export type CallBannerKind =
   | "terminal_loud"
   | "device_not_set_up"
   | "device_unsupported"
-  | "unencrypted_notice";
+  | "unencrypted_notice"
+  | "cannot_verify";
 
 export interface CallBannerInputs {
   /** The §4.4 chip, from `chipState`. */
@@ -659,10 +820,14 @@ export interface CallBannerInputs {
 }
 
 /**
- * THE INVARIANT: `chipState(x) === "not_encrypted"` implies
- * `callBannerState(...) !== "none"`, for every readiness. A red chip always
+ * THE INVARIANT: `chipState(x) ∈ { "not_encrypted", "cannot_verify" }` implies
+ * `callBannerState(...) !== "none"`, for every readiness. A LOUD chip always
  * carries a banner and an escape — enforced by an exhaustive spec over the
- * chip's whole input space, not by inspection.
+ * chip's whole input space, not by inspection. `cannot_verify` was added to
+ * the chip in wave 2 and would have been BANNERLESS through the
+ * `!== "not_encrypted"` guard below while that spec still sampled only
+ * `not_encrypted` — which is why the guard is widened here and the spec's
+ * filter alongside it.
  *
  * It did not hold before. `isTerminalLoud` requires a latched error, and the
  * chip's two NO-SESSION branches (ME-7 "capable, no session, open group" and
@@ -678,7 +843,8 @@ export interface CallBannerInputs {
  * ONCE at connect. A device that cannot encrypt, alone in a channel with no
  * group yet, gets chip `none` and therefore no banner from this rule — so a
  * device that must not go quiet has to stay E2EE-CAPABLE and latch, which puts
- * its chip red through `latchedError` with no probe involved. That is what
+ * its chip red through its latch — a direct `state.tsx` write with no origin,
+ * row 2 of `chipState` — with no probe involved. That is what
  * `callEncryptionCapable` does for `owned_elsewhere`, and it is the reason it
  * is not simply "not an E2EE call". The remaining case — a never-enrolled
  * install (`needs_setup`) in a channel whose group opens after the probe
@@ -689,6 +855,11 @@ export function callBannerState(inputs: CallBannerInputs): CallBannerKind {
   const mode = inputs.mode?.kind;
   if (mode === "mixed") return "mixed";
   if (mode === "interlude") return "interlude";
+  // `cannot_verify` is only reachable WITH a session (a keyed control latch),
+  // and a session implies readiness `ready`, so the device arms below have
+  // nothing to say about it; it gets its own banner here, ahead of the guard
+  // that would otherwise read it as "not red" and return `none`.
+  if (inputs.chip === "cannot_verify") return "cannot_verify";
   if (inputs.chip !== "not_encrypted") return "none";
 
   // The device arms outrank the loud one: when the reason this call is not
@@ -724,8 +895,9 @@ export function callBannerState(inputs: CallBannerInputs): CallBannerKind {
  *
  * The card banner sits at z5 INSIDE the call card and the player host floats
  * above the card, so a banner the user is meant to read and act on has to
- * displace it. That is true of the three §3.4 states — each has an in-call
- * control that clears it, so the park is transient by construction.
+ * displace it. That is true of the three §3.4 states and of `cannot_verify` —
+ * each has an in-call control that clears it (Rejoin / Leave / Stay
+ * unencrypted for the latter), so the park is transient by construction.
  *
  * 🔴 It is NOT true of the device banners. `device_not_set_up`,
  * `device_unsupported` and `unencrypted_notice` describe the DEVICE, and
@@ -736,7 +908,12 @@ export function callBannerState(inputs: CallBannerInputs): CallBannerKind {
  * the player; that is a layout fix, not a reason to hide the video.
  */
 export function bannerParksFloat(kind: CallBannerKind): boolean {
-  return kind === "mixed" || kind === "interlude" || kind === "terminal_loud";
+  return (
+    kind === "mixed" ||
+    kind === "interlude" ||
+    kind === "terminal_loud" ||
+    kind === "cannot_verify"
+  );
 }
 
 /**
@@ -971,11 +1148,35 @@ export function modeUnderLoudLatch(
  * `encryptionError` or a native frame-key error, classified outside every
  * rotation window or escalated from a re-securing that never resolved — can
  * heal (`loudHealVerdict`). A CONTROL latch (a failed join ladder, a
- * destroyed envelope, local publications the SFU keeps recording as
- * plaintext, a terminal session failure) says nothing a later epoch could
- * disprove; it stays terminal until the group re-establishes or the call ends.
+ * destroyed envelope, a failed mid-call group action or commit arbitration,
+ * local publications the SFU keeps recording as plaintext, a terminal session
+ * failure) says nothing a later epoch could disprove; it stays terminal until
+ * the group re-establishes or the call ends.
+ *
+ * The origin also decides what the chip SAYS. A media latch is
+ * `not_encrypted`: frames failed. A control latch taken while this device was
+ * still KEYED (`LoudLatchMeta.mediaKeyed`), with its local publications
+ * declared GCM and the decode witness dropping nothing, is `cannot_verify`:
+ * the group can no longer be vouched for, but no frame failed — the 09-08
+ * reading ("not encrypted" over media every peer decrypted fine) was this
+ * case. Either way the publish gate stays HELD (`loudModeFallback` folds the
+ * mode to `negotiating`, `#onLoud` sets `failed` under it); `cannot_verify`
+ * changes the copy, never the gate.
  */
 export type LoudLatchOrigin = "media" | "control";
+
+/**
+ * Rides EVERY `loud` emission out of `#latchLoud` (`onEncryptionState`'s
+ * third argument). `mediaKeyed` is snapshotted at the latch — E2EE on, a
+ * local send key held, the local declaration not plaintext, the error not a
+ * `MissingLocalFrameKeyError` — BEFORE `loudModeFallback` runs, since that
+ * fold is what `#resetEnableState` later reads. A media→control upgrade emits
+ * `mediaKeyed: false`: a plane that already failed never reads keyed.
+ */
+export interface LoudLatchMeta {
+  origin: LoudLatchOrigin;
+  mediaKeyed: boolean;
+}
 
 /**
  * The CANCEL TOKEN on a pending re-securing escalation: only a clearer that

@@ -102,6 +102,7 @@ import { MissingLocalFrameKeyError } from "./mlsCallKeys";
 import {
   type CallMode,
   type CallModeEvent,
+  type LoudLatchMeta,
   type LoudLatchOrigin,
   type ResecureReason,
   type RotationWindowOpener,
@@ -109,6 +110,7 @@ import {
   callModeTransition,
   classifyEncryptionError,
   classifyMediaError,
+  interludeStickyAcrossResecure,
   latestPresentAddedAt,
   loudHealVerdict,
   loudModeFallback,
@@ -734,12 +736,24 @@ export interface MlsMediaBinding {
    */
   sfuConnected?(): boolean;
   /**
-   * Surface the media-plane state for the 6.5 chip / callEncryptionError.
+   * Surface the media-plane state for the 6.5 chip / callEncryptionLatch.
    * `"loud"` carries the error to latch; `"clear"` WITH an error asks the UI
    * to forget exactly that latched object (heal / re-establish), `"clear"`
    * without one only ends a transient re-securing.
+   *
+   * Every `"loud"` rides with `meta`: the latch's `origin` and `mediaKeyed`,
+   * the session's own send-side witness snapshotted AT the latch (was this
+   * device holding a usable frame key under an enabled, encrypted-declared
+   * publication?) — the chip's only ground for "can't verify" over "not
+   * encrypted". A media→control upgrade carries `replaces`: the previously
+   * latched object the UI must swap out in the SAME write, so the
+   * identity-matched clear protocol never sees a `clear` + `loud` pair.
    */
-  onEncryptionState?(state: MediaEncryptionState, error?: unknown): void;
+  onEncryptionState?(
+    state: MediaEncryptionState,
+    error?: unknown,
+    meta?: LoudLatchMeta & { replaces?: unknown },
+  ): void;
   /**
    * Whether a join-race hold is open — a decode missing key whose verdict is
    * DEFERRED while the install that would answer it is still expected
@@ -1674,8 +1688,8 @@ export class MlsCallSession {
    * chip and no log while media was NOT end-to-end encrypted. This assertion
    * closes that: positive proof of our own leaf in a natively-VERIFIED roster,
    * or a loud report through `#latchLoud` — the ONE failure channel `state.tsx`
-   * actually observes (`onEncryptionState` → `callEncryptionError` →
-   * `chipState({latchedError})` → NOT-ENCRYPTED).
+   * actually observes (`onEncryptionState` → `callEncryptionLatch` →
+   * `chipState({ latch })` → loud (`not_encrypted` / `cannot_verify`)).
    */
   #armEnrolmentAssertion(): void {
     this.#enrolmentDeadline = Date.now() + SELF_ENROLMENT_DEADLINE_MS;
@@ -3499,13 +3513,20 @@ export class MlsCallSession {
    * `isTerminalLoud` (which requires `negotiating`) never lets the terminal
    * banner render — the chip flips, publishing pauses, and the user is
    * parked muted behind a chip with no "Stay unencrypted" escape: the exact
-   * state this design exists to eliminate. A locally-CONFIRMED plaintext
-   * interlude is exempt — the user authorized plaintext, and
-   * `#resetEnableState` deliberately keeps it publishing through a re-secure.
+   * state this design exists to eliminate. A NATIVELY-confirmed plaintext
+   * interlude is exempt — the user authorized plaintext through the native
+   * dialog against a real group, and `#resetEnableState` deliberately keeps
+   * it publishing through a re-secure. An APP-confirmed interlude
+   * (`confirmedVia: "app"`, the in-app escape taken when no usable group
+   * existed) is NOT sticky: invariant 1 (plan §5) lets a plaintext window
+   * outlive only the group state it was confirmed against, so a re-secure
+   * withdraws it to `negotiating` and the lockstep re-holds the gate —
+   * the user must confirm again over the NEW group, never inherit a
+   * standing plaintext authorization across an epoch they never saw.
+   * `interludeStickyAcrossResecure` is the single rule for both sites.
    */
   #dropModeToNegotiating(): void {
-    const confirmedInterlude =
-      this.#callMode.kind === "interlude" && this.#callMode.localConfirmed;
+    const confirmedInterlude = interludeStickyAcrossResecure(this.#callMode);
     if (!confirmedInterlude && this.#callMode.kind !== "negotiating") {
       this.#setMode({ kind: "negotiating" });
     }
@@ -3635,6 +3656,8 @@ export class MlsCallSession {
     if (
       this.#callMode.kind === "interlude" &&
       this.#callMode.localConfirmed &&
+      // The in-app route never announces (native refuses `mls_not_confirmed`).
+      this.#callMode.confirmedVia !== "app" &&
       outcome.kind !== "welcome_joined"
     ) {
       void this.#announceDowngrade();
@@ -4454,21 +4477,27 @@ export class MlsCallSession {
         this.#loudOrigin = "control";
         this.#loudOriginatingPair = null;
         // The banner and the UI's clear protocol both key on the latched
-        // object, so the control error has to become it — and the ORDER
-        // matters, because `state.tsx`'s latch is idempotent-first
-        // (`prev ?? error`) and its clear is identity-matched
-        // (`prev === error ? undefined : prev`). Latching first made the new
-        // `loud` a no-op and the following `clear` then wiped the signal
-        // outright: red chip with a banner became AMBER with no banner and no
-        // escape, while the session stayed terminally latched — the exact
-        // "parked behind a chip" state `modeUnderLoudLatch` exists to prevent
-        // (media-E2EE review, 2026-09-08).
+        // object, so the control error has to become it. `state.tsx`'s latch
+        // is idempotent-first and its clear is identity-matched, so this is
+        // ONE `loud` carrying `replaces: previous` — the UI swaps the latched
+        // object in a single write. The old `clear(previous)` + `loud(error)`
+        // pair had a two-write window with NO latch at all (a frame where the
+        // chip read amber with no banner, `storeOwnerMismatch` flapped and any
+        // effect consumer could sample a green) while the session stayed
+        // terminally latched — the exact "parked behind a chip" state
+        // `modeUnderLoudLatch` exists to prevent (media-E2EE review,
+        // 2026-09-08; single-emit fold 2026-09-20).
+        // `mediaKeyed: false` — NOT re-snapshotted: the media plane already
+        // FAILED at the original media latch, so a keyed-looking send side
+        // now proves nothing and the chip must never soften to "can't verify"
+        // over a plane the worker reported broken.
         const previous = this.#loudError;
         this.#loudError = error;
-        if (previous !== undefined) {
-          this.#media?.onEncryptionState?.("clear", previous);
-        }
-        this.#media?.onEncryptionState?.("loud", error);
+        this.#media?.onEncryptionState?.("loud", error, {
+          origin: "control",
+          mediaKeyed: false,
+          replaces: previous,
+        });
         this.#clearHealProbe();
         console.warn(
           "[mls] loud latch upgraded to control: a control-plane verdict " +
@@ -4487,6 +4516,21 @@ export class MlsCallSession {
     this.#loudError = error;
     this.#loudLatchedAt = Date.now();
     this.#loudLatchedInstallSeq = this.#installSeq;
+    // Send-side witness, snapshotted HERE — before `loudModeFallback` below
+    // folds the mode to `negotiating` (after which `#e2eeEnabled` reads false
+    // under every latch and the fact is gone). "Keyed" = E2EE is on, this
+    // device holds a frame key, and its local publications are not recorded
+    // plaintext by the SFU. A `MissingLocalFrameKeyError` is excluded by
+    // class: both flags still read true on it, yet the CURRENT epoch's key
+    // is exactly what is absent (a removed leaf), so a naive snapshot would
+    // read keyed and be wrong. Every un-keyed control latch (first-join
+    // ladder spent, re-establish caps after `#resetRotationState`) reads
+    // false here by construction.
+    const mediaKeyed =
+      this.#e2eeEnabled &&
+      this.#hasLocalKey &&
+      !this.#localDeclarationPlain &&
+      !(error instanceof MissingLocalFrameKeyError);
     // The heal witness set, keyed by DEVICE (a `:screen` leg shares its
     // owner's MLS member key, so a withheld key fails both and the leg's
     // error may land first; witnessing the owner — present = any SFU identity
@@ -4522,11 +4566,11 @@ export class MlsCallSession {
         : null;
     this.#clearHealProbe();
     // Loud FIRST, then drop the amber. `state.tsx` writes `callMediaHold` and
-    // `callEncryptionError` in separate, unbatched Solid setters, so clearing
+    // `callEncryptionLatch` in separate, unbatched Solid setters, so clearing
     // the holds first leaves an intermediate state where neither is set and
     // `chipState` computes a green — no paint happens between them, but any
     // effect or memo consumer (a live-leg sampler) can read it.
-    this.#media?.onEncryptionState?.("loud", error);
+    this.#media?.onEncryptionState?.("loud", error, { origin, mediaKeyed });
     // The strictest reading has now been taken about the MEDIA plane, so
     // nothing there is left to defer. The `control` escalation is NOT
     // subsumed: it bounds the correction of our OWN declaration, which this
@@ -4815,7 +4859,7 @@ export class MlsCallSession {
     // being replaced, the mode has dropped to `negotiating` (gate held) and
     // the ladder either succeeds — then the chip must be allowed to go green
     // honestly — or exhausts into `#onLoud`, which latches again. The UI's
-    // `callEncryptionError` follows the session's latch instead of outliving
+    // `callEncryptionLatch` follows the session's latch instead of outliving
     // it (it used to stay set until disconnect, leaving a successfully
     // re-established call red with no banner and no escape).
     if (this.#loudLatched && this.#loudError !== undefined) {
@@ -5888,52 +5932,109 @@ export class MlsCallSession {
 
   /**
    * The user confirmed the whole-call plaintext downgrade (§3.4 T3/T5). Public
-   * entry from the 6.5 banner. Shows the BLOCKING native confirm dialog (its
-   * non-enrolled roster is native-computed); on Ok, transitions to a confirmed
-   * interlude — set_e2ee(false) STRICTLY before resume (invariant 1), then a
-   * best-effort announce. Cancel keeps the mixed pause.
+   * entry from the 6.5 banner. With a usable group, shows the BLOCKING native
+   * confirm dialog (its non-enrolled roster is native-computed); on Ok,
+   * transitions to a confirmed interlude — set_e2ee(false) STRICTLY before
+   * resume (invariant 1), then a best-effort announce. Decline keeps the
+   * mixed pause. Without a usable group (`hasUsableGroup()`), or when the
+   * native dialog fails for any reason OTHER than a decline, routes to the
+   * in-app `confirmLocalPlaintext()` so the banner's escape is never inert.
    */
   async confirmPlaintext(displayNames: Record<string, string>): Promise<void> {
-    if (!this.#groupId || this.#terminal()) return;
-    // Reachable from: mixed (T3), an unconfirmed interlude (T5), or — the
-    // ME-10 terminal-loud escape — a call that FAILED to secure while still
-    // `negotiating` (retry exhaustion / loud failure): "Stay unencrypted".
-    // A HEALTHY negotiation is excluded (no UI offers the button there, and
-    // the guard makes the API unmisusable).
-    // Terminal-loud populations (re-verify MED-B): retry exhaustion / loud
-    // failure (`failed`/`resecuring`) AND a LATCHED loud media-plane error
-    // while the state is still nominally `active` (e.g. `#enable` threw —
-    // the E2EE worker died — and `#latchLoud` latched without failing the
-    // session). All show the same terminal banner; all must make its
-    // "Stay unencrypted" button real.
-    const terminalEscape =
-      this.#callMode.kind === "negotiating" &&
-      (this.#state === "failed" ||
-        this.#state === "resecuring" ||
-        this.#loudLatched);
-    if (
-      this.#callMode.kind !== "mixed" &&
-      !(
-        this.#callMode.kind === "interlude" && !this.#callMode.localConfirmed
-      ) &&
-      !terminalEscape
-    ) {
-      return; // not a confirmable state
+    if (!this.confirmReachable()) return;
+    // No usable group = the native dialog has nothing to compute its
+    // non-enrolled roster against (`MlsGroupNotFound` at every permanent
+    // control terminus, or a group action / establish still in flight).
+    // Route to the in-app confirm rather than returning: this is exactly the
+    // population the terminal banner offers "Stay unencrypted" to, and an
+    // inert button under a red chip is the parked-behind-a-chip state.
+    // (`groupId === null` is already inside `!hasUsableGroup()`; the local
+    // read only narrows the id for the bridge call.)
+    const groupId = this.#groupId;
+    if (groupId === null || !this.hasUsableGroup()) {
+      return this.confirmLocalPlaintext();
     }
     const sfu = this.#media?.sfuParticipants() ?? [];
     try {
       // The native dialog computes its own non-enrolled set; Declined throws.
-      await this.#deps.bridge.callConfirmDowngrade(
-        this.#groupId,
-        sfu,
-        displayNames,
-      );
-    } catch {
-      return; // Declined ⇒ stay mixed (paused, receive-only); banner persists
+      await this.#deps.bridge.callConfirmDowngrade(groupId, sfu, displayNames);
+    } catch (e) {
+      // Only an explicit user DECLINE keeps the pause (receive-only; banner
+      // persists). Any other failure — IPC, a group the native side no longer
+      // holds, a dialog that could not open — falls through to the in-app
+      // confirm so the escape still runs. Never rethrown: the sole caller is
+      // a Solid click handler (`void voice.confirmCallPlaintext()`), and a
+      // rejection there is an unhandled promise, not a banner.
+      if ((e as { type?: string })?.type === "declined") return;
+      return this.confirmLocalPlaintext();
     }
-    if (this.#terminal() || !this.#groupId) return;
+    // The dialog is blocking; the session may have moved under it (disposed,
+    // re-secured to `e2ee`, gone plaintext another way).
+    if (!this.confirmReachable()) return;
     this.#announcedBy = undefined;
     this.#applyMode({ type: "local_confirm" });
+  }
+
+  /**
+   * Whether a plaintext confirmation can be applied right now. The escape is
+   * reachable from: mixed (T3), an unconfirmed interlude (T5), or — the ME-10
+   * terminal-loud escape — a call that FAILED to secure while still
+   * `negotiating` (retry exhaustion / loud failure): "Stay unencrypted". A
+   * HEALTHY negotiation is excluded (no UI offers the button there, and the
+   * guard makes the API unmisusable).
+   * Terminal-loud populations (re-verify MED-B): retry exhaustion / loud
+   * failure (`failed`/`resecuring`) AND a LATCHED loud media-plane error
+   * while the state is still nominally `active` (e.g. `#enable` threw —
+   * the E2EE worker died — and `#latchLoud` latched without failing the
+   * session). All show the same terminal banner; all must make its
+   * "Stay unencrypted" button real. A terminal session (`closed` /
+   * `plaintext`) is never reachable — a disposed session must not have
+   * `#announcedBy` cleared or a mode applied.
+   */
+  confirmReachable(): boolean {
+    if (this.#terminal()) return false;
+    const mode = this.#callMode;
+    if (mode.kind === "mixed") return true;
+    if (mode.kind === "interlude") return !mode.localConfirmed;
+    return (
+      mode.kind === "negotiating" &&
+      (this.#state === "failed" ||
+        this.#state === "resecuring" ||
+        this.#loudLatched)
+    );
+  }
+
+  /**
+   * ROUTING only: whether the NATIVE confirm dialog has a group to compute its
+   * non-enrolled roster against. False at every permanent control terminus
+   * (`#groupId` null after `#onRemovedSelf`, the re-establish caps, a group
+   * action that threw) and while an establish or group action is in flight
+   * (the id may be about to change under the dialog). This is NOT a security
+   * predicate and NOT part of `confirmReachable()`: it decides WHICH confirm
+   * runs, never WHETHER one may.
+   */
+  hasUsableGroup(): boolean {
+    return (
+      this.#groupId !== null &&
+      !this.#establishInFlight &&
+      !this.#groupActionPending
+    );
+  }
+
+  /**
+   * The in-app plaintext confirmation: the user pressed "Stay unencrypted" on
+   * a terminal banner and the app's own blocking, per-device confirm was
+   * answered (the caller owns that dialog). No native dialog — there is no
+   * usable group for it to compute a roster against — and no announce (the
+   * native side refuses `mls_not_confirmed` without a group). The resulting
+   * interlude is stamped `confirmedVia: "app"`, so it is NOT sticky across a
+   * re-secure (`interludeStickyAcrossResecure`): invariant 1 lets the window
+   * outlive only the group state it was confirmed against.
+   */
+  async confirmLocalPlaintext(): Promise<void> {
+    if (!this.confirmReachable()) return;
+    this.#announcedBy = undefined;
+    this.#applyMode({ type: "local_confirm", via: "app" });
   }
 
   /** Courier a best-effort §3.4 mode announcement (ME-4/ME-12). */
@@ -6019,12 +6120,16 @@ export class MlsCallSession {
    */
   #resetEnableState(): void {
     this.#cancelReupgrade();
-    // A locally-confirmed interlude keeps publishing plaintext THROUGH a
+    // A NATIVELY-confirmed interlude keeps publishing plaintext THROUGH a
     // control-plane re-secure (the authorization came from the user, not from
-    // group state; Room E2EE is off, so there is no key dependency). Every
-    // other state pauses through the re-secure (successor keys not installed).
-    const confirmedInterlude =
-      this.#callMode.kind === "interlude" && this.#callMode.localConfirmed;
+    // group state; Room E2EE is off, so there is no key dependency). An
+    // APP-confirmed interlude is withdrawn instead (invariant 1: a plaintext
+    // window confirmed with no usable group does not outlive the re-secure;
+    // `#dropModeToNegotiating` ran first in `#rejoinFresh`, so `negotiating`
+    // is already held in lockstep and the user re-confirms over the new
+    // group). Every other state pauses through the re-secure (successor keys
+    // not installed). `interludeStickyAcrossResecure` is the single rule.
+    const confirmedInterlude = interludeStickyAcrossResecure(this.#callMode);
     if (!confirmedInterlude && (this.#e2eeEnabled || this.#mixPaused)) {
       void this.#media?.pausePublishing?.("enable-window");
     }
@@ -6263,7 +6368,8 @@ export class MlsCallSession {
     // `onStateChange` is optional and state.tsx does not pass it, and
     // `chipState` reads `session.state()` non-reactively so a flip to "failed"
     // re-renders nothing. `#latchLoud` is the wired path (onEncryptionState →
-    // callEncryptionError → NOT-ENCRYPTED chip); it self-dedups.
+    // callEncryptionLatch → a LOUD chip (`cannot_verify` when keyed, else
+    // `not_encrypted`)); it self-dedups.
     this.#latchLoud(error);
   }
 

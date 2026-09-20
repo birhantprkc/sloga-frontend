@@ -2,17 +2,22 @@
 //   node --test components/rtc/mlsCallModePolicy.test.ts   (Node >=23.6 strips types)
 // Focus: every numbered transition T0a–T7, the confirm-order invariant
 // (set_e2ee(false) strictly before resume), T6-is-the-sole-interlude-exit
-// (no warm-enable after a confirmed interlude), the chip precedence table +
-// each fail-closed degradation, and default-closed ctl parsing.
+// (no warm-enable after a confirmed interlude), the chip precedence table
+// (the seven-row loud order — `cannot_verify` from row 4 only) + each
+// fail-closed degradation, the banner every loud chip carries, the escape's
+// `via` split, and default-closed ctl parsing.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
   type CallBannerInputs,
   type CallMode,
+  type CallModeEffect,
   type ChipInputs,
+  type ChipLatch,
   type DecodeWitness,
   type LoudHealInputs,
+  DECODE_WITNESS_UNAVAILABLE,
   MediaErrorLedger,
   bannerParksFloat,
   callBannerState,
@@ -20,6 +25,7 @@ import {
   chipState,
   classifyEncryptionError,
   classifyMediaError,
+  interludeStickyAcrossResecure,
   isTerminalLoud,
   keyPairId,
   latestPresentAddedAt,
@@ -38,6 +44,19 @@ const E2EE: CallMode = { kind: "e2ee" };
 const MIXED: CallMode = { kind: "mixed" };
 const INTERLUDE_UNCONF: CallMode = { kind: "interlude", localConfirmed: false };
 const INTERLUDE_CONF: CallMode = { kind: "interlude", localConfirmed: true };
+// What `local_confirm` mints since wave 2: every confirmed interlude carries
+// WHO authorized it. `INTERLUDE_CONF` above is the shape with no
+// `confirmedVia` — still a valid INPUT to the transitions that keep the mode.
+const INTERLUDE_NATIVE: CallMode = {
+  kind: "interlude",
+  localConfirmed: true,
+  confirmedVia: "native",
+};
+const INTERLUDE_APP: CallMode = {
+  kind: "interlude",
+  localConfirmed: true,
+  confirmedVia: "app",
+};
 
 // ---- Mode machine ----------------------------------------------------------
 
@@ -78,7 +97,7 @@ test("T2 mixed → schedule warm reupgrade (viaSuccessor false) on mix clear", (
 
 test("T3 mixed → interlude(confirmed): set_e2ee(false) STRICTLY before resume, then announce", () => {
   const t = callModeTransition(MIXED, { type: "local_confirm" });
-  assert.deepEqual(t.mode, { kind: "interlude", localConfirmed: true });
+  assert.deepEqual(t.mode, INTERLUDE_NATIVE);
   const order = t.effects.map((e) => e.do);
   const iE2ee = order.indexOf("set_e2ee");
   const iResume = order.indexOf("resume");
@@ -92,7 +111,7 @@ test("T3 mixed → interlude(confirmed): set_e2ee(false) STRICTLY before resume,
 
 test("ME-10 terminal escape: local_confirm from negotiating → interlude(confirmed), E2EE-off first; releases enable-window but NOT negotiating (the lockstep releases that after effects)", () => {
   const t = callModeTransition(NEGOTIATING, { type: "local_confirm" });
-  assert.deepEqual(t.mode, { kind: "interlude", localConfirmed: true });
+  assert.deepEqual(t.mode, INTERLUDE_NATIVE);
   const order = t.effects.map((e) => e.do);
   assert.equal(order[0], "set_e2ee", "E2EE-off is the FIRST effect");
   assert.deepEqual(t.effects[0], { do: "set_e2ee", enabled: false });
@@ -124,6 +143,91 @@ test("MED-B: local_confirm from mixed ALSO releases enable-window (after set_e2e
   assert.ok(iE2ee < iEnableResume, "E2EE-off strictly first");
 });
 
+// The full effect list of a confirm, per route. Pinned as a WHOLE (not just by
+// membership) so the ORDER — set_e2ee(false) strictly before any resume, the
+// announce after the gate releases — cannot drift while the members stay.
+const CONFIRM_EFFECTS_NATIVE: CallModeEffect[] = [
+  { do: "set_e2ee", enabled: false },
+  { do: "resume", reason: "mixed" },
+  { do: "resume", reason: "enable-window" },
+  { do: "announce" },
+  { do: "cancel_reupgrade" },
+];
+const CONFIRM_EFFECTS_APP: CallModeEffect[] = CONFIRM_EFFECTS_NATIVE.filter(
+  (e) => e.do !== "announce",
+);
+
+test("🔴 C1: local_confirm from negotiating ALSO releases `mixed` (kills escape-negotiating-keeps-mixed-held)", () => {
+  // After a mix was declared and a re-establish ran, `#resetEnableState`
+  // drops `#mixPaused` WITHOUT releasing the `mixed` gate reason, so a
+  // terminal confirm from `negotiating` used to leave `mixed` held — paused,
+  // under a banner saying the media was being sent. Releasing an un-held
+  // reason is a no-op on the reason set, and `negotiating` itself stays held
+  // until `#setMode` runs after these effects, so this cannot produce a
+  // premature 1→0 edge.
+  const t = callModeTransition(NEGOTIATING, { type: "local_confirm" });
+  const iMixed = t.effects.findIndex(
+    (e) => e.do === "resume" && e.reason === "mixed",
+  );
+  assert.ok(iMixed >= 0, "the mixed gate reason is released");
+  const iE2ee = t.effects.findIndex((e) => e.do === "set_e2ee");
+  assert.ok(iE2ee < iMixed, "E2EE-off strictly before the mixed resume");
+  assert.deepEqual(t.effects, CONFIRM_EFFECTS_NATIVE);
+});
+
+test("local_confirm stamps confirmedVia: native when `via` is absent or native, and announces", () => {
+  for (const mode of [MIXED, INTERLUDE_UNCONF, NEGOTIATING]) {
+    const absent = callModeTransition(mode, { type: "local_confirm" });
+    assert.deepEqual(absent.mode, INTERLUDE_NATIVE, mode.kind);
+    const native = callModeTransition(mode, {
+      type: "local_confirm",
+      via: "native",
+    });
+    assert.deepEqual(native.mode, INTERLUDE_NATIVE, mode.kind);
+    assert.deepEqual(native.effects, absent.effects, mode.kind);
+    assert.ok(
+      native.effects.some((e) => e.do === "announce"),
+      mode.kind + ": the native route announces",
+    );
+  }
+});
+
+test("🔴 local_confirm via app OMITS the announce and stamps confirmedVia: app (kills escape-app-confirm-announces)", () => {
+  // `callAnnounce` is native-gated on `mls_not_confirmed`; the in-app route
+  // never armed a grant, so the announce would be refused (and a later T6
+  // `callClearDowngrade` would run against a grant that never existed).
+  // Everything else is identical: E2EE-off first, the same gate releases in
+  // the same order, the same re-upgrade cancel.
+  for (const mode of [MIXED, INTERLUDE_UNCONF, NEGOTIATING]) {
+    const t = callModeTransition(mode, { type: "local_confirm", via: "app" });
+    assert.deepEqual(t.mode, INTERLUDE_APP, mode.kind);
+    assert.ok(
+      !t.effects.some((e) => e.do === "announce"),
+      mode.kind + ": no announce on the in-app route",
+    );
+    assert.deepEqual(t.effects, CONFIRM_EFFECTS_APP, mode.kind);
+  }
+});
+
+test("local_confirm: the mixed / interlude arms keep their effect ORDER under the `via` split", () => {
+  // T3 / T5 always ran set_e2ee(false) → resume mixed → resume enable-window
+  // → announce → cancel_reupgrade; wave 2 only threads `via` through them.
+  for (const mode of [MIXED, INTERLUDE_UNCONF])
+    assert.deepEqual(
+      callModeTransition(mode, { type: "local_confirm" }).effects,
+      CONFIRM_EFFECTS_NATIVE,
+      mode.kind,
+    );
+  // An already-confirmed interlude ignores a repeat confirm — no double
+  // release, and an app confirm can never overwrite a native stamp.
+  const repeat = callModeTransition(INTERLUDE_NATIVE, {
+    type: "local_confirm",
+    via: "app",
+  });
+  assert.deepEqual(repeat.mode, INTERLUDE_NATIVE);
+  assert.deepEqual(repeat.effects, []);
+});
+
 test("T4 mixed → interlude(UNconfirmed) on remote announce — NEVER resumes publishing", () => {
   const t = callModeTransition(MIXED, { type: "remote_announce" });
   assert.deepEqual(t.mode, { kind: "interlude", localConfirmed: false });
@@ -136,7 +240,7 @@ test("T4 mixed → interlude(UNconfirmed) on remote announce — NEVER resumes p
 
 test("T5 interlude(unconfirmed) → confirmed on local confirm, with the same confirm order", () => {
   const t = callModeTransition(INTERLUDE_UNCONF, { type: "local_confirm" });
-  assert.deepEqual(t.mode, { kind: "interlude", localConfirmed: true });
+  assert.deepEqual(t.mode, INTERLUDE_NATIVE);
   const order = t.effects.map((e) => e.do);
   assert.ok(order.indexOf("set_e2ee") < order.indexOf("resume"));
 });
@@ -186,12 +290,58 @@ test("resecure keeps the mode (the machine rides above group identity)", () => {
   }
 });
 
+test("🔴 interludeStickyAcrossResecure: only a NATIVE-confirmed interlude survives a re-secure (kills escape-app-interlude-sticky)", () => {
+  // Consumed at `#dropModeToNegotiating` and `#resetEnableState` ONLY. A
+  // native confirm is the per-device, group-bound authorization invariant 1
+  // names and stays sticky; an app confirm authorized THIS plaintext window
+  // and nothing about the group the re-secure is about to establish, so it is
+  // withdrawn — without that the in-app route would mint a permanently
+  // sticky interlude.
+  assert.equal(interludeStickyAcrossResecure(INTERLUDE_NATIVE), true);
+  // No `confirmedVia` at all: nothing mints this shape any more (the
+  // transition always stamps; `state.tsx`'s in-app writer stamps `app`), and
+  // the rule is pinned to its contract expression, `confirmedVia !== "app"`.
+  assert.equal(interludeStickyAcrossResecure(INTERLUDE_CONF), true);
+  assert.equal(interludeStickyAcrossResecure(INTERLUDE_APP), false);
+  assert.equal(interludeStickyAcrossResecure(INTERLUDE_UNCONF), false);
+  assert.equal(
+    interludeStickyAcrossResecure({
+      kind: "interlude",
+      localConfirmed: false,
+      confirmedVia: "app",
+    }),
+    false,
+  );
+  for (const mode of [
+    undefined,
+    NEGOTIATING,
+    E2EE,
+    MIXED,
+    { kind: "off" } as const,
+    { kind: "call_full" } as const,
+  ])
+    assert.equal(
+      interludeStickyAcrossResecure(mode),
+      false,
+      mode?.kind ?? "undefined",
+    );
+});
+
 test("off is terminal for mode purposes (a non-E2EE call has no group)", () => {
   const t = callModeTransition({ kind: "off" }, { type: "mix_detected" });
   assert.deepEqual(t.mode, { kind: "off" });
 });
 
 // ---- Chip precedence + fail-closed -----------------------------------------
+
+// The latch shapes the chip splits on (`ChipLatch`). `DIRECT_LATCH` is what
+// the two direct `state.tsx` writers produce (no `#latchLoud` snapshot);
+// the others are `#latchLoud`'s `{ origin, mediaKeyed }` meta.
+const DIRECT_LATCH: ChipLatch = { origin: undefined, mediaKeyed: false };
+const MEDIA_KEYED: ChipLatch = { origin: "media", mediaKeyed: true };
+const MEDIA_UNKEYED: ChipLatch = { origin: "media", mediaKeyed: false };
+const CONTROL_KEYED: ChipLatch = { origin: "control", mediaKeyed: true };
+const CONTROL_UNKEYED: ChipLatch = { origin: "control", mediaKeyed: false };
 
 const baseChip = (over: Partial<ChipInputs>): ChipInputs => ({
   hasSession: true,
@@ -200,7 +350,7 @@ const baseChip = (over: Partial<ChipInputs>): ChipInputs => ({
   e2eeEnabled: true,
   hasLocalKey: true,
   resecuring: false,
-  latchedError: false,
+  latch: undefined,
   publishingIdentities: [],
   observedEncrypted: new Map(),
   localPublicationsEncrypted: true,
@@ -262,9 +412,11 @@ test("chip (b) fail-closed: a LOCAL publication not declared GCM is NOT green", 
 });
 
 test("chip: the local declaration never outranks a loud verdict or a mix", () => {
+  // Even the keyed control latch: row 4 needs the declaration, so a NONE
+  // publication drops it to row 5.
   assert.equal(
     chipState(
-      baseChip({ localPublicationsEncrypted: false, latchedError: true }),
+      baseChip({ localPublicationsEncrypted: false, latch: CONTROL_KEYED }),
     ),
     "not_encrypted",
   );
@@ -328,7 +480,160 @@ test("chip precedence: not_encrypted beats everything", () => {
     chipState(baseChip({ sessionState: "failed" })),
     "not_encrypted",
   );
-  assert.equal(chipState(baseChip({ latchedError: true })), "not_encrypted");
+  // Every latch shape that is not row 4 (rows 2, 3 and 5).
+  for (const latch of [
+    DIRECT_LATCH,
+    MEDIA_KEYED,
+    MEDIA_UNKEYED,
+    CONTROL_UNKEYED,
+  ])
+    assert.equal(chipState(baseChip({ latch })), "not_encrypted", latch.origin);
+});
+
+// ---- The loud order of record (wave 2): rows 1–6 ----------------------------
+//
+// `cannot_verify` is reachable from exactly ONE rule (row 4): a CONTROL latch
+// taken while this device was KEYED, with every local publication declared
+// GCM and the decode witness reporting nothing dropping. Everything above it
+// (a downgrade mode, an origin-less direct write, a media latch) and
+// everything below it (any other latch, a `failed` nothing latched) reads
+// `not_encrypted`. One spec per row; each names the mutation it kills.
+
+test("chip row 1: a downgrade mode outranks even a keyed control latch", () => {
+  for (const mode of [
+    MIXED,
+    INTERLUDE_UNCONF,
+    INTERLUDE_NATIVE,
+    { kind: "call_full" } as const,
+  ])
+    assert.equal(
+      chipState(baseChip({ mode, latch: CONTROL_KEYED })),
+      "not_encrypted",
+      mode.kind,
+    );
+});
+
+test("chip row 2: a latch with no origin (the direct state.tsx writers) → not_encrypted", () => {
+  // The store-owner identity mismatch and `sessionSetupDecision`'s `hold_loud`
+  // never went through `#latchLoud`, so there is no snapshot to split on —
+  // whatever `mediaKeyed` says.
+  assert.equal(chipState(baseChip({ latch: DIRECT_LATCH })), "not_encrypted");
+  assert.equal(
+    chipState(baseChip({ latch: { origin: undefined, mediaKeyed: true } })),
+    "not_encrypted",
+  );
+});
+
+test("chip row 3: a MEDIA latch → not_encrypted, even keyed", () => {
+  // Frames failed to decrypt outside every window, or a re-securing never
+  // resolved: the media plane itself is broken. Our send side being keyed
+  // (the helper's path snapshots `mediaKeyed: true`) softens nothing.
+  assert.equal(chipState(baseChip({ latch: MEDIA_KEYED })), "not_encrypted");
+  assert.equal(chipState(baseChip({ latch: MEDIA_UNKEYED })), "not_encrypted");
+});
+
+test("🔴 chip row 4: control ∧ keyed ∧ local GCM ∧ witness not dropping → cannot_verify (kills chip-cannot-verify-collapses-to-not-encrypted)", () => {
+  assert.equal(chipState(baseChip({ latch: CONTROL_KEYED })), "cannot_verify");
+  // Unmoved by the gates below the loud rows: a publishing peer, an unverified
+  // roster, a live witness, a rotation debounce.
+  assert.equal(
+    chipState(
+      baseChip({
+        latch: CONTROL_KEYED,
+        publishingIdentities: ["u:d"],
+        observedEncrypted: new Map([["u:d", true]]),
+        rosterVerified: [true, false],
+        resecuring: true,
+        decodeWitness: { available: true, dropping: [], live: ["u:d"] },
+      }),
+    ),
+    "cannot_verify",
+  );
+});
+
+test("🔴 chip row 4 → 5: a DROPPING decode witness makes the keyed control latch not_encrypted (kills chip-cannot-verify-ignores-witness)", () => {
+  // A sender's frames are arriving and being discarded: the media plane IS
+  // failing, so "we can't confirm" would understate it.
+  assert.equal(
+    chipState(
+      baseChip({
+        latch: CONTROL_KEYED,
+        decodeWitness: { available: true, dropping: ["u:d"], live: [] },
+      }),
+    ),
+    "not_encrypted",
+  );
+});
+
+test("🔴 chip row 4 → 5: an UN-KEYED control latch is not_encrypted (kills chip-cannot-verify-ignores-media-keyed)", () => {
+  // `mediaKeyed: false` is what `#latchLoud` snapshots for a spent join
+  // ladder, a media→control upgrade, a re-establish cap reached after the key
+  // wipe, and a `MissingLocalFrameKeyError` (keyed while the CURRENT epoch
+  // key is absent) — none may soften to "can't verify".
+  assert.equal(
+    chipState(baseChip({ latch: CONTROL_UNKEYED })),
+    "not_encrypted",
+  );
+});
+
+test("chip row 4 → 5: a local publication NOT declared GCM makes the keyed control latch not_encrypted", () => {
+  assert.equal(
+    chipState(
+      baseChip({ latch: CONTROL_KEYED, localPublicationsEncrypted: false }),
+    ),
+    "not_encrypted",
+  );
+});
+
+test("🔴 chip row 4 has NO `decodeWitness.available` conjunct: an unavailable witness still reads cannot_verify", () => {
+  // An unpatched bundle, a dead worker, a stale tick — none can support the
+  // POSITIVE claim "not encrypted"; "we can't confirm" is exactly what
+  // `unavailable` means. (First-join control latches are un-keyed regardless,
+  // so this cannot soften a first-join failure.)
+  assert.equal(
+    chipState(
+      baseChip({
+        latch: CONTROL_KEYED,
+        decodeWitness: DECODE_WITNESS_UNAVAILABLE,
+      }),
+    ),
+    "cannot_verify",
+  );
+});
+
+test("🔴 chip row 6 sits BELOW row 4: `failed` + keyed control latch → cannot_verify (the #onLoud shape)", () => {
+  // `#onLoud` sets `failed` BEFORE it calls `#latchLoud` — the only
+  // `#setState("failed")` in the session — so every keyed mid-call control
+  // site (a native build that threw, a DS commit arbitration classified
+  // failed, a destroyed envelope) latches with `sessionState === "failed"`
+  // and must still reach row 4.
+  assert.equal(
+    chipState(baseChip({ sessionState: "failed", latch: CONTROL_KEYED })),
+    "cannot_verify",
+  );
+  // ...and it fails closed for a witness that IS dropping, as everywhere.
+  assert.equal(
+    chipState(
+      baseChip({
+        sessionState: "failed",
+        latch: CONTROL_KEYED,
+        decodeWitness: { available: true, dropping: ["u:d"], live: [] },
+      }),
+    ),
+    "not_encrypted",
+  );
+});
+
+test("chip row 6: `failed` with NO latch is the fail-closed backstop → not_encrypted", () => {
+  assert.equal(
+    chipState(baseChip({ sessionState: "failed", latch: undefined })),
+    "not_encrypted",
+  );
+  // With an un-keyed latch it is row 5 — the same reading.
+  assert.equal(
+    chipState(baseChip({ sessionState: "failed", latch: CONTROL_UNKEYED })),
+    "not_encrypted",
+  );
 });
 
 test("chip resecuring beats unverified/green", () => {
@@ -346,7 +651,7 @@ test("chip resecuring beats unverified/green", () => {
 test("T-06-ext: a transient rotation-window resecuring stays amber, never not_encrypted", () => {
   // Rotation debounce active (media-plane), session still active, no latch.
   assert.equal(
-    chipState(baseChip({ resecuring: true, latchedError: false })),
+    chipState(baseChip({ resecuring: true, latch: undefined })),
     "resecuring",
   );
   // Its media-plane form: a publishing participant momentarily lacks an
@@ -380,8 +685,15 @@ test("T-06-ext: ONLY a latched error (post-escalation) flips a rotating call lou
   // Rotation window + a latched structured error ⇒ the latch wins (loud). This
   // is the 10 s-escalation outcome, not the transient window itself.
   assert.equal(
-    chipState(baseChip({ resecuring: true, latchedError: true })),
+    chipState(baseChip({ resecuring: true, latch: MEDIA_KEYED })),
     "not_encrypted",
+  );
+  // The re-securing BACKSTOP (a control latch taken while re-securing, keys
+  // intact, witness clean) is loud too — `cannot_verify`: the gate is held
+  // and the copy says "can't confirm", never the positive "not encrypted".
+  assert.equal(
+    chipState(baseChip({ resecuring: true, latch: CONTROL_KEYED })),
+    "cannot_verify",
   );
 });
 
@@ -409,7 +721,7 @@ test("chip plaintext/off/no-session with no open group → none", () => {
       e2eeEnabled: false,
       hasLocalKey: false,
       resecuring: false,
-      latchedError: false,
+      latch: undefined,
       publishingIdentities: [],
       observedEncrypted: new Map(),
       localPublicationsEncrypted: true,
@@ -430,7 +742,7 @@ test("chip ME-7/R2-4 + §0.2#9: NO session in a channel with an open group ⇒ n
       e2eeEnabled: false,
       hasLocalKey: false,
       resecuring: false,
-      latchedError: false,
+      latch: undefined,
       publishingIdentities: [],
       observedEncrypted: new Map(),
       localPublicationsEncrypted: true,
@@ -451,7 +763,7 @@ test("chip: the open-group branch speaks for any shell, capable or not", () => {
       e2eeEnabled: false,
       hasLocalKey: false,
       resecuring: false,
-      latchedError: false,
+      latch: undefined,
       publishingIdentities: [],
       observedEncrypted: new Map(),
       localPublicationsEncrypted: true,
@@ -508,6 +820,33 @@ test("terminal-loud: any emitted mode verdict other than negotiating is not term
 test("terminal-loud: requires the loud chip", () => {
   assert.equal(isTerminalLoud(NEGOTIATING, "resecuring", true), false);
   assert.equal(isTerminalLoud(undefined, "none", true), false);
+});
+
+test("🔴 terminal-loud: cannot_verify counts exactly like not_encrypted (kills terminal-loud-cannot-verify-arm-dropped)", () => {
+  // A keyed control latch is folded to `negotiating` by `#onLoud` (or lands
+  // before any verdict) exactly like a media one; the gate is held either way
+  // and the same escape serves it. Both shapes, and both non-shapes.
+  assert.equal(isTerminalLoud(NEGOTIATING, "cannot_verify", true), true);
+  assert.equal(isTerminalLoud(NEGOTIATING, "cannot_verify", false), true);
+  assert.equal(isTerminalLoud(undefined, "cannot_verify", true), true);
+  assert.equal(isTerminalLoud(undefined, "cannot_verify", false), false);
+  const modes: (CallMode | undefined)[] = [
+    undefined,
+    NEGOTIATING,
+    { kind: "off" },
+    E2EE,
+    MIXED,
+    INTERLUDE_UNCONF,
+    INTERLUDE_NATIVE,
+    { kind: "call_full" },
+  ];
+  for (const mode of modes)
+    for (const latchedError of [false, true])
+      assert.equal(
+        isTerminalLoud(mode, "cannot_verify", latchedError),
+        isTerminalLoud(mode, "not_encrypted", latchedError),
+        JSON.stringify({ mode, latchedError }),
+      );
 });
 
 // ---- Which banner a chip carries (the no-dead-end invariant) ----------------
@@ -633,14 +972,68 @@ test("banner: nothing to say on a green, amber or chrome-less chip", () => {
       );
 });
 
+test("🔴 banner: a cannot_verify chip is never bannerless (kills banner-state-cannot-verify-bannerless)", () => {
+  // It is only reachable WITH a session (a keyed control latch), so the
+  // device is `ready` by construction — but the rule is total, and it sits
+  // ahead of the device arms and of the `!== "not_encrypted"` guard that
+  // would otherwise read it as "not red" and return `none`.
+  const MODES: (CallMode | undefined)[] = [
+    undefined,
+    NEGOTIATING,
+    { kind: "off" },
+    E2EE,
+    { kind: "call_full" },
+  ];
+  for (const mode of MODES)
+    for (const latchedError of [false, true])
+      for (const readiness of [
+        "ready",
+        "needs_setup",
+        "owned_elsewhere",
+        "unsupported",
+      ] as const)
+        assert.equal(
+          callBannerState({
+            chip: "cannot_verify",
+            mode,
+            latchedError,
+            readiness,
+          }),
+          "cannot_verify",
+          JSON.stringify({ mode, latchedError, readiness }),
+        );
+  // The §3.4 downgrade modes keep their own banners ahead of it (row 1 wins
+  // the chip too, so the pair never co-occurs; the banner rule is still
+  // total).
+  assert.equal(
+    callBannerState(
+      baseBanner({ chip: "cannot_verify", mode: MIXED, readiness: "ready" }),
+    ),
+    "mixed",
+  );
+  assert.equal(
+    callBannerState(
+      baseBanner({
+        chip: "cannot_verify",
+        mode: INTERLUDE_NATIVE,
+        readiness: "ready",
+      }),
+    ),
+    "interlude",
+  );
+  // ...and it parks the Watch Together player like the other actionable ones.
+  assert.equal(bannerParksFloat("cannot_verify"), true);
+});
+
 test("🔴 a REFUSED device is loud with no dependence on the open-group probe", () => {
   // The hole the first cut of this fix opened (reviewer F1, CRITICAL): a
   // device treated as non-capable asserts no gate, latches nothing, and
   // `chipState`'s no-session branches are gated on `channelHasOpenGroup` — so
   // alone in a channel with no group yet it published plaintext under chip
   // `none` with NO chrome at all. Staying CAPABLE is what fixes it: the setup
-  // decision holds loud, the error latches, and `latchedError` is the FIRST
-  // term of the chip, ahead of every probe-dependent branch.
+  // decision holds loud, the error latches as a direct `state.tsx` write (no
+  // origin — row 2 of the chip's loud order), ahead of every probe-dependent
+  // branch.
   for (const channelHasOpenGroup of [false, true]) {
     const chip = chipState(
       baseChip({
@@ -649,7 +1042,7 @@ test("🔴 a REFUSED device is loud with no dependence on the open-group probe",
         mode: undefined,
         e2eeEnabled: false,
         hasLocalKey: false,
-        latchedError: true,
+        latch: DIRECT_LATCH,
         rosterVerified: [],
         channelHasOpenGroup,
         deviceNeedsSetup: false,
@@ -795,10 +1188,14 @@ test("the release is offered with a session, and on the R2-4 hold", () => {
 test("🔴 a session alone is not enough — the gate must actually be held", () => {
   // `hasSession` used to be the whole test, which would offer "Turn off
   // encryption" on any session-bound red chip that had not latched: the same
-  // silent no-op the `call_full` arm exists to prevent, since
-  // `confirmPlaintext` returns immediately without a group or once terminal.
-  // The session's OWN downgrade states hold a gate by construction; anything
-  // else has to show the latch that proves one is held.
+  // silent no-op the `call_full` arm exists to prevent. `confirmPlaintext`
+  // returns immediately once terminal, and its `confirmReachable()` guard
+  // refuses a session that is neither in a downgrade mode nor
+  // failed / re-securing / latched loud; a MISSING group no longer
+  // short-circuits it (the escape routes to the in-app confirm,
+  // `confirmLocalPlaintext`), so the latch is what proves there is a held
+  // gate to release. The session's OWN downgrade states hold a gate by
+  // construction; anything else has to show that latch.
   for (const mode of [MIXED, INTERLUDE_CONF, NEGOTIATING])
     assert.equal(
       plaintextReleaseAvailable({
@@ -833,8 +1230,10 @@ test("🔴 a session alone is not enough — the gate must actually be held", ()
 
 test("🔴 the release is NOT offered where nothing is paused, nor once terminal", () => {
   // A never-enrolled device and an unsupported shell assert no gate, so the
-  // press is a silent no-op; `call_full` is terminal in the session, so
-  // `confirmPlaintext` returns immediately.
+  // press is a silent no-op; `call_full` is terminal in the session
+  // (`#terminal()`), so `confirmReachable()` is false and `confirmPlaintext`
+  // returns immediately — it is the terminal check that stops it, not a
+  // missing group (a missing group now routes to the in-app confirm).
   assert.equal(
     plaintextReleaseAvailable({
       mode: undefined,
@@ -864,18 +1263,30 @@ test("🔴 the release is NOT offered where nothing is paused, nor once terminal
   );
 });
 
-test("🔴 INVARIANT: every NOT-ENCRYPTED chip carries a banner (exhaustive)", () => {
-  // The design rule this whole change exists to make checkable: a red chip is
-  // never a dead end. Swept over every input that can PRODUCE a red chip —
+test("🔴 INVARIANT: every LOUD chip (not_encrypted or cannot_verify) carries a banner (exhaustive)", () => {
+  // The design rule this whole change exists to make checkable: a loud chip is
+  // never a dead end. Swept over every input that can PRODUCE a loud chip —
   // which is not the same as every input, and saying so matters: the sweep
-  // fixes `localPublicationsEncrypted: true` and a clean `decodeWitness` (each
-  // only ever downgrades a green chip to amber, never to red — gate (d) may
-  // only WITHHOLD green) and leaves the mode/state/latch/no-session
-  // axes free, because those are the ones that make it red. Written out rather
-  // than trusted to the handful of shapes anyone thought of, which is how the
-  // ME-7 and §0.2 #9 no-session branches sat bannerless through five reviews —
-  // and it is still no proof about a chip that is NEVER red, which is the hole
-  // that got through twice.
+  // leaves the mode/state/latch/no-session axes free, because those are the
+  // ones that make it loud, and since wave 2 ALSO sweeps
+  // `localPublicationsEncrypted` and a clean-vs-dropping decode witness,
+  // because row 4 reads both to pick WHICH loud value (neither can mint a red
+  // — gate (d) may only WITHHOLD green — but each turns `cannot_verify` into
+  // `not_encrypted`). The witness's third value (`unavailable`), the un-keyed
+  // media latch and the app-confirmed interlude are held out of this product
+  // — each is inert for the loud rows and pinned by its own spec (the next
+  // one sweeps `unavailable` against every shape) — to keep the sweep at
+  // ~1.3M shapes rather than 2.6M.
+  // Written out rather than trusted to the handful of shapes anyone thought
+  // of, which is how the ME-7 and §0.2 #9 no-session branches sat bannerless
+  // through five reviews — and it is still no proof about a chip that is
+  // NEVER red, which is the hole that got through twice.
+  //
+  // 🔴 The COMPUTED chip goes into `callBannerState`. The first cut of this
+  // sweep hard-coded `chip: "not_encrypted"` here, which sampled the banner
+  // for a chip the sweep never produced and would have kept a bannerless
+  // `cannot_verify` green (round-1 audit, B3) — the filter and the argument
+  // move together, and the sweep must be shown to REACH `cannot_verify`.
   const MODES: (CallMode | undefined)[] = [
     undefined,
     NEGOTIATING,
@@ -883,7 +1294,7 @@ test("🔴 INVARIANT: every NOT-ENCRYPTED chip carries a banner (exhaustive)", (
     E2EE,
     MIXED,
     INTERLUDE_UNCONF,
-    INTERLUDE_CONF,
+    INTERLUDE_NATIVE,
     { kind: "call_full" },
   ];
   const STATES: ChipInputs["sessionState"][] = [
@@ -902,6 +1313,17 @@ test("🔴 INVARIANT: every NOT-ENCRYPTED chip carries a banner (exhaustive)", (
     "unsupported",
   ] as const;
   const BOOLS = [false, true];
+  const LATCHES: (ChipLatch | undefined)[] = [
+    undefined,
+    DIRECT_LATCH,
+    MEDIA_KEYED,
+    CONTROL_KEYED,
+    CONTROL_UNKEYED,
+  ];
+  const WITNESSES: DecodeWitness[] = [
+    { available: true, dropping: [], live: [] },
+    { available: true, dropping: ["u:d"], live: [] },
+  ];
   const PUBLISHERS: { p: string[]; o: Map<string, boolean> }[] = [
     { p: [], o: new Map() },
     { p: ["u:d"], o: new Map([["u:d", true]]) },
@@ -909,71 +1331,190 @@ test("🔴 INVARIANT: every NOT-ENCRYPTED chip carries a banner (exhaustive)", (
   ];
 
   let red = 0;
+  let cannotVerify = 0;
   for (const hasSession of BOOLS)
     for (const sessionState of STATES)
       for (const mode of MODES)
         for (const e2eeEnabled of BOOLS)
           for (const hasLocalKey of BOOLS)
             for (const resecuring of BOOLS)
-              for (const latchedError of BOOLS)
+              for (const latch of LATCHES)
                 for (const channelHasOpenGroup of BOOLS)
                   for (const deviceNeedsSetup of BOOLS)
                     for (const peerCouldEncrypt of BOOLS)
                       for (const rosterVerified of [[], [true], [false]])
-                        for (const pub of PUBLISHERS) {
-                          const inputs: ChipInputs = {
-                            hasSession,
-                            sessionState,
-                            mode,
-                            e2eeEnabled,
-                            hasLocalKey,
-                            resecuring,
-                            latchedError,
-                            publishingIdentities: pub.p,
-                            observedEncrypted: pub.o,
-                            localPublicationsEncrypted: true,
-                            rosterVerified,
-                            channelHasOpenGroup,
-                            deviceNeedsSetup,
-                            peerCouldEncrypt,
-                            decodeWitness: {
-                              available: true,
-                              dropping: [],
-                              live: [],
-                            },
-                          };
-                          if (chipState(inputs) !== "not_encrypted") continue;
-                          red++;
-                          for (const readiness of READINESS)
-                            assert.notEqual(
-                              callBannerState({
-                                chip: "not_encrypted",
-                                mode,
-                                latchedError,
-                                readiness,
-                              }),
-                              "none",
-                              `red chip with no banner: ${JSON.stringify({
+                        for (const localPublicationsEncrypted of BOOLS)
+                          for (const decodeWitness of WITNESSES)
+                            for (const pub of PUBLISHERS) {
+                              const inputs: ChipInputs = {
                                 hasSession,
                                 sessionState,
                                 mode,
-                                latchedError,
+                                e2eeEnabled,
+                                hasLocalKey,
+                                resecuring,
+                                latch,
+                                publishingIdentities: pub.p,
+                                observedEncrypted: pub.o,
+                                localPublicationsEncrypted,
+                                rosterVerified,
                                 channelHasOpenGroup,
                                 deviceNeedsSetup,
                                 peerCouldEncrypt,
-                                readiness,
-                              })}`,
-                            );
-                        }
-  // A sweep that found no red chips would pass vacuously.
-  assert.ok(red > 1000, `expected a large red-chip sample, got ${red}`);
+                                decodeWitness,
+                              };
+                              const chip = chipState(inputs);
+                              if (
+                                chip !== "not_encrypted" &&
+                                chip !== "cannot_verify"
+                              )
+                                continue;
+                              red++;
+                              const shape = () =>
+                                JSON.stringify({
+                                  chip,
+                                  hasSession,
+                                  sessionState,
+                                  mode,
+                                  latch,
+                                  localPublicationsEncrypted,
+                                  decodeWitness,
+                                  channelHasOpenGroup,
+                                  deviceNeedsSetup,
+                                  peerCouldEncrypt,
+                                });
+                              if (chip === "cannot_verify") {
+                                cannotVerify++;
+                                // Exactly ONE rule yields it (row 4): pin
+                                // every conjunct, and that no row above
+                                // fired.
+                                if (
+                                  !(
+                                    latch?.origin === "control" &&
+                                    latch.mediaKeyed &&
+                                    localPublicationsEncrypted &&
+                                    decodeWitness.dropping.length === 0 &&
+                                    mode?.kind !== "mixed" &&
+                                    mode?.kind !== "interlude" &&
+                                    mode?.kind !== "call_full"
+                                  )
+                                )
+                                  assert.fail(
+                                    `cannot_verify outside row 4: ${shape()}`,
+                                  );
+                              }
+                              // The banner takes the boolean the product
+                              // passes it: "a gate is held".
+                              const latchedError = latch !== undefined;
+                              for (const readiness of READINESS)
+                                if (
+                                  callBannerState({
+                                    chip,
+                                    mode,
+                                    latchedError,
+                                    readiness,
+                                  }) === "none"
+                                )
+                                  assert.fail(
+                                    `loud chip with no banner: ${shape()} readiness=${readiness}`,
+                                  );
+                            }
+  // A sweep that found no loud chips would pass vacuously — and one that never
+  // produced `cannot_verify` would prove nothing about its banner.
+  assert.ok(red > 1000, `expected a large loud-chip sample, got ${red}`);
+  assert.ok(
+    cannotVerify > 0,
+    `the sweep never reached cannot_verify (${cannotVerify})`,
+  );
+});
+
+test("🔴 an UNAVAILABLE decode witness never changes a loud reading (no `available` conjunct, every shape)", () => {
+  // The exhaustive sweep above holds the witness to clean / dropping; this
+  // pins the third value across every mode × state × latch × declaration:
+  // whatever the clean witness reads, the unavailable one reads the same —
+  // it can neither rescue a red nor turn "can't verify" into the positive
+  // "not encrypted".
+  const MODES: (CallMode | undefined)[] = [
+    undefined,
+    NEGOTIATING,
+    { kind: "off" },
+    E2EE,
+    MIXED,
+    INTERLUDE_UNCONF,
+    INTERLUDE_NATIVE,
+    INTERLUDE_APP,
+    { kind: "call_full" },
+  ];
+  const STATES: ChipInputs["sessionState"][] = [
+    undefined,
+    "starting",
+    "active",
+    "plaintext",
+    "resecuring",
+    "failed",
+    "closed",
+  ];
+  const LATCHES: (ChipLatch | undefined)[] = [
+    undefined,
+    DIRECT_LATCH,
+    MEDIA_KEYED,
+    MEDIA_UNKEYED,
+    CONTROL_KEYED,
+    CONTROL_UNKEYED,
+  ];
+  let loud = 0;
+  let cannotVerify = 0;
+  for (const hasSession of [false, true])
+    for (const mode of MODES)
+      for (const sessionState of STATES)
+        for (const latch of LATCHES)
+          for (const localPublicationsEncrypted of [false, true]) {
+            const shape = {
+              hasSession,
+              mode,
+              sessionState,
+              latch,
+              localPublicationsEncrypted,
+            };
+            const clean = chipState(
+              baseChip({
+                ...shape,
+                decodeWitness: { available: true, dropping: [], live: [] },
+              }),
+            );
+            if (clean !== "not_encrypted" && clean !== "cannot_verify")
+              continue;
+            loud++;
+            if (clean === "cannot_verify") cannotVerify++;
+            assert.equal(
+              chipState(
+                baseChip({
+                  ...shape,
+                  decodeWitness: DECODE_WITNESS_UNAVAILABLE,
+                }),
+              ),
+              clean,
+              JSON.stringify(shape),
+            );
+          }
+  assert.ok(loud > 0, `expected loud shapes, got ${loud}`);
+  assert.ok(
+    cannotVerify > 0,
+    `expected cannot_verify shapes, got ${cannotVerify}`,
+  );
 });
 
 test("🔴 only a banner the user can clear parks the Watch Together player", () => {
   // The player host floats above the card, so a banner the user must act on
-  // has to displace it — and each §3.4 state has an in-call control that
-  // clears it, so the park is transient by construction.
-  for (const kind of ["mixed", "interlude", "terminal_loud"] as const)
+  // has to displace it — and each §3.4 state, and `cannot_verify` (Rejoin /
+  // Leave / Stay unencrypted), has an in-call control that clears it, so the
+  // park is transient by construction.
+  for (const kind of [
+    "mixed",
+    "interlude",
+    "terminal_loud",
+    "cannot_verify",
+  ] as const)
     assert.equal(bannerParksFloat(kind), true, kind);
   // The DEVICE banners describe the device; NOTHING in the call clears them,
   // so parking on one un-anchors the video for the whole call with no control
@@ -1161,7 +1702,7 @@ test("chip: negotiating + latched error is loud; negotiating without one is ambe
     e2eeEnabled: false,
     hasLocalKey: false,
     resecuring: false,
-    latchedError: false,
+    latch: undefined,
     publishingIdentities: [],
     observedEncrypted: new Map(),
     localPublicationsEncrypted: true,
@@ -1171,7 +1712,9 @@ test("chip: negotiating + latched error is loud; negotiating without one is ambe
     peerCouldEncrypt: true,
     decodeWitness: { available: true, dropping: [], live: [] },
   };
-  assert.equal(chipState({ ...base, latchedError: true }), "not_encrypted");
+  // A first-join control latch is un-keyed (`#hasLocalKey` is only set after
+  // a Welcome install), so it reads not_encrypted at row 5, never row 4.
+  assert.equal(chipState({ ...base, latch: CONTROL_UNKEYED }), "not_encrypted");
   // The heal's intermediate: the latch is gone, the label is still folded
   // until the chained `e2ee` lands.
   assert.equal(chipState(base), "resecuring");
@@ -1619,11 +2162,23 @@ test("🔴 gate (d) can only WITHHOLD green — it never produces a red", () => 
   assert.equal(
     chipState(
       baseChip({
-        latchedError: true,
+        latch: MEDIA_KEYED,
         decodeWitness: witness({ available: false }),
       }),
     ),
     "not_encrypted",
+  );
+  // ...nor pick the loud SHADE beyond its `dropping` check: a keyed control
+  // latch under an UNAVAILABLE witness is still loud — `cannot_verify`, since
+  // "no sample" cannot support the positive claim "not encrypted" either.
+  assert.equal(
+    chipState(
+      baseChip({
+        latch: CONTROL_KEYED,
+        decodeWitness: witness({ available: false }),
+      }),
+    ),
+    "cannot_verify",
   );
 });
 

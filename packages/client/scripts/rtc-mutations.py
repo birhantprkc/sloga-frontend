@@ -223,6 +223,59 @@ HARNESS = "mlsCallSession.harness.ts"
 #: in the leg); and E2EE-on: the call was `mixed` throughout, so the seat
 #: never ran `set_e2ee(true)`. Those three remain admitted here, not
 #: measured, until an E2EE-on two-native-seat leg and a plain-call leg run.
+#:
+#: 🔴 AND THE WAVE-2 CHIP-SPLIT / ESCAPE WIRINGS (banner-honesty wave 2,
+#: 2026-09-20), live-only for the same reason — `state.tsx` and the chip
+#: component cannot be loaded by `node --test`:
+#:  (v)   the `onEncryptionState` binding in `#buildMediaBinding`: ONE
+#:        composite latch signal (`callEncryptionLatch`, `{ error, origin,
+#:        mediaKeyed }`), written on `"loud"` under the `replaces` rule —
+#:        `prev === undefined || prev.error === meta?.replaces
+#:        ? { error, ...meta } : prev` — and cleared on `"clear"(error)`
+#:        only when `prev.error === error` (identity-matched). The harness
+#:        `#replay()` mirrors that rule VERBATIM and the session specs
+#:        measure the MIRROR; nothing here can measure that `state.tsx`
+#:        still implements it. Drop the `replaces` arm and a media→control
+#:        upgrade leaves the OLD error latched under the old origin, every
+#:        spec green. The two direct writers (store-owner mismatch,
+#:        `sessionSetupDecision`'s `hold_loud`) write `{ error }` with no
+#:        origin — row 2 of `chipState` — and no entry can see whether they
+#:        still do.
+#:  (vi)  the chip binding's `latch:` thunk inside the single
+#:        `return chipStateFrom({` literal (`rtc-gate.sh` pins the literal,
+#:        not the thunk): it narrows the composite latch to `{ origin,
+#:        mediaKeyed }`. Hardcode `origin: "control"` there and every media
+#:        latch reaches row 4's `cannot_verify` in the PRODUCT while
+#:        `chipInputs.test.ts` and the session suite stay green —
+#:        `harness-chip-origin-hardcoded` below pins the HARNESS copy of
+#:        the same thunk, which is the most any entry can reach.
+#:  (vii) the `confirmedVia: "app"` stamp in `#confirmNoSessionPlaintext`
+#:        (the no-session in-app confirm). `interludeStickyAcrossResecure`
+#:        is specified against `"app"` and `escape-app-interlude-sticky`
+#:        pins the rule; whether THIS writer stamps it is unmeasured — drop
+#:        the field and that interlude is permanently sticky across a
+#:        re-secure. The stamp's OTHER consumer — the
+#:        `confirmedVia !== "app"` conjunct on the ME-4 re-announce in
+#:        `#onEpochAdvanced` (`mlsCallSession.ts`, the fix-pass F1 site) —
+#:        IS measured: `escape-app-interlude-reannounces` below drops it and
+#:        `mlsCallSession.escape.test.ts` spec 8 goes red.
+#:  (viii) the `VoiceCallCardStatus.tsx` `label()` / `symbol()` /
+#:        `variants.chip` arms for `cannot_verify`: `tsc` and the file's
+#:        own `never` exhaustiveness check are what hold them; no spec
+#:        renders the chip, and a Panda variant record is a bare object
+#:        literal that applies NO style for a missing key rather than
+#:        failing to compile.
+#:
+#: `chip-missing-frame-key-reads-keyed` was OWED here until the wave-2 fix
+#: pass (2026-09-20) and deliberately NOT an entry before it: the harness's
+#: `fakeInstaller.applyLocalKey` never threw `MissingLocalFrameKeyError`, so
+#: the `#onRotationError` control latch that carries it could not be driven
+#: from any spec, and an entry no spec can turn red is a green entry. The
+#: seam (`world.failLocalKeyOnce(err)`) and the falsered spec ("the
+#: missing-local-frame-key control latch reads mediaKeyed: false by
+#: exclusion and never cannot_verify") landed together in that pass; the
+#: entry now exists below, pinned `must_red` on that spec, which kills it at
+#: both the emission deepEqual (`mediaKeyed: false`) and the chip assert.
 STATE = "state.tsx"
 GATE = "publishGate.ts"
 EPISODE = "publishGateEpisode.ts"
@@ -240,6 +293,7 @@ GATE_SPEC = "components/rtc/publishGate.test.ts"
 EPISODE_SPEC = "components/rtc/publishGateEpisode.test.ts"
 VERDICT_SPEC = "components/rtc/pauseVerdict.test.ts"
 RESECURE_SPEC = "components/rtc/mlsCallSession.resecure.test.ts"
+ESCAPE_SPEC = "components/rtc/mlsCallSession.escape.test.ts"
 MIC_POLICY_SPEC = "components/rtc/micPipelinePolicy.test.ts"
 KICK_POLICY_SPEC = "components/rtc/publishKickPolicy.test.ts"
 WITNESS_SPEC = "components/rtc/decodeWitnessListener.test.ts"
@@ -746,10 +800,13 @@ MUTATIONS += [
         id="amber-dropped-before-loud",
         what="the amber is dropped BEFORE the loud is reported, so the chip computes a green in between",
         file=SESSION,
-        search="""    this.#media?.onEncryptionState?.("loud", error);
+        # Retargeted 2026-09-20 (banner-honesty wave 2): every `"loud"` now
+        # rides with `{ origin, mediaKeyed }` (`LoudLatchMeta`). Same defect,
+        # same two lines, three-argument emit.
+        search="""    this.#media?.onEncryptionState?.("loud", error, { origin, mediaKeyed });
     // The strictest reading has now been taken about the MEDIA plane, so""",
         replace="""    this.#clearJoinRaceHolds();
-    this.#media?.onEncryptionState?.("loud", error);
+    this.#media?.onEncryptionState?.("loud", error, { origin, mediaKeyed });
     // The strictest reading has now been taken about the MEDIA plane, so""",
     ),
     # ---- who may cancel what ------------------------------------------------
@@ -2506,8 +2563,11 @@ MUTATIONS += [
         id="chip-latched-error-ignored",
         what="a latched structured error does not reach the chip",
         file=CHIP,
-        search="""    latchedError: sources.latchedError(),""",
-        replace="""    latchedError: false,""",
+        # Retargeted 2026-09-20 (banner-honesty wave 2): the boolean
+        # `latchedError` became `latch: ChipLatch | undefined` (origin +
+        # keyed-ness). Same defect — the latch never reaches the chip.
+        search="""    latch: sources.latch(),""",
+        replace="""    latch: undefined,""",
         specs=[CHIP_SPEC],
     ),
     Mutation(
@@ -2584,6 +2644,244 @@ MUTATIONS += [
         replace="""  const sessionState = "active" as const;
   void sources.sessionState;""",
         specs=[CHIP_SPEC],
+    ),
+]
+
+
+# --- Banner-honesty wave 2: the `cannot_verify` split and the escape ---------
+#
+# `mlsCallModePolicy.ts`: rows 3–5 of `chipState`'s order of record (the ONE
+# rule that yields `cannot_verify` and the two conjuncts that keep it honest),
+# `isTerminalLoud` / `callBannerState` accepting the second loud value, and
+# the `local_confirm` arms (`mixed` released from `negotiating`; the in-app
+# `via: "app"` variant announcing nothing and minting a NON-sticky interlude).
+# `mlsCallSession.ts`: `#latchLoud`'s `mediaKeyed` snapshot and its single
+# upgrade emit, and `confirmPlaintext`'s routing around the native dialog.
+# `mlsCallSession.harness.ts`: the harness's own latch feed, the canary that
+# the session suite reads the session's origin rather than a copy of it.
+# Every entry `expect="red"`; the wirings no spec can load are in the header
+# admission (v)–(viii). The `MissingLocalFrameKeyError` entry was OWED at first
+# (no harness seam); the wave-2 fix pass added `failLocalKeyOnce` and the
+# falsered spec, and it is listed below, pinned `must_red`.
+
+MUTATIONS += [
+    # ---- row 4 and its conjuncts --------------------------------------------
+    Mutation(
+        id="chip-cannot-verify-collapses-to-not-encrypted",
+        what="row 4 answers `not_encrypted`, so a keyed control latch over a clean media plane claims a plaintext it cannot prove",
+        file=POLICY,
+        search="""    inputs.decodeWitness.dropping.length === 0
+  ) {
+    return "cannot_verify";
+  }""",
+        replace="""    inputs.decodeWitness.dropping.length === 0
+  ) {
+    return "not_encrypted";
+  }""",
+        specs=[POLICY_SPEC],
+    ),
+    Mutation(
+        id="chip-cannot-verify-ignores-witness",
+        what="row 4 drops the decode-witness conjunct, so a control latch softens to `cannot_verify` while a peer's frames are being discarded",
+        file=POLICY,
+        search="""    latch.mediaKeyed &&
+    inputs.localPublicationsEncrypted &&
+    inputs.decodeWitness.dropping.length === 0
+  ) {""",
+        replace="""    latch.mediaKeyed &&
+    inputs.localPublicationsEncrypted
+  ) {""",
+        specs=[POLICY_SPEC],
+    ),
+    Mutation(
+        id="chip-cannot-verify-ignores-media-keyed",
+        what="row 4 drops the `mediaKeyed` conjunct, so an UN-keyed control latch (a spent first-join ladder, a media→control upgrade) reads `cannot_verify`",
+        file=POLICY,
+        search="""    latch?.origin === "control" &&
+    latch.mediaKeyed &&""",
+        replace="""    latch?.origin === "control" &&""",
+        specs=[POLICY_SPEC],
+    ),
+    Mutation(
+        id="terminal-loud-cannot-verify-arm-dropped",
+        what="isTerminalLoud only knows `not_encrypted`, so a `cannot_verify` chip renders no Leave / Stay-unencrypted escape — parked behind a chip",
+        file=POLICY,
+        search="""  if (chip !== "not_encrypted" && chip !== "cannot_verify") return false;""",
+        replace="""  if (chip !== "not_encrypted") return false;""",
+        specs=[POLICY_SPEC],
+    ),
+    Mutation(
+        id="banner-state-cannot-verify-bannerless",
+        what="callBannerState's red guard is not widened, so `cannot_verify` reads as 'not red' and gets NO banner",
+        file=POLICY,
+        search="""  if (inputs.chip === "cannot_verify") return "cannot_verify";
+  if (inputs.chip !== "not_encrypted") return "none";""",
+        replace="""  if (inputs.chip !== "not_encrypted") return "none";""",
+        specs=[POLICY_SPEC],
+    ),
+    # ---- the escape's mode arms ---------------------------------------------
+    Mutation(
+        id="escape-negotiating-keeps-mixed-held",
+        what="a terminal confirm from `negotiating` leaves `mixed` held (lane-3 C1): the banner says media is being sent while the gate still pauses it",
+        file=POLICY,
+        search="""      if (mode.kind === "negotiating") {
+        return {
+          mode: confirmed,
+          effects: [
+            { do: "set_e2ee", enabled: false },
+            { do: "resume", reason: "mixed" },
+            { do: "resume", reason: "enable-window" },""",
+        replace="""      if (mode.kind === "negotiating") {
+        return {
+          mode: confirmed,
+          effects: [
+            { do: "set_e2ee", enabled: false },
+            { do: "resume", reason: "enable-window" },""",
+        specs=[POLICY_SPEC, ESCAPE_SPEC],
+        must_red=[ESCAPE_SPEC],
+    ),
+    Mutation(
+        id="escape-app-confirm-announces",
+        what="the in-app confirm announces: `callAnnounce` is native-gated on a grant the in-app route never armed, so the announce is refused and a later T6 clear runs against nothing",
+        file=POLICY,
+        search="""      const announce: CallModeEffect[] =
+        via === "app" ? [] : [{ do: "announce" }];""",
+        replace="""      const announce: CallModeEffect[] = [{ do: "announce" }];""",
+        specs=[POLICY_SPEC, ESCAPE_SPEC],
+        must_red=[ESCAPE_SPEC],
+    ),
+    Mutation(
+        id="escape-app-interlude-sticky",
+        what="an APP-confirmed interlude is sticky across a re-secure, so the in-app route mints a permanent plaintext interlude the user is never asked about again",
+        file=POLICY,
+        # Anchored on `interludeStickyAcrossResecure`'s own conjunct — the rule
+        # S:3507 / S:6026 consult — never on the dead `resecure` event arm.
+        search="""    mode.localConfirmed &&
+    mode.confirmedVia !== "app"
+  );""",
+        replace="""    mode.localConfirmed &&
+    true
+  );""",
+        specs=[POLICY_SPEC, ESCAPE_SPEC],
+        must_red=[ESCAPE_SPEC],
+    ),
+    # ---- the latch snapshot -------------------------------------------------
+    Mutation(
+        id="chip-upgrade-reads-keyed",
+        what="the media→control upgrade emits `mediaKeyed: true`, so a plane the worker already reported broken softens to 'can't verify'",
+        file=SESSION,
+        search="""        this.#media?.onEncryptionState?.("loud", error, {
+          origin: "control",
+          mediaKeyed: false,
+          replaces: previous,
+        });""",
+        replace="""        this.#media?.onEncryptionState?.("loud", error, {
+          origin: "control",
+          mediaKeyed: true,
+          replaces: previous,
+        });""",
+        # The kill is the emission deepEqual in the joinrace upgrade spec (and
+        # falsered fr7), not the chip canary: row 5 reads an upgrade
+        # `not_encrypted` either way, so the chip alone cannot see this.
+        specs=[JOINRACE_SPEC, FALSERED_SPEC],
+        must_red=[JOINRACE_SPEC],
+    ),
+    Mutation(
+        id="chip-media-latch-reads-control",
+        what="every latch is emitted as CONTROL origin, so a media latch (frames failed to decrypt) can reach row 4 and read 'can't verify'",
+        file=SESSION,
+        search="""    this.#media?.onEncryptionState?.("loud", error, { origin, mediaKeyed });""",
+        replace="""    this.#media?.onEncryptionState?.("loud", error, {
+      origin: "control",
+      mediaKeyed,
+    });""",
+        specs=[FALSERED_SPEC, JOINRACE_SPEC],
+        must_red=[FALSERED_SPEC],
+    ),
+    Mutation(
+        id="chip-plain-declaration-reads-keyed",
+        what="the snapshot ignores `#localDeclarationPlain`, so the declaration-seam latch reads keyed while our own publications are on the SFU's record as plaintext",
+        file=SESSION,
+        search="""      this.#hasLocalKey &&
+      !this.#localDeclarationPlain &&
+      !(error instanceof MissingLocalFrameKeyError);""",
+        replace="""      this.#hasLocalKey &&
+      !(error instanceof MissingLocalFrameKeyError);""",
+        specs=[JOINRACE_SPEC, FALSERED_SPEC],
+        must_red=[JOINRACE_SPEC],
+    ),
+    Mutation(
+        id="chip-missing-frame-key-reads-keyed",
+        what="the snapshot drops the `MissingLocalFrameKeyError` exclusion, so a REMOVED leaf's control latch (both flags still true from the previous epoch's key) reads keyed and softens to 'can't verify'",
+        file=SESSION,
+        search="""      !this.#localDeclarationPlain &&
+      !(error instanceof MissingLocalFrameKeyError);""",
+        replace="""      !this.#localDeclarationPlain;""",
+        # Driven through the harness's `failLocalKeyOnce` seam (wave-2 fix
+        # pass, 2026-09-20). Killed by falsered's missing-local-frame-key spec
+        # at BOTH the emission deepEqual (`mediaKeyed: false`) and the chip
+        # assert (`not_encrypted`, never `cannot_verify`).
+        specs=[FALSERED_SPEC],
+        must_red=[FALSERED_SPEC],
+        expect="red",
+    ),
+    # ---- confirmPlaintext's routing -----------------------------------------
+    Mutation(
+        id="escape-declined-routes-to-app",
+        what="a DECLINED native dialog falls through to the in-app confirm, so the user's 'No' resumes plaintext",
+        file=SESSION,
+        search="""      if ((e as { type?: string })?.type === "declined") return;
+      return this.confirmLocalPlaintext();""",
+        replace="""      void e;
+      return this.confirmLocalPlaintext();""",
+        specs=[ESCAPE_SPEC],
+    ),
+    Mutation(
+        id="escape-no-group-returns-early",
+        what="confirmPlaintext returns without a usable group (the pre-wave-2 early return), leaving 'Stay unencrypted' inert under a red chip",
+        file=SESSION,
+        search="""    if (groupId === null || !this.hasUsableGroup()) {
+      return this.confirmLocalPlaintext();
+    }""",
+        replace="""    if (groupId === null || !this.hasUsableGroup()) {
+      return;
+    }""",
+        specs=[ESCAPE_SPEC],
+    ),
+    # ---- the ME-4 re-announce's provenance test -----------------------------
+    Mutation(
+        id="escape-app-interlude-reannounces",
+        what="the ME-4 epoch-advance re-announce ignores provenance, so an APP-confirmed interlude re-attempts the native announce on every epoch (refused `mls_not_confirmed` each time)",
+        file=SESSION,
+        # The exact conjunct line, dropped whole (newline included) so the
+        # mutant is still well-formed TS: the `&&` chain closes on the
+        # neighbouring conjuncts. Killed by escape spec 8: `announces()` reads
+        # 2 (one per advance) against an asserted 0.
+        search="""      this.#callMode.confirmedVia !== "app" &&
+""",
+        replace="",
+        specs=[ESCAPE_SPEC],
+        must_red=[ESCAPE_SPEC],
+        expect="red",
+    ),
+    # ---- the harness's own latch feed ---------------------------------------
+    Mutation(
+        id="harness-chip-origin-hardcoded",
+        what="the harness feeds every latch to the chip as CONTROL origin, so the session suite's media-latch `not_encrypted` reads would be measuring a hand-built origin rather than the session's",
+        file=HARNESS,
+        search="""        latch && {
+          origin: latch.origin,
+          mediaKeyed: latch.mediaKeyed ?? false,
+        },""",
+        replace="""        latch && {
+          origin: "control",
+          mediaKeyed: latch.mediaKeyed ?? false,
+        },""",
+        # Measured 2026-09-20: falsered AND joinrace each go red on their own
+        # (a media latch fed as control reaches row 4 under the harness's keyed
+        # snapshot and clean witness). Both pinned individually.
+        specs=[FALSERED_SPEC, JOINRACE_SPEC],
+        must_red=[FALSERED_SPEC, JOINRACE_SPEC],
     ),
 ]
 

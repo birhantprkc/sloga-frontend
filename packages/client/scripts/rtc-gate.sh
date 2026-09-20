@@ -96,10 +96,11 @@ EXPECTED=(
   "components/rtc/mlsAdmitGracePolicy.test.ts 18 0"
   "components/rtc/mlsAdmitPolicy.test.ts 15 0"
   "components/rtc/mlsCallKeys.test.ts 23 0"
-  "components/rtc/mlsCallModePolicy.test.ts 96 0"
-  "components/rtc/mlsCallSession.falsered.test.ts 5 0"
+  "components/rtc/mlsCallModePolicy.test.ts 114 0"
+  "components/rtc/mlsCallSession.escape.test.ts 17 0"
+  "components/rtc/mlsCallSession.falsered.test.ts 10 0"
   "components/rtc/mlsCallSession.heal.test.ts 7 0"
-  "components/rtc/mlsCallSession.joinrace.test.ts 35 0"
+  "components/rtc/mlsCallSession.joinrace.test.ts 37 0"
   "components/rtc/mlsCallSession.resecure.test.ts 23 0"
   "components/rtc/mlsDrainPolicy.test.ts 14 0"
   "components/rtc/mlsJoinRequestPolicy.test.ts 4 0"
@@ -115,7 +116,7 @@ EXPECTED=(
   "components/rtc/micPipelinePolicy.test.ts 4 0"
   "components/rtc/publishKickPolicy.test.ts 4 0"
   "components/rtc/decodeWitnessListener.test.ts 42 0"
-  "components/rtc/chipInputs.test.ts 28 0"
+  "components/rtc/chipInputs.test.ts 31 0"
   "components/rtc/screenAudioWire.test.ts 17 0"
   "components/rtc/screenAudioNativeWin.test.ts 51 0"
 )
@@ -252,11 +253,13 @@ FILES=(components/rtc/mlsCallSession.ts components/rtc/mlsCallModePolicy.ts
   components/rtc/decodeWitnessListener.ts
   components/rtc/decodeWitnessListener.test.ts
   components/rtc/chipInputs.ts
-  components/rtc/chipInputs.test.ts
+  components/rtc/chipInputs.test.ts src/sentry.ts
+  components/rtc/mlsCallSession.escape.test.ts
   components/rtc/screenAudioWire.ts components/rtc/screenAudioWire.test.ts
   components/rtc/screenAudioNativeWin.ts
-  components/rtc/screenAudioNativeWin.test.ts src/sentry.ts
-  components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx)
+  components/rtc/screenAudioNativeWin.test.ts
+  components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
+  components/ui/components/features/voice/callCard/VoiceCallCardStatus.tsx)
 ran=0
 RAN_SPECS=()
 for f in "${SPECS[@]}"; do

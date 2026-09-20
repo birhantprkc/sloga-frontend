@@ -239,8 +239,10 @@ import { MlsKeyProvider } from "./mlsCallKeys";
 import {
   type CallBannerKind,
   type CallMode,
+  type ChipLatch,
   type ChipState,
   type DecodeWitness,
+  type LoudLatchOrigin,
   callBannerState,
   isTerminalLoud,
   plaintextReleaseAvailable,
@@ -472,6 +474,20 @@ type GateTraceCensusEntry = {
   transportState: string | null;
   upstream: string;
   op: string;
+};
+
+/**
+ * The latched call-encryption failure, with what the session knew about it
+ * at latch time. `error` is the STRUCTURED value (native error object or
+ * LiveKit error), never stringified. `origin` and `mediaKeyed` ride only on
+ * a session-emitted `loud`; the two direct writers in this file (identity
+ * mismatch, `hold_loud`) latch a bare `{ error }`, and an absent origin is
+ * read by the chip as `not_encrypted` — the fail-closed reading.
+ */
+type CallEncryptionLatch = {
+  error: unknown;
+  origin?: LoudLatchOrigin;
+  mediaKeyed?: boolean;
 };
 
 class Voice {
@@ -964,13 +980,22 @@ class Voice {
    */
   #soundboard: SoundboardPlayback;
   /**
-   * First latched call-key/encryption error for this call — the STRUCTURED
-   * value (native error object or LiveKit error), never stringified, so 6.5
-   * can classify rotation-window `RE-SECURING` vs loud `NOT ENCRYPTED`
-   * (invariant 11).
+   * First latched call-key/encryption failure for this call, as ONE
+   * composite value: the structured error plus the session's `origin` and
+   * its send-side `mediaKeyed` snapshot (see `CallEncryptionLatch`). One
+   * signal, so the chip can never read an origin that belongs to a different
+   * error than the banner is showing.
+   */
+  callEncryptionLatch: Accessor<CallEncryptionLatch | undefined>;
+  #setCallEncryptionLatch: Setter<CallEncryptionLatch | undefined>;
+  /**
+   * The latched error alone — the STRUCTURED value (native error object or
+   * LiveKit error), never stringified, so 6.5 can classify rotation-window
+   * `RE-SECURING` vs loud `NOT ENCRYPTED` (invariant 11) and the banner can
+   * run `storeOwnerMismatch` on it. Derived from `callEncryptionLatch`; every
+   * reader that only needs "is a gate held" keeps this accessor.
    */
   callEncryptionError: Accessor<unknown>;
-  #setCallEncryptionError: Setter<unknown>;
   /**
    * A media-plane join-race hold is open: the session has DEFERRED its verdict
    * on a decode missing key while the install that would answer it is still
@@ -1426,9 +1451,10 @@ class Voice {
     },
     /**
      * The PRODUCER side of `callPauseDisproved` and of its confidence sibling
-     * `callPauseDisproofConfirmed`. The signal stays here — the chip and the
-     * banner read it — and both accessors keep their names and their shapes;
-     * only who writes them moved.
+     * `callPauseDisproofConfirmed`. The signal stays here — the banner reads
+     * it; the chip does NOT, by pinned design, because a disproof is a
+     * withdrawal-only signal and never a chip input — and both accessors keep
+     * their names and their shapes; only who writes them moved.
      *
      * 🔴 ONE object into ONE signal, and that is the whole point. The alarm
      * and its confidence are not two things that have to be kept in step;
@@ -1476,18 +1502,22 @@ class Voice {
       //    exact OPPOSITE of what this sweep just proved. Showing it here tells
       //    a user their mic is off at the moment we established it is on.
       //  - Latching through the session (`#latchLoud`) makes that banner
-      //    render, but `confirmPlaintext` returns early while `#groupId` is
-      //    null — the whole 409-join stretch, which is when the first mic
-      //    publishes — so the only escape it offers is inert.
-      //  - Writing `callEncryptionError` directly reddens the chip without
-      //    `#loudLatched`, so the banner never renders at all when the mode is
-      //    `e2ee`, and it MASKS a later store-owner error (`prev ?? error`),
-      //    removing the only in-call "Reset encryption" control.
+      //    render, and its escape is LIVE even while `#groupId` is null — the
+      //    whole 409-join stretch, which is when the first mic publishes:
+      //    without a usable group `confirmPlaintext` routes to the in-app
+      //    `confirmLocalPlaintext()`. What rules it out here is the copy, not
+      //    an inert button: "stay paused", offered over a wire this sweep just
+      //    proved live.
+      //  - Writing the latch directly (`#setCallEncryptionLatch`) reddens the
+      //    chip without `#loudLatched`, so the banner never renders at all
+      //    when the mode is `e2ee`, and it MASKS a later store-owner error
+      //    (`prev ?? { error }`), removing the only in-call "Reset encryption"
+      //    control.
       //  - It can fire BEFORE `#mlsSession` exists (the connect sweep, with an
       //    `await room.switchActiveDevice` before the session is assigned), so
       //    there is no session to latch through. NOTE this one is NOT a dead
       //    end on the UI side, contrary to an earlier version of this comment:
-      //    `latchedError` sits in `chipState`'s highest-precedence block, so a
+      //    an origin-less latch is row 2 of `chipState`'s loud order, so a
       //    direct write does redden the chip; pre-session `callMode()` is
       //    `undefined`, which is `isTerminalLoud`'s second arm, so the banner
       //    renders; and `canConfirmNoSessionPlaintext` is satisfied, so the
@@ -1661,10 +1691,14 @@ class Voice {
     this.cameraEffectsApplied = effectsApplied;
     this.#setCameraEffectsApplied = setEffectsApplied;
 
-    const [callEncryptionError, setCallEncryptionError] =
-      createSignal<unknown>();
-    this.callEncryptionError = callEncryptionError;
-    this.#setCallEncryptionError = setCallEncryptionError;
+    const [callEncryptionLatch, setCallEncryptionLatch] = createSignal<
+      CallEncryptionLatch | undefined
+    >();
+    this.callEncryptionLatch = callEncryptionLatch;
+    this.#setCallEncryptionLatch = setCallEncryptionLatch;
+    // Derived, never written: the error is one field of the latch, so the two
+    // accessors cannot disagree.
+    this.callEncryptionError = createMemo(() => callEncryptionLatch()?.error);
 
     const [callMediaHold, setCallMediaHold] = createSignal(false);
     this.callMediaHold = callMediaHold;
@@ -3685,21 +3719,23 @@ class Voice {
       // MlsKeyProvider's local-last send-key would silently never install
       // (frame keys are matched by this identity). Fail LOUD and latch the
       // error rather than let a later setE2EEEnabled(true) publish plaintext
-      // under an encrypted flag; the enable gate (6.4 step 6) refuses to
-      // encrypt while callEncryptionError is set.
+      // under an encrypted flag; the session-construction gate (6.4 step 6,
+      // `sessionSetupDecision`'s `identityOk`) then answers `hold_loud`, so no
+      // session is built and the latch keeps the chip red.
       let e2eeIdentityOk = false;
       if (e2eeCapable && selfUserId && e2eeDeviceId) {
         const expectedIdentity = `${selfUserId}:${e2eeDeviceId}`;
         const actualIdentity = room.localParticipant.identity;
         if (actualIdentity !== expectedIdentity) {
-          this.#setCallEncryptionError(
+          this.#setCallEncryptionLatch(
             (prev) =>
-              prev ??
-              new Error(
-                `E2EE call identity mismatch: expected "${expectedIdentity}", ` +
-                  `got "${actualIdentity}" — refusing call encryption ` +
-                  `(device-qualified identity, slice 6.1/6.4).`,
-              ),
+              prev ?? {
+                error: new Error(
+                  `E2EE call identity mismatch: expected "${expectedIdentity}", ` +
+                    `got "${actualIdentity}" — refusing call encryption ` +
+                    `(device-qualified identity, slice 6.1/6.4).`,
+                ),
+              },
           );
         } else {
           e2eeIdentityOk = true;
@@ -3844,7 +3880,9 @@ class Voice {
             ? setup.reason
             : "This call could not be encrypted: the call session could not be set up";
         console.error("[rtc] holding the publish gate:", reason);
-        this.#setCallEncryptionError((prev) => prev ?? new Error(reason));
+        this.#setCallEncryptionLatch(
+          (prev) => prev ?? { error: new Error(reason) },
+        );
         if (this.room() === room) void this.#applyPublishGate(room);
       }
     } catch (error) {
@@ -4034,7 +4072,7 @@ class Voice {
       // narrower episode boundaries.
       this.#gateEpisode.resetForCall();
       this.#pinnedMicId = undefined;
-      this.#setCallEncryptionError(undefined);
+      this.#setCallEncryptionLatch(undefined);
       // Clears with the call's other latched encryption state and nowhere
       // else — a new call is the only thing that clears it (see
       // `#publishWinScreenAudio`).
@@ -4336,24 +4374,43 @@ class Voice {
       // A full reconnect empties `remoteParticipants` until the new join
       // response; the heal probe must not read that as "everyone left".
       sfuConnected: () => room.state === ConnectionState.Connected,
-      onEncryptionState: (state, error) => {
-        // Latch a loud media-plane failure into the existing structured signal
-        // (6.5 classifies RE-SECURING vs NOT-ENCRYPTED from callEncryption +
-        // this). A transient RE-SECURING is not latched (it may recover).
+      onEncryptionState: (state, error, meta) => {
+        // Latch a loud failure into the ONE composite signal, together with
+        // the origin and the send-side `mediaKeyed` snapshot the session took
+        // at latch time (6.5 classifies RE-SECURING vs NOT-ENCRYPTED from
+        // callEncryption + this). A transient RE-SECURING is not latched (it
+        // may recover).
+        //
+        // First latch wins, with ONE exception — `meta.replaces`. The
+        // session's media→control upgrade used to emit `clear(previous)` then
+        // `loud(error)` as two callbacks, which tore this signal for a frame
+        // (the banner's owner-mismatch read flapped through `undefined`). It
+        // now emits ONE `loud` naming the error it supersedes; the write
+        // below replaces the latch only when the held error IS that one, so
+        // an unrelated later `loud` still cannot displace the first. ONE
+        // functional write, so there is no intermediate value to observe. A
+        // `loud` with no meta (nothing the session vouched for) latches a
+        // bare `{ error }` — origin undefined, which the chip reads as
+        // `not_encrypted` (fail-closed).
         if (state === "loud" && error !== undefined) {
-          this.#setCallEncryptionError((prev) => prev ?? error);
+          this.#setCallEncryptionLatch((prev) =>
+            prev === undefined || prev.error === meta?.replaces
+              ? { error, ...(meta ?? {}) }
+              : prev,
+          );
         }
         // The session forgot its latch — a re-establish replaced the group,
         // or the peer-scoped heal fired — and names the object it latched.
-        // Clear exactly that one: the identity-mismatch and no-session holds
-        // never coexist with a session (one is constructed only when the
-        // identity checks out), and a bare `"clear"` (a transient re-securing
-        // ending) carries no error and touches nothing. Until this the UI
-        // latch outlived the session's, leaving a successfully re-established
-        // call red with no banner and no escape.
+        // Clear exactly that one (identity-matched on `.error`): the
+        // identity-mismatch and no-session holds never coexist with a session
+        // (one is constructed only when the identity checks out), and a bare
+        // `"clear"` (a transient re-securing ending) carries no error and
+        // touches nothing. Until this the UI latch outlived the session's,
+        // leaving a successfully re-established call red with no banner and
+        // no escape.
         if (state === "clear" && error !== undefined) {
-          this.#setCallEncryptionError((prev) =>
-            prev === error ? undefined : prev,
+          this.#setCallEncryptionLatch((prev) =>
+            prev?.error === error ? undefined : prev,
           );
         }
       },
@@ -7406,7 +7463,7 @@ class Voice {
     );
     this.#screenAudioPlaintext = true;
 
-    // 🔴 DELIBERATELY NOT `#setCallEncryptionError`, and this is the L15 result
+    // 🔴 DELIBERATELY NOT `#setCallEncryptionLatch`, and this is the L15 result
     // rather than an oversight. Writing it here would fire the NOT-ENCRYPTED
     // chip on the premise that the sharer's tracks were reaching the SFU in the
     // clear; measured (design §7, L15), a sender with no transform emits ZERO
@@ -8494,7 +8551,13 @@ class Voice {
       sessionState: () => this.callSessionState() ?? session?.state(),
       mode: () => this.callMode(),
       mediaHold: () => this.callMediaHold(),
-      latchedError: () => this.callEncryptionError() !== undefined,
+      // The composite latch, narrowed to what the chip judges on: origin and
+      // the send-side snapshot. `mediaKeyed` defaults FALSE — a latch nobody
+      // vouched for (the two direct writers here) must never read keyed.
+      latch: (): ChipLatch | undefined => {
+        const l = this.callEncryptionLatch();
+        return l && { origin: l.origin, mediaKeyed: l.mediaKeyed ?? false };
+      },
       rosterVerified: () =>
         this.callRoster().members.map((m) => m.user_verified),
       channelHasOpenGroup: () => this.callChannelHasOpenGroup(),
@@ -8563,8 +8626,10 @@ class Voice {
   /**
    * The user confirmed the whole-call plaintext downgrade (§3.4 T3/T5) from the
    * 6.5 banner. Delegates to the session, which shows the BLOCKING native
-   * confirm dialog (native-computed non-enrolled roster), then transitions to a
-   * confirmed interlude. `displayNames` labels the natively-selected ids only.
+   * confirm dialog (native-computed non-enrolled roster) — or, with no usable
+   * group / a non-declined dialog failure, the in-app `confirmLocalPlaintext()`
+   * — then transitions to a confirmed interlude. `displayNames` labels the
+   * natively-selected ids only.
    */
   async confirmCallPlaintext(): Promise<void> {
     const session = this.#mlsSession;
@@ -8586,7 +8651,8 @@ class Voice {
    * "Stay unencrypted" for a call that has NO session: the R2-4 hold — an
    * E2EE-capable shell whose session could not be constructed (see
    * `sessionSetupDecision`). The session's `confirmPlaintext` cannot serve
-   * it: its native roster dialog computes from a group, and no group exists.
+   * it — nor can the in-app `confirmLocalPlaintext()` it routes to without a
+   * group — because there is no session object to call either on.
    * The banner press is the explicit consent (`canConfirmNoSessionPlaintext`
    * says why that gives up nothing the dialog protects). Same order as a
    * `local_confirm`: the mode flips to a confirmed interlude BEFORE the
@@ -8609,7 +8675,13 @@ class Voice {
     ) {
       return;
     }
-    this.#setCallMode({ kind: "interlude", localConfirmed: true });
+    // Confirmed in-app (no native dialog ran, so no announcement either):
+    // stamped `"app"` so the interlude is NOT sticky across a re-secure.
+    this.#setCallMode({
+      kind: "interlude",
+      localConfirmed: true,
+      confirmedVia: "app",
+    });
     await this.#resumeGate(room, "negotiating");
   }
 

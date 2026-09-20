@@ -20,12 +20,14 @@
 import assert from "node:assert/strict";
 import { type TestContext, test } from "node:test";
 
+import { ENCRYPTION_TYPE_GCM } from "./localPublicationEncryption.ts";
 import {
   type World,
   advance,
   bringUpCreator,
   bringUpJoiner,
   flush,
+  GROUP,
   JOIN_RACE_DEFER_MS,
   LEAVE_GRACE_MS,
   newWorld,
@@ -672,9 +674,37 @@ test("🔴 a media latch does not subsume the CONTROL escalation, which still re
     .map((s) => s.error)
     .find((e) => e !== error && e !== undefined);
   assert.ok(control, "the media latch swallowed the control escalation");
+  // The upgrade emission, pinned. It is ONE `loud` naming the media error it
+  // `replaces` — `state.tsx` swaps the latched object in a single write — and
+  // it carries `mediaKeyed: false` WITHOUT re-snapshotting: the media plane
+  // already FAILED at the original latch, so a keyed-looking send side now
+  // proves nothing and the chip must never soften to "can't verify" over a
+  // plane the worker reported broken (kills `chip-upgrade-reads-keyed`). The
+  // media latch reads `mediaKeyed: false` here too: our declaration was on
+  // the SFU's record as plaintext when it latched (`!#localDeclarationPlain`),
+  // and row 3 reads a media latch `not_encrypted` regardless.
+  assert.deepEqual(
+    world.states.slice(before).filter((s) => s.state === "loud"),
+    [
+      { state: "loud", error, meta: { origin: "media", mediaKeyed: false } },
+      {
+        state: "loud",
+        error: control,
+        meta: { origin: "control", mediaKeyed: false, replaces: error },
+      },
+    ],
+  );
+  // No clear for the media error — not before the upgrade, not as part of
+  // it. The old clear(previous) + loud(error) pair had a two-write window
+  // with NO latch at all; the single emit has none.
+  assert.deepEqual(
+    world.clearsSince(before).filter((c) => c.error === error),
+    [],
+    "the upgrade cleared the media error in a separate write",
+  );
 
   // ...and the upgraded latch never heals, however the peers churn. (The
-  // upgrade itself reports a clear for the SUPERSEDED media error, so the
+  // upgrade names the media error it replaces rather than clearing it, so the
   // question is whether the CONTROL error is ever cleared.)
   const sinceUpgrade = world.states.length;
   world.sfu = [SELF_ID];
@@ -687,10 +717,10 @@ test("🔴 a media latch does not subsume the CONTROL escalation, which still re
   );
   assert.equal(world.session.callMode().kind, "negotiating");
   // 🔴 The upgrade must not cost the user the banner. `state.tsx` latches
-  // `prev ?? error` and clears on identity, so latching the control error
-  // BEFORE clearing the superseded media one made the latch a no-op and the
-  // clear then wiped the signal: red chip with a Leave / Stay-unencrypted
-  // banner became amber with neither, while the session stayed latched.
+  // first-wins and clears on identity, so an upgrade written as a clear of
+  // the superseded media error plus a fresh loud once wiped the signal: red
+  // chip with a Leave / Stay-unencrypted banner became amber with neither,
+  // while the session stayed latched. The single `replaces` write cannot.
   assert.equal(world.chip(), "not_encrypted", "the upgrade wiped the UI latch");
   release();
 });
@@ -719,6 +749,28 @@ test("🔴 a remote peer's SFU-declared status does not cancel the bound on OUR 
     "a peer's declared status cancelled the control bound",
   );
   assert.equal(world.chip(), "not_encrypted");
+  // The seam's latch, pinned: CONTROL origin (what the SFU records for our
+  // own publications is nothing a later epoch could disprove) and
+  // `mediaKeyed: false` — the snapshot's `!#localDeclarationPlain` conjunct:
+  // our declaration was still on the SFU's record as plaintext when the
+  // deadline latched. E2EE was on and a frame key was installed, so without
+  // that conjunct this latch would read keyed.
+  const [seam] = world.states.slice(before).filter((s) => s.state === "loud");
+  assert.deepEqual(seam.meta, { origin: "control", mediaKeyed: false });
+  // And row 4 stays unreachable from it however the OTHER inputs move: the
+  // SFU's record flipping to GCM after the latch (the held republish landing
+  // late) satisfies `localPublicationsEncrypted`, and the chip must still not
+  // soften to "can't verify" — the latch itself carries the fact that this
+  // device was publishing under a plaintext declaration.
+  world.localPublications = [
+    { trackSid: "TR_local", encryption: ENCRYPTION_TYPE_GCM },
+  ];
+  assert.equal(
+    world.chip(),
+    "not_encrypted",
+    "a late GCM record softened the declaration-seam red",
+  );
+  world.declarePlaintext(); // back to the seat the held republish corrects
   release();
 });
 
@@ -1043,4 +1095,160 @@ test("🔴 gate (c): an unverified roster member holds the lock open", async (t)
     "resecuring",
     "the media plane's amber must still win over an unverified lock",
   );
+});
+
+// ---- The loud split: a KEYED control latch reads "can't verify" ------------
+//
+// Every `loud` carries `{ origin, mediaKeyed }`, snapshotted by `#latchLoud`
+// before `loudModeFallback` folds the mode. `chipState` reads `cannot_verify`
+// from exactly one rule: a CONTROL latch taken while this device was keyed,
+// with its local publications on the SFU's record as GCM and the decode
+// witness dropping nothing. `sessionState === "failed"` sits BELOW the latch
+// rules because `#onLoud` sets `failed` BEFORE it calls `#latchLoud` — so the
+// keyed mid-call `#onLoud` sites reach that rule, and the un-keyed ones (the
+// re-establish caps, which wipe the keys first) do not.
+
+/** `MAX_REESTABLISH` (`mlsCallSession.ts`, not exported): the fourth is the cap. */
+const REESTABLISH_CAP = 3;
+
+test("🔴 a DS arbitration classified `failed` mid-call latches KEYED: the chip reads cannot_verify, and only the decode witness can turn it not_encrypted", async (t) => {
+  // An established, keyed creator admits a joiner: the admit commit is staged
+  // and submitted, and a hostile DS answers a 409 whose body says `Won` —
+  // `classifyArbitration` → `failed` → `#safeCommitLost` + `#onLoud`. The
+  // session is `failed` and the latch is a CONTROL one taken while this
+  // device was keyed: E2EE on, a frame key installed, nothing declared
+  // plaintext. Nothing says the media plane failed; the group can no longer
+  // be vouched for. That is "we can't confirm", not "not encrypted".
+  const world = newWorld(t, "creator", "ch-arbitration-failed");
+  await bringUpCreator(t, world);
+  await world.session.reconcileNow();
+  await flush();
+  await advance(t, 3_000); // past the immediate-install rotation settle (2 s)
+  assert.equal(world.chip(), "e2ee");
+  const before = world.states.length;
+
+  world.answerSubmitOnce({ kind: "conflict", body: { result: "Won" } });
+  await world.joinRequest(THIRD); // not in this two-party roster
+  await advance(t, 1); // the admit's 0 ms leaf stagger: claim, stage, submit
+  assert.equal(world.submits(), 1, "the admit never submitted");
+  assert.equal(world.submitAnswer, null, "the hostile answer was never taken");
+  // The `failed` arm: the staged commit is discarded and nothing is merged.
+  assert.deepEqual(world.commitLosts, [GROUP]);
+  assert.equal(
+    world.bridgeCalls.filter((n) => n === "callCommitWon").length,
+    0,
+  );
+  assert.equal(world.session.state(), "failed");
+  assert.equal(world.session.callMode().kind, "negotiating");
+  assert.equal(world.publishing(), false, "the banner's pause claim is false");
+
+  // ONE loud, control-origin, KEYED — the snapshot `#latchLoud` takes before
+  // the mode folds to `negotiating` (after which `#e2eeEnabled` reads false).
+  const louds = world.states.slice(before).filter((s) => s.state === "loud");
+  assert.equal(louds.length, 1);
+  const [latched] = louds;
+  const error = latched.error;
+  assert.ok(error instanceof Error, "the arbitration latched no error");
+  assert.match(error.message, /409 commit without a winner/);
+  assert.deepEqual(latched.meta, { origin: "control", mediaKeyed: true });
+
+  assert.equal(
+    world.chip(),
+    "cannot_verify",
+    "a keyed control failure read as a media-plane failure",
+  );
+  assert.equal(world.terminalLoud(), true, "no banner on cannot_verify");
+
+  // 🔴 The witness may only CONTRADICT a green, and here it may only harden
+  // the red: a peer whose frames the worker is dropping makes this "not
+  // encrypted", and lifting the drop returns it to "can't verify"...
+  world.dropFrames(PEER_ID);
+  assert.equal(
+    world.chip(),
+    "not_encrypted",
+    "a dropping witness left the chip at cannot_verify",
+  );
+  world.dropFrames();
+  assert.equal(world.chip(), "cannot_verify");
+  // ...while an UNAVAILABLE witness cannot support the positive claim "not
+  // encrypted" either: "we can't confirm" is exactly what unavailable means.
+  world.loseWitness();
+  assert.equal(world.chip(), "cannot_verify");
+  world.witnessAvailable = true;
+
+  // Terminal: nothing heals a control latch, and no later verdict lands.
+  await advance(t, JOIN_RACE_DEFER_MS * 2);
+  assert.deepEqual(
+    world.states
+      .slice(before)
+      .filter((s) => s.state === "loud" || s.state === "clear"),
+    louds,
+  );
+  assert.equal(world.session.state(), "failed");
+  assert.equal(world.chip(), "cannot_verify");
+  assert.equal(world.terminalLoud(), true);
+});
+
+test("CONTROL — the re-establish cap is NOT keyed: `#resetGroupBuffers` wipes the keys before the cap, so its red reads not_encrypted", async (t) => {
+  // The cap (`#rejoinFresh`: `re-establish limit reached`) is an `#onLoud`
+  // caller too, but it is reached only after `#resetGroupBuffers` ran
+  // `#resetRotationState` — `#hasLocalKey = false`, E2EE off — so its
+  // snapshot reads un-keyed by construction and the chip reads
+  // `not_encrypted` at row 5, which is truthful there: no send key is held.
+  //
+  // A KEYED member drives it: a kick while still in the SFU (`#onRemovedSelf`)
+  // is `#rejoinFresh` #1, whose establish conflicts onto the open group and
+  // broadcasts a join intent; the DS answers `not_found` (the group closed
+  // during the join), which is the direct `#rejoinFresh` #2, then #3 — and #4
+  // is the cap. `#reestablishes` resets only on `#toActive`, which this chain
+  // never reaches. Each intent is held so the next answer can be scripted
+  // before the ladder's own retry timer runs.
+  const world = newWorld(t, "joiner", "ch-reestablish-cap");
+  await bringUpJoiner(t, world, 1);
+  await world.session.reconcileNow();
+  await flush();
+  await advance(t, 3_000);
+  assert.equal(world.chip(), "e2ee", "not keyed before the chain");
+  const before = world.states.length;
+  const intents = world.joinIntents();
+
+  let release = world.holdJoinIntent();
+  await world.removedSelf(2);
+  await advance(t, 1); // `#onRemovedSelf` runs as a 0 ms group action
+  assert.equal(world.session.state(), "resecuring");
+  assert.equal(world.joinIntents(), intents + 1, "#1 broadcast no intent");
+  for (let n = 2; n <= REESTABLISH_CAP; n++) {
+    world.answerJoinIntentOnce({ kind: "not_found" });
+    release();
+    release = world.holdJoinIntent(); // re-held before the next intent runs
+    await advance(t, 1);
+    assert.equal(world.joinIntentAnswer, null, `#${n}'s answer never landed`);
+    assert.equal(world.joinIntents(), intents + n, `#${n} broadcast no intent`);
+    assert.equal(world.session.state(), "resecuring");
+    assert.deepEqual(world.loudSince(before), [], `#${n} went loud early`);
+  }
+  // The third `not_found`: `#rejoinFresh` #4, which is the cap. No establish
+  // runs, so no further intent.
+  world.answerJoinIntentOnce({ kind: "not_found" });
+  release();
+  await advance(t, 1);
+  assert.equal(
+    world.joinIntents(),
+    intents + REESTABLISH_CAP,
+    "the cap ran another establish",
+  );
+  assert.equal(world.session.state(), "failed");
+  assert.equal(world.session.callMode().kind, "negotiating");
+
+  const louds = world.states.slice(before).filter((s) => s.state === "loud");
+  assert.equal(louds.length, 1);
+  const [latched] = louds;
+  const error = latched.error;
+  assert.ok(error instanceof Error, "the cap latched no error");
+  // WHICH verdict latched: the cap, reached through the closed-group rejoin.
+  assert.match(error.message, /re-establish limit reached: group closed/);
+  assert.deepEqual(latched.meta, { origin: "control", mediaKeyed: false });
+  assert.equal(world.chip(), "not_encrypted", "an un-keyed cap read keyed");
+  assert.equal(world.terminalLoud(), true, "no banner on the cap's red");
+  assert.equal(world.publishing(), false, "the banner's pause claim is false");
 });

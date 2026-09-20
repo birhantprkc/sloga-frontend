@@ -594,7 +594,7 @@ test("5c GUARD — another group's Welcome during a held intent does not stop th
 
 // ---- The backstop's owner terms, and the stale-submit guard -----------------
 
-test("6a — the backstop re-arms while the join ladder still holds re-securing, and goes red within one bound of it returning", async (t) => {
+test("6a — the backstop re-arms while the join ladder still holds re-securing, and goes loud (`cannot_verify`) within one bound of it returning", async (t) => {
   const world = newWorld(t, "joiner", "ch-resecure-6a");
   const releaseIntent = world.holdJoinIntent();
   await startJoiner(t, world);
@@ -630,13 +630,26 @@ test("6a — the backstop re-arms while the join ladder still holds re-securing,
   assert.equal(world.joinIntents(), 1);
 
   // The ladder returns through P1's check, and nothing owns the state now.
+  //
+  // The backstop's verdict is a CONTROL latch taken with this device still
+  // KEYED: its keys were installed at generation 1 above and the timeout arm
+  // re-secured without wiping them (`#toResecuring` alone — no
+  // `#resetRotationState`), no local publication is on the SFU's record as
+  // plaintext (this world publishes none, so that conjunct is vacuous here),
+  // and the decode witness is dropping nothing. That is chip row 4,
+  // `cannot_verify` — the group can no longer be vouched for, but nothing
+  // says the media plane failed — and it is still LOUD: `terminalLoud` holds
+  // and the gate stays paused; only the copy softens from "not encrypted" to
+  // "can't confirm". Every other red in this file latched UN-KEYED — an
+  // exhausted ladder that never installed a key, or 4a's backstop after
+  // `#onRemovedSelf` wiped the keys — so those stay `not_encrypted` (row 5).
   releaseIntent();
   await flush();
   await advanceUntil(
     t,
-    () => world.chip() === "not_encrypted" && world.terminalLoud(),
+    () => world.chip() === "cannot_verify" && world.terminalLoud(),
     RESECURE_BACKSTOP_MS + 1_000,
-    "the backstop's red after the ladder returned",
+    "the backstop's loud after the ladder returned",
   );
   assert.equal(
     world.joinIntents(),
@@ -647,9 +660,26 @@ test("6a — the backstop re-arms while the join ladder still holds re-securing,
   const latched = louds(world);
   assert.equal(latched.length, 1);
   const [error] = latched;
-  assert.ok(error instanceof Error, "the red latched no error");
+  assert.ok(error instanceof Error, "the loud latched no error");
   // WHICH verdict latched: the backstop's own, not some later path's.
   assert.match(error.message, /stayed re-securing with nothing left to end it/);
+  // WHAT rode it: the send-side snapshot `#latchLoud` took before the mode
+  // fell to `negotiating` — control origin, keyed. The one input row 4 splits
+  // on; a media latch or an un-keyed control latch reads `not_encrypted`.
+  assert.deepEqual(
+    world.states.filter((s) => s.state === "loud"),
+    [{ state: "loud", error, meta: { origin: "control", mediaKeyed: true } }],
+  );
+  // The receive-side negative term: the SAME latch under a witness that sees a
+  // sender's frames being dropped reads `not_encrypted`. The witness may only
+  // contradict "can't verify" — it never softens a red.
+  assert.equal(
+    world.chip({
+      decodeWitness: { available: true, dropping: [PEER_ID], live: [] },
+    }),
+    "not_encrypted",
+    "a dropping witness left the chip at cannot_verify",
+  );
 });
 
 /** The group that replaces GROUP under a held submit (`createNextGroupOnce`). */

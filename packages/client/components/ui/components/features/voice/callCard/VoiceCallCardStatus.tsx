@@ -2,8 +2,10 @@ import { Show } from "solid-js";
 
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import { styled } from "styled-system/jsx";
+import type { SystemStyleObject } from "styled-system/types";
 
 import { useVoice } from "@revolt/rtc";
+import type { ChipState } from "@revolt/rtc/mlsCallModePolicy";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
 /**
@@ -21,32 +23,51 @@ export function VoiceCallEncryptionChip() {
   const chip = () => voice.callEncryptionChip();
 
   const label = () => {
-    switch (chip()) {
+    const state = chip();
+    switch (state) {
+      case "none":
+        return "";
       case "e2ee":
         return t`End-to-end encrypted`;
       case "e2ee_unverified":
         return t`Encrypted · unverified`;
       case "resecuring":
         return t`Re-securing…`;
+      // A control-plane verdict latched while our own media plane was still
+      // keyed: the publish gate is held and the roster is unproven, so the
+      // chip says exactly that — never "not encrypted", which would over-claim.
+      case "cannot_verify":
+        return t`Can't verify`;
       case "not_encrypted":
         return t`Not encrypted`;
-      default:
-        return "";
+      default: {
+        const exhaustive: never = state;
+        return exhaustive;
+      }
     }
   };
 
   const symbol = () => {
-    switch (chip()) {
+    const state = chip();
+    switch (state) {
+      case "none":
+        return "";
       case "e2ee":
         return "lock";
       case "e2ee_unverified":
         return "lock";
       case "resecuring":
         return "sync";
+      // Same glyph as `not_encrypted`, not `resecuring`'s `sync`: the latch is
+      // terminal (nothing is recovering), and the chip is styled red to match.
+      case "cannot_verify":
+        return "no_encryption";
       case "not_encrypted":
         return "no_encryption";
-      default:
-        return "";
+      default: {
+        const exhaustive: never = state;
+        return exhaustive;
+      }
     }
   };
 
@@ -79,16 +100,25 @@ const EncryptionChip = styled("button", {
     background: "transparent",
   },
   variants: {
+    // `satisfies Record<ChipState, …>` (not a hoisted const) keeps the literal
+    // in place for Panda's static extraction while making a missing chip state
+    // a compile error — a bare literal silently applied no style for one.
     chip: {
       none: {},
       e2ee: { color: "var(--md-sys-color-primary)" },
       e2ee_unverified: { color: "var(--md-sys-color-on-surface-variant)" },
       resecuring: { color: "var(--md-sys-color-on-surface-variant)" },
+      // Red like `not_encrypted` — the gate is held and the roster is
+      // unproven. Not amber: amber is the recovering state, and nothing is.
+      cannot_verify: {
+        color: "var(--md-sys-color-on-error-container)",
+        background: "var(--md-sys-color-error-container)",
+      },
       not_encrypted: {
         color: "var(--md-sys-color-on-error-container)",
         background: "var(--md-sys-color-error-container)",
       },
-    },
+    } satisfies Record<ChipState, SystemStyleObject>,
   },
 });
 
