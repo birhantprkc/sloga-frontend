@@ -116,6 +116,8 @@ EXPECTED=(
   "components/rtc/publishKickPolicy.test.ts 4 0"
   "components/rtc/decodeWitnessListener.test.ts 42 0"
   "components/rtc/chipInputs.test.ts 28 0"
+  "components/rtc/screenAudioWire.test.ts 17 0"
+  "components/rtc/screenAudioNativeWin.test.ts 51 0"
 )
 
 counter() { # counter <log> <name> — the runner's own summary counter, or ""
@@ -199,7 +201,9 @@ SPECS=(components/rtc/mls*.test.ts components/rtc/rosterReconcile.test.ts
   components/rtc/micPipelinePolicy.test.ts
   components/rtc/publishKickPolicy.test.ts
   components/rtc/decodeWitnessListener.test.ts
-  components/rtc/chipInputs.test.ts)
+  components/rtc/chipInputs.test.ts
+  components/rtc/screenAudioWire.test.ts
+  components/rtc/screenAudioNativeWin.test.ts)
 # 🔴 Arguments ADD to that set; they do not replace it. They used to replace
 # it, so the natural invocation for this branch —
 #   rtc-gate.sh components/rtc/mls*.test.ts
@@ -248,7 +252,10 @@ FILES=(components/rtc/mlsCallSession.ts components/rtc/mlsCallModePolicy.ts
   components/rtc/decodeWitnessListener.ts
   components/rtc/decodeWitnessListener.test.ts
   components/rtc/chipInputs.ts
-  components/rtc/chipInputs.test.ts src/sentry.ts
+  components/rtc/chipInputs.test.ts
+  components/rtc/screenAudioWire.ts components/rtc/screenAudioWire.test.ts
+  components/rtc/screenAudioNativeWin.ts
+  components/rtc/screenAudioNativeWin.test.ts src/sentry.ts
   components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx)
 ran=0
 RAN_SPECS=()

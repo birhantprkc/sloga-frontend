@@ -99,3 +99,16 @@ export {
   screenAudioAvailableSync,
   screenAudioSupported,
 } from "./screenAudioNative";
+
+// 🔴 EXPORTED UNDER `win` NAMES, and the aliasing is not cosmetic.
+// `screenAudioNativeWin.ts` is a different mechanism from
+// `screenAudioNative.ts` above — native WASAPI process-loopback in the Tauri
+// shell versus PipeWire through the Electron shell — and the two modules own
+// several of the same export names for it. Re-exporting either one bare would
+// make the barrel answer one module's question with the other module's
+// implementation, and on Windows that routes the caller into an Electron
+// surface that does not exist there. Same aliases `state.tsx` uses.
+export {
+  screenAudioPickerAudioSuppressed as winScreenAudioPickerSuppressed,
+  screenAudioSupported as winScreenAudioSupported,
+} from "./screenAudioNativeWin";

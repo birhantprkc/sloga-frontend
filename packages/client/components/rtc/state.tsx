@@ -20,6 +20,7 @@ import {
 
 import {
   type AudioCaptureOptions,
+  type LocalTrackPublication,
   type TrackPublishOptions,
   type VideoCaptureOptions,
   ConnectionState,
@@ -283,6 +284,27 @@ import {
   screenAudioSupported,
   stopScreenAudio,
 } from "./screenAudioNative";
+// 🔴 The Windows/WASAPI body, under aliases. It is a SEPARATE module from
+// `screenAudioNative.ts` above, which is the Linux/Electron PipeWire body and
+// owns the same three names (`screenAudioSupported`, `captureScreenAudio`,
+// `ScreenAudioCapture`) for an entirely different mechanism. Aliasing rather
+// than re-exporting is deliberate: a single dispatching `screenAudioSupported`
+// answering true on Windows would route Windows into the Electron shell path,
+// which does not exist there. The platform branch is at ONE call site, below.
+import {
+  type ScreenAudioFailure as WinScreenAudioFailure,
+  beginScreenAudioPublish as beginWinScreenAudioPublish,
+  captureScreenAudio as captureWinScreenAudio,
+  finishScreenAudioPublish as finishWinScreenAudioPublish,
+  primeScreenAudioProbe as primeWinScreenAudioProbe,
+  teardownScreenAudio as teardownWinScreenAudio,
+  screenAudioActive as winScreenAudioActive,
+  screenAudioDiagnostics as winScreenAudioDiagnostics,
+  screenAudioEncryptionFailed as winScreenAudioEncryptionFailed,
+  screenAudioPickerAudioSuppressed as winScreenAudioPickerSuppressed,
+  screenAudioSenderEncrypted as winScreenAudioSenderEncrypted,
+  screenAudioSupported as winScreenAudioSupported,
+} from "./screenAudioNativeWin";
 import { isScreenShareCancel } from "./screenShareCancel";
 import { ScreenShieldProcessor } from "./screenShieldProcessor";
 import { SoundboardPlayback } from "./soundboardPlayback";
@@ -846,6 +868,27 @@ class Voice {
   /** Disarms the live capture's death guard (#armScreenAudioGuard), or
    * undefined when none is armed. */
   #screenAudioGuard: (() => void) | undefined;
+  /**
+   * WINDOWS ONLY. Latched the moment this call publishes native screen audio
+   * through a sender carrying no E2EE transform, and cleared only by the next
+   * call (see the disconnect reset).
+   *
+   * Without it the failure is per-share and self-repeating: the module's state
+   * machine returns to IDLE, the next share reaches `#publishWinScreenAudio`
+   * again, and the only gate in its way is `room.isE2EEEnabled` — which is set
+   * from the worker's own reply and stays true. Each retry re-runs the same
+   * sender setup that just failed and produces another silent share and
+   * another modal.
+   *
+   * 🔴 This is an AVAILABILITY refusal, not a disclosure one. Measured (design
+   * §7, L15): a sender with no transform emits ZERO RTP under
+   * `encodedInsertableStreams`, which livekit sets for every E2EE room. A
+   * retry re-opens no plaintext window; what it costs is the user's time and a
+   * second identical failure. It is scoped to the whole call because the cause
+   * is unattributable from here — there is no signal a retry could be
+   * conditioned on, so a new call is the natural scope.
+   */
+  #screenAudioPlaintext = false;
   /**
    * The native Android screen leg (screen-leg plan §7), when this shell can
    * publish one. Constructed lazily on first share and reused: the plugin
@@ -2860,6 +2903,13 @@ class Voice {
       this.#startPushToTalk(room);
       this.#startVAD(room);
       this.#attenuation.attach(room);
+      // 🔴 Warm the Windows screen-audio capability answer NOW, minutes before
+      // anyone clicks Share. `winScreenAudioSupported()` sits on the
+      // user-gesture path immediately before `getDisplayMedia`, where an
+      // unresolved shell IPC would burn the transient-activation window and
+      // break SCREENSHARING ENTIRELY, not just its audio. No-op off a lit
+      // Windows shell; the Linux probe has its own refresh-on-share path.
+      primeWinScreenAudioProbe();
       this.#watchDuck.attach(room);
       this.#playEntranceSound(channel);
       const isAfk = channel.name?.toLowerCase() === "afk";
@@ -3106,6 +3156,18 @@ class Voice {
           passes: this.#gateSweeper?.passes() ?? null,
           currentRoom: this.room() === room,
         });
+      // 🔴 The `lk_e2ee` assertion for Windows native screen audio, bound here
+      // rather than at the publish call site so it re-arms PER PUBLICATION,
+      // not once per share. livekit's full-reconnect `republishAllTracks`
+      // unpublishes and republishes ScreenShareAudio, constructing a NEW
+      // RTCRtpSender — and `handleSender` opens
+      // `if (E2EE_FLAG in sender || !this.worker) return`, so a fresh sender
+      // with a dead worker is skipped IN SILENCE. Binding here covers the
+      // first publish too: livekit emits this event inside `publishTrack` and
+      // Room re-emits it before its first yield. Cheap no-op for every other
+      // source and off the Windows path.
+      if (pub.source === Track.Source.ScreenShareAudio)
+        this.#assertWinScreenAudioEncrypted(room, pub);
       this.#setCallParticipantsVersion((v) => v + 1);
       // livekit's `onTrackUpstreamPaused -> onTrackMuted` sends the server
       // its `MuteTrackRequest` only when `track.sid` is set. The born-paused
@@ -3889,6 +3951,14 @@ class Voice {
       this.#disarmScreenAudioGuard();
       this.#screenAudioGen++;
       void stopScreenAudio(this.#screenAudioSessionId);
+      // Windows screen-share audio dies with the call at the SAME choke point,
+      // for the same reason: `handleDisconnect` stops tracks programmatically,
+      // which never fires `"ended"` — and on Windows that DOM event is
+      // unreachable for our destination-node track in any case, so livekit's
+      // auto-unpublish net cannot clean up after it either. Idempotent and
+      // silent with no session; deliberately hung off this EXISTING choke
+      // point rather than a second `"disconnected"` listener.
+      void teardownWinScreenAudio();
 
       // Media E2EE teardown (§4.2 / §7.2): dispose the MLS session FIRST (its
       // best-effort self-`callRemove` wants the DS still reachable — before
@@ -3965,6 +4035,10 @@ class Voice {
       this.#gateEpisode.resetForCall();
       this.#pinnedMicId = undefined;
       this.#setCallEncryptionError(undefined);
+      // Clears with the call's other latched encryption state and nowhere
+      // else — a new call is the only thing that clears it (see
+      // `#publishWinScreenAudio`).
+      this.#screenAudioPlaintext = false;
       this.#setCallMediaHold(false);
       this.#setCallNonEnrolled([]);
       // Reset the 6.5 signals so the next call's card never flashes this
@@ -6352,6 +6426,13 @@ class Voice {
       this.#disarmScreenAudioGuard();
       this.#screenAudioGen++;
       void stopScreenAudio(this.#screenAudioSessionId);
+      // 🔴 AWAITED, and BEFORE the unpublish. On Windows the native session,
+      // the AudioContext and the worklet are ours and
+      // `setScreenShareEnabled(false)` releases none of them — its
+      // auto-unpublish of ScreenShareAudio stops the WRAPPED destination track
+      // and nothing else. The teardown is internally bounded (two 2 s settles),
+      // so this cannot wedge the stop branch. No-op on every other surface.
+      await teardownWinScreenAudio();
       await room.localParticipant.setScreenShareEnabled(false);
 
       // The quality dialog is asking about a share that no longer exists, so
@@ -6437,6 +6518,27 @@ class Voice {
           qualities[this.#settings.screenShareQuality || "low"] ||
           qualities.low!;
 
+        // 🔴 TWO questions, deliberately answered separately, and this one is
+        // SYNCHRONOUS.
+        //
+        // (1) Should the picker's "Also share system audio" checkbox be gone?
+        //     That is a CAPABILITY question and never a preference: a capable
+        //     user with the setting off would otherwise still see the
+        //     checkbox, tick it, and resurrect the measured-broken browser
+        //     loopback on the exact shell this feature fixes.
+        // (2) Can the native capture actually run? That needs the shell's
+        //     probe, and is asked separately at the call site below.
+        //
+        // Fusing them is a silent regression in the direction of the original
+        // bug: an unsettled probe answering `false` would not merely skip the
+        // native capture, it would hand the checkbox back. Keyed on what is
+        // knowable without waiting (build flag, platform, Tauri bridge), an
+        // incapable shell therefore gives a SILENT share — the acceptable
+        // degrade — and never a loopback one. This is also the platform
+        // discriminator for the branch at the call site, so it is read ONCE
+        // and the two answers cannot disagree within a share.
+        const suppressPickerAudio = winScreenAudioPickerSuppressed();
+
         const localTrack = await room.localParticipant.setScreenShareEnabled(
           true,
           {
@@ -6452,9 +6554,20 @@ class Voice {
             // this object verbatim into getDisplayMedia
             // (screenCaptureToDisplayMediaStreamOptions), but its
             // AudioCaptureOptions type lags the spec, hence the cast.
-            audio: {
-              restrictOwnAudio: true,
-            } as AudioCaptureOptions,
+            //
+            // 🔴 On the SUPPRESSED (Windows, lit, Tauri) path this is `false`:
+            // the shell captures the system mix natively, excluding our own
+            // WebView2 process subtree, so there is nothing for the browser to
+            // be asked for. livekit passes the value straight into
+            // getDisplayMedia (`audio: options.audio ?? false`), so `false`
+            // REMOVES the checkbox rather than merely unticking it. Everywhere
+            // else — web, Android, Linux, macOS — this stays exactly as it
+            // was.
+            audio: suppressPickerAudio
+              ? false
+              : ({
+                  restrictOwnAudio: true,
+                } as AudioCaptureOptions),
           },
           {
             // MUST be screenShareEncoding: livekit-client silently ignores
@@ -6508,6 +6621,31 @@ class Voice {
                 }
               ).displaySurface
             : undefined;
+          // 🔴 ENTIRE SCREEN ONLY, and computed HERE — off the RAW track,
+          // before the shield below replaces it.
+          //
+          // The Windows native capture is the whole system mix minus our own
+          // process subtree, so publishing it for a WINDOW or TAB share would
+          // send the user's music, their notifications and every other
+          // application to the call while they believe they are sharing one
+          // window — something Chromium never offered for a window share and
+          // nothing in the UI would tell them.
+          //
+          // `undefined` counts as a monitor share: that is what the privacy
+          // shield already assumes, and on this shell getDisplayMedia does
+          // report the surface.
+          //
+          // 🔴 One value, read once, used by BOTH the publish decision below
+          // and the settings modal. The modal cannot re-derive it: a
+          // `LocalTrack`'s `mediaStreamTrack` getter returns
+          // `processor?.processedTrack ?? _mediaStreamTrack`, and the shield
+          // is attached and awaited before that modal opens, so by then the
+          // surface reads as a canvas capture stream with no `displaySurface`
+          // at all. It would land on the `undefined ⇒ monitor` fallback and be
+          // right only by the coincidence that the shield attaches on monitor
+          // shares — which ends the moment a window share can carry audio.
+          const entireScreen =
+            displaySurface === "monitor" || displaySurface === undefined;
           if (this.#settings.screenShareShield && localTrack.videoTrack) {
             const surface = displaySurface;
             if (surface === "monitor" || surface === undefined) {
@@ -6559,7 +6697,69 @@ class Voice {
           // until they do — a silent wrong guess would broadcast an app
           // they never chose (design §9's privacy rule).
           let needsAudioChoice = false;
-          if (
+          // 🔴 THE PLATFORM BRANCH. The two native screen-audio bodies are
+          // mutually exclusive mechanisms behind identically-named exports, so
+          // exactly one of them may be consulted per share and the choice is
+          // made here, at the one call site, on the SYNCHRONOUS suppression
+          // answer computed above.
+          //
+          // `winScreenAudioPickerSuppressed()` is true only for a lit build on
+          // a Windows Tauri shell, which is precisely the set of hosts where
+          // `window.slogaShell.screenAudio` (the Electron/PipeWire surface the
+          // Linux body probes) does not exist. Linux, macOS, Android and web
+          // take the `else` and reach the byte-identical Linux path below
+          // unchanged — including its `screenAudioSupported(true)` refresh,
+          // which is never called on the Windows arm.
+          if (suppressPickerAudio) {
+            // `entireScreen` is computed once beside `displaySurface` above,
+            // off the raw track — see its note there for why it cannot be
+            // re-derived later, and why the settings modal is handed the same
+            // value rather than asking the track again.
+            //
+            // The browser checkbox is GONE on this path, so the native capture
+            // is the only source of system audio there is — and `wantsAudio`
+            // (the stored setting, or the picker's answer, or a pending
+            // consent) is the whole of the user's consent to send it.
+            // 🔴 The SYNCHRONOUS conditions are hoisted into their own block so
+            // the consent pause below lands BEFORE the first await, not after
+            // it.
+            if (!screenAudioTrack && wantsAudio && entireScreen) {
+              // The capture path awaits a Tauri IPC round trip plus an
+              // AudioWorklet module fetch — do not let the just-published
+              // video stream to the call for that long before the user has
+              // answered the ask-modal: pause it now; the modal path pauses
+              // again idempotently below. Same rule and same shape as the
+              // Linux arm's pause; the awaits differ, the exposure does not.
+              // Safe even when the probe then says no: `consentPending` is
+              // exactly the condition under which the ask-modal opens, and its
+              // callback is what resumes the upstream.
+              if (consentPending) localTrack.pauseUpstream();
+              // Probe-bounded, and answers "no" when unsettled. Safe HERE
+              // precisely because the checkbox question was answered
+              // separately and synchronously above: the degrade is a silent
+              // share, never a loopback one.
+              //
+              // 🔴 Both of these awaits are BOUNDED all the way down, and the
+              // paused upstream above is why — the same rule the Linux arm
+              // states below. The upstream is resumed by the ask-modal's
+              // callback, and that modal does not open until this block
+              // returns, so a shell call that never settled would strand
+              // viewers on a frozen tile with no modal, no error and no way
+              // out. `winScreenAudioSupported` races the probe at 200 ms;
+              // every await inside the capture path has its own bound and its
+              // own spec (`screenAudioNativeWin.test.ts`, "The STARTING window
+              // is bounded at EVERY await"). A wedged shell therefore costs a
+              // silent share, never the video.
+              if (await winScreenAudioSupported()) {
+                screenAudioTrack =
+                  (await this.#publishWinScreenAudio(
+                    room,
+                    generation,
+                    consentPending,
+                  )) ?? screenAudioTrack;
+              }
+            }
+          } else if (
             !screenAudioTrack &&
             wantsAudio &&
             (await screenAudioSupported(true))
@@ -6632,7 +6832,28 @@ class Voice {
                 .setDegradationPreference(quality.degradationPreference)
                 .catch(() => undefined);
               if (!audio && screenAudioTrack?.track) {
-                room.localParticipant.unpublishTrack(screenAudioTrack.track);
+                // 🔴 Branch on PROVENANCE, not on liveness. `suppressPickerAudio`
+                // is the same platform decision that chose the capture path for
+                // this share, so a publication held here under it can only have
+                // come from `#publishWinScreenAudio` — the browser checkbox was
+                // removed, so gUM produced no audio track to publish. Asking
+                // `winScreenAudioActive()` instead would be asking whether the
+                // module is live RIGHT NOW: if it self-tore-down between the
+                // publish and this untick (a death, or the E2EE assertion) while
+                // `screenAudioTrack` is still held, that reads false and the
+                // Linux unpublish/`stopScreenAudio` pair would run against a
+                // Windows publication. Correct only by coincidence today.
+                if (suppressPickerAudio) {
+                  // Windows: the module owns the unpublish (its host closure
+                  // resolves the publication BY TRACK, which is the only
+                  // lookup that survives the publish window and
+                  // `republishAllTracks`), and it also owns the AudioContext
+                  // and the worklet that a bare unpublish would leak.
+                  // Idempotent and silent when the session is already gone.
+                  await teardownWinScreenAudio();
+                } else {
+                  room.localParticipant.unpublishTrack(screenAudioTrack.track);
+                }
                 // The native PipeWire session (Linux) dies with the untick;
                 // no-op on every other surface.
                 void stopScreenAudio(this.#screenAudioSessionId);
@@ -6658,6 +6879,13 @@ class Voice {
                   // and stops the tracks.
                   this.#screenAudioGen++;
                   void stopScreenAudio(this.#screenAudioSessionId);
+                  // Windows: same stop path, and it must run BEFORE the
+                  // unpublish for the same reason as the toggle's disable
+                  // branch. A cancel landing while the graph is still being
+                  // built sets the module's start-cancelled flag, so an
+                  // in-flight capture abandons instead of publishing into a
+                  // share the user has just cancelled.
+                  await teardownWinScreenAudio();
                   await room.localParticipant.setScreenShareEnabled(false);
                   this.#setScreenshare(
                     room.localParticipant.isScreenShareEnabled,
@@ -6675,13 +6903,17 @@ class Voice {
                 }),
                 audio: !!screenAudioTrack,
                 audioChoice: needsAudioChoice,
+                entireScreen,
                 callback: async (qualityName, audio) => {
                   callback(qualityName, audio);
                   // Native screen audio was published MUTED while consent
                   // was pending (F8/E3) — unmute now that the user said
                   // yes, once the gate is empty and (on E2EE) the sender
-                  // transform is asserted. No-op for the Windows path,
-                  // whose track was never muted.
+                  // transform is asserted. This covers the Windows arm too:
+                  // `#publishWinScreenAudio` mutes on the same edge, and
+                  // `#unmuteScreenAudioWhenSafe` is platform-neutral (it
+                  // keys on the publication's `LocalAudioTrack`, not on how
+                  // the track was captured).
                   if (audio && screenAudioTrack?.track?.isMuted) {
                     void this.#unmuteScreenAudioWhenSafe(
                       room,
@@ -6766,6 +6998,430 @@ class Voice {
       room !== this.room() ||
       !this.screenshare()
     );
+  }
+
+  /**
+   * WINDOWS ONLY — publish the shell's native WASAPI system-audio capture.
+   *
+   * Nothing here is shared with `#publishNativeScreenAudio` below, which is
+   * the Linux/PipeWire path: that one captures a virtual device through gUM
+   * and publishes MUTED behind a consent doorway, where this one owns an
+   * AudioContext and a worklet fed over a Tauri binary `Channel` and publishes
+   * live. Every failure DEGRADES TO A SILENT SHARE — the video share always
+   * continues.
+   *
+   * Ordering is not incidental; each step is a rule from design §3.4/§3.6.
+   */
+  async #publishWinScreenAudio(
+    room: Room,
+    generation: number,
+    consentPending: boolean,
+  ) {
+    if (this.#screenAudioStale(generation, room)) return undefined;
+
+    // 🔴 REFUSE to re-arm after this call already published screen audio
+    // through a sender with no E2EE transform (latched at detection, in
+    // `#assertWinScreenAudioEncrypted`). See the field's own note for why the
+    // scope is the call and why this is availability, not disclosure.
+    if (this.#screenAudioPlaintext) {
+      console.error(
+        "[screen-audio] refusing to re-arm: this call already published screen audio through a sender with no E2EE transform",
+      );
+      return undefined;
+    }
+
+    // 🔴 §3.4 E3, checked BEFORE the shell is asked to capture anything, and
+    // again immediately before `publishTrack` below — the gate can be acquired
+    // across the awaits in between. This first check exists so a gated share
+    // does not spin up a native capture and an AudioContext that the gate says
+    // must not exist, only to tear them down.
+    //
+    // 🔴 This CONSULTS `#publishGate`; it never joins it. The module's
+    // `beginScreenAudioPublish`/`finishScreenAudioPublish` latch is a separate,
+    // module-local STARTING-window object. Adding a screen-audio reason to
+    // `#publishGate` would pause the microphone and the camera too — that gate
+    // pauses EVERY sender.
+    if (this.#publishGate.size > 0) {
+      console.error(
+        "[screen-audio] not starting a capture while the publish gate is held:",
+        [...this.#publishGate].join(", "),
+      );
+      return undefined;
+    }
+
+    // Assigned below, after the gate checks, and read by the host closure —
+    // so it cannot be `const`.
+    // eslint-disable-next-line prefer-const
+    let audioTrack: LocalAudioTrack | undefined;
+
+    const capture = await captureWinScreenAudio({
+      mode: "system",
+      host: {
+        // Idempotent and non-throwing: this is called from a death path.
+        // 🔴 Resolves the publication BY TRACK first. A death during the
+        // publish window finds nothing by source (livekit registers the
+        // publication only after `negotiate()` returns), and neither does a
+        // teardown landing inside `republishAllTracks`'s unpublish/republish
+        // gap, which is how every full reconnect works.
+        unpublish: async () => {
+          const target =
+            audioTrack ??
+            room.localParticipant.getTrackPublication(
+              Track.Source.ScreenShareAudio,
+            )?.track;
+          if (!target) return;
+          try {
+            await room.localParticipant.unpublishTrack(target);
+          } catch (error) {
+            console.error("[screen-audio] unpublish failed", error);
+          }
+        },
+        // 🔴 DROP a report that outlived its share. The `not-encrypted` LIVE
+        // edge reports from `teardownScreenAudio().finally`, and that teardown
+        // is two bounded 2 s settles plus a `context.close()` — precisely the
+        // path a dropping socket makes slow. Hang up inside that window and
+        // the modal would otherwise open over the NEXT call, announcing
+        // unencrypted screen audio for a call that has shared nothing.
+        report: (failure) => {
+          if (this.#screenAudioStale(generation, room)) {
+            console.error(
+              "[screen-audio] dropping a failure report from a share that is gone",
+              failure,
+            );
+            return;
+          }
+          this.#reportWinScreenAudioFailure(failure);
+        },
+      },
+    });
+    if (!capture) return undefined;
+
+    // `captureWinScreenAudio` spans an IPC round trip plus a worklet module
+    // load; the share or the call can end underneath it.
+    if (this.#screenAudioStale(generation, room)) {
+      await teardownWinScreenAudio();
+      return undefined;
+    }
+
+    // 🔴 §3.4 E3 again, because the gate is checked BEFORE the publish, not
+    // after. The `localTrackPublished` listener re-applies the gate, but only
+    // once `negotiate()` has returned and the encoder is already producing —
+    // so publishing into a held gate puts the whole desktop mix on the wire
+    // and pauses it a task or two later. The house precedent is to refuse
+    // outright (`startWhisper`), and a silent share is the right degrade.
+    if (this.#publishGate.size > 0) {
+      console.error(
+        "[screen-audio] refusing to publish while the publish gate is held:",
+        [...this.#publishGate].join(", "),
+      );
+      await teardownWinScreenAudio();
+      return undefined;
+    }
+
+    // 🔴 Refuse a duplicate. livekit permits a second ScreenShareAudio
+    // publication with only an info log, and two of them means two captures
+    // and an invariant nobody enforces.
+    if (
+      room.localParticipant.getTrackPublication(Track.Source.ScreenShareAudio)
+    ) {
+      console.error(
+        "[screen-audio] a ScreenShareAudio publication already exists; refusing to publish a second",
+      );
+      await teardownWinScreenAudio();
+      return undefined;
+    }
+
+    // `userProvidedTrack: true` — the track is ours, from a
+    // MediaStreamAudioDestinationNode, and livekit must never try to
+    // "reacquire" it the way it would a gUM track.
+    audioTrack = new LocalAudioTrack(capture.track, undefined, true);
+
+    // 🔴 PUBLISH MUTED WHILE CONSENT IS PENDING (§3.4 F8/E3), exactly as the
+    // Linux arm does below. This is the whole of the user's protection on this
+    // edge, and it is a REAL mute, not a pause.
+    //
+    // `wantsAudio` is true whenever the ask-modal will open — `consentPending
+    // || …` — so this path is reached even when the stored "Share audio"
+    // setting is OFF. The modal has not opened yet; the user has not agreed to
+    // send anything. `pauseUpstream()` below does not cover it: livekit
+    // attaches the sender at the top of `negotiate()`, on a transport the
+    // video share has already connected, so RTP leaves before `publishTrack`
+    // resolves and the pause lands afterwards. §3.4 names both
+    // `mediaStreamTrack.enabled = false` and the pause as NOT a mute: only
+    // `track.mute()` sets `req.muted` at signaling time, which is what stops
+    // the SFU forwarding it.
+    //
+    // Without this, one signaling round trip of the user's entire desktop mix
+    // reaches every participant before they are asked — and the modal then
+    // renders the checkbox UNTICKED, so nothing tells them it happened.
+    //
+    // 🔴 Placed BEFORE `beginWinScreenAudioPublish()`, not after: the latch
+    // below must stay adjacent to `publishTrack` with no suspension point
+    // between them, or the two STARTING death rows stop being
+    // distinguishable. Muting here costs that property nothing.
+    if (consentPending) {
+      try {
+        await audioTrack.mute();
+      } catch (error) {
+        // A rejecting mute leaves a live capture we are no longer willing to
+        // publish: degrade to a silent share rather than publish unmuted.
+        console.error("[screen-audio] mute before publish failed", error);
+        await teardownWinScreenAudio();
+        return undefined;
+      }
+      // `mute()` is an await, so the share or the call can have ended under
+      // it — the same re-check every other await in this method carries.
+      if (this.#screenAudioStale(generation, room)) {
+        await teardownWinScreenAudio();
+        return undefined;
+      }
+    }
+
+    // 🔴 No `await` between this and `publishTrack`. The two STARTING death
+    // rows differ by exactly whether the publish has been ISSUED — before it
+    // the publish is REFUSED, after it `negotiate()` has already put the track
+    // on the wire and the only correct action is to UNPUBLISH. Because there
+    // is no suspension point here, no death can land in between and the two
+    // cases stay distinguishable.
+    if (!beginWinScreenAudioPublish()) {
+      await teardownWinScreenAudio();
+      return undefined;
+    }
+
+    let publication: LocalTrackPublication;
+    try {
+      publication = await room.localParticipant.publishTrack(audioTrack, {
+        source: Track.Source.ScreenShareAudio,
+        // 🔴 `forceStereo`: livekit reads channel count from settings and
+        // constraints, and BOTH are empty on a synthetic worklet track — so
+        // without forcing it the track negotiates MONO and the implicit
+        // stereo dtx/red-off backstop never arms.
+        forceStereo: true,
+        // Stated explicitly rather than inherited from `forceStereo`: empty
+        // DTX frames bypass frame encryption, which is an activity-pattern
+        // leak on an E2EE call, and RED duplicates payload the frame cryptor
+        // has already sealed.
+        dtx: false,
+        red: false,
+      });
+    } catch (error) {
+      console.error("[screen-audio] publish failed", error);
+      await teardownWinScreenAudio();
+      return undefined;
+    }
+
+    // 🔴 ASSERT the mute survived the publish, rather than trusting it.
+    // §3.4's rule is about what `req.muted` carried at signaling time, and
+    // that is a livekit internal we do not own: `publishTrack` reads the
+    // track's mute state while building the request, so a livekit change that
+    // reordered or reset it would silently reopen exactly the window this
+    // mute exists to close. Fail LOUD — unpublish and degrade to a silent
+    // share — because the alternative is broadcasting the desktop mix to a
+    // user who has not been asked yet.
+    if (consentPending && !publication.isMuted) {
+      console.error(
+        "[screen-audio] published track is NOT muted while consent is pending; refusing to leave it up",
+      );
+      await teardownWinScreenAudio();
+      return undefined;
+    }
+
+    // A death that landed during the publish window. There is no publish left
+    // to refuse, so returning early would strand a live ScreenShareAudio
+    // publication on the SFU against local state DEAD — encrypted silence both
+    // ends believe is live, on the one path where the frames may be other
+    // participants' voices.
+    if (!finishWinScreenAudioPublish()) {
+      // 🔴 BOUNDED, not merely caught — and this arm is where it matters most.
+      // It is reached ONLY when a death or a stop path landed during the
+      // publish window, i.e. precisely the dead-socket / dead-shell conditions
+      // under which livekit's `unpublishTrack` hangs: it awaits
+      // `pendingPublishPromises` and then `engine.negotiate()`, both of which
+      // sit on a dead PeerConnection. A `try/catch` answers rejection and does
+      // nothing about a hang.
+      //
+      // The caller is holding `localTrack.pauseUpstream()` and the ask-modal
+      // does not open until this method returns, so an unbounded await here
+      // reproduces the frozen-tile-with-no-modal failure the module's own
+      // STARTING-window bounds exist to prevent — from the one call site that
+      // is outside the module.
+      //
+      // Usually redundant: `die()` and `teardownScreenAudio()` each already
+      // ran `host.unpublish()` under their own 2 s settle. It is kept for the
+      // one ordering where it is not — a stop path that fired before livekit
+      // registered the publication — and 2 s is the same number those use.
+      await Promise.race([
+        room.localParticipant.unpublishTrack(audioTrack).catch((error) => {
+          console.error("[screen-audio] late unpublish failed", error);
+        }),
+        new Promise<void>((resolve) =>
+          setTimeout(() => {
+            console.error(
+              "[screen-audio] late unpublish did not settle within 2000ms",
+            );
+            resolve();
+          }, 2_000),
+        ),
+      ]);
+      return undefined;
+    }
+
+    // The `lk_e2ee` assertion for this publication is bound to
+    // `localTrackPublished` in `connect`, and livekit emits that event INSIDE
+    // `publishTrack` — so the listener has already seen this one. Asserting
+    // again here would be a second, redundant check on the same sender.
+    return publication;
+  }
+
+  /**
+   * Turn a Windows screen-audio failure CODE into copy.
+   *
+   * 🔴 The copy lives here, not in `screenAudioNativeWin.ts`: the client's
+   * user-facing strings are lingui macros with ~70 catalogs behind them, and a
+   * raw literal in a platform module silently bypasses all of them. Each string
+   * is wrapped in `new Error(...)` rather than passed bare because `onErr`
+   * renders through `useError()`, whose only verbatim path is an Error's
+   * `.message`; a bare string falls into ``t`Something went wrong! ${error}` ``
+   * and arrives wearing a generic error's clothes.
+   *
+   * 🔴 BRANCHES ON `code`, NEVER ON DETAIL TEXT. The detail strings are
+   * diagnostics for a user report and the same code covers genuinely different
+   * causes — `"unsupported"` is emitted both for "this is not Windows / the
+   * build is too old" and for a damaged system DLL. The retired literal
+   * "ActivateAudioInterfaceAsync is not exported (Windows build < 19041)" no
+   * longer means an old OS and must never be matched again.
+   */
+  #reportWinScreenAudioFailure(failure: WinScreenAudioFailure) {
+    switch (failure.kind) {
+      case "start":
+        // 🔴 This arm also receives the ASYNCHRONOUS refusal.
+        // `screen_audio_start` resolves `Ok` even where the OS gate will
+        // refuse — the gate is reached on the capture thread, inside
+        // `resolve_activate()`, after the command has already returned — so a
+        // too-old Windows lands here later, off the died/end channel, as
+        // `EndReason::CaptureError` with `code === "unsupported"`. The module
+        // re-labels it as a START failure so it gets start copy rather than
+        // "your screen audio stopped"; the video share continues, the audio
+        // publication has already been torn down by the module's death path,
+        // and the user is TOLD. A silent share with no explanation is the one
+        // outcome this arm exists to prevent.
+        if (failure.code === "no-root") {
+          this.onErr(
+            new Error(
+              t`Screen audio is unavailable in this window. If you are running a second copy of Sloga, only the first one can share system audio.`,
+            ),
+          );
+          return;
+        }
+        if (failure.code === "unsupported") {
+          this.onErr(
+            new Error(t`This version of Windows cannot share system audio.`),
+          );
+          return;
+        }
+        // A deliberate opt-out (`SLOGA_NO_SCREEN_AUDIO=1`) is not a failure.
+        if (failure.code === "disabled-by-env") return;
+        this.onErr(
+          new Error(t`Screen audio could not start; sharing without it.`),
+        );
+        return;
+      case "not-encrypted":
+        // 🔴 This sentence says NOTHING LEAKED, and that is measured rather
+        // than hoped. L15 (design §7): with `encodedInsertableStreams` — which
+        // livekit sets for every E2EE room — Chromium withholds RTP from a
+        // transformless sender entirely, at zero bytes and zero packets. What
+        // is left to tell the user is an availability failure plus the reason
+        // their next share in this call will also be silent.
+        this.onErr(
+          new Error(
+            t`Screen audio could not be encrypted, so nothing was sent in the clear. Your computer's sound has stopped reaching the call and stays off for the rest of it — rejoin to try again.`,
+          ),
+        );
+        return;
+      case "graph":
+        this.onErr(
+          new Error(t`Screen audio could not start; sharing without it.`),
+        );
+        return;
+      case "died":
+      default:
+        // 🔴 L13's discriminator goes in the log line: once "the audio engine
+        // went idle" was retired, the two surviving causes — a throttled relay
+        // and a dead audio render thread — present identically at the shell's
+        // tick counter, and only the module's two delivery stamps separate
+        // them. It also carries §11.9's exclusion verdict, so a user report
+        // names which check ran.
+        console.error(
+          "[screen-audio] died:",
+          failure,
+          winScreenAudioDiagnostics(),
+        );
+        this.onErr(
+          new Error(t`Screen audio stopped. The screen is still being shared.`),
+        );
+    }
+  }
+
+  /**
+   * The `lk_e2ee` assertion, per publication — WINDOWS ONLY (gated on the
+   * module's own `screenAudioActive()`, so a Linux PipeWire share never
+   * reaches it).
+   *
+   * Fails LOUD: a dead E2EE worker plus one publish sends the whole
+   * system-audio capture to the SFU as PLAINTEXT while the signaling still
+   * stamps GCM at participant level. Receivers fail-decrypt and drop, so the
+   * symptom is "the far end hears nothing" — indistinguishable from a quiet
+   * desktop.
+   */
+  #assertWinScreenAudioEncrypted(room: Room, pub: LocalTrackPublication) {
+    if (!winScreenAudioActive()) return;
+    if (!room.isE2EEEnabled) return;
+    const sender = pub.track?.sender;
+    if (winScreenAudioSenderEncrypted(sender)) return;
+
+    // 🔴 NO SENDER TO READ IS NOT EVIDENCE OF PLAINTEXT.
+    // `winScreenAudioSenderEncrypted` answers false for a MISSING sender as
+    // well as for a present one carrying no flag. Below this line the call is
+    // latched for the rest of its life with no in-call recovery, so a
+    // momentarily-undefined `pub.track` on a republish — or a livekit
+    // API-shape change on a bump — would permanently disable screen audio on a
+    // healthy call. A missing sender therefore keeps the per-track teardown
+    // and skips the call-level latch: fail-closed on the track, no evidence on
+    // the call.
+    if (!sender) {
+      console.error(
+        "[screen-audio] no sender to assert on; tearing down this track without latching the call",
+      );
+      winScreenAudioEncryptionFailed();
+      return;
+    }
+
+    // 🔴 Everything call-level happens HERE, synchronously, before the teardown
+    // is even started. The module's LIVE edge reports only after its teardown
+    // settles, which is two bounded 2 s awaits — a latch set from the report
+    // would leave a racing `toggleScreenshare` free to re-arm inside the gap.
+    console.error(
+      "[screen-audio] E2EE transform missing on publication",
+      pub.trackSid,
+    );
+    this.#screenAudioPlaintext = true;
+
+    // 🔴 DELIBERATELY NOT `#setCallEncryptionError`, and this is the L15 result
+    // rather than an oversight. Writing it here would fire the NOT-ENCRYPTED
+    // chip on the premise that the sharer's tracks were reaching the SFU in the
+    // clear; measured (design §7, L15), a sender with no transform emits ZERO
+    // RTP, so a red lock on this call would be a false alarm — and the same
+    // mechanism protects the mic and the screen video, which was the whole
+    // argument for going call-wide. What is left is an AVAILABILITY failure:
+    // this share is silent, the latch above stops it repeating, and the modal
+    // from `#reportWinScreenAudioFailure` says so. The chip derivation is
+    // therefore untouched by this lane.
+
+    // 🔴 The response differs by state — a failure during the publish window
+    // must LATCH and refuse the pending publish, where one on a live
+    // publication must discard and unpublish first — so the rule lives in the
+    // module that owns the state machine rather than here.
+    winScreenAudioEncryptionFailed();
   }
 
   /**

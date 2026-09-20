@@ -194,6 +194,33 @@ export function CameraOptions() {
         >
           <Trans>Always Ask for Screen Share Quality</Trans>
         </CategoryButton>
+        {/* 🔴 THE ONLY UNCONDITIONAL WRITER of `screenShareAudio`, and that is
+            why it exists rather than being a nicety.
+
+            The other writer is the screen-share settings dialog, which only
+            opens when `screenShareQualityAsk` is on AND more than one quality
+            tier is available. On a shell where the browser's own "share system
+            audio" checkbox has been removed in favour of a native capture
+            (Windows), turning audio off and then turning the ask-dialog off —
+            or simply arriving with one quality tier, or with the setting
+            already off and synced from another device — left a user with NO
+            control anywhere that could turn screen-share audio back on.
+
+            Routing them to "Always Ask for Screen Share Quality" was the only
+            way back, which is a control labelled entirely about quality. */}
+        <CategoryButton
+          icon="blank"
+          description={
+            <Trans>
+              Send your computer's sound when you share your screen, where the
+              app supports it.
+            </Trans>
+          }
+          action={<Checkbox checked={voice.screenShareAudio} />}
+          onClick={() => (voice.screenShareAudio = !voice.screenShareAudio)}
+        >
+          <Trans>Share Computer Sound</Trans>
+        </CategoryButton>
       </CategoryButton.Group>
     </Column>
   );
