@@ -276,6 +276,43 @@ HARNESS = "mlsCallSession.harness.ts"
 #: exclusion and never cannot_verify") landed together in that pass; the
 #: entry now exists below, pinned `must_red` on that spec, which kills it at
 #: both the emission deepEqual (`mediaKeyed: false`) and the chip assert.
+#:
+#: 🔴 AND THE WAVE-3 TWO-AXIS BANNER WIRINGS (banner-honesty wave 3,
+#: 2026-09-20), live-only for the same reason — `state.tsx`, the banner
+#: component and the watch overlay cannot be loaded by `node --test`:
+#:  (ix)  the `callBanner()` accessor in `state.tsx`: it feeds
+#:        `callBanner(...)` (`mlsCallModePolicy.ts`) with `hasSession:
+#:        this.#mlsSession !== undefined`, `pauseDisproved:
+#:        this.callPauseDisproved()` and `pauseDisproofConfirmed:
+#:        this.callPauseDisproofConfirmed()` — the FIRST runtime consumer
+#:        of the confirmed half. The `banner-*` entries below pin what the
+#:        policy DOES with those three inputs; nothing here can pin that
+#:        the accessor binds them rather than a literal (`hasSession:
+#:        true` makes a session-less seat whose chip is NOT red — a plain
+#:        call — read `securing` for its whole duration; the red table
+#:        runs first, so the setup seats are the one thing it spares;
+#:        transposing the two verdict readers is the same swap the
+#:        "TWO VERDICT-READER ASSIGNMENTS" admission above records, now
+#:        with a runtime consumer on BOTH halves).
+#:  (x)   `VoiceCallDowngradeBanner.tsx`: Line A switches on
+#:        `banner().kind`; Line B switches on the HELD pause clause — the
+#:        raw `banner().pause` folded through `holdPauseClause` in ONE
+#:        `createComputed`, with ONE `setTimeout(holdExpiresIn(state, now))`
+#:        to re-evaluate when the hold lapses — and the direct
+#:        `voice.callPauseDisproved()` `<Match>` is DELETED so there is one
+#:        derivation. The `hold-*` entries pin what the fold DOES; nothing
+#:        here can pin that the component feeds the fold rather than
+#:        rendering `banner().pause` raw (the flash returns), that the
+#:        timer is armed from `holdExpiresIn` rather than a literal, or
+#:        that the `cannot_verify` / `terminal_loud` Rejoin action still calls
+#:        `voice.connect(channel())` (the only in-call control that
+#:        clears a keyed control latch). Nested JSX inside `<Trans>` and
+#:        an unhedged pause claim are likewise no runner's to catch.
+#:  (xi)  `WatchOverlay.tsx`'s single read, `bannerParksFloat(
+#:        voice.callBanner())`: `banner-securing-parks` and
+#:        `banner-disproved-does-not-park` pin the PREDICATE; whether the
+#:        overlay asks it (rather than `!== "none"`, the round-5 defect
+#:        that parked the player for a whole call) is unmeasured.
 STATE = "state.tsx"
 GATE = "publishGate.ts"
 EPISODE = "publishGateEpisode.ts"
@@ -284,6 +321,10 @@ MIC_POLICY = "micPipelinePolicy.ts"
 KICK_POLICY = "publishKickPolicy.ts"
 WITNESS = "decodeWitnessListener.ts"
 CHIP = "chipInputs.ts"
+#: 🔴 Relative to `RTC`, like every other target here (`apply` reads
+#: `RTC / mutation.file`) — NOT the `components/rtc/…` form the spec
+#: constants use.
+HOLD = "pauseClauseHold.ts"
 
 JOINRACE_SPEC = "components/rtc/mlsCallSession.joinrace.test.ts"
 HEAL_SPEC = "components/rtc/mlsCallSession.heal.test.ts"
@@ -298,6 +339,7 @@ MIC_POLICY_SPEC = "components/rtc/micPipelinePolicy.test.ts"
 KICK_POLICY_SPEC = "components/rtc/publishKickPolicy.test.ts"
 WITNESS_SPEC = "components/rtc/decodeWitnessListener.test.ts"
 CHIP_SPEC = "components/rtc/chipInputs.test.ts"
+HOLD_SPEC = "components/rtc/pauseClauseHold.test.ts"
 ALL_SPECS = [POLICY_SPEC, HEAL_SPEC, JOINRACE_SPEC]
 
 
@@ -2712,7 +2754,7 @@ MUTATIONS += [
     ),
     Mutation(
         id="banner-state-cannot-verify-bannerless",
-        what="callBannerState's red guard is not widened, so `cannot_verify` reads as 'not red' and gets NO banner",
+        what="`redBannerKind`'s red guard is not widened (wave 3 moved it there from `callBannerState`; `callBanner` composes it), so `cannot_verify` reads as 'not red' and gets NO banner",
         file=POLICY,
         search="""  if (inputs.chip === "cannot_verify") return "cannot_verify";
   if (inputs.chip !== "not_encrypted") return "none";""",
@@ -2882,6 +2924,105 @@ MUTATIONS += [
         # snapshot and clean witness). Both pinned individually.
         specs=[FALSERED_SPEC, JOINRACE_SPEC],
         must_red=[FALSERED_SPEC, JOINRACE_SPEC],
+    ),
+]
+
+
+# --- The two-axis banner and its pause-clause hold (banner-honesty wave 3) --
+#
+# `callBanner` (`mlsCallModePolicy.ts`) now answers `{ kind, pause }`:
+# `redBannerKind` (the pre-wave-3 table, evaluated first and in full), then
+# `securingReachable` for a chip it read as not red, then `pauseClauseFor`.
+# `pauseClauseHold.ts` is the pure hysteresis the banner folds the pause
+# clause through so a bouncing `disproved` reads as one warning. Both are
+# loadable, so every rule below is reachable; the wirings that feed them
+# (the `state.tsx` accessor, the component's fold and timer, the overlay's
+# read) are header admission items (ix)–(xi), never entries.
+#
+# The six POLICY entries were measured red under `mlsCallModePolicy.test.ts`
+# alone on 2026-09-20 with all 123 tests executing; the three HOLD entries
+# under `pauseClauseHold.test.ts` alone with all 7 executing.
+
+MUTATIONS += [
+    # ---- the securing notice ------------------------------------------------
+    Mutation(
+        id="banner-securing-unreachable",
+        what="`securingReachable` never answers true, so the pre-verdict join (mode undefined, or `negotiating` on a rejoin) shows NO banner while the gate is held — the user hears silence with nothing on screen saying why",
+        file=POLICY,
+        search="""    inputs.hasSession &&""",
+        replace="""    false &&""",
+        specs=[POLICY_SPEC],
+    ),
+    # ---- the pause clause -----------------------------------------------------
+    Mutation(
+        id="banner-disproof-raises-unconfirmed",
+        what="the `disproved` row fires on `pauseDisproved` alone, so a budget-exhausted `{ value: true, confirmed: false }` observation raises the blocking 'may still be sending — leave to stop it' line over a wire the verdict never confirmed",
+        file=POLICY,
+        search="""  if (inputs.pauseDisproved && inputs.pauseDisproofConfirmed) {""",
+        replace="""  if (inputs.pauseDisproved) {""",
+        specs=[POLICY_SPEC],
+    ),
+    Mutation(
+        id="banner-disproof-ignored",
+        what="the `disproved` row is unreachable, so a CONFIRMED disproof (`{ true, true }`) still reads `held` and the banner keeps promising a pause over a live wire — the false red this slice exists to remove",
+        file=POLICY,
+        search="""  if (inputs.pauseDisproved && inputs.pauseDisproofConfirmed) {""",
+        replace="""  if (false && inputs.pauseDisproofConfirmed) {""",
+        specs=[POLICY_SPEC],
+    ),
+    Mutation(
+        id="banner-hidden-carries-pause",
+        what="a hidden banner (`kind: none`) carries a pause clause, so a transient `{ none, disproved }` parks the Watch Together float through `bannerParksFloat` with nothing rendered to say why",
+        file=POLICY,
+        # The guard line dropped whole (newline included) so the mutant is
+        # still well-formed TS and `pauseClauseFor` falls straight into the
+        # verdict test.
+        search='  if (kind === "none") return "none";\n',
+        replace="",
+        specs=[POLICY_SPEC],
+    ),
+    # ---- what parks the float -------------------------------------------------
+    Mutation(
+        id="banner-securing-parks",
+        what="`securing` parks the Watch Together float, so every join un-anchors the player behind a notice that has no control to clear it and is expected to resolve on its own",
+        file=POLICY,
+        search="""    banner.kind === "mixed" ||""",
+        replace="""    banner.kind === "securing" ||
+    banner.kind === "mixed" ||""",
+        specs=[POLICY_SPEC],
+    ),
+    Mutation(
+        id="banner-disproved-does-not-park",
+        what="a `disproved` pause no longer parks the float, so the one line the user must not miss ('may still be sending — leave to stop it') can sit under the player",
+        file=POLICY,
+        search='    banner.pause === "disproved"',
+        replace="""    false""",
+        specs=[POLICY_SPEC],
+    ),
+    # ---- the pause-clause hold ------------------------------------------------
+    Mutation(
+        id="hold-never-expires",
+        what="the hold window is unbounded, so one confirmed disproof keeps 'may still be sending' up for the rest of the call over a gate that has long since re-paused",
+        file=HOLD,
+        search="""export const PAUSE_DISPROOF_HOLD_MS = 15_000;""",
+        replace="""export const PAUSE_DISPROOF_HOLD_MS = Number.MAX_SAFE_INTEGER;""",
+        specs=[HOLD_SPEC],
+    ),
+    Mutation(
+        id="hold-is-zero",
+        what="the hold window is zero, so a `disproved` → quiet → `disproved` bounce flashes the blocking line at the verdict's own frequency — the flicker the hold exists to remove",
+        file=HOLD,
+        search="""export const PAUSE_DISPROOF_HOLD_MS = 15_000;""",
+        replace="""export const PAUSE_DISPROOF_HOLD_MS = 0;""",
+        specs=[HOLD_SPEC],
+    ),
+    Mutation(
+        id="hold-survives-green",
+        what="the hold ignores `kind: none`, so a banner that just went hidden — the call re-secured, the gate released 1→0 — keeps rendering 'may still be sending' for the rest of the window: a false red over a green call",
+        file=HOLD,
+        search="""  if (banner.kind === "none" || banner.pause === "none") {""",
+        replace="""  if (banner.pause === "none") {""",
+        specs=[HOLD_SPEC],
     ),
 ]
 

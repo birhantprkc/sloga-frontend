@@ -4,23 +4,28 @@
 // (set_e2ee(false) strictly before resume), T6-is-the-sole-interlude-exit
 // (no warm-enable after a confirmed interlude), the chip precedence table
 // (the seven-row loud order — `cannot_verify` from row 4 only) + each
-// fail-closed degradation, the banner every loud chip carries, the escape's
-// `via` split, and default-closed ctl parsing.
+// fail-closed degradation, the two-axis banner (kind + pause) every loud chip
+// carries and the `securing` notice, the escape's `via` split, and
+// default-closed ctl parsing.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  type CallBanner,
   type CallBannerInputs,
+  type CallBannerKind,
   type CallMode,
   type CallModeEffect,
   type ChipInputs,
   type ChipLatch,
+  type ChipState,
   type DecodeWitness,
   type LoudHealInputs,
+  type PauseClause,
   DECODE_WITNESS_UNAVAILABLE,
   MediaErrorLedger,
   bannerParksFloat,
-  callBannerState,
+  callBanner,
   callModeTransition,
   chipState,
   classifyEncryptionError,
@@ -34,6 +39,7 @@ import {
   mixDetectedAction,
   modeUnderLoudLatch,
   parseCtlPayload,
+  pauseClauseFor,
   plaintextReleaseAvailable,
   rotationWindowMs,
   summarizeDecodeWitness,
@@ -807,7 +813,7 @@ test("terminal-loud: attribution chips without a latched error are not a LOUD fa
   // branches (web participant, a device with no encryption set up). Nothing
   // was attempted, so nothing latched and nothing is paused — the loud
   // banner's copy and its "Stay unencrypted" release would both be wrong.
-  // They are NOT bannerless: `callBannerState` gives them the device arms.
+  // They are NOT bannerless: `callBanner` gives them the device arms.
   assert.equal(isTerminalLoud(undefined, "not_encrypted", false), false);
 });
 
@@ -851,41 +857,49 @@ test("🔴 terminal-loud: cannot_verify counts exactly like not_encrypted (kills
 
 // ---- Which banner a chip carries (the no-dead-end invariant) ----------------
 
+// Wave-3 defaults: a session exists — so the `securing` question is LIVE for
+// any non-red chip a spec passes — and the pause verdict is quiet. The red
+// table never reads `hasSession`, so the red-arm specs below are insensitive
+// to it; the session-less seats say `hasSession: false` in full, because that
+// is the discriminator that keeps them on their device arm.
 const baseBanner = (over: Partial<CallBannerInputs>): CallBannerInputs => ({
   chip: "not_encrypted",
   mode: undefined,
   latchedError: false,
   readiness: "needs_setup",
+  hasSession: true,
+  pauseDisproved: false,
+  pauseDisproofConfirmed: false,
   ...over,
 });
 
 test("banner: the §3.4 downgrade modes keep their own banners", () => {
   assert.equal(
-    callBannerState(baseBanner({ mode: MIXED, readiness: "ready" })),
+    callBanner(baseBanner({ mode: MIXED, readiness: "ready" })).kind,
     "mixed",
   );
   assert.equal(
-    callBannerState(baseBanner({ mode: INTERLUDE_CONF, readiness: "ready" })),
+    callBanner(baseBanner({ mode: INTERLUDE_CONF, readiness: "ready" })).kind,
     "interlude",
   );
   assert.equal(
-    callBannerState(baseBanner({ mode: INTERLUDE_UNCONF, readiness: "ready" })),
+    callBanner(baseBanner({ mode: INTERLUDE_UNCONF, readiness: "ready" })).kind,
     "interlude",
   );
 });
 
 test("banner: a ready device with a red chip is a CALL failure — terminal loud", () => {
   assert.equal(
-    callBannerState(
+    callBanner(
       baseBanner({ mode: NEGOTIATING, latchedError: true, readiness: "ready" }),
-    ),
+    ).kind,
     "terminal_loud",
   );
   // The capable-but-sessionless R2-4 hold: `negotiating` is still in the
   // publish gate and the error IS latched, so "your audio and video stay
   // paused" is true.
   assert.equal(
-    callBannerState(baseBanner({ latchedError: true, readiness: "ready" })),
+    callBanner(baseBanner({ latchedError: true, readiness: "ready" })).kind,
     "terminal_loud",
   );
 });
@@ -901,13 +915,13 @@ test("🔴 banner: call_full is no longer silent (it latches, and the gate is he
     false,
   );
   assert.equal(
-    callBannerState(
+    callBanner(
       baseBanner({
         mode: { kind: "call_full" },
         latchedError: true,
         readiness: "ready",
       }),
-    ),
+    ).kind,
     "terminal_loud",
   );
 });
@@ -918,17 +932,16 @@ test("banner: a device that cannot encrypt owns the banner, whatever the call di
   // state. Holds even with a latched error, which `owned_elsewhere` always
   // has (it stays capable and the setup decision holds it loud).
   assert.equal(
-    callBannerState(baseBanner({ readiness: "needs_setup" })),
+    callBanner(baseBanner({ readiness: "needs_setup" })).kind,
     "device_not_set_up",
   );
   assert.equal(
-    callBannerState(
-      baseBanner({ readiness: "owned_elsewhere", latchedError: true }),
-    ),
+    callBanner(baseBanner({ readiness: "owned_elsewhere", latchedError: true }))
+      .kind,
     "device_not_set_up",
   );
   assert.equal(
-    callBannerState(baseBanner({ readiness: "unsupported" })),
+    callBanner(baseBanner({ readiness: "unsupported" })).kind,
     "device_unsupported",
   );
 });
@@ -941,19 +954,19 @@ test("🔴 banner: an unknown-cause red chip never falls back to 'this app can't
   // when nothing did — never a statement about the shell.
   for (const latchedError of [false, true])
     assert.notEqual(
-      callBannerState(
+      callBanner(
         baseBanner({ readiness: "ready", mode: { kind: "off" }, latchedError }),
-      ),
+      ).kind,
       "device_unsupported",
     );
   assert.equal(
-    callBannerState(
+    callBanner(
       baseBanner({
         readiness: "ready",
         mode: { kind: "off" },
         latchedError: true,
       }),
-    ),
+    ).kind,
     "terminal_loud",
   );
 });
@@ -967,7 +980,7 @@ test("banner: nothing to say on a green, amber or chrome-less chip", () => {
       "unsupported",
     ] as const)
       assert.equal(
-        callBannerState(baseBanner({ chip, mode: E2EE, readiness })),
+        callBanner(baseBanner({ chip, mode: E2EE, readiness })).kind,
         "none",
       );
 });
@@ -986,43 +999,65 @@ test("🔴 banner: a cannot_verify chip is never bannerless (kills banner-state-
   ];
   for (const mode of MODES)
     for (const latchedError of [false, true])
-      for (const readiness of [
-        "ready",
-        "needs_setup",
-        "owned_elsewhere",
-        "unsupported",
-      ] as const)
-        assert.equal(
-          callBannerState({
-            chip: "cannot_verify",
-            mode,
-            latchedError,
-            readiness,
-          }),
-          "cannot_verify",
-          JSON.stringify({ mode, latchedError, readiness }),
-        );
+      for (const hasSession of [false, true])
+        for (const readiness of [
+          "ready",
+          "needs_setup",
+          "owned_elsewhere",
+          "unsupported",
+        ] as const)
+          assert.equal(
+            callBanner({
+              chip: "cannot_verify",
+              mode,
+              latchedError,
+              readiness,
+              hasSession,
+              pauseDisproved: false,
+              pauseDisproofConfirmed: false,
+            }).kind,
+            "cannot_verify",
+            JSON.stringify({ mode, latchedError, readiness, hasSession }),
+          );
   // The §3.4 downgrade modes keep their own banners ahead of it (row 1 wins
   // the chip too, so the pair never co-occurs; the banner rule is still
   // total).
   assert.equal(
-    callBannerState(
+    callBanner(
       baseBanner({ chip: "cannot_verify", mode: MIXED, readiness: "ready" }),
-    ),
+    ).kind,
     "mixed",
   );
   assert.equal(
-    callBannerState(
+    callBanner(
       baseBanner({
         chip: "cannot_verify",
         mode: INTERLUDE_NATIVE,
         readiness: "ready",
       }),
-    ),
+    ).kind,
     "interlude",
   );
-  // ...and it parks the Watch Together player like the other actionable ones.
-  assert.equal(bannerParksFloat("cannot_verify"), true);
+  // ...and it parks the Watch Together player like the other actionable ones
+  // — the KIND parks it, ahead of any pause verdict, so a quiet `held` row
+  // parks exactly like the derived banner does.
+  assert.equal(
+    bannerParksFloat(
+      callBanner(
+        baseBanner({
+          chip: "cannot_verify",
+          mode: NEGOTIATING,
+          latchedError: true,
+          readiness: "ready",
+        }),
+      ),
+    ),
+    true,
+  );
+  assert.equal(
+    bannerParksFloat({ kind: "cannot_verify", pause: "held" }),
+    true,
+  );
 });
 
 test("🔴 a REFUSED device is loud with no dependence on the open-group probe", () => {
@@ -1051,12 +1086,17 @@ test("🔴 a REFUSED device is loud with no dependence on the open-group probe",
     );
     assert.equal(chip, "not_encrypted", `probe=${channelHasOpenGroup}`);
     assert.equal(
-      callBannerState({
+      callBanner({
         chip,
         mode: undefined,
         latchedError: true,
         readiness: "owned_elsewhere",
-      }),
+        // `hold_loud` builds no session: the device arm owns this seat, and
+        // `securing` — which needs one — can never mask it.
+        hasSession: false,
+        pauseDisproved: false,
+        pauseDisproofConfirmed: false,
+      }).kind,
       "device_not_set_up",
     );
   }
@@ -1084,12 +1124,17 @@ test("🔴 a device that could be set up is loud with NO open group, if a peer c
     );
     assert.equal(chip, "not_encrypted", `probe=${channelHasOpenGroup}`);
     assert.equal(
-      callBannerState({
+      callBanner({
         chip,
         mode: undefined,
         latchedError: false,
         readiness: "needs_setup",
-      }),
+        // Never enrolled: nothing was attempted, so there is no session to
+        // be securing with.
+        hasSession: false,
+        pauseDisproved: false,
+        pauseDisproofConfirmed: false,
+      }).kind,
       "device_not_set_up",
     );
   }
@@ -1138,12 +1183,15 @@ test("a shell that can NEVER encrypt still rides the probe — no nagging on a p
   );
   assert.equal(quiet, "none");
   assert.equal(
-    callBannerState({
+    callBanner({
       chip: quiet,
       mode: undefined,
       latchedError: false,
       readiness: "unsupported",
-    }),
+      hasSession: false,
+      pauseDisproved: false,
+      pauseDisproofConfirmed: false,
+    }).kind,
     "none",
   );
 });
@@ -1153,12 +1201,518 @@ test("🔴 an unlatched red chip on a ready device promises nothing (MEDIUM-1)",
   // paused". It was accepted and ignored once, and that is how a red strip
   // came to promise a pause over a live, ungated mic.
   assert.equal(
-    callBannerState(baseBanner({ readiness: "ready", latchedError: false })),
+    callBanner(baseBanner({ readiness: "ready", latchedError: false })).kind,
     "unencrypted_notice",
   );
   assert.equal(
-    callBannerState(baseBanner({ readiness: "ready", latchedError: true })),
+    callBanner(baseBanner({ readiness: "ready", latchedError: true })).kind,
     "terminal_loud",
+  );
+});
+
+// ---- the securing notice and the pause axis (wave 3) -----------------------
+
+// The nine kinds and six chips, pinned as records so a tenth kind (or a
+// seventh chip) cannot be added to the type without landing in every sweep
+// below.
+const KIND_TABLE: Record<CallBannerKind, 0> = {
+  none: 0,
+  securing: 0,
+  mixed: 0,
+  interlude: 0,
+  terminal_loud: 0,
+  cannot_verify: 0,
+  device_not_set_up: 0,
+  device_unsupported: 0,
+  unencrypted_notice: 0,
+};
+const ALL_KINDS = Object.keys(KIND_TABLE) as CallBannerKind[];
+const CHIP_TABLE: Record<ChipState, 0> = {
+  none: 0,
+  e2ee: 0,
+  e2ee_unverified: 0,
+  resecuring: 0,
+  cannot_verify: 0,
+  not_encrypted: 0,
+};
+const ALL_CHIPS = Object.keys(CHIP_TABLE) as ChipState[];
+const ALL_READINESS = [
+  "ready",
+  "needs_setup",
+  "owned_elsewhere",
+  "unsupported",
+] as const;
+const ALL_MODES: (CallMode | undefined)[] = [
+  undefined,
+  NEGOTIATING,
+  { kind: "off" },
+  E2EE,
+  MIXED,
+  INTERLUDE_UNCONF,
+  INTERLUDE_CONF,
+  INTERLUDE_NATIVE,
+  INTERLUDE_APP,
+  { kind: "call_full" },
+];
+// The four pause-verdict shapes: [pauseDisproved, pauseDisproofConfirmed].
+const FLAGS: [boolean, boolean][] = [
+  [false, false],
+  [true, false],
+  [false, true],
+  [true, true],
+];
+
+// The rules of record (w3_CONTRACT / plan "Approach" wave 3), restated here
+// independently of the policy's code so the sweeps have an oracle that is
+// not the implementation:
+//   raise     : kind !== "none" ⇔ the pre-wave-3 red condition ∨ securing
+//   securing  : hasSession ∧ mode ∈ {undefined, negotiating} ∧ chip ∉ red
+//   disproved : pauseDisproved ∧ pauseDisproofConfirmed, on a RAISED banner
+//   held      : securing / mixed / interlude(!localConfirmed) / terminal_loud
+//               / cannot_verify / device_not_set_up on a REFUSED device
+//   none      : everything else — and every hidden banner, flags or not
+const redChip = (chip: ChipState) =>
+  chip === "not_encrypted" || chip === "cannot_verify";
+const oldRedRaise = (i: CallBannerInputs) =>
+  i.mode?.kind === "mixed" || i.mode?.kind === "interlude" || redChip(i.chip);
+const securingRule = (i: CallBannerInputs) =>
+  i.hasSession &&
+  (i.mode === undefined || i.mode.kind === "negotiating") &&
+  !redChip(i.chip);
+const heldRule = (kind: CallBannerKind, i: CallBannerInputs): boolean => {
+  switch (kind) {
+    case "securing":
+    case "mixed":
+    case "terminal_loud":
+    case "cannot_verify":
+      return true;
+    case "interlude":
+      return !(i.mode?.kind === "interlude" && i.mode.localConfirmed);
+    case "device_not_set_up":
+      return i.readiness === "owned_elsewhere";
+    case "device_unsupported":
+    case "unencrypted_notice":
+    case "none":
+      return false;
+  }
+  const exhaustive: never = kind;
+  return exhaustive;
+};
+const expectedPause = (
+  kind: CallBannerKind,
+  i: CallBannerInputs,
+): PauseClause =>
+  kind === "none"
+    ? "none"
+    : i.pauseDisproved && i.pauseDisproofConfirmed
+      ? "disproved"
+      : heldRule(kind, i)
+        ? "held"
+        : "none";
+
+// One input per raised kind, each producing that kind THROUGH `callBanner` —
+// so the pause table is pinned on derived banners, never on a kind handed in
+// by name.
+const KIND_INPUTS: Record<Exclude<CallBannerKind, "none">, CallBannerInputs> = {
+  securing: baseBanner({ chip: "none", mode: undefined, readiness: "ready" }),
+  mixed: baseBanner({ mode: MIXED, readiness: "ready" }),
+  interlude: baseBanner({ mode: INTERLUDE_UNCONF, readiness: "ready" }),
+  terminal_loud: baseBanner({
+    mode: NEGOTIATING,
+    latchedError: true,
+    readiness: "ready",
+  }),
+  cannot_verify: baseBanner({
+    chip: "cannot_verify",
+    mode: NEGOTIATING,
+    latchedError: true,
+    readiness: "ready",
+  }),
+  // The refused device: `owned_elsewhere`, capable, held loud, no session.
+  device_not_set_up: baseBanner({
+    hasSession: false,
+    latchedError: true,
+    readiness: "owned_elsewhere",
+  }),
+  device_unsupported: baseBanner({
+    hasSession: false,
+    readiness: "unsupported",
+  }),
+  unencrypted_notice: baseBanner({
+    mode: { kind: "off" },
+    latchedError: false,
+    readiness: "ready",
+  }),
+};
+const HELD_KINDS = [
+  "securing",
+  "mixed",
+  "interlude",
+  "terminal_loud",
+  "cannot_verify",
+  "device_not_set_up",
+] as const;
+
+test("🔴 securing: reachable EXACTLY for hasSession ∧ mode ∈ {undefined, negotiating} ∧ chip not red (kills banner-securing-unreachable)", () => {
+  // Enumerated over every chip × every mode × both sessions × both latches ×
+  // every readiness, asserting the rule in BOTH directions — then the two
+  // shapes the product actually produces, by name.
+  let hits = 0;
+  for (const chip of ALL_CHIPS)
+    for (const mode of ALL_MODES)
+      for (const hasSession of [false, true])
+        for (const latchedError of [false, true])
+          for (const readiness of ALL_READINESS) {
+            const inputs = baseBanner({
+              chip,
+              mode,
+              hasSession,
+              latchedError,
+              readiness,
+            });
+            const { kind } = callBanner(inputs);
+            assert.equal(
+              kind === "securing",
+              securingRule(inputs),
+              JSON.stringify({ kind, ...inputs }),
+            );
+            if (kind === "securing") hits++;
+          }
+  // 4 non-red chips × 2 undecided modes × WITH a session × 2 latches × 4
+  // readiness — the rule reads neither the latch nor the readiness.
+  assert.equal(hits, 4 * 2 * 1 * 2 * 4);
+  // First join, pre-verdict: the session's initial `negotiating` is a field
+  // initialiser, never pushed through `#setMode`, so `mode` is undefined and
+  // the chip is `none` (state `starting`).
+  assert.deepEqual(
+    callBanner(
+      baseBanner({ chip: "none", mode: undefined, readiness: "ready" }),
+    ),
+    { kind: "securing", pause: "held" },
+  );
+  // Rejoin: `negotiating` was emitted and the chip is amber.
+  assert.deepEqual(
+    callBanner(
+      baseBanner({ chip: "resecuring", mode: NEGOTIATING, readiness: "ready" }),
+    ),
+    { kind: "securing", pause: "held" },
+  );
+});
+
+test("securing: never under a decided mode — e2ee, off, mixed, interlude, call_full — whatever the chip", () => {
+  const DECIDED: CallMode[] = [
+    E2EE,
+    { kind: "off" },
+    MIXED,
+    INTERLUDE_UNCONF,
+    INTERLUDE_CONF,
+    INTERLUDE_NATIVE,
+    INTERLUDE_APP,
+    { kind: "call_full" },
+  ];
+  for (const chip of ALL_CHIPS)
+    for (const mode of DECIDED)
+      for (const latchedError of [false, true])
+        assert.notEqual(
+          callBanner(
+            baseBanner({ chip, mode, latchedError, readiness: "ready" }),
+          ).kind,
+          "securing",
+          JSON.stringify({ chip, mode, latchedError }),
+        );
+  // The green and plain rows stay bannerless: nothing is being secured.
+  assert.deepEqual(
+    callBanner(baseBanner({ chip: "e2ee", mode: E2EE, readiness: "ready" })),
+    { kind: "none", pause: "none" },
+  );
+  assert.deepEqual(
+    callBanner(
+      baseBanner({ chip: "none", mode: { kind: "off" }, readiness: "ready" }),
+    ),
+    { kind: "none", pause: "none" },
+  );
+});
+
+test("🔴 securing: never without a session — a session-less seat reads its device arm (hasSession is the discriminator)", () => {
+  // The session-less setup arms (`hold_loud`, `owned_elsewhere`) hold the
+  // `negotiating` gate without ever building a session, and `mode` is
+  // undefined there exactly as it is on a first join. Only a session is
+  // securing anything; without one the readiness arms own the banner.
+  const seat = (over: Partial<CallBannerInputs>) =>
+    callBanner(baseBanner({ mode: undefined, hasSession: false, ...over }));
+  // R2-4: a refused device — capable, held loud, latched.
+  assert.deepEqual(seat({ latchedError: true, readiness: "owned_elsewhere" }), {
+    kind: "device_not_set_up",
+    pause: "held",
+  });
+  // Never enrolled: nothing attempted, nothing held.
+  assert.deepEqual(seat({ latchedError: false, readiness: "needs_setup" }), {
+    kind: "device_not_set_up",
+    pause: "none",
+  });
+  // The capable-but-sessionless hold on a ready device: loud, not securing.
+  assert.deepEqual(seat({ latchedError: true, readiness: "ready" }), {
+    kind: "terminal_loud",
+    pause: "held",
+  });
+  // A browser: nothing to secure, nothing to set up.
+  assert.deepEqual(seat({ latchedError: false, readiness: "unsupported" }), {
+    kind: "device_unsupported",
+    pause: "none",
+  });
+  // And a non-red chip with no session, under either undecided mode, on any
+  // device: no banner at all — `securing` needs the session.
+  for (const chip of ["none", "resecuring"] as const)
+    for (const mode of [undefined, NEGOTIATING])
+      for (const readiness of ALL_READINESS)
+        assert.deepEqual(
+          seat({ chip, mode, readiness }),
+          { kind: "none", pause: "none" },
+          JSON.stringify({ chip, mode, readiness }),
+        );
+});
+
+test("🔴 securing: never over a red chip — cannot_verify and not_encrypted keep their red kind under an undecided mode", () => {
+  for (const mode of [undefined, NEGOTIATING])
+    for (const latchedError of [false, true]) {
+      const red = (over: Partial<CallBannerInputs>) =>
+        callBanner(baseBanner({ mode, latchedError, ...over })).kind;
+      assert.equal(
+        red({ chip: "cannot_verify", readiness: "ready" }),
+        "cannot_verify",
+      );
+      assert.equal(
+        red({ chip: "not_encrypted", readiness: "ready" }),
+        latchedError ? "terminal_loud" : "unencrypted_notice",
+      );
+      for (const readiness of ["needs_setup", "owned_elsewhere"] as const)
+        assert.equal(
+          red({ chip: "not_encrypted", readiness }),
+          "device_not_set_up",
+        );
+      assert.equal(
+        red({ chip: "not_encrypted", readiness: "unsupported" }),
+        "device_unsupported",
+      );
+    }
+});
+
+test("🔴 pause: disproved iff BOTH halves of the verdict (kills banner-disproof-raises-unconfirmed and banner-disproof-ignored)", () => {
+  // `{ value: true, confirmed: false }` is a budget-exhausted single
+  // observation: it stays on the kind's own row, whose `held` copy already
+  // hedges. A CONFIRMED disproof overrides every raised kind — including the
+  // `none`-pause ones, whose copy otherwise says nothing about a pause.
+  for (const [kind, base] of Object.entries(KIND_INPUTS) as [
+    CallBannerKind,
+    CallBannerInputs,
+  ][]) {
+    const own = callBanner(base).pause;
+    for (const [pauseDisproved, pauseDisproofConfirmed] of FLAGS) {
+      const banner = callBanner({
+        ...base,
+        pauseDisproved,
+        pauseDisproofConfirmed,
+      });
+      // The flags never move the KIND.
+      assert.equal(
+        banner.kind,
+        kind,
+        JSON.stringify({ expected: kind, ...banner }),
+      );
+      assert.equal(
+        banner.pause,
+        pauseDisproved && pauseDisproofConfirmed ? "disproved" : own,
+        JSON.stringify({ kind, pauseDisproved, pauseDisproofConfirmed }),
+      );
+    }
+  }
+  const pauseOf = (
+    kind: (typeof HELD_KINDS)[number],
+    flags: [boolean, boolean],
+  ) =>
+    callBanner({
+      ...KIND_INPUTS[kind],
+      pauseDisproved: flags[0],
+      pauseDisproofConfirmed: flags[1],
+    }).pause;
+  for (const kind of HELD_KINDS) {
+    // {true, false}: the mutation that drops the `confirmed` conjunct reads
+    // this as disproved.
+    assert.equal(pauseOf(kind, [true, false]), "held", `${kind} {true,false}`);
+    // {false, true}: a confirmation of NOTHING — no alarm to confirm.
+    assert.equal(pauseOf(kind, [false, true]), "held", `${kind} {false,true}`);
+    // {false, false}: the kind's own row.
+    assert.equal(
+      pauseOf(kind, [false, false]),
+      "held",
+      `${kind} {false,false}`,
+    );
+    // {true, true}: the mutation that ignores `pauseDisproved` reads this as
+    // held.
+    assert.equal(
+      pauseOf(kind, [true, true]),
+      "disproved",
+      `${kind} {true,true}`,
+    );
+  }
+});
+
+test("🔴 a hidden banner carries no pause clause, flags or not (kills banner-hidden-carries-pause)", () => {
+  // A transient `{ none, disproved }` would park the float for a beat through
+  // `bannerParksFloat`, with nothing rendered to say why. The guard is the
+  // FIRST line of `pauseClauseFor`: a hidden banner has no Line B.
+  const HIDDEN: CallBannerInputs[] = [
+    baseBanner({ chip: "e2ee", mode: E2EE, readiness: "ready" }),
+    baseBanner({ chip: "e2ee_unverified", mode: E2EE, readiness: "ready" }),
+    baseBanner({ chip: "resecuring", mode: E2EE, readiness: "ready" }),
+    baseBanner({ chip: "none", mode: { kind: "off" }, readiness: "ready" }),
+    baseBanner({
+      chip: "none",
+      mode: undefined,
+      hasSession: false,
+      readiness: "ready",
+    }),
+  ];
+  for (const base of HIDDEN)
+    for (const [pauseDisproved, pauseDisproofConfirmed] of FLAGS) {
+      const inputs = { ...base, pauseDisproved, pauseDisproofConfirmed };
+      assert.deepEqual(
+        callBanner(inputs),
+        { kind: "none", pause: "none" },
+        JSON.stringify(inputs),
+      );
+      assert.equal(pauseClauseFor("none", inputs), "none");
+      assert.equal(bannerParksFloat(callBanner(inputs)), false);
+    }
+});
+
+test("pause: the held / none table, row by row (derived banners and the exported table agree)", () => {
+  const rows: [CallBannerInputs, CallBanner][] = [
+    [KIND_INPUTS.securing, { kind: "securing", pause: "held" }],
+    [KIND_INPUTS.mixed, { kind: "mixed", pause: "held" }],
+    [KIND_INPUTS.interlude, { kind: "interlude", pause: "held" }],
+    [
+      baseBanner({ mode: INTERLUDE_CONF, readiness: "ready" }),
+      { kind: "interlude", pause: "none" },
+    ],
+    [
+      baseBanner({ mode: INTERLUDE_NATIVE, readiness: "ready" }),
+      { kind: "interlude", pause: "none" },
+    ],
+    [
+      baseBanner({ mode: INTERLUDE_APP, readiness: "ready" }),
+      { kind: "interlude", pause: "none" },
+    ],
+    [KIND_INPUTS.terminal_loud, { kind: "terminal_loud", pause: "held" }],
+    [KIND_INPUTS.cannot_verify, { kind: "cannot_verify", pause: "held" }],
+    // refused (`owned_elsewhere`) vs never enrolled (`needs_setup`)
+    [
+      KIND_INPUTS.device_not_set_up,
+      { kind: "device_not_set_up", pause: "held" },
+    ],
+    [
+      baseBanner({
+        hasSession: false,
+        latchedError: false,
+        readiness: "needs_setup",
+      }),
+      { kind: "device_not_set_up", pause: "none" },
+    ],
+    [
+      KIND_INPUTS.device_unsupported,
+      { kind: "device_unsupported", pause: "none" },
+    ],
+    [
+      KIND_INPUTS.unencrypted_notice,
+      { kind: "unencrypted_notice", pause: "none" },
+    ],
+    [
+      baseBanner({ chip: "e2ee", mode: E2EE, readiness: "ready" }),
+      { kind: "none", pause: "none" },
+    ],
+  ];
+  for (const [inputs, expected] of rows) {
+    const banner = callBanner(inputs);
+    assert.deepEqual(banner, expected, JSON.stringify(inputs));
+    assert.equal(pauseClauseFor(banner.kind, inputs), expected.pause);
+  }
+  // The refused device is the one `device_not_set_up` that holds: it is
+  // `owned_elsewhere`, still capable, so the setup decision answers
+  // `hold_loud` — gate asserted, error latched in one step. `needs_setup`
+  // attempts nothing and holds nothing, latched or not.
+  assert.equal(
+    callBanner(
+      baseBanner({
+        hasSession: false,
+        latchedError: true,
+        readiness: "needs_setup",
+      }),
+    ).pause,
+    "none",
+  );
+});
+
+test("🔴 the banner over its WHOLE input space: raise, securing, pause and park follow the rules of record (exhaustive)", () => {
+  // 6 chips × 10 modes × 2 latches × 4 readiness × 2 sessions × 4 verdicts
+  // = 3840 shapes — the banner's entire domain, so nothing here is sampled.
+  // Every one of the nine kinds must be produced, or a rule is being
+  // asserted over a row nobody reached.
+  const seen = new Set<CallBannerKind>();
+  let shapes = 0;
+  for (const chip of ALL_CHIPS)
+    for (const mode of ALL_MODES)
+      for (const latchedError of [false, true])
+        for (const readiness of ALL_READINESS)
+          for (const hasSession of [false, true])
+            for (const [pauseDisproved, pauseDisproofConfirmed] of FLAGS) {
+              const inputs: CallBannerInputs = {
+                chip,
+                mode,
+                latchedError,
+                readiness,
+                hasSession,
+                pauseDisproved,
+                pauseDisproofConfirmed,
+              };
+              const banner = callBanner(inputs);
+              const at = () => JSON.stringify({ banner, ...inputs });
+              shapes++;
+              seen.add(banner.kind);
+              assert.equal(
+                banner.kind !== "none",
+                oldRedRaise(inputs) || securingRule(inputs),
+                `raise: ${at()}`,
+              );
+              assert.equal(
+                banner.kind === "securing",
+                securingRule(inputs),
+                `securing: ${at()}`,
+              );
+              assert.equal(
+                banner.pause,
+                expectedPause(banner.kind, inputs),
+                `pause: ${at()}`,
+              );
+              assert.equal(
+                pauseClauseFor(banner.kind, inputs),
+                banner.pause,
+                `table: ${at()}`,
+              );
+              assert.equal(
+                bannerParksFloat(banner),
+                banner.kind === "mixed" ||
+                  banner.kind === "interlude" ||
+                  banner.kind === "terminal_loud" ||
+                  banner.kind === "cannot_verify" ||
+                  banner.pause === "disproved",
+                `park: ${at()}`,
+              );
+            }
+  assert.equal(shapes, 6 * 10 * 2 * 4 * 2 * 4);
+  assert.equal(
+    seen.size,
+    ALL_KINDS.length,
+    `kinds never produced: ${ALL_KINDS.filter((k) => !seen.has(k)).join(", ")}`,
   );
 });
 
@@ -1282,7 +1836,7 @@ test("🔴 INVARIANT: every LOUD chip (not_encrypted or cannot_verify) carries a
   // through five reviews — and it is still no proof about a chip that is
   // NEVER red, which is the hole that got through twice.
   //
-  // 🔴 The COMPUTED chip goes into `callBannerState`. The first cut of this
+  // 🔴 The COMPUTED chip goes into `callBanner`. The first cut of this
   // sweep hard-coded `chip: "not_encrypted"` here, which sampled the banner
   // for a chip the sweep never produced and would have kept a bannerless
   // `cannot_verify` green (round-1 audit, B3) — the filter and the argument
@@ -1330,11 +1884,27 @@ test("🔴 INVARIANT: every LOUD chip (not_encrypted or cannot_verify) carries a
     { p: ["u:d"], o: new Map() },
   ];
 
+  // Wave 3: every (chip, mode, latch, session) tuple the sweep REACHES is
+  // recorded for the second pass below, which walks the banner's OWN axes —
+  // readiness and the two pause flags — over those tuples. Deduplicated, so
+  // the new axes multiply a few dozen distinct tuples, not the 1.3M shapes
+  // here; the runtime of this spec is the chip sweep, as it was.
+  const reachedKey = (
+    chip: ChipState,
+    modeIdx: number,
+    latched: boolean,
+    hasSession: boolean,
+  ) =>
+    ((ALL_CHIPS.indexOf(chip) * MODES.length + modeIdx) * 2 +
+      (latched ? 1 : 0)) *
+      2 +
+    (hasSession ? 1 : 0);
+  const reached = new Uint8Array(ALL_CHIPS.length * MODES.length * 4);
   let red = 0;
   let cannotVerify = 0;
   for (const hasSession of BOOLS)
     for (const sessionState of STATES)
-      for (const mode of MODES)
+      for (const [modeIdx, mode] of MODES.entries())
         for (const e2eeEnabled of BOOLS)
           for (const hasLocalKey of BOOLS)
             for (const resecuring of BOOLS)
@@ -1364,6 +1934,14 @@ test("🔴 INVARIANT: every LOUD chip (not_encrypted or cannot_verify) carries a
                                 decodeWitness,
                               };
                               const chip = chipState(inputs);
+                              reached[
+                                reachedKey(
+                                  chip,
+                                  modeIdx,
+                                  latch !== undefined,
+                                  hasSession,
+                                )
+                              ] = 1;
                               if (
                                 chip !== "not_encrypted" &&
                                 chip !== "cannot_verify"
@@ -1404,16 +1982,21 @@ test("🔴 INVARIANT: every LOUD chip (not_encrypted or cannot_verify) carries a
                                   );
                               }
                               // The banner takes the boolean the product
-                              // passes it: "a gate is held".
+                              // passes it: "a gate is held" — and the SAME
+                              // `hasSession` the chip just read (both are
+                              // `#mlsSession !== undefined` in state.tsx).
                               const latchedError = latch !== undefined;
                               for (const readiness of READINESS)
                                 if (
-                                  callBannerState({
+                                  callBanner({
                                     chip,
                                     mode,
                                     latchedError,
                                     readiness,
-                                  }) === "none"
+                                    hasSession,
+                                    pauseDisproved: false,
+                                    pauseDisproofConfirmed: false,
+                                  }).kind === "none"
                                 )
                                   assert.fail(
                                     `loud chip with no banner: ${shape()} readiness=${readiness}`,
@@ -1425,6 +2008,70 @@ test("🔴 INVARIANT: every LOUD chip (not_encrypted or cannot_verify) carries a
   assert.ok(
     cannotVerify > 0,
     `the sweep never reached cannot_verify (${cannotVerify})`,
+  );
+
+  // 🔴 Second pass — the banner's own axes over every tuple the chip REACHED
+  // (kills banner-securing-unreachable through `securing > 0`, and the two
+  // disproof mutations through the pause rule). For each reached (chip, mode,
+  // latch, session) × every readiness × all four pause-flag combinations:
+  //   kind !== "none"       ⇔  the pre-wave-3 red condition ∨ the securing rule
+  //   kind === "securing"   ⇔  the securing rule
+  //   pause === "disproved" ⇔  both flags ∧ kind !== "none"
+  // and the pass must actually SEE `securing` — the one kind the chip sweep
+  // can produce only through a non-red chip under an undecided mode.
+  let securing = 0;
+  let disproved = 0;
+  let tuples = 0;
+  for (const chip of ALL_CHIPS)
+    for (const [modeIdx, mode] of MODES.entries())
+      for (const latchedError of BOOLS)
+        for (const hasSession of BOOLS) {
+          if (!reached[reachedKey(chip, modeIdx, latchedError, hasSession)])
+            continue;
+          tuples++;
+          for (const readiness of READINESS)
+            for (const pauseDisproved of BOOLS)
+              for (const pauseDisproofConfirmed of BOOLS) {
+                const inputs: CallBannerInputs = {
+                  chip,
+                  mode,
+                  latchedError,
+                  readiness,
+                  hasSession,
+                  pauseDisproved,
+                  pauseDisproofConfirmed,
+                };
+                const banner = callBanner(inputs);
+                const at = () => JSON.stringify({ banner, ...inputs });
+                assert.equal(
+                  banner.kind !== "none",
+                  oldRedRaise(inputs) || securingRule(inputs),
+                  `raise: ${at()}`,
+                );
+                assert.equal(
+                  banner.kind === "securing",
+                  securingRule(inputs),
+                  `securing: ${at()}`,
+                );
+                assert.equal(
+                  banner.pause === "disproved",
+                  pauseDisproved &&
+                    pauseDisproofConfirmed &&
+                    banner.kind !== "none",
+                  `disproved: ${at()}`,
+                );
+                if (banner.kind === "securing") securing++;
+                if (banner.pause === "disproved") disproved++;
+              }
+        }
+  assert.ok(tuples > 20, `expected a spread of reached tuples, got ${tuples}`);
+  assert.ok(
+    securing > 0,
+    `the chip sweep never reached securing (${securing})`,
+  );
+  assert.ok(
+    disproved > 0,
+    `the pass never saw a disproved pause (${disproved})`,
   );
 });
 
@@ -1504,28 +2151,76 @@ test("🔴 an UNAVAILABLE decode witness never changes a loud reading (no `avail
   );
 });
 
-test("🔴 only a banner the user can clear parks the Watch Together player", () => {
+test("🔴 only a banner the user can clear parks the Watch Together player (kills banner-securing-parks)", () => {
   // The player host floats above the card, so a banner the user must act on
   // has to displace it — and each §3.4 state, and `cannot_verify` (Rejoin /
   // Leave / Stay unencrypted), has an in-call control that clears it, so the
-  // park is transient by construction.
+  // park is transient by construction. The KIND decides, whatever a quiet
+  // pause clause says.
+  const QUIET: PauseClause[] = ["none", "held"];
   for (const kind of [
     "mixed",
     "interlude",
     "terminal_loud",
     "cannot_verify",
   ] as const)
-    assert.equal(bannerParksFloat(kind), true, kind);
+    for (const pause of QUIET)
+      assert.equal(bannerParksFloat({ kind, pause }), true, `${kind}/${pause}`);
   // The DEVICE banners describe the device; NOTHING in the call clears them,
   // so parking on one un-anchors the video for the whole call with no control
-  // that brings it back and no copy that says why.
+  // that brings it back and no copy that says why. Nor does `securing`, HELD
+  // or not: it is a notice over a join that is expected to succeed, with no
+  // control that clears it — parking the player on every join would teach the
+  // user the notice is an interruption.
   for (const kind of [
+    "securing",
     "device_not_set_up",
     "device_unsupported",
     "unencrypted_notice",
     "none",
   ] as const)
-    assert.equal(bannerParksFloat(kind), false, kind);
+    for (const pause of QUIET)
+      assert.equal(
+        bannerParksFloat({ kind, pause }),
+        false,
+        `${kind}/${pause}`,
+      );
+  // The derived shape, not just the literal: a securing first join, held.
+  const securing = callBanner(
+    baseBanner({ chip: "none", mode: undefined, readiness: "ready" }),
+  );
+  assert.deepEqual(securing, { kind: "securing", pause: "held" });
+  assert.equal(bannerParksFloat(securing), false);
+});
+
+test("🔴 ANY disproved pause parks the player, securing included (kills banner-disproved-does-not-park)", () => {
+  // "Your microphone, camera or screen share may still be sending; leave the
+  // call to stop it" is the one line the user must not be able to miss, and
+  // Leave clears it — so it parks through the PAUSE axis on every kind,
+  // including the two that never park on their own (`securing`, the device
+  // banners) and even a `none` the policy no longer produces (pure over the
+  // shape, so the rule stays total).
+  for (const kind of ALL_KINDS)
+    assert.equal(bannerParksFloat({ kind, pause: "disproved" }), true, kind);
+  // Pinned by name: the securing notice parks ONLY when disproved.
+  assert.equal(bannerParksFloat({ kind: "securing", pause: "held" }), false);
+  assert.equal(
+    bannerParksFloat({ kind: "securing", pause: "disproved" }),
+    true,
+  );
+  // ...and the derived shape agrees: a securing rejoin whose gate was
+  // disproved.
+  const banner = callBanner(
+    baseBanner({
+      chip: "resecuring",
+      mode: NEGOTIATING,
+      readiness: "ready",
+      pauseDisproved: true,
+      pauseDisproofConfirmed: true,
+    }),
+  );
+  assert.deepEqual(banner, { kind: "securing", pause: "disproved" });
+  assert.equal(bannerParksFloat(banner), true);
 });
 
 // ---- ctl parser (default-closed) -------------------------------------------

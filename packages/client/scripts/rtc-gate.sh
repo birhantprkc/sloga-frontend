@@ -96,7 +96,7 @@ EXPECTED=(
   "components/rtc/mlsAdmitGracePolicy.test.ts 18 0"
   "components/rtc/mlsAdmitPolicy.test.ts 15 0"
   "components/rtc/mlsCallKeys.test.ts 23 0"
-  "components/rtc/mlsCallModePolicy.test.ts 114 0"
+  "components/rtc/mlsCallModePolicy.test.ts 123 0"
   "components/rtc/mlsCallSession.escape.test.ts 17 0"
   "components/rtc/mlsCallSession.falsered.test.ts 10 0"
   "components/rtc/mlsCallSession.heal.test.ts 7 0"
@@ -119,6 +119,7 @@ EXPECTED=(
   "components/rtc/chipInputs.test.ts 31 0"
   "components/rtc/screenAudioWire.test.ts 17 0"
   "components/rtc/screenAudioNativeWin.test.ts 51 0"
+  "components/rtc/pauseClauseHold.test.ts 7 0"
 )
 
 counter() { # counter <log> <name> — the runner's own summary counter, or ""
@@ -204,7 +205,11 @@ SPECS=(components/rtc/mls*.test.ts components/rtc/rosterReconcile.test.ts
   components/rtc/decodeWitnessListener.test.ts
   components/rtc/chipInputs.test.ts
   components/rtc/screenAudioWire.test.ts
-  components/rtc/screenAudioNativeWin.test.ts)
+  components/rtc/screenAudioNativeWin.test.ts
+  # 🔴 NOT matched by the mls*.test.ts glob above — a literal, or the
+  # banner's pause-clause hold (wave 3) runs nowhere and its EXPECTED row
+  # trips "never ran" instead of measuring anything.
+  components/rtc/pauseClauseHold.test.ts)
 # 🔴 Arguments ADD to that set; they do not replace it. They used to replace
 # it, so the natural invocation for this branch —
 #   rtc-gate.sh components/rtc/mls*.test.ts
@@ -259,7 +264,15 @@ FILES=(components/rtc/mlsCallSession.ts components/rtc/mlsCallModePolicy.ts
   components/rtc/screenAudioNativeWin.ts
   components/rtc/screenAudioNativeWin.test.ts
   components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
-  components/ui/components/features/voice/callCard/VoiceCallCardStatus.tsx)
+  components/ui/components/features/voice/callCard/VoiceCallCardStatus.tsx
+  components/rtc/pauseClauseHold.ts components/rtc/pauseClauseHold.test.ts)
+# 🔴 NOT in FILES: components/ui/components/features/voice/watch/WatchOverlay.tsx.
+# Wave 3 changes ONE line of it (`bannerParksFloat(voice.callBanner())`), but
+# the file carries 101 pre-existing prettier/prettier warnings and fails
+# `prettier --check` at base a59257eb, so enrolling it would either turn this
+# gate permanently red or force a whole-file reformat of code this branch
+# never touched (the sweep the comment above forbids). Its one edit is
+# prettier-stable in its own window; tsc still type-checks it.
 ran=0
 RAN_SPECS=()
 for f in "${SPECS[@]}"; do

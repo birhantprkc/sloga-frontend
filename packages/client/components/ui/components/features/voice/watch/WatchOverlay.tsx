@@ -73,12 +73,12 @@ export function WatchOverlay() {
   // A BLOCKING card banner (the E2EE downgrade / terminal-loud banner, z5
   // inside the card) must stay on top; the player host sits at Float level
   // ABOVE the card, so park it (audio continues) while one is showing.
-  // `bannerParksFloat(callBannerState())`, not a third copy of the rule: the
+  // `bannerParksFloat(callBanner())`, not a third copy of the rule: the
   // old three-term test missed `call_full` (which latches, so the banner shows
   // and the player should move), and testing `!== "none"` instead would park
   // on the DEVICE banners — which nothing in the call clears, so the player
   // would never come back (media-e2ee-reviewer round 5, MEDIUM).
-  const blockingBanner = () => bannerParksFloat(voice.callBannerState());
+  const blockingBanner = () => bannerParksFloat(voice.callBanner());
 
   // Anchor the player host to the slot whenever the slot exists.
   const [slot, setSlot] = createSignal<HTMLDivElement>();

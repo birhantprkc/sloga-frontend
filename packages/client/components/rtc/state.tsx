@@ -237,14 +237,13 @@ import { faceSettingsActive } from "./faceFilterCatalog";
 import { micPipelineAction } from "./micPipelinePolicy";
 import { MlsKeyProvider } from "./mlsCallKeys";
 import {
-  type CallBannerKind,
+  type CallBanner,
   type CallMode,
   type ChipLatch,
   type ChipState,
   type DecodeWitness,
   type LoudLatchOrigin,
-  callBannerState,
-  isTerminalLoud,
+  callBanner,
   plaintextReleaseAvailable,
 } from "./mlsCallModePolicy";
 import {
@@ -1043,8 +1042,9 @@ class Voice {
   #setPauseVerdict: Setter<PauseDisproofVerdict>;
   /**
    * The publish gate is held and a sweep found local media still on the wire.
-   * Read by the downgrade banner, which otherwise asserts "your audio and video
-   * stay paused" — the sentence the 2026-09-08 legs disproved.
+   * Read by `callBanner()`, which turns a CONFIRMED disproof into the banner's
+   * "disproved" pause clause; no arm asserts a pause as fact any more (the
+   * sentence the 2026-09-08 legs disproved is gone, `held` copy hedges).
    *
    * 🔴 A ONE-DIRECTIONAL ALARM. TRUE is "a held gate could not prove the wire
    * quiet". FALSE is "no live disproof" and NOTHING MORE: it is also what
@@ -1494,47 +1494,48 @@ class Voice {
       // The gate is held and the wire is still live. Publishing is escaping a
       // gate every layer above believes is closed.
       //
-      // 🔴 Deliberately LOG-ONLY — this does not touch the chip or the
-      // banner, and that is a scoping decision, not an oversight. Every
-      // user-facing arm reachable from here today is either wrong or inert:
+      // This callback is LOG-ONLY for the DETAIL, and only for the detail.
+      // The user-facing side of a disproof no longer needs anything from
+      // here — it is not latched through the session, not written to the
+      // chip (a disproof is a withdrawal-only signal and never a chip input,
+      // by pinned design), and not raised from this callback:
       //
-      //  - ME-10's sentence is "Your audio and video stay paused", which is the
-      //    exact OPPOSITE of what this sweep just proved. Showing it here tells
-      //    a user their mic is off at the moment we established it is on.
-      //  - Latching through the session (`#latchLoud`) makes that banner
-      //    render, and its escape is LIVE even while `#groupId` is null — the
-      //    whole 409-join stretch, which is when the first mic publishes:
-      //    without a usable group `confirmPlaintext` routes to the in-app
-      //    `confirmLocalPlaintext()`. What rules it out here is the copy, not
-      //    an inert button: "stay paused", offered over a wire this sweep just
-      //    proved live.
-      //  - Writing the latch directly (`#setCallEncryptionLatch`) reddens the
-      //    chip without `#loudLatched`, so the banner never renders at all
-      //    when the mode is `e2ee`, and it MASKS a later store-owner error
-      //    (`prev ?? { error }`), removing the only in-call "Reset encryption"
-      //    control.
-      //  - It can fire BEFORE `#mlsSession` exists (the connect sweep, with an
-      //    `await room.switchActiveDevice` before the session is assigned), so
-      //    there is no session to latch through. NOTE this one is NOT a dead
-      //    end on the UI side, contrary to an earlier version of this comment:
-      //    an origin-less latch is row 2 of `chipState`'s loud order, so a
-      //    direct write does redden the chip; pre-session `callMode()` is
-      //    `undefined`, which is `isTerminalLoud`'s second arm, so the banner
-      //    renders; and `canConfirmNoSessionPlaintext` is satisfied, so the
-      //    escape works. What rules it out is the copy, not the machinery.
+      //  - The verdict itself reached `callPauseDisproved` /
+      //    `callPauseDisproofConfirmed` through `setPauseDisproved` above,
+      //    BEFORE this runs.
+      //  - The banner is derived from that verdict by the pure policy
+      //    (`callBanner`, `mlsCallModePolicy.ts`, read via this class's
+      //    `callBanner()`), on two axes: `kind` — which surface — and `pause`
+      //    — what the second line may say about the gate. `kind` now includes
+      //    `securing` for the held-gate stretch of a join (session present,
+      //    mode still `undefined` or `negotiating`, chip not red), so plain
+      //    `negotiating` — the enable window, a stuck
+      //    `#assertLocalDeclarations`, the 409-join stretch — is no longer
+      //    bannerless: there is a surface to correct through the held-gate
+      //    stretch, not only under `mixed` / `interlude` / terminal-loud.
+      //    The one residual is BEFORE `#mlsSession` is assigned (the connect
+      //    sweep's `await room.switchActiveDevice` under the R2-5 pre-connect
+      //    gate): `hasSession` is `securing`'s discriminator, so a disproof
+      //    observed there is still log-only unless a device arm or a latch
+      //    has already raised a banner.
+      //  - A CONFIRMED disproof (`{ value: true, confirmed: true }`) flips the
+      //    `pause` axis to `"disproved"`, and the banner's second line says
+      //    the microphone, camera or screen share may still be sending. A
+      //    budget-exhausted single observation
+      //    (`{ value: true, confirmed: false }`) stays `"held"`, whose copy is
+      //    hedged ("should stay paused") rather than a claim of fact, so a
+      //    lone live-wire read is never presented as a confirmed leak.
+      //  - The way DOWN from `"disproved"` is held for 15 s by the pure
+      //    `holdPauseClause` (`pauseClauseHold.ts`, same figure and rationale
+      //    as `REUPGRADE_HYSTERESIS_MS`) so a bounce inside a confirm cycle
+      //    reads as one warning; the hold drops immediately when the kind or
+      //    the pause goes `none`, because that 1→0 resume is real. The banner
+      //    component owns that one timer.
       //
-      // `callPauseDisproved` — which the episode has already set by the time
-      // this runs — withdraws the false claim wherever the banner is ALREADY
-      // up, which needs none of that. But note the scope honestly: the banner
-      // renders only for `mixed` / `interlude` / terminal-loud, so through
-      // plain `negotiating` — the R2-5 pre-connect gate, the enable window, a
-      // stuck `#assertLocalDeclarations` — there is no banner to correct and
-      // this is log-only for the MAJORITY of held-gate time, not just the
-      // ME-10 corner. RAISING a surface there needs its own slice: a chip
-      // precedence, an affordance that works with no session and no group, and
-      // a path around the banner's 3 s debounce. Until then a wrong or inert
-      // signal would be worse than the log (media-E2EE reviews,
-      // 2026-09-08/09).
+      // What stays here is the detail no surface carries: the publication
+      // names (`${source}/${trackSid}`) never leave the episode's `consume`,
+      // and the reason set on the gate at the moment of the observation is
+      // only visible from this file.
       console.error("[mls] publish gate could not prove the wire quiet", {
         ...detail,
         reasons: [...this.#publishGate],
@@ -3868,7 +3869,8 @@ class Voice {
         // with no session no verdict can ever come. `negotiating` stays where
         // the R2-5 assertion put it; the structured error latches so the
         // existing loud state renders — the NOT-ENCRYPTED chip, and the
-        // Leave / Stay banner through `isTerminalLoud` (no mode + latched) —
+        // Leave / Stay banner through `callBanner`'s `terminal_loud` arm
+        // (red chip + `ready` device + latched) —
         // and the banner's "Stay unencrypted" is the only release
         // (`#confirmNoSessionPlaintext`). `prev ??` keeps the identity-
         // mismatch error latched above; the decision's reason names every
@@ -8822,23 +8824,6 @@ class Voice {
   }
 
   /**
-   * ME-10 terminal-loud state (slice 6.5): the call FAILED to secure while
-   * still negotiating — or before the session ever emitted a mode verdict,
-   * which is where a refusal thrown inside establish() (store-owner mismatch)
-   * lands. Publishing is gated and the banner offers the blocking Leave /
-   * Stay-unencrypted choice (the "stay" leg runs the same native-confirmed
-   * plaintext path as a mixed-call downgrade). Distinct from mixed/interlude,
-   * which have their own banner.
-   */
-  callTerminalLoud(): boolean {
-    return isTerminalLoud(
-      this.callMode(),
-      this.callEncryptionChip(),
-      this.callEncryptionError() !== undefined,
-    );
-  }
-
-  /**
    * Whether the Room for THIS call was actually built with the `e2ee` option —
    * i.e. both pieces it needs are present. Capability is not re-tested here
    * because neither field is ever constructed outside the `if (e2eeCapable)`
@@ -8862,16 +8847,32 @@ class Voice {
   }
 
   /**
-   * Which banner the call card owes this call — the single derivation the
-   * banner component switches on, so the invariant it enforces (a red chip
-   * is never a dead end) is decided in one unit-tested place.
+   * Which banner the call card owes this call, on two axes — `kind` (which
+   * surface, incl. `securing` through the held-gate stretch of a join) and
+   * `pause` (what the second line may say about the gate). The single
+   * derivation the banner component and `WatchOverlay` switch on, so the
+   * invariant it enforces (a red chip is never a dead end) and the one it
+   * withdraws (a "stay paused" line over a wire the sweep proved live) are
+   * both decided in one unit-tested place (`callBanner` in
+   * `mlsCallModePolicy.ts`).
+   *
+   * `hasSession` is the same non-reactive `#mlsSession` read the plaintext
+   * escape uses; re-evaluation rides the `callSessionState` signal, which is
+   * written immediately after the session is assigned (and cleared with it),
+   * and which `callEncryptionChip()` already reads inside this derivation.
+   * `pauseDisproofConfirmed` gates `pause === "disproved"`: a budget-exhausted
+   * single observation (`{ value: true, confirmed: false }`) stays `"held"`
+   * with hedged copy, so this is the confidence sibling's first runtime read.
    */
-  callBannerState(): CallBannerKind {
-    return callBannerState({
+  callBanner(): CallBanner {
+    return callBanner({
       chip: this.callEncryptionChip(),
       mode: this.callMode(),
       latchedError: this.callEncryptionError() !== undefined,
       readiness: this.callEncryptionReadiness(),
+      hasSession: this.#mlsSession !== undefined,
+      pauseDisproved: this.callPauseDisproved(),
+      pauseDisproofConfirmed: this.callPauseDisproofConfirmed(),
     });
   }
 

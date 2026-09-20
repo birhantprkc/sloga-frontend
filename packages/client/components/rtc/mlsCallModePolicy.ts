@@ -610,7 +610,7 @@ export function chipState(inputs: ChipInputs): ChipState {
   //      a downgrade the user can't see) and the §0.2 #9 self-attribution for
   //      a shell that can never encrypt. The old `capableAndEnabled` split of
   //      this arm is gone: both halves always returned the same chip, and the
-  //      BANNER is what needs them told apart (`callBannerState` reads the
+  //      BANNER is what needs them told apart (`callBanner` reads the
   //      readiness).
   //  (b) this device could encrypt, is not set up here, and someone else in
   //      the call CAN encrypt. Local and live, so unlike (a) it cannot go
@@ -753,8 +753,18 @@ export function isTerminalLoud(
 // ---- Which banner a chip must carry (the no-dead-end invariant) ------------
 
 /**
- * The banner the call card renders, or `none`.
+ * The KIND axis of the banner the call card renders — Line A: what is wrong
+ * and which escape is offered. The second axis, `PauseClause`, is Line B:
+ * what may be said about the publish gate. `callBanner` derives both; the
+ * raise predicate is `kind !== "none"`.
  *
+ * - `securing` — the held-gate stretch of a join or rejoin: a session exists,
+ *   no verdict has landed yet (`mode` is `undefined` on a first join,
+ *   `negotiating` on a rejoin) and the chip is not red. A NOTICE, not a
+ *   downgrade: it parks nothing and offers no escape. It exists because that
+ *   stretch was chip-less AND banner-less — up to ~43 s on a stuck first join
+ *   before the joiner ladder latched — so a pause disproof inside it had no
+ *   surface at all. Evaluated AFTER every red and device arm, never before.
  * - `mixed` / `interlude` — the §3.4 downgrade states. Publishing is paused
  *   (mixed) or explicitly resumed in plaintext (interlude); the escape is
  *   "Turn off encryption" / "Resume unencrypted".
@@ -769,8 +779,8 @@ export function isTerminalLoud(
  * - `terminal_loud` — ME-10: the DEVICE is fine and the CALL failed to secure.
  *   Publishing is held by the `negotiating` gate; the escape is Leave / Stay
  *   unencrypted (plus Reset encryption on a store-owner mismatch). Requires a
- *   LATCHED error, because that is what makes its copy — "your audio and video
- *   stay paused" — true.
+ *   LATCHED error, because that is what makes its `held` clause — "your audio
+ *   and video should stay paused" — a claim about a gate that is asserted.
  * - `unencrypted_notice` — the honest floor: a red chip nothing above claimed,
  *   with nothing latched, so no pause may be promised and no release offered.
  *   Unreachable today (every red chip on a `ready` device latches); it exists
@@ -784,13 +794,43 @@ export function isTerminalLoud(
  */
 export type CallBannerKind =
   | "none"
+  | "securing"
   | "mixed"
   | "interlude"
   | "terminal_loud"
+  | "cannot_verify"
   | "device_not_set_up"
   | "device_unsupported"
-  | "unencrypted_notice"
-  | "cannot_verify";
+  | "unencrypted_notice";
+
+/**
+ * The PAUSE axis — Line B: what this banner may say about the publish gate.
+ *
+ * - `held` — a gate is asserted for this kind (`negotiating` on a securing /
+ *   loud / can't-verify call, `mixed`, the unconfirmed interlude, the R2-4
+ *   hold on a refused device), so the copy may say publishing SHOULD be
+ *   paused. Hedged on purpose: a held gate is a claim about what was ISSUED,
+ *   never a proof about the wire.
+ * - `disproved` — the publish-gate episode saw a live wire under a held gate
+ *   and a confirming re-sweep agreed (`callPauseDisproofConfirmed`). It
+ *   overrides every kind: the copy withdraws the pause and points at Leave.
+ * - `none` — nothing is held (a confirmed interlude, a device that never
+ *   attempted encryption, no banner), so nothing about a pause may be said.
+ *
+ * "proven" is deliberately UNREPRESENTABLE. The verdict beneath this is
+ * two-valued: proven-quiet and unknown are the SAME `{ value: false,
+ * confirmed: false }` object (`pauseVerdict.ts`, `publishGateEpisode.ts`),
+ * and making "proven" a value is a producer change pinned OUT by mutation
+ * `episode-quiet-arm-withdrawal-claims-confirmed`. So `held` is the strongest
+ * claim this type can carry, and no arm may ever assert a pause as fact.
+ */
+export type PauseClause = "none" | "held" | "disproved";
+
+/** What `callBanner` hands the card: both axes, derived together. */
+export interface CallBanner {
+  readonly kind: CallBannerKind;
+  readonly pause: PauseClause;
+}
 
 export interface CallBannerInputs {
   /** The §4.4 chip, from `chipState`. */
@@ -817,17 +857,46 @@ export interface CallBannerInputs {
    * (media-e2ee-reviewer, F4).
    */
   readiness: CallEncryptionReadiness;
+  /**
+   * An MLS call session exists (`Voice.#mlsSession !== undefined`) — the
+   * discriminator for `securing`, and deliberately not `mode`. `mode` is
+   * `undefined` before the first verdict on a FIRST join (the session's
+   * initial `negotiating` is a field initialiser, never pushed through
+   * `#setMode`), which is the same value it has with no session at all; and
+   * the session-less setup arms (`hold_loud`, `owned_elsewhere`) hold the
+   * `negotiating` gate without ever building one. Only a session is actually
+   * securing anything. Without one the readiness arms own the banner, so a
+   * device-not-set-up seat never reads `securing`.
+   */
+  hasSession: boolean;
+  /** `callPauseDisproved()` — `PauseDisproofVerdict.value`, the alarm. */
+  pauseDisproved: boolean;
+  /**
+   * `callPauseDisproofConfirmed()` — `PauseDisproofVerdict.confirmed`; this
+   * is its first runtime consumer. A `{ value: true, confirmed: false }`
+   * verdict is a SINGLE observation promoted to the alarm because the
+   * episode's confirm budget ran out. It stays `held` here — whose copy
+   * already hedges — rather than withdrawing the pause on evidence the
+   * 2026-09-08 false red taught this slice not to act on alone.
+   */
+  pauseDisproofConfirmed: boolean;
 }
 
 /**
  * THE INVARIANT: `chipState(x) ∈ { "not_encrypted", "cannot_verify" }` implies
- * `callBannerState(...) !== "none"`, for every readiness. A LOUD chip always
+ * `callBanner(...).kind !== "none"`, for every readiness. A LOUD chip always
  * carries a banner and an escape — enforced by an exhaustive spec over the
  * chip's whole input space, not by inspection. `cannot_verify` was added to
  * the chip in wave 2 and would have been BANNERLESS through the
  * `!== "not_encrypted"` guard below while that spec still sampled only
- * `not_encrypted` — which is why the guard is widened here and the spec's
+ * `not_encrypted` — which is why the guard is widened there and the spec's
  * filter alongside it.
+ *
+ * The second axis does not weaken the first. `pause` never decides whether a
+ * banner is raised — `kind` alone does — it decides what Line B may claim
+ * about the gate under that kind, and `disproved` can only WITHDRAW a pause
+ * the kind's copy would otherwise hedge. Nothing on the pause axis can turn a
+ * `none` into a banner or a banner into a `none`.
  *
  * It did not hold before. `isTerminalLoud` requires a latched error, and the
  * chip's two NO-SESSION branches (ME-7 "capable, no session, open group" and
@@ -850,8 +919,43 @@ export interface CallBannerInputs {
  * install (`needs_setup`) in a channel whose group opens after the probe
  * answered — is pre-existing on main and recorded as a follow-up, with a spec
  * below that pins the gap rather than letting it hide.
+ *
+ * ORDER IS PART OF THE RULE. `redBannerKind` — every red and device arm, as
+ * one table — is evaluated first and in full; only a chip it reads as not red
+ * goes on to the `securing` question. So `securing` can never mask
+ * `device_not_set_up` / `device_unsupported` / `cannot_verify` / a latched
+ * loud state: a session implies readiness `ready`, and the session-less setup
+ * arms have no session to be securing with.
  */
-export function callBannerState(inputs: CallBannerInputs): CallBannerKind {
+export function callBanner(inputs: CallBannerInputs): CallBanner {
+  let kind = redBannerKind(inputs);
+  if (kind === "none" && securingReachable(inputs)) kind = "securing";
+  return { kind, pause: pauseClauseFor(kind, inputs) };
+}
+
+/**
+ * The `securing` rule, stated once: a session exists, no verdict has landed
+ * (`mode` undefined on a first join, `negotiating` on a rejoin) and the chip
+ * is not red. The chip conjunct is redundant behind `redBannerKind` — a red
+ * chip never reaches here — and is kept so the rule reads whole on its own,
+ * as the slice-6.5 banner plan states it, and so a future caller that does
+ * not come through the red table still cannot read a red chip as securing.
+ */
+function securingReachable(inputs: CallBannerInputs): boolean {
+  return (
+    inputs.hasSession &&
+    (inputs.mode === undefined || inputs.mode.kind === "negotiating") &&
+    inputs.chip !== "not_encrypted" &&
+    inputs.chip !== "cannot_verify"
+  );
+}
+
+/**
+ * The red and device arms — the whole pre-wave-3 banner table, unchanged.
+ * `none` from here means "the chip is not red", which is the ONE place
+ * `callBanner` goes on to ask about `securing`; it is not the final answer.
+ */
+function redBannerKind(inputs: CallBannerInputs): CallBannerKind {
   const mode = inputs.mode?.kind;
   if (mode === "mixed") return "mixed";
   if (mode === "interlude") return "interlude";
@@ -863,9 +967,9 @@ export function callBannerState(inputs: CallBannerInputs): CallBannerKind {
   if (inputs.chip !== "not_encrypted") return "none";
 
   // The device arms outrank the loud one: when the reason this call is not
-  // encrypted is the device, saying "this call could not be secured" and
-  // offering only a per-call escape sends the user round the loop again on
-  // their next call.
+  // encrypted is the device, showing the loud "could not be confirmed" copy
+  // and offering only a per-call escape sends the user round the loop again
+  // on their next call.
   switch (inputs.readiness) {
     case "unsupported":
       return "device_unsupported";
@@ -879,8 +983,9 @@ export function callBannerState(inputs: CallBannerInputs): CallBannerKind {
   // A `ready` device with a red chip is a CALL failure. Everything left lands
   // here — the two `isTerminalLoud` shapes, the `call_full` auto-leave, and any
   // red state a future change invents — so nothing can return `none` from here
-  // by omission. `isTerminalLoud` is still the name for the two shapes it
-  // always covered (`callTerminalLoud`), not the gate for this.
+  // by omission. `isTerminalLoud` has no production caller any more (the
+  // `callTerminalLoud` accessor is gone); only the harness's `terminalLoud()`
+  // and the specs read it, and it is not the gate for this.
   //
   // The latch is what makes the loud copy true. Every reachable red chip on a
   // `ready` device has one: `sessionSetupDecision` latches on every
@@ -891,13 +996,75 @@ export function callBannerState(inputs: CallBannerInputs): CallBannerKind {
 }
 
 /**
+ * The pause axis for a kind — Line B. `callBanner` is the entry the app
+ * calls; this is exported so the table can be pinned by itself.
+ *
+ * | kind                              | pause      |
+ * |-----------------------------------|------------|
+ * | any, verdict `{true, true}`       | disproved  |
+ * | securing                          | held       |
+ * | mixed                             | held       |
+ * | interlude, !localConfirmed        | held       |
+ * | interlude, localConfirmed         | none       |
+ * | terminal_loud                     | held       |
+ * | cannot_verify                     | held       |
+ * | device_not_set_up, refused device | held       |
+ * | device_not_set_up, never enrolled | none       |
+ * | device_unsupported                | none       |
+ * | unencrypted_notice                | none       |
+ * | none                              | none       |
+ *
+ * `disproved` needs BOTH halves of the verdict: `{ value: true, confirmed:
+ * false }` is a budget-exhausted single observation and stays on the kind's
+ * own row. The refused device is `owned_elsewhere` — the one readiness that
+ * is still capable, so `sessionSetupDecision` answers `hold_loud` for it: the
+ * `negotiating` gate is asserted and the error latched in one step (see
+ * `callEncryptionCapable`). `needs_setup` attempts nothing and holds nothing.
+ */
+export function pauseClauseFor(
+  kind: CallBannerKind,
+  inputs: CallBannerInputs,
+): PauseClause {
+  // A hidden banner carries no pause clause: nothing renders it, and a
+  // transient `{ none, disproved }` would otherwise park the float for a
+  // beat through `bannerParksFloat`. The verdict is reset at the 1→0 edge
+  // anyway (`endEpisode` / `resetForCall` write `{ false, false }`).
+  if (kind === "none") return "none";
+  if (inputs.pauseDisproved && inputs.pauseDisproofConfirmed) {
+    return "disproved";
+  }
+  switch (kind) {
+    case "securing":
+    case "mixed":
+    case "terminal_loud":
+    case "cannot_verify":
+      return "held";
+    case "interlude":
+      return inputs.mode?.kind === "interlude" && inputs.mode.localConfirmed
+        ? "none"
+        : "held";
+    case "device_not_set_up":
+      return inputs.readiness === "owned_elsewhere" ? "held" : "none";
+    case "device_unsupported":
+    case "unencrypted_notice":
+      return "none";
+  }
+  // `none` was returned above; the guard narrowed it away, so it is absent here.
+  const exhaustive: never = kind;
+  return exhaustive;
+}
+
+/**
  * Whether a banner must park the Float-level Watch Together player host.
  *
  * The card banner sits at z5 INSIDE the call card and the player host floats
  * above the card, so a banner the user is meant to read and act on has to
  * displace it. That is true of the three §3.4 states and of `cannot_verify` —
  * each has an in-call control that clears it (Rejoin / Leave / Stay
- * unencrypted for the latter), so the park is transient by construction.
+ * unencrypted for the latter), so the park is transient by construction — and
+ * of ANY kind whose pause is `disproved`: "your microphone, camera or screen
+ * share may still be sending; leave to stop it" is the one line the user must
+ * not be able to miss, and Leave clears it.
  *
  * 🔴 It is NOT true of the device banners. `device_not_set_up`,
  * `device_unsupported` and `unencrypted_notice` describe the DEVICE, and
@@ -906,13 +1073,20 @@ export function callBannerState(inputs: CallBannerInputs): CallBannerKind {
  * why. Testing `!== "none"` did exactly that and is how this rule earned a name
  * (media-e2ee-reviewer round 5, MEDIUM). They still need a z-order that beats
  * the player; that is a layout fix, not a reason to hide the video.
+ *
+ * 🔴 Nor of `securing`, held or not. It is a notice over a join that is
+ * expected to succeed, with no control that clears it; parking the player on
+ * every join would teach the user the notice is an interruption, not
+ * information. Only its `disproved` row parks — through the pause clause,
+ * never the kind.
  */
-export function bannerParksFloat(kind: CallBannerKind): boolean {
+export function bannerParksFloat(banner: CallBanner): boolean {
   return (
-    kind === "mixed" ||
-    kind === "interlude" ||
-    kind === "terminal_loud" ||
-    kind === "cannot_verify"
+    banner.kind === "mixed" ||
+    banner.kind === "interlude" ||
+    banner.kind === "terminal_loud" ||
+    banner.kind === "cannot_verify" ||
+    banner.pause === "disproved"
   );
 }
 
@@ -1100,7 +1274,7 @@ export function rotationWindowMs(
  * `negotiating` (or no verdict yet) only, and `confirmPlaintext` guards its
  * terminal escape on `negotiating` too. Dropping to `negotiating` through the
  * session's `#setMode` also re-asserts the negotiating publish gate, so the
- * banner's "your audio and video stay paused" is true (fail-closed, I3): a
+ * banner's `held` pause clause is honest (fail-closed, I3): a
  * session that can no longer vouch for the group must not keep publishing as
  * if it could.
  *
@@ -1129,8 +1303,8 @@ export function loudModeFallback(mode: CallMode): CallMode | null {
  *
  * So while latched, `e2ee` is unreachable: it folds to `negotiating`, whose
  * `#setMode` lockstep re-asserts the negotiating publish gate (the banner's
- * "your audio and video stay paused" is true again) and whose shape
- * `isTerminalLoud` renders. Every other label passes: `mixed` and `interlude`
+ * `held` pause clause is honest again) and whose shape reads as a loud
+ * banner kind. Every other label passes: `mixed` and `interlude`
  * carry their own banners with the same native-confirmed escape, `off` is a
  * plain call, `call_full` is terminal. A red chip therefore always has a
  * banner with an escape — by construction, not by the order timers happen to
