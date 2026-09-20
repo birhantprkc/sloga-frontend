@@ -111,6 +111,38 @@ test("acknowledge() reports whether anything changed", () => {
   assert.equal(client.channelUnreads.acknowledge(CHANNEL, MSG(9)), false);
 });
 
+test("the server's echo of this session's own ack is a no-op", () => {
+  const { client, channel } = setup();
+  (client.api as { put: unknown }).put = () => Promise.resolve(null);
+  channel.ack(undefined, true, true);
+  const before = client.channelUnreads.get(CHANNEL)?.lastMessageId;
+  assert.equal(before, MSG(9));
+  assert.equal(client.channelUnreads.acknowledge(CHANNEL, MSG(9)), false);
+  remoteAck(client, MSG(9));
+  assert.equal(client.channelUnreads.get(CHANNEL)?.lastMessageId, before);
+  assert.equal(channel.unread, false);
+});
+
+test("a remote ack for a channel with no unread row still marks it read", () => {
+  const { client } = setup();
+  const fresh = client.channels.getOrCreate("01FRESH0000000000000000000", {
+    _id: "01FRESH0000000000000000000",
+    channel_type: "TextChannel",
+    server: "01SERVER0000000000000000000",
+    name: "fresh",
+    last_message_id: MSG(3),
+  } as never);
+  assert.equal(fresh.unread, true, "no row means unread");
+  client.events.emit("event", {
+    type: "ChannelAck",
+    id: fresh.id,
+    user: ME,
+    message_id: MSG(3),
+  } as never);
+  assert.equal(fresh.unread, false);
+  assert.equal(client.channelUnreads.get(fresh.id)?.lastMessageId, MSG(3));
+});
+
 test("a failed ack request is retried, and gives up after three attempts", () => {
   mock.timers.enable({ apis: ["setTimeout"] });
   try {
