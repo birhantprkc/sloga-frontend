@@ -83,7 +83,7 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //   markdown_content: `## vX.Y.Z — Windows screen shares carry your computer's sound
   //
   // ### 🔊 Screen sharing in the Windows desktop app
-  // - **Share your whole screen and your computer's sound goes with it — without dragging the call along.** Sloga now captures what your machine is playing directly, and leaves its own output out of that capture, so your game, your video and your music reach everyone without the voices of the people you are already talking to being fed back into the stream.
+  // - **Share your whole screen and your computer's sound goes with it.** Sloga now captures what your machine is playing directly, and leaves its own output out of that capture, so your game, your video and your music reach everyone.
   // - **There is no system-audio checkbox to remember any more.** The Windows picker used to offer one, and ticking it was what caused the echo. Sound follows your screen-share audio setting instead, so there is one less thing to get wrong.
   // - **Whole-screen shares only, for now.** Sharing a single window still carries no sound.
   // - **When we can tell why the sound did not start, we say so** — on older Windows builds, for instance, or when a second copy of Sloga is already running and holding the capture. Some setups still share silently without an explanation; if that is you, the screen-share settings dialog says what it can.
