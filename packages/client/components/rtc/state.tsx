@@ -6752,8 +6752,11 @@ class Voice {
               // silent share, never the video.
               if (await winScreenAudioSupported()) {
                 screenAudioTrack =
-                  (await this.#publishWinScreenAudio(room, generation)) ??
-                  screenAudioTrack;
+                  (await this.#publishWinScreenAudio(
+                    room,
+                    generation,
+                    consentPending,
+                  )) ?? screenAudioTrack;
               }
             }
           } else if (
@@ -6906,8 +6909,11 @@ class Voice {
                   // Native screen audio was published MUTED while consent
                   // was pending (F8/E3) — unmute now that the user said
                   // yes, once the gate is empty and (on E2EE) the sender
-                  // transform is asserted. No-op for the Windows path,
-                  // whose track was never muted.
+                  // transform is asserted. This covers the Windows arm too:
+                  // `#publishWinScreenAudio` mutes on the same edge, and
+                  // `#unmuteScreenAudioWhenSafe` is platform-neutral (it
+                  // keys on the publication's `LocalAudioTrack`, not on how
+                  // the track was captured).
                   if (audio && screenAudioTrack?.track?.isMuted) {
                     void this.#unmuteScreenAudioWhenSafe(
                       room,
@@ -7006,7 +7012,11 @@ class Voice {
    *
    * Ordering is not incidental; each step is a rule from design §3.4/§3.6.
    */
-  async #publishWinScreenAudio(room: Room, generation: number) {
+  async #publishWinScreenAudio(
+    room: Room,
+    generation: number,
+    consentPending: boolean,
+  ) {
     if (this.#screenAudioStale(generation, room)) return undefined;
 
     // 🔴 REFUSE to re-arm after this call already published screen audio
@@ -7126,6 +7136,47 @@ class Voice {
     // "reacquire" it the way it would a gUM track.
     audioTrack = new LocalAudioTrack(capture.track, undefined, true);
 
+    // 🔴 PUBLISH MUTED WHILE CONSENT IS PENDING (§3.4 F8/E3), exactly as the
+    // Linux arm does below. This is the whole of the user's protection on this
+    // edge, and it is a REAL mute, not a pause.
+    //
+    // `wantsAudio` is true whenever the ask-modal will open — `consentPending
+    // || …` — so this path is reached even when the stored "Share audio"
+    // setting is OFF. The modal has not opened yet; the user has not agreed to
+    // send anything. `pauseUpstream()` below does not cover it: livekit
+    // attaches the sender at the top of `negotiate()`, on a transport the
+    // video share has already connected, so RTP leaves before `publishTrack`
+    // resolves and the pause lands afterwards. §3.4 names both
+    // `mediaStreamTrack.enabled = false` and the pause as NOT a mute: only
+    // `track.mute()` sets `req.muted` at signaling time, which is what stops
+    // the SFU forwarding it.
+    //
+    // Without this, one signaling round trip of the user's entire desktop mix
+    // reaches every participant before they are asked — and the modal then
+    // renders the checkbox UNTICKED, so nothing tells them it happened.
+    //
+    // 🔴 Placed BEFORE `beginWinScreenAudioPublish()`, not after: the latch
+    // below must stay adjacent to `publishTrack` with no suspension point
+    // between them, or the two STARTING death rows stop being
+    // distinguishable. Muting here costs that property nothing.
+    if (consentPending) {
+      try {
+        await audioTrack.mute();
+      } catch (error) {
+        // A rejecting mute leaves a live capture we are no longer willing to
+        // publish: degrade to a silent share rather than publish unmuted.
+        console.error("[screen-audio] mute before publish failed", error);
+        await teardownWinScreenAudio();
+        return undefined;
+      }
+      // `mute()` is an await, so the share or the call can have ended under
+      // it — the same re-check every other await in this method carries.
+      if (this.#screenAudioStale(generation, room)) {
+        await teardownWinScreenAudio();
+        return undefined;
+      }
+    }
+
     // 🔴 No `await` between this and `publishTrack`. The two STARTING death
     // rows differ by exactly whether the publish has been ISSUED — before it
     // the publish is REFUSED, after it `negotiate()` has already put the track
@@ -7159,17 +7210,59 @@ class Voice {
       return undefined;
     }
 
+    // 🔴 ASSERT the mute survived the publish, rather than trusting it.
+    // §3.4's rule is about what `req.muted` carried at signaling time, and
+    // that is a livekit internal we do not own: `publishTrack` reads the
+    // track's mute state while building the request, so a livekit change that
+    // reordered or reset it would silently reopen exactly the window this
+    // mute exists to close. Fail LOUD — unpublish and degrade to a silent
+    // share — because the alternative is broadcasting the desktop mix to a
+    // user who has not been asked yet.
+    if (consentPending && !publication.isMuted) {
+      console.error(
+        "[screen-audio] published track is NOT muted while consent is pending; refusing to leave it up",
+      );
+      await teardownWinScreenAudio();
+      return undefined;
+    }
+
     // A death that landed during the publish window. There is no publish left
     // to refuse, so returning early would strand a live ScreenShareAudio
     // publication on the SFU against local state DEAD — encrypted silence both
     // ends believe is live, on the one path where the frames may be other
     // participants' voices.
     if (!finishWinScreenAudioPublish()) {
-      try {
-        await room.localParticipant.unpublishTrack(audioTrack);
-      } catch (error) {
-        console.error("[screen-audio] late unpublish failed", error);
-      }
+      // 🔴 BOUNDED, not merely caught — and this arm is where it matters most.
+      // It is reached ONLY when a death or a stop path landed during the
+      // publish window, i.e. precisely the dead-socket / dead-shell conditions
+      // under which livekit's `unpublishTrack` hangs: it awaits
+      // `pendingPublishPromises` and then `engine.negotiate()`, both of which
+      // sit on a dead PeerConnection. A `try/catch` answers rejection and does
+      // nothing about a hang.
+      //
+      // The caller is holding `localTrack.pauseUpstream()` and the ask-modal
+      // does not open until this method returns, so an unbounded await here
+      // reproduces the frozen-tile-with-no-modal failure the module's own
+      // STARTING-window bounds exist to prevent — from the one call site that
+      // is outside the module.
+      //
+      // Usually redundant: `die()` and `teardownScreenAudio()` each already
+      // ran `host.unpublish()` under their own 2 s settle. It is kept for the
+      // one ordering where it is not — a stop path that fired before livekit
+      // registered the publication — and 2 s is the same number those use.
+      await Promise.race([
+        room.localParticipant.unpublishTrack(audioTrack).catch((error) => {
+          console.error("[screen-audio] late unpublish failed", error);
+        }),
+        new Promise<void>((resolve) =>
+          setTimeout(() => {
+            console.error(
+              "[screen-audio] late unpublish did not settle within 2000ms",
+            );
+            resolve();
+          }, 2_000),
+        ),
+      ]);
       return undefined;
     }
 
