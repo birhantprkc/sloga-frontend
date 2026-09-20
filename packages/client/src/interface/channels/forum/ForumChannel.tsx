@@ -20,6 +20,13 @@ import { useModals } from "@revolt/modal";
 import { Button, CircularProgress, Header, Row, Text } from "@revolt/ui";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
+import MdCheck from "@material-design-icons/svg/outlined/check.svg?component-solid";
+
+import {
+  ContextMenu,
+  ContextMenuButton,
+} from "@revolt/app/menus/ContextMenu";
+
 import { ChannelHeader } from "../ChannelHeader";
 import { ChannelPageProps } from "../ChannelPage";
 
@@ -208,21 +215,43 @@ export function ForumChannel(props: ChannelPageProps) {
 
       <Toolbar>
         <Row align gap="sm" wrap>
+          {/* One "view" control rather than a button per mode. The toolbar
+              also carries the tag filter and the archived toggle, and a row of
+              one button per mode does not survive another mode being added. */}
           <Button
-            group="connected-start"
-            groupActive={sort() === "latest_activity"}
             size="sm"
-            onPress={() => setSort("latest_activity")}
+            variant="text"
+            use:floating={{
+              contextMenu: () => (
+                <ContextMenu>
+                  <ContextMenuButton
+                    onClick={() => setSort("latest_activity")}
+                    actionIcon={
+                      sort() === "latest_activity" ? MdCheck : undefined
+                    }
+                  >
+                    <Trans>Latest activity</Trans>
+                  </ContextMenuButton>
+                  <ContextMenuButton
+                    onClick={() => setSort("creation_date")}
+                    actionIcon={
+                      sort() === "creation_date" ? MdCheck : undefined
+                    }
+                  >
+                    <Trans>Creation date</Trans>
+                  </ContextMenuButton>
+                </ContextMenu>
+              ),
+              contextMenuHandler: "click",
+            }}
           >
-            <Trans>Latest activity</Trans>
-          </Button>
-          <Button
-            group="connected-end"
-            groupActive={sort() === "creation_date"}
-            size="sm"
-            onPress={() => setSort("creation_date")}
-          >
-            <Trans>Creation date</Trans>
+            <Symbol>sort</Symbol>
+            <Show
+              when={sort() === "creation_date"}
+              fallback={<Trans>Latest activity</Trans>}
+            >
+              <Trans>Creation date</Trans>
+            </Show>
           </Button>
 
           <Button
