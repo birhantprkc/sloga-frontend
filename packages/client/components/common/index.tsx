@@ -2,14 +2,20 @@ export * from "./Device";
 export { appOrigin, inviteUrl } from "./lib/appOrigin";
 export {
   AUTO_ARCHIVE_NEVER,
-  AUTO_ARCHIVE_OPTIONS,
+  AUTO_ARCHIVE_PRESETS,
+  AUTO_ARCHIVE_UNIT_MINUTES,
   FORUM_DEFAULT_AUTO_ARCHIVE_MINUTES,
+  MAX_AUTO_ARCHIVE_MINUTES,
   THREAD_DEFAULT_AUTO_ARCHIVE_MINUTES,
   isAutoArchiveMinutes,
+  isAutoArchivePreset,
+  joinAutoArchive,
+  maxAutoArchiveIn,
   resolveCurrent,
   resolvePostDefault,
+  splitAutoArchive,
 } from "./lib/autoArchive";
-export type { AutoArchiveMinutes } from "./lib/autoArchive";
+export type { AutoArchiveMinutes, AutoArchiveUnit } from "./lib/autoArchive";
 export { debounce } from "./lib/debounce";
 export {
   desktopUpdateInstalling,
