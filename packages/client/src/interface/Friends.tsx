@@ -19,7 +19,7 @@ import { UserContextMenu } from "@revolt/app";
 import { useClient, useUser } from "@revolt/client";
 import { IS_POPOUT_WINDOW } from "@revolt/client/popout";
 import { voiceChannelOf } from "@revolt/client/voicePresence";
-import { tauriInvoke } from "@revolt/common";
+import { tauriInvoke, useDevice } from "@revolt/common";
 import { useModals } from "@revolt/modal";
 import { useState } from "@revolt/state";
 import {
@@ -110,6 +110,8 @@ export function Friends(props: Partial<RouteSectionProps> & { popout?: boolean }
   const client = useClient();
   const state = useState();
   const { openModal } = useModals();
+  // The popout opens a second window; there is nowhere to put one on mobile.
+  const { isMobile } = useDevice();
 
   // Always-on-top pin (popout window on a desktop shell only).
   const [pinned, setPinned] = createSignal(false);
@@ -210,7 +212,7 @@ export function Friends(props: Partial<RouteSectionProps> & { popout?: boolean }
           <Symbol>group</Symbol>
         </HeaderIcon>
         <Trans>Friends</Trans>
-        <Show when={!props.popout && !window.opener}>
+        <Show when={!props.popout && !window.opener && !isMobile}>
           <IconButton
             onPress={openPopout}
             use:floating={{ tooltip: { placement: "bottom", content: t`Pop out friends list` } }}
