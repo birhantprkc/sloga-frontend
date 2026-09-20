@@ -94,6 +94,38 @@ export const CHANGELOGS: ChangelogResponse[] = [
   // `,
   // },
   // ==========================================================================
+  // v0.60.5 (2026-09-20). Copy constraints, load-bearing:
+  // - This release exists to carry the v0.60.4 text fix into the Windows,
+  //   Linux and Android apps. They bundle their own copy of the client and
+  //   were built before the fix landed, so they shipped showing internal ids.
+  // - Web already had the fix inside 0.60.4. Do not tell web users something
+  //   was broken for them; name the apps it affected.
+  // - macOS is STILL held at 0.59.0 for the keybinds fix. No bullet may say
+  //   "every app" or name the Mac.
+  // - The bug was cosmetic: the labels were unreadable, but every option did
+  //   what it said. Nothing was lost or mis-saved. Do not imply a data fix.
+  // - 🔴 NATIVE WINDOWS SCREEN-SHARE AUDIO MERGED IN THIS RELEASE AND IS
+  //   DELIBERATELY NOT MENTIONED. `ENABLE_WIN_NATIVE_SCREEN_AUDIO` is dark in
+  //   every dist, so it is unreachable and describing it would be false. Its
+  //   entry is the held-back comment block at the top of this array and stays
+  //   commented until the flag is lit. This silence is a decision, not an
+  //   oversight — do not "fix" it by adding a bullet.
+  // - No live click-through was done before this shipped. Nothing here may
+  //   claim one.
+  {
+    id: "sloga-2026-09-20b",
+    title: "Patch Notes",
+    published_at: "2026-09-20T23:30:00.000Z",
+    web_version: "0.60.5",
+    markdown_content: `## v0.60.5 — the menus say what they mean again
+
+### 🔤 Fixes
+- **The Windows, Linux and Android apps were showing codes like \`6kwTPA\` where menu labels belong.** It hit the forum auto-archive durations — **5, 10, 15, 20 and 25 days**, **Custom**, and the **Minutes / Hours / Days** units — along with the **A-Z** view button, **Use this order for everyone**, and the description under it. They read properly now.
+- Only the labels were wrong: every one of those options already did exactly what it was meant to. If you set an auto-archive duration while it looked like gibberish, it was saved correctly and there is nothing to redo.
+
+This is the only change you will notice in this release. The A-Z forums, info boards and fixes listed under v0.60.4 below arrived in that release and are unchanged.
+`,
+  },
   // v0.60.4 (2026-09-20). Copy constraints, load-bearing:
   // - Web, Windows, Linux and Android ship this build. macOS does NOT: it is
   //   still held at 0.59.0 for the keybinds fix, so no bullet may say "every

@@ -30,13 +30,15 @@ android {
         // to run its own 1.x sequence, which matched nothing users could see).
         // versionCode keeps counting up untouched — it is what ApkUpdateWorker
         // and Play order releases by, and it must never go backwards. vc66 is
-        // what Play carries (as 0.60.0), so this release is vc67.
+        // what Play carries (as 0.60.0), so this release is vc68: vc67 was
+        // built and published as the 0.60.4 SIDELOAD apk but never uploaded to
+        // Play, which is why Play skips it.
         //
-        // The versionName jumps 0.60.0 -> 0.60.4 rather than stepping: Android
+        // The versionName jumps 0.60.0 -> 0.60.5 rather than stepping: Android
         // was skipped for 0.60.1, 0.60.2 and 0.60.3, so this single build is
         // the first time Play users receive any of them.
-        versionCode 67
-        versionName "0.60.4"
+        versionCode 68
+        versionName "0.60.5"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
