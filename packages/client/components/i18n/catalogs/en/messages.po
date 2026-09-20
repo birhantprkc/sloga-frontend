@@ -897,6 +897,14 @@ msgstr "Also read translated captions aloud using your device's voice. Runs on t
 msgid "Always Ask for Screen Share Quality"
 msgstr "Always Ask for Screen Share Quality"
 
+#: components/app/interface/settings/user/voice/CameraOptions.tsx
+msgid "Send your computer's sound when you share your screen, where the app supports it."
+msgstr "Send your computer's sound when you share your screen, where the app supports it."
+
+#: components/app/interface/settings/user/voice/CameraOptions.tsx
+msgid "Share Computer Sound"
+msgstr "Share Computer Sound"
+
 #: components/app/interface/settings/user/Encryption.tsx
 msgid "Always on. Your voice and video are end-to-end encrypted on this device whenever everyone in the call supports it."
 msgstr "Always on. Your voice and video are end-to-end encrypted on this device whenever everyone in the call supports it."
