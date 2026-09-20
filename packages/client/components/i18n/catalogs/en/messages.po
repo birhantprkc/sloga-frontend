@@ -4579,6 +4579,42 @@ msgstr "Neutral"
 msgid "Never"
 msgstr "Never"
 
+#: components/ui/components/utils/AutoArchiveMenuItems.tsx
+msgid "5 days"
+msgstr "5 days"
+
+#: components/ui/components/utils/AutoArchiveMenuItems.tsx
+msgid "10 days"
+msgstr "10 days"
+
+#: components/ui/components/utils/AutoArchiveMenuItems.tsx
+msgid "15 days"
+msgstr "15 days"
+
+#: components/ui/components/utils/AutoArchiveMenuItems.tsx
+msgid "20 days"
+msgstr "20 days"
+
+#: components/ui/components/utils/AutoArchiveMenuItems.tsx
+msgid "25 days"
+msgstr "25 days"
+
+#: components/ui/components/utils/AutoArchiveMenuItems.tsx
+msgid "Custom…"
+msgstr "Custom…"
+
+#: components/ui/components/utils/AutoArchiveField.tsx
+msgid "Days"
+msgstr "Days"
+
+#: components/ui/components/utils/AutoArchiveField.tsx
+msgid "Hours"
+msgstr "Hours"
+
+#: components/ui/components/utils/AutoArchiveField.tsx
+msgid "Minutes"
+msgstr "Minutes"
+
 #: components/ui/components/features/messaging/elements/MessageDivider.tsx
 msgid "NEW"
 msgstr "NEW"
@@ -7003,6 +7039,20 @@ msgstr "Add a tag emoji"
 msgid "Remove tag emoji"
 msgstr "Remove tag emoji"
 
+#: src/interface/channels/forum/ForumChannel.tsx
+#: src/interface/channels/forum/ForumChannel.tsx
+#: components/app/interface/settings/channel/ForumSettings.tsx
+msgid "A-Z"
+msgstr "A-Z"
+
+#: components/app/interface/settings/channel/ForumSettings.tsx
+msgid "Use this order for everyone"
+msgstr "Use this order for everyone"
+
+#: components/app/interface/settings/channel/ForumSettings.tsx
+msgid "Members browse this forum in the order above and cannot change it. Use this for a forum that serves as an info board."
+msgstr "Members browse this forum in the order above and cannot change it. Use this for a forum that serves as an info board."
+
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
 msgid "Take back control"
@@ -8686,3 +8736,4 @@ msgstr "Push to talk matches a single key, so the modifiers you held were not sa
 #: components/app/interface/settings/UserSettings.tsx
 msgid "Keybinds"
 msgstr "Keybinds"
+

@@ -94,6 +94,41 @@ export const CHANGELOGS: ChangelogResponse[] = [
   // `,
   // },
   // ==========================================================================
+  // v0.60.4 (2026-09-20). Copy constraints, load-bearing:
+  // - Web, Windows, Linux and Android ship this build. macOS does NOT: it is
+  //   still held at 0.59.0 for the keybinds fix, so no bullet may say "every
+  //   app" or name the Mac.
+  // - A-Z and the forced view need the server deployed. Both shipped together
+  //   here; if the copy is ever reused for a client-only build, they must come
+  //   out, because the sort parameter does not exist on an older server.
+  // - The forced view is enforced by the SERVER, not just hidden in the UI.
+  //   Say "cannot change it", because that is now true of any client.
+  // - Custom durations are 1 minute to 2 years. Do not round that to "any
+  //   length": past two years the server refuses.
+  // - Moving a channel changes its CATEGORY. It does not reorder channels
+  //   within one — that is still drag-only and still not possible on mobile,
+  //   so the bullet must not imply otherwise.
+  // - No live click-through was done before this shipped. Nothing here may
+  //   claim one.
+  {
+    id: "sloga-2026-09-20",
+    title: "Patch Notes",
+    published_at: "2026-09-20T21:00:00.000Z",
+    web_version: "0.60.4",
+    markdown_content: `## v0.60.4 — A-Z forums, info boards, and a fistful of fixes
+
+### 💬 Forums
+- **Browse posts A-Z.** The view button now offers **A-Z** alongside Latest activity and Creation date. A-Z lists numbers first, then letters, and ignores capitals.
+- **Pin one view for the whole server.** In **forum settings**, pick a sort order and turn on **Use this order for everyone**. Everybody browsing that forum sees it that way and cannot change it — which is what you want for a forum that serves as an info board.
+- **Pick any auto-archive duration.** Alongside the presets — now **1, 3, 5, 7, 10, 15, 20, 25, 30 and 90 days**, plus 1 hour and Never — there is a **Custom** option that takes anything from **1 minute to 2 years**.
+
+### 📱 Fixes
+- **The friends pop-out button no longer appears on phones.** It opened a window that a phone has nowhere to put.
+- **Your account badge follows your date settings**, and it can actually be tapped on Android.
+- **The sticker and emoji panel fits on screen again** instead of overflowing off the edge.
+- **Move a channel into a category from its own menu.** Right-press a channel and choose **Move to category** — this works on mobile, where dragging did not. Reordering channels inside a category is still drag-only.
+`,
+  },
   // v0.60.3 (2026-09-19). Copy constraints, load-bearing:
   // - Web and the server only. The desktop and Android apps bundle their own
   //   copy of the client, so they get this with their next build; the entry

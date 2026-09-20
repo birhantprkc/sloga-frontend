@@ -27,6 +27,33 @@ const Base = styled(Row, {
 });
 
 /**
+ * Filename column
+ *
+ * `minWidth: 0` is load-bearing: a flex item defaults to `min-width: auto`,
+ * which refuses to shrink below its content, so a long filename widened this
+ * column until the download button was pushed off the card entirely.
+ */
+const Details = styled(Column, {
+  base: {
+    minWidth: 0,
+  },
+});
+
+/**
+ * The filename itself
+ *
+ * `anywhere` rather than `break-word`: browsers already break after hyphens,
+ * which is why `screen-2026-09-19.mp4` wrapped and looked fine while
+ * `Screencast_20260920_121354.webm` did not — nothing breaks at an
+ * underscore, so the unbroken run pushed the button out.
+ */
+const Filename = styled("span", {
+  base: {
+    overflowWrap: "anywhere",
+  },
+});
+
+/**
  * Download affordance
  *
  * Brand orange on the purple card so it reads as the one thing to click,
@@ -36,6 +63,8 @@ const DownloadLink = styled("a", {
   base: {
     display: "flex",
     alignSelf: "center",
+    // never give up space to the filename; it is the only control here
+    flexShrink: 0,
 
     "& button": {
       background: "#FF8A00",
@@ -90,14 +119,14 @@ export function FileInfo(props: Props) {
           <BiSolidFileTxt size={24} />
         </Match>
       </Switch>
-      <Column grow>
-        <span>{props.file?.filename}</span>
+      <Details grow>
+        <Filename>{props.file?.filename}</Filename>
         <Show when={props.file?.size}>
           <Text class="label" size="small">
             {humanFileSize(props.file!.size!)}
           </Text>
         </Show>
-      </Column>
+      </Details>
       <Show when={props.file}>
         <DownloadLink
           target="_blank"

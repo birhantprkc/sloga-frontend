@@ -21,7 +21,8 @@ import {
   Row,
   Text,
 } from "@revolt/ui";
-import { AutoArchiveMenuItems } from "@revolt/ui/components/utils/AutoArchiveMenuItems";
+import { MenuItem } from "@revolt/ui/components/design/Menu";
+import { AutoArchiveField } from "@revolt/ui/components/utils/AutoArchiveField";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
 import { ChannelSettingsProps } from "../ChannelSettings";
@@ -67,10 +68,12 @@ export default function ForumSettings(props: ChannelSettingsProps) {
   const [defaultSort, setDefaultSort] = createSignal<string>(
     props.channel.defaultSort,
   );
-  // minutes as a string, the form `FloatingSelect` works in; a missing or
-  // invalid forum default shows as the fallback new posts would get anyway
-  const [defaultAutoArchive, setDefaultAutoArchive] = createSignal<string>(
-    String(resolvePostDefault(props.channel.defaultAutoArchiveMinutes)),
+  const [forceSort, setForceSort] = createSignal(props.channel.forceSort);
+  // minutes; a missing or invalid forum default shows as the fallback new
+  // posts would get anyway. A custom duration set elsewhere survives, so
+  // opening this screen and saving cannot quietly round it to a preset.
+  const [defaultAutoArchive, setDefaultAutoArchive] = createSignal<number>(
+    resolvePostDefault(props.channel.defaultAutoArchiveMinutes),
   );
   /* eslint-enable solid/reactivity */
 
@@ -88,9 +91,9 @@ export default function ForumSettings(props: ChannelSettingsProps) {
     setSaving(true);
     try {
       await props.channel.edit({
-        // `tags`/`require_tag`/`default_sort`/`default_auto_archive_minutes`
-        // are additive fields the typed client predates; the PATCH route
-        // passes them through verbatim.
+        // `tags`/`require_tag`/`default_sort`/`force_sort`/
+        // `default_auto_archive_minutes` are additive fields the typed client
+        // predates; the PATCH route passes them through verbatim.
         tags: tags.map((tag) => ({
           id: tag.id,
           name: tag.name.trim(),
@@ -99,7 +102,8 @@ export default function ForumSettings(props: ChannelSettingsProps) {
         })),
         require_tag: requireTag(),
         default_sort: defaultSort(),
-        default_auto_archive_minutes: Number(defaultAutoArchive()),
+        force_sort: forceSort(),
+        default_auto_archive_minutes: defaultAutoArchive(),
       } as Parameters<typeof props.channel.edit>[0]);
     } catch (error) {
       showError(error);
@@ -252,24 +256,36 @@ export default function ForumSettings(props: ChannelSettingsProps) {
         <Text class="label">
           <Trans>Default sort order</Trans>
         </Text>
-        <Row>
-          <Button
-            group="connected-start"
-            groupActive={defaultSort() === "LatestActivity"}
-            size="sm"
-            onPress={() => setDefaultSort("LatestActivity")}
-          >
+        {/* A select rather than a connected button row: `Button`'s group
+            variants are start/end only, so a third mode has no segment to
+            sit in without reworking that component's corner styling. */}
+        <FloatingSelect
+          value={defaultSort()}
+          onChange={(e) => {
+            const value = e.currentTarget.value;
+            if (value) setDefaultSort(value);
+          }}
+        >
+          <MenuItem value="LatestActivity">
             <Trans>Latest activity</Trans>
-          </Button>
-          <Button
-            group="connected-end"
-            groupActive={defaultSort() === "CreationDate"}
-            size="sm"
-            onPress={() => setDefaultSort("CreationDate")}
-          >
+          </MenuItem>
+          <MenuItem value="CreationDate">
             <Trans>Creation date</Trans>
-          </Button>
-        </Row>
+          </MenuItem>
+          <MenuItem value="Alphabetical">
+            <Trans>A-Z</Trans>
+          </MenuItem>
+        </FloatingSelect>
+
+        <Checkbox checked={forceSort()} onChange={setForceSort}>
+          <Trans>Use this order for everyone</Trans>
+        </Checkbox>
+        <Text>
+          <Trans>
+            Members browse this forum in the order above and cannot change it.
+            Use this for a forum that serves as an info board.
+          </Trans>
+        </Text>
       </Column>
 
       <Column>
@@ -282,18 +298,10 @@ export default function ForumSettings(props: ChannelSettingsProps) {
             it on each post.
           </Trans>
         </Text>
-        <FloatingSelect
+        <AutoArchiveField
           value={defaultAutoArchive()}
-          onChange={(e) => {
-            // mdui types `value` as optional; every item carries one, and an
-            // empty string must never reach the save (`Number("")` is 0,
-            // which means "Never")
-            const value = e.currentTarget.value;
-            if (value) setDefaultAutoArchive(value);
-          }}
-        >
-          <AutoArchiveMenuItems />
-        </FloatingSelect>
+          onChange={setDefaultAutoArchive}
+        />
       </Column>
 
       <Row>

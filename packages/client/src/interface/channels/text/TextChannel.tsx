@@ -24,7 +24,6 @@ import { LAYOUT_SECTIONS } from "@revolt/state/stores/Layout";
 import {
   BelowFloatingHeader,
   Button,
-  FloatingSelect,
   Header,
   NewMessages,
   Text,
@@ -34,7 +33,7 @@ import {
 } from "@revolt/ui";
 import { VoiceChannelCallCardMount } from "@revolt/ui/components/features/voice/callCard/VoiceCallCard";
 import { SlideState } from "@revolt/ui/components/navigation/SlideDrawer";
-import { AutoArchiveMenuItems } from "@revolt/ui/components/utils/AutoArchiveMenuItems";
+import { AutoArchiveField } from "@revolt/ui/components/utils/AutoArchiveField";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
 import { ChannelHeader } from "../ChannelHeader";
@@ -470,26 +469,23 @@ function ThreadBanner(props: { channel: Channel }) {
         {/* ManageChannel, or creator with SendMessage, may change the duration */}
         <Show when={canSetAutoArchive()}>
           <ThreadBannerSelect>
-            <FloatingSelect
+            <AutoArchiveField
               label={t`Auto-archive`}
-              value={String(resolveCurrent(props.channel.autoArchiveMinutes))}
-              onChange={(e) => {
+              value={resolveCurrent(props.channel.autoArchiveMinutes)}
+              onChange={(minutes) => {
                 // Skip no-op PATCHes when the current duration is re-picked
                 if (
-                  Number(e.currentTarget.value) ===
-                  resolveCurrent(props.channel.autoArchiveMinutes)
+                  minutes === resolveCurrent(props.channel.autoArchiveMinutes)
                 )
                   return;
 
                 props.channel
                   .edit({
-                    auto_archive_minutes: Number(e.currentTarget.value),
+                    auto_archive_minutes: minutes,
                   } as never)
                   .catch(showError);
               }}
-            >
-              <AutoArchiveMenuItems />
-            </FloatingSelect>
+            />
           </ThreadBannerSelect>
         </Show>
         <Show
@@ -564,8 +560,10 @@ const ThreadBannerNotice = styled("span", {
  */
 const ThreadBannerSelect = styled("div", {
   base: {
-    width: "160px",
-    minWidth: "128px",
+    // Not a fixed width any more: a custom duration puts a number field and
+    // a unit select under the preset list, and the banner wraps rather than
+    // squeezing them into 160px.
+    minWidth: "160px",
     flexShrink: 0,
   },
 });

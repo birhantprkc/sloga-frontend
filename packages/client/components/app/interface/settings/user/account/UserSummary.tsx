@@ -1,6 +1,7 @@
 import { Show } from "solid-js";
 
 import { User } from "stoat.js";
+import { css } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 
 import { useTime } from "@revolt/i18n";
@@ -54,12 +55,16 @@ export function UserSummary(props: {
             </ProfileBadges> */}
             <ProfileBadges>
               <span
+                class={badgeHitArea}
                 use:floating={{
                   tooltip: {
                     placement: "top",
-                    // todo
+                    // L and LT are the localized tokens the Language settings write
+                    // to (Locale.setDateFormat / setTimeFormat), so this respects the
+                    // chosen date and time format. The literals are still
+                    // untranslated - todo.
                     content: dayjs(props.user.createdAt).format(
-                      "[Account created] Do MMMM YYYY [at] HH:mm",
+                      "[Account created] L [at] LT",
                     ),
                   },
                 }}
@@ -129,6 +134,34 @@ const DummyPadding = styled("div", {
     width: "58px",
     // Matches with ProfileDetails
     marginInlineEnd: "var(--gap-lg)",
+  },
+});
+
+/**
+ * Touch target for a badge.
+ *
+ * The badge icon is 14px, far below a usable tap target, so tapping it on a
+ * phone mostly misses and the tooltip never opens. The hit area is grown with
+ * a centred pseudo-element rather than padding, so the badge pill keeps its
+ * current size and nothing in the layout moves.
+ *
+ * Note: at 44px these overlap once there is more than one badge (the row uses
+ * gap-sm). Revisit the spacing when the commented-out badges above land.
+ */
+const badgeHitArea = css({
+  position: "relative",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+
+  _before: {
+    content: '""',
+    position: "absolute",
+    top: "50%",
+    left: "50%",
+    width: "44px",
+    height: "44px",
+    transform: "translate(-50%, -50%)",
   },
 });
 

@@ -1,4 +1,4 @@
-import { Match, Show, Switch } from "solid-js";
+import { For, Match, Show, Switch } from "solid-js";
 
 import { Trans } from "@lingui-solid/solid/macro";
 import { Channel } from "stoat.js";
@@ -7,7 +7,9 @@ import { useModals } from "@revolt/modal";
 import { useState } from "@revolt/state";
 
 import MdBadge from "@material-design-icons/svg/outlined/badge.svg?component-solid";
+import MdCheck from "@material-design-icons/svg/outlined/check.svg?component-solid";
 import MdDelete from "@material-design-icons/svg/outlined/delete.svg?component-solid";
+import MdDriveFileMove from "@material-design-icons/svg/outlined/drive_file_move.svg?component-solid";
 import MdGroupAdd from "@material-design-icons/svg/outlined/group_add.svg?component-solid";
 import MdLibraryAdd from "@material-design-icons/svg/outlined/library_add.svg?component-solid";
 import MdLock from "@material-design-icons/svg/outlined/lock.svg?component-solid";
@@ -20,6 +22,7 @@ import {
   ContextMenu,
   ContextMenuButton,
   ContextMenuDivider,
+  ContextMenuSubMenu,
 } from "./ContextMenu";
 import { NotificationContextMenu } from "./shared/NotificationContextMenu";
 
@@ -90,6 +93,44 @@ export function ChannelContextMenu(props: { channel: Channel }) {
   }
 
   /**
+   * The category this channel currently sits in, if any.
+   *
+   * `orderedChannels` synthesises a "default" category for channels that are
+   * not listed anywhere, so an undefined result here means uncategorised.
+   */
+  function currentCategoryId() {
+    return props.channel.server?.categories?.find((category) =>
+      category.channels.includes(props.channel.id),
+    )?.id;
+  }
+
+  /**
+   * Move this channel into another category, or out of all of them.
+   *
+   * The server stores categories as a list, each holding an ordered list of
+   * channel ids, so a move is: drop the id everywhere, then append it to the
+   * target. Passing no target is how a channel leaves a category altogether --
+   * anything listed in no category is what the sidebar shows as "Default".
+   */
+  function moveToCategory(categoryId?: string) {
+    const server = props.channel.server;
+    if (!server) return;
+
+    const categories = (server.categories ?? []).map((category) => ({
+      ...category,
+      channels: category.channels.filter((id) => id !== props.channel.id),
+    }));
+
+    if (categoryId) {
+      const target = categories.find((category) => category.id === categoryId);
+      if (!target) return;
+      target.channels = [...target.channels, props.channel.id];
+    }
+
+    server.edit({ categories });
+  }
+
+  /**
    * Copy channel link to clipboard
    */
   function copyLink() {
@@ -135,6 +176,32 @@ export function ChannelContextMenu(props: { channel: Channel }) {
         <ContextMenuButton icon={MdLibraryAdd} onClick={createChannel}>
           <Trans>Create channel</Trans>
         </ContextMenuButton>
+        <Show when={props.channel.server?.categories?.length}>
+          <ContextMenuSubMenu
+            icon={MdDriveFileMove}
+            buttonContent={<Trans>Move to category</Trans>}
+          >
+            <For each={props.channel.server!.categories!}>
+              {(category) => (
+                <ContextMenuButton
+                  onClick={() => moveToCategory(category.id)}
+                  actionIcon={
+                    currentCategoryId() === category.id ? MdCheck : undefined
+                  }
+                >
+                  {category.title}
+                </ContextMenuButton>
+              )}
+            </For>
+            <ContextMenuDivider />
+            <ContextMenuButton
+              onClick={() => moveToCategory()}
+              actionIcon={currentCategoryId() ? undefined : MdCheck}
+            >
+              <Trans>No category</Trans>
+            </ContextMenuButton>
+          </ContextMenuSubMenu>
+        </Show>
       </Show>
       <Show when={props.channel.havePermission("ManageChannel")}>
         <ContextMenuButton icon={MdSettings} onClick={editChannel}>

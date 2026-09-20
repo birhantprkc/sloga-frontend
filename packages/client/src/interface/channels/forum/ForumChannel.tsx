@@ -1,7 +1,9 @@
 import {
   For,
+  Match,
   Show,
   Suspense,
+  Switch,
   createEffect,
   createMemo,
   createSignal,
@@ -20,6 +22,10 @@ import { useModals } from "@revolt/modal";
 import { Button, CircularProgress, Header, Row, Text } from "@revolt/ui";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
+import MdCheck from "@material-design-icons/svg/outlined/check.svg?component-solid";
+
+import { ContextMenu, ContextMenuButton } from "@revolt/app/menus/ContextMenu";
+
 import { ChannelHeader } from "../ChannelHeader";
 import { ChannelPageProps } from "../ChannelPage";
 
@@ -27,6 +33,36 @@ import { PostCard } from "./PostCard";
 
 /** Server page size for GET /posts */
 const PAGE_SIZE = 50;
+
+/** The `sort` values `GET /posts` accepts. */
+type SortMode = "latest_activity" | "creation_date" | "alphabetical";
+
+/**
+ * Map a forum's stored `default_sort` onto the query parameter
+ * @param order Forum's configured default ordering
+ */
+function sortModeFor(order: string): SortMode {
+  if (order === "CreationDate") return "creation_date";
+  if (order === "Alphabetical") return "alphabetical";
+  return "latest_activity";
+}
+
+/**
+ * Name of a sort mode. Written as three literal `Trans` elements rather than
+ * a lookup table so each label is a literal lingui msgid.
+ */
+function SortName(props: { mode: SortMode }) {
+  return (
+    <Switch fallback={<Trans>Latest activity</Trans>}>
+      <Match when={props.mode === "creation_date"}>
+        <Trans>Creation date</Trans>
+      </Match>
+      <Match when={props.mode === "alphabetical"}>
+        <Trans>A-Z</Trans>
+      </Match>
+    </Switch>
+  );
+}
 
 /**
  * Forum channel browse view: a card grid of posts with tag filtering,
@@ -36,10 +72,18 @@ export function ForumChannel(props: ChannelPageProps) {
   const client = useClient();
   const { openModal, showError } = useModals();
 
-  const [sort, setSort] = createSignal<"latest_activity" | "creation_date">(
-    props.channel.defaultSort === "CreationDate"
-      ? "creation_date"
-      : "latest_activity",
+  const [chosenSort, setSort] = createSignal<SortMode>(
+    sortModeFor(props.channel.defaultSort),
+  );
+
+  // A forum can impose its order on everyone. The server enforces it, so the
+  // client must ask for the same thing rather than send a `sort` that comes
+  // back ignored — otherwise the merged page order below would disagree with
+  // the order the pages actually arrived in.
+  const sort = createMemo<SortMode>(() =>
+    props.channel.forceSort
+      ? sortModeFor(props.channel.defaultSort)
+      : chosenSort(),
   );
   const [tag, setTag] = createSignal<string | undefined>(undefined);
   const [archived, setArchived] = createSignal(false);
@@ -71,14 +115,27 @@ export function ForumChannel(props: ChannelPageProps) {
   }));
 
   /**
-   * Client-side mirror of the server's sort key so merged pages stay ordered
+   * Client-side mirror of the server's sort key so merged pages stay ordered.
+   * The A-Z key mirrors `alphabetical_key` in the delta route exactly,
+   * including the NUL tiebreaker on the post id — two posts can share a name.
    */
-  const sortKey = (post: Channel) =>
-    sort() === "creation_date" ? post.id : (post.lastMessageId ?? post.id);
+  const keyFor = (post: Channel, mode: SortMode) => {
+    if (mode === "alphabetical")
+      return `${post.name.toLowerCase()}\0${post.id}`;
+    if (mode === "creation_date") return post.id;
+    return post.lastMessageId ?? post.id;
+  };
+
+  const sortKey = (post: Channel) => keyFor(post, sort());
 
   // First page merged with cursor-loaded pages, deduplicated (a live refetch
   // of page one can overlap the tail) and re-sorted.
   const posts = createMemo(() => {
+    // Read the mode once for the whole pass rather than per comparison: the
+    // comparators below then hold no reactivity of their own, and the sort
+    // cannot see the mode change halfway through its own ordering.
+    const mode = sort();
+
     const seen = new Set<string>();
     const merged: Channel[] = [];
     for (const post of [...(query.data?.posts ?? []), ...extraPosts()]) {
@@ -87,7 +144,22 @@ export function ForumChannel(props: ChannelPageProps) {
         merged.push(post);
       }
     }
-    return merged.sort((a, b) => sortKey(b).localeCompare(sortKey(a)));
+
+    // A-Z reads ascending, and compares by code unit rather than with
+    // `localeCompare`: the server orders raw UTF-8 bytes, and locale
+    // collation treats the NUL tiebreaker as ignorable, which would order
+    // same-named posts differently here than in the pages being merged.
+    if (mode === "alphabetical") {
+      return merged.sort((a, b) => {
+        const left = keyFor(a, mode);
+        const right = keyFor(b, mode);
+        return left < right ? -1 : left > right ? 1 : 0;
+      });
+    }
+
+    return merged.sort((a, b) =>
+      keyFor(b, mode).localeCompare(keyFor(a, mode)),
+    );
   });
 
   async function loadMore() {
@@ -99,7 +171,10 @@ export function ForumChannel(props: ChannelPageProps) {
         sort: sort(),
         tag: tag(),
         archived: archived(),
-        before: sortKey(tail),
+        // A-Z pages on the post's id, which the route resolves to the real
+        // sort key server-side — the key itself embeds a NUL and cannot be
+        // spelled in a query string. Every other order pages on the key.
+        before: sort() === "alphabetical" ? tail.id : sortKey(tail),
         limit: PAGE_SIZE,
         includeStarters: true,
       });
@@ -208,22 +283,60 @@ export function ForumChannel(props: ChannelPageProps) {
 
       <Toolbar>
         <Row align gap="sm" wrap>
-          <Button
-            group="connected-start"
-            groupActive={sort() === "latest_activity"}
-            size="sm"
-            onPress={() => setSort("latest_activity")}
+          {/* One "view" control rather than a button per mode. The toolbar
+              also carries the tag filter and the archived toggle, and a row of
+              one button per mode does not survive another mode being added. */}
+          <Show
+            when={!props.channel.forceSort}
+            fallback={
+              // The order is fixed for everyone, so this is a label rather
+              // than a disabled menu: a control that opens and changes
+              // nothing is worse than no control.
+              <ForcedSort>
+                <Symbol size={18}>lock</Symbol>
+                <SortName mode={sort()} />
+              </ForcedSort>
+            }
           >
-            <Trans>Latest activity</Trans>
-          </Button>
-          <Button
-            group="connected-end"
-            groupActive={sort() === "creation_date"}
-            size="sm"
-            onPress={() => setSort("creation_date")}
-          >
-            <Trans>Creation date</Trans>
-          </Button>
+            <Button
+              size="sm"
+              variant="text"
+              use:floating={{
+                contextMenu: () => (
+                  <ContextMenu>
+                    <ContextMenuButton
+                      onClick={() => setSort("latest_activity")}
+                      actionIcon={
+                        sort() === "latest_activity" ? MdCheck : undefined
+                      }
+                    >
+                      <Trans>Latest activity</Trans>
+                    </ContextMenuButton>
+                    <ContextMenuButton
+                      onClick={() => setSort("creation_date")}
+                      actionIcon={
+                        sort() === "creation_date" ? MdCheck : undefined
+                      }
+                    >
+                      <Trans>Creation date</Trans>
+                    </ContextMenuButton>
+                    <ContextMenuButton
+                      onClick={() => setSort("alphabetical")}
+                      actionIcon={
+                        sort() === "alphabetical" ? MdCheck : undefined
+                      }
+                    >
+                      <Trans>A-Z</Trans>
+                    </ContextMenuButton>
+                  </ContextMenu>
+                ),
+                contextMenuHandler: "click",
+              }}
+            >
+              <Symbol>sort</Symbol>
+              <SortName mode={sort()} />
+            </Button>
+          </Show>
 
           <Button
             size="sm"
@@ -329,6 +442,17 @@ const Toolbar = styled("div", {
     flexDirection: "column",
     gap: "var(--gap-md)",
     padding: "var(--gap-md) var(--gap-lg)",
+  },
+});
+
+const ForcedSort = styled("div", {
+  base: {
+    display: "flex",
+    alignItems: "center",
+    gap: "4px",
+    padding: "0 8px",
+    fontSize: "0.8125rem",
+    color: "var(--md-sys-color-on-surface-variant)",
   },
 });
 

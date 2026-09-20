@@ -32,7 +32,8 @@ interface Props {
 
   /**
    * What type of files to accept (any HTML input `accept` string; the image
-   * preview UI only renders for exactly "image/*", others get a plain picker)
+   * preview UI renders whenever the list admits images, others get a plain
+   * picker)
    */
   accept?: string;
 
@@ -86,6 +87,35 @@ export function FileInput(props: Props) {
     }
   }
 
+  /**
+   * Whether `accept` admits images at all.
+   *
+   * Deliberately not an exact match on "image/*": the sticker upload accepts
+   * "image/*,application/json" (Lottie), and an exact check dropped it to the
+   * bare <input type="file"> fallback. That control is both unstyled and
+   * natively wide, which is what pushed the sticker form off the side of the
+   * panel on narrow screens.
+   */
+  function acceptsImages() {
+    return (props.accept ?? "")
+      .split(",")
+      .some((type) => type.trim().startsWith("image/"));
+  }
+
+  /**
+   * Whether the current selection can actually be shown as an image.
+   *
+   * `accept` may admit non-image files, which would otherwise render as a
+   * broken <img> in the preview.
+   */
+  function previewable() {
+    if (typeof local.file === "string") return true;
+    if (Array.isArray(local.file)) {
+      return local.file[0]?.type.startsWith("image/") ?? false;
+    }
+    return false;
+  }
+
   return (
     <Switch
       fallback={
@@ -104,7 +134,7 @@ export function FileInput(props: Props) {
         </>
       }
     >
-      <Match when={props.accept === "image/*"}>
+      <Match when={acceptsImages()}>
         <input
           type="file"
           ref={inputRef}
@@ -123,7 +153,7 @@ export function FileInput(props: Props) {
             rounded={props.imageRounded ?? true}
           >
             <Ripple />
-            <Show when={local.file}>
+            <Show when={local.file && previewable()}>
               <img src={imageSrc()} />
             </Show>
           </ImagePreview>
