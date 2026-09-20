@@ -308,6 +308,32 @@ export default {
       (import.meta.env.VITE_CFG_ENABLE_LINUX_SCREEN_AUDIO as string) ?? ""
     ).toLowerCase() == "true",
   /**
+   * Windows screen-share audio — system audio for Entire Screen shares from
+   * the Windows desktop shell, captured natively through WASAPI process
+   * loopback with Sloga's own render tree excluded (the echo-loop defense),
+   * because the browser loopback this replaces is a measured no-op there.
+   *
+   * DEFAULT OFF. The code paths also gate on the shell's `screen_audio_probe`
+   * and on the picker's audio-suppression check, so this flag leaking into
+   * another surface is inert — but only Windows shell builds should ever set
+   * it (`dist_rclit`; the web and Android dists stay dark and the Linux dist
+   * must not carry it), and lighting it is a Windows-only release decision
+   * that additionally requires the slice-3 copy matrix (a capable shell whose
+   * capture failed must not get the generic "pick a tab" retry copy).
+   *
+   * Read in `screenAudioSupported()` (rtc/screenAudioNativeWin.ts), the single
+   * point the capture path and the settings-modal copy sit behind;
+   * `SLOGA_NO_SCREEN_AUDIO=1` is the shell-side runtime escape below the flag
+   * and makes that probe answer false.
+   *
+   * Set `VITE_CFG_ENABLE_WIN_NATIVE_SCREEN_AUDIO=true` for Windows shell
+   * builds that should have it.
+   */
+  ENABLE_WIN_NATIVE_SCREEN_AUDIO:
+    (
+      (import.meta.env.VITE_CFG_ENABLE_WIN_NATIVE_SCREEN_AUDIO as string) ?? ""
+    ).toLowerCase() == "true",
+  /**
    * Session ID to set during development.
    */
   DEVELOPMENT_SESSION_ID: import.meta.env.DEV
