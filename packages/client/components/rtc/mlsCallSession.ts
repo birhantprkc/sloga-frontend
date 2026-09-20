@@ -125,6 +125,7 @@ import {
   spliceParkedAfterWelcome,
 } from "./mlsDrainPolicy";
 import { joinRequestAction } from "./mlsJoinRequestPolicy";
+import { type JoinTimelineSummary, JoinTimeline } from "./mlsJoinTimeline";
 import {
   type NegotiatingFailsafeInput,
   negotiatingFailsafeAction,
@@ -913,6 +914,10 @@ export interface MlsMetricsSummary {
   pass: boolean;
   /** Human-readable threshold breaches (empty ⇒ pass). */
   failures: string[];
+  /** Slice 0: this device's own bring-up timeline (joiner or creator). */
+  joinTimeline?: JoinTimelineSummary;
+  /** Slice 0: admits this member completed — the newest 8, oldest first. */
+  admitTimelines?: JoinTimelineSummary[];
 }
 
 class MlsMetrics {
@@ -1497,6 +1502,22 @@ export class MlsCallSession {
 
   /** R-1/R-2 metrics recorder (step 8) — off the correctness path. */
   #metrics = new MlsMetrics();
+  /**
+   * Slice-0 join instrumentation (measurement only — nothing reads it back
+   * into a decision). The joiner timeline follows the establish generation;
+   * admit timelines are keyed `user:device` and close on our won Add.
+   */
+  #joinTimeline: JoinTimeline | null = null;
+  #admitTimelines = new Map<string, JoinTimeline>();
+  /** Closed admit timelines, the newest 8, oldest first (`metrics()`). */
+  #admitSummaries: JoinTimelineSummary[] = [];
+  /**
+   * The `user:device` whose admit or rejoin serve is about to be staged, so
+   * `#stageAndSubmit`'s won arm stamps the right admit timeline. Consumed
+   * synchronously at that method's entry, before its lock wait, so neither a
+   * racing admit nor a heartbeat queuing behind it can inherit the key.
+   */
+  #stagingFor: string | null = null;
 
   // --- Admit re-drive + joiner self-enrolment assertion ----------------------
   /**
@@ -1577,7 +1598,16 @@ export class MlsCallSession {
    *  proof; also logged on dispose. NOT a substitute for the T-03-at-the-remover
    *  correctness assertion (audit M3). */
   metrics(): MlsMetricsSummary {
-    return this.#metrics.summary();
+    return this.#foldTimelines(this.#metrics.summary());
+  }
+
+  /** Fold the slice-0 join and admit timelines into a metrics summary. */
+  #foldTimelines(summary: MlsMetricsSummary): MlsMetricsSummary {
+    if (this.#joinTimeline) summary.joinTimeline = this.#joinTimeline.summary();
+    if (this.#admitSummaries.length) {
+      summary.admitTimelines = [...this.#admitSummaries];
+    }
+    return summary;
   }
 
   /**
@@ -1603,8 +1633,14 @@ export class MlsCallSession {
     });
     this.#armNegotiatingFailsafe();
     this.#armEnrolmentAssertion();
+    // Slice-0 timeline t0: enrolment is the first serial round trip of a
+    // fresh join, so it sits inside the measurement rather than before it.
+    const timeline = new JoinTimeline("joiner");
+    this.#joinTimeline = timeline;
+    timeline.stamp("start");
     try {
       await this.#ensureKeyPackages();
+      timeline.stamp("keyPackagesPut");
       if (this.#terminal()) return;
     } catch (error) {
       this.#onLoud(error);
@@ -1807,8 +1843,14 @@ export class MlsCallSession {
   dispose(): void {
     if (this.#state === "closed") return;
     // Emit the R-1/R-2 session summary (§7.3) before tearing down.
-    const summary = this.#metrics.summary();
-    if (summary.rotations || summary.mailbox.gapRefetches) {
+    const summary = this.#foldTimelines(this.#metrics.summary());
+    // A join timeline is worth printing on its own: a solo or short call has
+    // no rotations, and its bring-up cost is exactly what slice 0 measures.
+    if (
+      summary.rotations ||
+      summary.mailbox.gapRefetches ||
+      summary.joinTimeline
+    ) {
       const log = summary.pass ? console.info : console.warn;
       log("[mls] call metrics summary", summary);
     }
@@ -1932,6 +1974,11 @@ export class MlsCallSession {
     // it and aborts when superseded, so a stale loop broadcasts nothing and
     // never touches the live establish's shared state.
     const generation = ++this.#establishGeneration;
+    // A re-establish is a fresh join for latency purposes: its stamps start
+    // over at this generation's t0 (`start()` opened the first generation's).
+    if (!this.#joinTimeline) this.#joinTimeline = new JoinTimeline("joiner");
+    else if (generation > 1) this.#joinTimeline.restart();
+    this.#joinTimeline.stamp("start");
     this.#establishInFlight = true;
     try {
       await this.#establishWithGeneration(generation, supersedes);
@@ -1983,6 +2030,7 @@ export class MlsCallSession {
       return;
     }
     const decision = routeCreateOrJoin(res);
+    this.#joinTimeline?.stamp("createRouted");
 
     switch (decision.action) {
       case "created":
@@ -1992,6 +2040,7 @@ export class MlsCallSession {
         // Sweep them (never the orphan we just minted) so no surviving state
         // can collide with this call's envelopes.
         await this.#startupWipe(orphanId);
+        this.#joinTimeline?.stamp("wipeDone");
         if (this.#terminal() || generation !== this.#establishGeneration)
           return;
         this.#joinedGeneration = generation; // our own create IS enrolment (F2)
@@ -2034,6 +2083,7 @@ export class MlsCallSession {
         // before the first `callJoinIntent` writes the fresh local intent row
         // the wipe would otherwise delete.
         await this.#startupWipe(null);
+        this.#joinTimeline?.stamp("wipeDone");
         if (this.#terminal() || generation !== this.#establishGeneration)
           return;
         await this.#joinPath(
@@ -2163,6 +2213,7 @@ export class MlsCallSession {
         error,
       );
     }
+    this.#joinTimeline?.stamp("reconcileDone");
 
     for (let attempt = 0; attempt <= MAX_JOINER_RETRIES; attempt++) {
       // §4.2: a superseded join loop broadcasts NOTHING — every re-broadcast
@@ -2243,6 +2294,7 @@ export class MlsCallSession {
           this.#onLoud(new Error("join intent rejected"));
           return;
         }
+        this.#joinTimeline?.stamp("intentAccepted");
       }
 
       // The admitter's winning Add fans a Welcome to us; the drain processes it
@@ -2369,6 +2421,7 @@ export class MlsCallSession {
     if (action === "ignore") return;
 
     const key = `${request.user_id}:${request.device_id}`;
+    this.#admitTimeline(key).stamp("joinRequestSeen");
     // The joiner is observably still enrolling — keep its admit-grace open
     // (bounded; see #refreshAdmitGrace) so the roster reconcile does not
     // declare it mixed while this very admit is in flight.
@@ -2414,6 +2467,7 @@ export class MlsCallSession {
     } catch (error) {
       return this.#abortAdmit(key, request, "listing_unavailable", error);
     }
+    this.#admitTimelineFor(request)?.stamp("reconcileDone");
     if (this.#state !== "active") {
       return this.#abortAdmit(key, request, "not_active");
     }
@@ -2444,6 +2498,7 @@ export class MlsCallSession {
     const timer = setTimeout(() => {
       this.#scheduledAdmits.delete(key);
       this.#timers.delete(timer);
+      this.#admitTimelineFor(request)?.stamp("staggerFired");
       void this.#tryAdmit(request);
     }, leafStaggerDelayMs(leaf));
     this.#scheduledAdmits.set(key, timer);
@@ -2473,6 +2528,13 @@ export class MlsCallSession {
 
     if (!admitAbortIsRetryable(abort)) {
       this.#pendingAdmits.delete(key);
+      // Slice 0: `already_member` is this attempt's terminal end — a racing
+      // admitter's Add carried the joiner in, so no won Add of ours will ever
+      // close its timeline. Retire it here, or the recorder's first-wins t0
+      // makes this device's NEXT join request report a row spanning both.
+      if (abort === "already_member") {
+        this.#admitTimelines.delete(`${request.user_id}:${request.device_id}`);
+      }
       if (!admitAbortIsBenign(abort)) {
         console.warn(
           `[mls] admit of ${key} abandoned (${abort}) — that participant is ` +
@@ -2578,6 +2640,7 @@ export class MlsCallSession {
     } catch (error) {
       return this.#abortAdmit(key, request, "listing_unavailable", error);
     }
+    this.#admitTimelineFor(request)?.stamp("reconcileDone");
     try {
       await this.#deps.bridge.callVerifyJoinIntent(request);
     } catch (error) {
@@ -2650,6 +2713,7 @@ export class MlsCallSession {
     const timer = setTimeout(() => {
       this.#scheduledAdmits.delete(key);
       this.#timers.delete(timer);
+      this.#admitTimelineFor(request)?.stamp("staggerFired");
       void this.#removeStaleLeaf(request);
     }, leafStaggerDelayMs(leaf));
     this.#scheduledAdmits.set(key, timer);
@@ -2660,6 +2724,39 @@ export class MlsCallSession {
   #retireRejoinServe(key: string): void {
     this.#scheduledAdmits.delete(key);
     this.#pendingAdmits.delete(key);
+  }
+
+  /** The admit timeline for `user:device`, opened on its first join request. */
+  #admitTimeline(key: string): JoinTimeline {
+    let timeline = this.#admitTimelines.get(key);
+    if (!timeline) {
+      timeline = new JoinTimeline("admitter");
+      this.#admitTimelines.set(key, timeline);
+    }
+    return timeline;
+  }
+
+  /** The open admit timeline for the device behind `request`, if any. */
+  #admitTimelineFor(request: MlsJoinRequest): JoinTimeline | undefined {
+    return this.#admitTimelines.get(`${request.user_id}:${request.device_id}`);
+  }
+
+  /**
+   * Our commit for `key`'s join won: stamp its admit timeline and, once the
+   * Add itself is in, report the row and retire the entry (newest 8 kept).
+   */
+  #closeAdmitTimeline(key: string, kind: StagedCommit["kind"]): void {
+    const timeline = this.#admitTimelines.get(key);
+    if (!timeline) return;
+    timeline.stamp("commitWon");
+    if (kind !== "admit") return;
+    const summary = timeline.summary();
+    // `p` is the absolute `performance.now()` of the print, the same clock
+    // `[gate-trace]` carries, so a leg anchors the row at t0 = p − totalMs.
+    console.info("[mls] admit timeline", { p: performance.now(), ...summary });
+    this.#admitSummaries.push(summary);
+    if (this.#admitSummaries.length > 8) this.#admitSummaries.shift();
+    this.#admitTimelines.delete(key);
   }
 
   async #removeStaleLeaf(request: MlsJoinRequest): Promise<void> {
@@ -2711,15 +2808,20 @@ export class MlsCallSession {
     console.warn(
       `[mls] removing stale leaf for rejoin: ${request.user_id}:${request.device_id}`,
     );
-    await this.#stageAndSubmit(
-      () =>
-        this.#deps.bridge.callRemove(
-          this.#groupId!,
-          request.user_id,
-          request.device_id,
-        ),
-      "remove",
-    );
+    this.#stagingFor = `${request.user_id}:${request.device_id}`;
+    try {
+      await this.#stageAndSubmit(
+        () =>
+          this.#deps.bridge.callRemove(
+            this.#groupId!,
+            request.user_id,
+            request.device_id,
+          ),
+        "remove",
+      );
+    } finally {
+      this.#stagingFor = null;
+    }
   }
 
   async #tryAdmit(request: MlsJoinRequest): Promise<void> {
@@ -2810,6 +2912,7 @@ export class MlsCallSession {
         claimRes.body.results[0]?.status,
       );
     }
+    this.#admitTimelineFor(request)?.stamp("claimDone");
 
     // The attempt now owns a consumed KeyPackage and reaches the DS. Whatever
     // `#stageAndSubmit` decides (won / lost-and-rebased / loud) is reported by
@@ -2822,11 +2925,16 @@ export class MlsCallSession {
     // leaf we cannot verify from failing OUR session — the pre-check above
     // catches the common case, this covers a refusal that only the claimed
     // KeyPackage's own credential can reveal.
-    await this.#stageAndSubmit(
-      () => this.#deps.bridge.callAdmit(request, claimed),
-      "admit",
-      (error) => this.#abortAdmit(key, request, "leaf_unverifiable", error),
-    );
+    this.#stagingFor = key;
+    try {
+      await this.#stageAndSubmit(
+        () => this.#deps.bridge.callAdmit(request, claimed),
+        "admit",
+        (error) => this.#abortAdmit(key, request, "leaf_unverifiable", error),
+      );
+    } finally {
+      this.#stagingFor = null;
+    }
     // §4.8: record the Add observation (ours, or on a Lost the racing winner's
     // — either way the leaf is fresh) so a stale rejoin re-broadcast landing
     // after it cannot re-remove the member it was already served by.
@@ -2856,6 +2964,11 @@ export class MlsCallSession {
      */
     onTargetRefused?: (error: unknown) => void,
   ): Promise<void> {
+    // Consume the caller's attribution FIRST, before any await or early
+    // return: it was set synchronously just before this call, and a heartbeat
+    // or ghost Remove queuing behind us on the lock must not inherit it.
+    const stagingFor = this.#stagingFor;
+    this.#stagingFor = null;
     if (!this.#groupId || this.#terminal()) return;
     const groupId = this.#groupId;
 
@@ -2970,8 +3083,18 @@ export class MlsCallSession {
           // C1: record the own-won KIND so step 4 classifies rotation timing
           // (commit_won returns removed:[] — the outcome would look Add-driven).
           this.#lastOwnWon = { epoch: commit.epoch, kind };
+          // Slice 0: a won Remove (rejoin serve) only stamps; the Add that
+          // follows it closes the entry, so a rejoin's two-commit gap is one row.
+          if (stagingFor) this.#closeAdmitTimeline(stagingFor, kind);
           break;
         case "lost":
+          // Slice 0: a lost Add is terminal for this attempt (`#tryAdmit`
+          // records the observation and does not re-drive), so its timeline
+          // must not survive to seed a later request's t0. A lost Remove
+          // stays open: the rejoin serve's Add is still to come.
+          if (stagingFor && kind === "admit") {
+            this.#admitTimelines.delete(stagingFor);
+          }
           await this.#safeCommitLost();
           await this.#rebaseInline(outcome.winning); // INLINE — we hold the lock
           break;
@@ -3638,6 +3761,7 @@ export class MlsCallSession {
         generation: this.#establishGeneration,
         waitInstalled: verdict.resolveWait,
       });
+      this.#joinTimeline?.stamp("welcomeAdopted");
       this.#groupId = outcome.group_id;
       this.#joinedGeneration = this.#establishGeneration;
       this.#toActive();
@@ -3875,6 +3999,7 @@ export class MlsCallSession {
    */
   #onLocalKeyInstalled(): void {
     this.#hasLocalKey = true;
+    this.#joinTimeline?.stamp("keysInstalled");
     // 6.7b MEDIUM-1: installing the FIRST local key is the genuine recovery
     // that closes the joiner window (`!#hasLocalKey` — see #surfaceError /
     // classifyEncryptionError). Clear the awaiting-first-key escalation HERE,
@@ -5021,6 +5146,10 @@ export class MlsCallSession {
     this.#noteMembershipObserved(identity);
     this.#clearAdmitGrace(identity); // a leaver holds no admit window
     this.#rejoinServed.delete(identity); // nor a pending re-Add
+    // Slice 0: nor an open admit timeline — a leaver's join can no longer
+    // close on our Add, and its t0 must not leak into the row for the join
+    // request it sends when it comes back.
+    this.#admitTimelines.delete(identity);
     if (this.#leaveGrace.has(identity)) return; // already pending
     const timer = setTimeout(() => {
       this.#leaveGrace.delete(identity);
@@ -5576,10 +5705,12 @@ export class MlsCallSession {
   async #enable(): Promise<void> {
     const media = this.#media;
     if (!media || this.#e2eeEnabled || this.#state !== "active") return;
+    this.#joinTimeline?.stamp("enableBegin");
     this.#e2eeEnabled = true; // set first — re-entry guard across the awaits
     try {
       await media.pausePublishing?.("enable-window");
       await media.setEncryptionEnabled?.(true);
+      this.#joinTimeline?.stamp("e2eeEnabled");
       // The flip republished what was registered; anything that landed
       // during it is declared NONE. Re-declare inside the window, so no
       // frame goes out under a declaration a receiver would disarm on.
@@ -5852,6 +5983,25 @@ export class MlsCallSession {
     mode = modeUnderLoudLatch(mode, this.#loudLatched);
     const wasNegotiating = this.#callMode.kind === "negotiating";
     this.#callMode = mode;
+    // Slice 0: the label reaching `e2ee` is the join's end for the session's
+    // purposes. Report the timeline once per establish generation (a restart
+    // clears the stamp, so a re-establish reports again). Stamped BEFORE the
+    // gate release and the UI callback below so the row measures the session
+    // alone, not the media plane's resume; `p` is the absolute
+    // `performance.now()` of the print, the clock `[gate-trace]` carries, so
+    // a leg anchors the row at t0 = p − totalMs.
+    const timeline = this.#joinTimeline;
+    if (
+      mode.kind === "e2ee" &&
+      timeline &&
+      timeline.elapsedTo("modeE2ee") === null
+    ) {
+      timeline.stamp("modeE2ee");
+      console.info("[mls] join timeline", {
+        p: performance.now(),
+        ...timeline.summary(),
+      });
+    }
     if (mode.kind === "negotiating" && !wasNegotiating) {
       void this.#media?.pausePublishing?.("negotiating");
     } else if (mode.kind !== "negotiating" && wasNegotiating) {

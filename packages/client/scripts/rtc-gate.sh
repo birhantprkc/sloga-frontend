@@ -102,8 +102,10 @@ EXPECTED=(
   "components/rtc/mlsCallSession.heal.test.ts 7 0"
   "components/rtc/mlsCallSession.joinrace.test.ts 37 0"
   "components/rtc/mlsCallSession.resecure.test.ts 23 0"
+  "components/rtc/mlsCallSession.timeline.test.ts 4 0"
   "components/rtc/mlsDrainPolicy.test.ts 14 0"
   "components/rtc/mlsJoinRequestPolicy.test.ts 4 0"
+  "components/rtc/mlsJoinTimeline.test.ts 9 0"
   "components/rtc/mlsNegotiatingFailsafe.test.ts 13 0"
   "components/rtc/mlsRejoinPolicy.test.ts 18 0"
   "components/rtc/mlsSessionSetupPolicy.test.ts 19 0"
@@ -265,7 +267,9 @@ FILES=(components/rtc/mlsCallSession.ts components/rtc/mlsCallModePolicy.ts
   components/rtc/screenAudioNativeWin.test.ts
   components/ui/components/features/voice/callCard/VoiceCallDowngradeBanner.tsx
   components/ui/components/features/voice/callCard/VoiceCallCardStatus.tsx
-  components/rtc/pauseClauseHold.ts components/rtc/pauseClauseHold.test.ts)
+  components/rtc/pauseClauseHold.ts components/rtc/pauseClauseHold.test.ts
+  components/rtc/mlsJoinTimeline.ts components/rtc/mlsJoinTimeline.test.ts
+  components/rtc/mlsCallSession.timeline.test.ts)
 # 🔴 NOT in FILES: components/ui/components/features/voice/watch/WatchOverlay.tsx.
 # Wave 3 changes ONE line of it (`bannerParksFloat(voice.callBanner())`), but
 # the file carries 101 pre-existing prettier/prettier warnings and fails

@@ -392,6 +392,7 @@ CHIP = "chipInputs.ts"
 #: `RTC / mutation.file`) — NOT the `components/rtc/…` form the spec
 #: constants use.
 HOLD = "pauseClauseHold.ts"
+TIMELINE = "mlsJoinTimeline.ts"
 
 JOINRACE_SPEC = "components/rtc/mlsCallSession.joinrace.test.ts"
 HEAL_SPEC = "components/rtc/mlsCallSession.heal.test.ts"
@@ -407,6 +408,8 @@ KICK_POLICY_SPEC = "components/rtc/publishKickPolicy.test.ts"
 WITNESS_SPEC = "components/rtc/decodeWitnessListener.test.ts"
 CHIP_SPEC = "components/rtc/chipInputs.test.ts"
 HOLD_SPEC = "components/rtc/pauseClauseHold.test.ts"
+TIMELINE_SPEC = "components/rtc/mlsJoinTimeline.test.ts"
+SESSION_TIMELINE_SPEC = "components/rtc/mlsCallSession.timeline.test.ts"
 ALL_SPECS = [POLICY_SPEC, HEAL_SPEC, JOINRACE_SPEC]
 
 
@@ -3187,6 +3190,67 @@ MUTATIONS += [
         search="""  if (banner.kind === "none" || banner.pause === "none") {""",
         replace="""  if (banner.pause === "none") {""",
         specs=[HOLD_SPEC],
+    ),
+]
+
+
+# --- The join timeline (join-latency plan, slice 0, wave 1, 2026-09-20) ------
+#
+# `mlsJoinTimeline.ts` is the pure recorder both seats stamp as the join
+# ladder passes each stage; `mlsCallSession.ts` only wires it. The three
+# recorder rules a misreading would silently corrupt — first occurrence wins,
+# an untaken stamp reads null (never 0, which is also t0), totalMs is last
+# minus first — are pinned under `mlsJoinTimeline.test.ts` alone. The session
+# wiring is only as measurable as the harness reaches: the `keysInstalled`
+# stamp inside `#onLocalKeyInstalled` is the one the timeline spec drives
+# directly, so it is the one pinned; the rest of the joiner ladder and the
+# admitter map are asserted as a sequence by `mlsCallSession.timeline.test.ts`
+# and are not given entries here, because a dropped stamp elsewhere in that
+# sequence is the same one-line defect and one pin is what proves the spec can
+# see it. Every entry `expect="red"` and `must_red` on its own spec.
+
+MUTATIONS += [
+    # ---- the recorder's rules -----------------------------------------------
+    Mutation(
+        id="timeline-last-wins",
+        what="a duplicate stamp name overwrites the first occurrence, so a retried stage reports the time of the retry and hides the very wait the timeline exists to measure",
+        file=TIMELINE,
+        search="""    if (this.#stamps.some((entry) => entry.name === name)) return;""",
+        replace="""    this.#stamps = this.#stamps.filter((entry) => entry.name !== name);""",
+        specs=[TIMELINE_SPEC],
+        must_red=[TIMELINE_SPEC],
+    ),
+    Mutation(
+        id="timeline-elapsed-zero",
+        what="`elapsedTo` answers 0 for a stamp never taken, which is indistinguishable from t0 — a stage that never ran reads as 'reached instantly'",
+        file=TIMELINE,
+        search="""    return entry ? entry.ms : null;""",
+        replace="""    return entry ? entry.ms : 0;""",
+        specs=[TIMELINE_SPEC],
+        must_red=[TIMELINE_SPEC],
+    ),
+    Mutation(
+        id="timeline-total-first",
+        what="`totalMs` reads the first stamp instead of last minus first, so every summary reports a 0 ms join whatever the ladder took",
+        file=TIMELINE,
+        search="""        ? roundTenth(stamps[stamps.length - 1].ms - stamps[0].ms)""",
+        replace="""        ? roundTenth(stamps[0].ms)""",
+        specs=[TIMELINE_SPEC],
+        must_red=[TIMELINE_SPEC],
+    ),
+    # ---- the session's wiring -----------------------------------------------
+    Mutation(
+        id="timeline-drop-keys-installed",
+        what="the `keysInstalled` stamp is not taken in `#onLocalKeyInstalled`, so the readout cannot attribute the wait between the welcome and the first local key — the stage the plan's levers are argued over",
+        file=SESSION,
+        # The stamp line dropped whole (newline included) so the mutant is
+        # still well-formed TS. Killed by the timeline spec's keysInstalled
+        # assertion on the summary.
+        search="""    this.#joinTimeline?.stamp("keysInstalled");
+""",
+        replace="",
+        specs=[SESSION_TIMELINE_SPEC],
+        must_red=[SESSION_TIMELINE_SPEC],
     ),
 ]
 
