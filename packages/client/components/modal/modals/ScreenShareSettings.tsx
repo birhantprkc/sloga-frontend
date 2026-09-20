@@ -1,13 +1,18 @@
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import { createFormControl, createFormGroup } from "solid-forms";
 
-import { screenAudioAvailableSync, useVoice } from "@revolt/rtc";
+import {
+  screenAudioAvailableSync,
+  useVoice,
+  winScreenAudioPickerSuppressed,
+  winScreenAudioSupported,
+} from "@revolt/rtc";
 import { useState } from "@revolt/state";
 import { ScreenShareQualityName } from "@revolt/state/stores/Voice";
 import { Column, Dialog, DialogProps, Form2 } from "@revolt/ui";
 import { VideoTrack } from "solid-livekit-components";
 
-import { Match, Show, Switch, createMemo } from "solid-js";
+import { Match, Show, Switch, createMemo, createResource } from "solid-js";
 import { Modals } from "../types";
 import { ScreenShareQualityLabel } from "./ScreenShareQualityLabel";
 
@@ -35,13 +40,37 @@ export function ScreenShareSettingsModal(
     () => props.audio || props.audioChoice === true,
   );
 
+  // WINDOWS. Read ONCE and synchronously, exactly as the share path reads it,
+  // so this dialog and the capture decision cannot disagree within one share.
+  // True only for a lit build on a Windows Tauri shell — the set of hosts
+  // where the browser's own "share system audio" checkbox has been removed.
+  const pickerAudioGone = winScreenAudioPickerSuppressed();
+  const [nativeAudio] = createResource(() => winScreenAudioSupported());
+
+  // 🔴 Whether this share can carry audio at all is a PREFERENCE question on a
+  // capable Windows shell, not only a live-track question. `props.audio` is
+  // false whenever there is no audio publication — INCLUDING when the user
+  // turned "Share audio" off — and hiding the checkbox in that state made the
+  // setting a ONE-WAY DOOR: this component is the only writer of
+  // `screenShareAudio` in the client, the browser checkbox that used to offer
+  // it is gone on that shell, and Settings has no toggle for it. So the
+  // checkbox stays visible and usable wherever it is the only lever.
+  const audioIsPreference = () => audioOffered() || pickerAudioGone;
+
+  // The state the checkbox exists to escape: capable shell, no audio
+  // publication. There is no live track to untick, so the control has no
+  // per-share meaning left and its only coherent meaning is the stored
+  // preference — which is why it writes through on submit without requiring
+  // "Don't ask me again".
+  const recoveringPreference = () => pickerAudioGone && !props.audio;
+
   const group = createFormGroup({
     qualityName: createFormControl<ScreenShareQualityName>(
       voice.screenShareQuality || "low",
       { required: true },
     ),
-    audio: createFormControl(audioOffered() && voice.screenShareAudio, {
-      disabled: !audioOffered(),
+    audio: createFormControl(audioIsPreference() && voice.screenShareAudio, {
+      disabled: !audioIsPreference(),
     }),
     shield: createFormControl(voice.screenShareShield),
     dontAsk: createFormControl(false),
@@ -51,14 +80,26 @@ export function ScreenShareSettingsModal(
     if (group.controls.dontAsk.value) {
       voice.screenShareQuality = group.controls.qualityName.value;
       voice.screenShareQualityAsk = false;
-      // Only when audio was actually on offer. When the capture failed
+      // Only when the control was actually usable. When the capture failed
       // (or this platform has none) the checkbox is hidden and reads
       // false, so persisting it would let one PipeWire hiccup turn screen
       // audio off for good — and with the ask dialog now gone too, the
-      // user never sees the checkbox again to notice.
-      if (audioOffered()) {
+      // user never sees the checkbox again to notice. 🔴 On a capable
+      // Windows shell the same write is what cemented the one-way door:
+      // "don't ask me again" wrote a DISABLED, forced-false checkbox over
+      // the setting on a shell where nothing else can turn it back on.
+      if (audioIsPreference()) {
         voice.screenShareAudio = group.controls.audio.value;
       }
+    }
+
+    // 🔴 The recovery case writes through WITHOUT "don't ask me again":
+    // there is no audio publication for the checkbox to govern this time
+    // round, so the preference is the only thing it can mean, and requiring
+    // a second, unrelated checkbox to make it stick is what made the setting
+    // a one-way door in the first place.
+    if (recoveringPreference()) {
+      voice.screenShareAudio = group.controls.audio.value;
     }
 
     // The shield persists unconditionally (unlike quality, it is a privacy
@@ -126,7 +167,7 @@ export function ScreenShareSettingsModal(
               };
             })}
           />
-          <Show when={audioOffered()}>
+          <Show when={audioIsPreference()}>
             <Form2.Checkbox control={group.controls.audio}>
               <Trans>Share audio</Trans>
             </Form2.Checkbox>
@@ -152,7 +193,12 @@ export function ScreenShareSettingsModal(
           <Form2.Checkbox control={group.controls.dontAsk}>
             <Trans>Don't ask me again</Trans>
           </Form2.Checkbox>
-          <Show when={!audioOffered()}>
+          {/* The Windows capability resource is only consulted on shells that
+              could be capable, so a Linux or macOS user's help text is never a
+              hostage of a Windows probe that will answer "no" anyway. */}
+          <Show
+            when={!audioOffered() && (!pickerAudioGone || !nativeAudio.loading)}
+          >
             <small>
               <Switch
                 fallback={
@@ -207,6 +253,51 @@ export function ScreenShareSettingsModal(
                   <Trans>
                     On macOS the browser can only capture audio when sharing a
                     tab — restart the share and pick a tab to include its sound.
+                  </Trans>
+                </Match>
+                {/* ------------------------------------------------------- */}
+                {/* WINDOWS — the shells with no checkbox.
+
+                    Order inside this group matters: each branch rules out the
+                    reason above it. The first two are the ones the user can
+                    act on; the last is the catch-all, and it is keyed on the
+                    checkbox being GONE rather than on the capture being
+                    available, so a shell whose probe never settled lands here
+                    instead of on the fallback's tick-the-box advice.
+
+                    Order against the Linux and macOS branches above does NOT
+                    matter, and that is by construction rather than by luck:
+                    `pickerAudioGone` and `nativeAudio()` can only be true on a
+                    lit Windows Tauri shell, where `isMac` is false and
+                    `screenAudioAvailableSync()` — which reads the Electron
+                    PipeWire surface — has nothing to find. The two groups are
+                    mutually exclusive. */}
+                <Match when={nativeAudio() && !props.entireScreen}>
+                  <Trans>
+                    Only entire-screen shares carry your computer's audio.
+                    Restart the share and pick a whole screen instead of a
+                    window.
+                  </Trans>
+                </Match>
+                <Match when={nativeAudio() && !voice.screenShareAudio}>
+                  <Trans>
+                    This share is silent because "Share audio" is turned off.
+                    Tick it above and restart the share to include your
+                    computer's sound.
+                  </Trans>
+                </Match>
+                {/* 🔴 No "your screen is still being shared" reassurance
+                    here. This branch is also what renders after an E2EE
+                    teardown stopped the audio, and in that case the cause is
+                    a missing transform — which livekit installs per sender
+                    from the same worker, so the screen VIDEO is in the same
+                    state. Telling the user the screen is still going out
+                    would be presenting the bad half as good news. The
+                    encryption failure raises its own blocking modal, which is
+                    where that story belongs; this line stays narrow. */}
+                <Match when={pickerAudioGone}>
+                  <Trans>
+                    Sloga couldn't capture your computer's audio for this share.
                   </Trans>
                 </Match>
               </Switch>

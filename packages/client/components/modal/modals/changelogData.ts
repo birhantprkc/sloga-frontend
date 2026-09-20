@@ -8,6 +8,92 @@ import type { ChangelogResponse } from "./Changelog";
  * the newest entry once, automatically, next time they open the app.
  */
 export const CHANGELOGS: ChangelogResponse[] = [
+  // ==========================================================================
+  // 🔴 HELD BACK — DO NOT UNCOMMENT UNTIL THE FLAG IS LIT.
+  //
+  // Native Windows screen-share audio (WASAPI process-loopback). The feature
+  // is DARK: `ENABLE_WIN_NATIVE_SCREEN_AUDIO` is off, no dist carries it, and
+  // the live legs (L1–L17 plus the §11.9 grandchild negative control) are
+  // still owed — so publishing now would describe behavior no user can reach.
+  //
+  // A COMMENT rather than an array entry on purpose. An entry that merely sits
+  // on main unbuilt is NOT safe: on 2026-08-20 exactly that reached users as a
+  // side effect of an unrelated feature deploy, describing more than had
+  // actually shipped.
+  //
+  // To publish, in the release that lights the flag:
+  //   1. uncomment and move to the TOP of the array;
+  //   2. set `id` to `sloga-<real date>`, `published_at` to that date, and
+  //      `web_version` to that release's version;
+  //   3. re-read it against what actually shipped. If window shares (slice 2)
+  //      landed in the same release, the "whole-screen shares only" bullet is
+  //      WRONG and must go.
+  //   4. 🔴 RE-CHECK THE LINUX AND macOS SENTENCE AGAINST THAT BUILD. It is
+  //      the line most likely to have gone stale: Linux gained a PipeWire
+  //      screen-audio path of its own, and its flag has shipped both lit and
+  //      accidentally dark across recent releases. Read the built dist rather
+  //      than trusting this comment.
+  //
+  // Copy constraints, load-bearing:
+  // - Windows DESKTOP SHELL only. Never claim it for the web — a Windows
+  //   browser tab has no native capture and still echoes the call — and never
+  //   for macOS.
+  // - The upstream Chromium bug was DRAFTED, NOT FILED (slice 0 leg 5). Say the
+  //   browser engine needs the fix; do not say a bug is open.
+  // - ENTIRE-SCREEN shares only. Window shares are slice 2 and carry no audio.
+  // - This entry CORRECTS v0.54.0's below, which tells Windows users to redo the
+  //   share with the system-audio box ticked. On a capable shell that box no
+  //   longer exists, so the old advice is impossible to follow — that
+  //   correction is why these notes gate the lighting.
+  // - PARAPHRASE the new dialog strings, never quote them: they are this
+  //   release's deploy gate markers, and quoting them here would put them in the
+  //   changelog chunk, so a dist grep would pass on the notes alone.
+  // - 🔴 SAY NOTHING ABOUT ENCRYPTION. The silence is deliberate, not an
+  //   oversight. A "your system audio is end-to-end encrypted" line would be
+  //   false in two reachable states: a mixed/downgraded call publishes screen
+  //   audio in plaintext by design (the assertion is skipped when
+  //   `!room.isE2EEEnabled`), and §7 records that even on a full-E2EE call the
+  //   assertion is a detector rather than a preventer, with a residual of
+  //   server-visible plaintext.
+  //
+  // THE THREE RESIDUALS, each of which the copy must respect:
+  // - 🔴 The exclusion is NOT unconditional. The measured exclusion covers the
+  //   target process and its DIRECT children, one level; a grandchild-owned
+  //   render session is NOT excluded, the §11.9 runtime control that would
+  //   catch it is unbuilt, and the one-level result is a single-box
+  //   measurement. System sounds (pid 0) are under no root at all, so Sloga's
+  //   own notification dings are still captured (WE24). The bullet below is
+  //   therefore written as what Sloga DOES — leave its own output out of the
+  //   capture — and NOT as a promise that no echo is possible.
+  // - 🔴 Failures are NOT always surfaced. At least four paths degrade to a
+  //   SILENT share by design and report nothing: a probe failure or timeout,
+  //   no Tauri bridge, refusing to start over an existing session, and the
+  //   `SLOGA_NO_SCREEN_AUDIO=1` opt-out. §9 names the silent share as the
+  //   ACCEPTED degrade; the existence of the settings-dialog help text is proof
+  //   that shares do go quietly silent.
+  // - 🔴 The WEB path is unfixed and stays unfixed. A Windows browser tab
+  //   sharing system audio still captures the call along with everything else.
+  //   That needs the browser engine, not us.
+  //
+  // {
+  //   id: "sloga-YYYY-MM-DD",
+  //   title: "Patch Notes",
+  //   published_at: "YYYY-MM-DDTHH:MM:SS.000Z",
+  //   web_version: "X.Y.Z",
+  //   markdown_content: `## vX.Y.Z — Windows screen shares carry your computer's sound
+  //
+  // ### 🔊 Screen sharing in the Windows desktop app
+  // - **Share your whole screen and your computer's sound goes with it — without dragging the call along.** Sloga now captures what your machine is playing directly, and leaves its own output out of that capture, so your game, your video and your music reach everyone without the voices of the people you are already talking to being fed back into the stream.
+  // - **There is no system-audio checkbox to remember any more.** The Windows picker used to offer one, and ticking it was what caused the echo. Sound follows your screen-share audio setting instead, so there is one less thing to get wrong.
+  // - **Whole-screen shares only, for now.** Sharing a single window still carries no sound.
+  // - **When we can tell why the sound did not start, we say so** — on older Windows builds, for instance, or when a second copy of Sloga is already running and holding the capture. Some setups still share silently without an explanation; if that is you, the screen-share settings dialog says what it can.
+  //
+  // ### What has not changed
+  // - This is the Windows desktop app. Sharing system audio **in a web browser still picks up everything the machine is playing, the call included** — that one needs a fix in the browser engine itself, and we are chasing it upstream.
+  // - macOS screen shares carry no system audio. Linux has its own separate capture path — check what that build actually shipped before saying anything about it here.
+  // `,
+  // },
+  // ==========================================================================
   // v0.60.3 (2026-09-19). Copy constraints, load-bearing:
   // - Web and the server only. The desktop and Android apps bundle their own
   //   copy of the client, so they get this with their next build; the entry

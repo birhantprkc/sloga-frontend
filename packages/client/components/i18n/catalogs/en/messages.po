@@ -46,6 +46,27 @@ msgid "A moderator deafened you in this server. You won't hear this call until t
 msgstr "A moderator deafened you in this server. You won't hear this call until they lift it."
 
 #: components/rtc/state.tsx
+msgid "Screen audio is unavailable in this window. If you are running a second copy of Sloga, only the first one can share system audio."
+msgstr "Screen audio is unavailable in this window. If you are running a second copy of Sloga, only the first one can share system audio."
+
+#: components/rtc/state.tsx
+msgid "This version of Windows cannot share system audio."
+msgstr "This version of Windows cannot share system audio."
+
+#: components/rtc/state.tsx
+#: components/rtc/state.tsx
+msgid "Screen audio could not start; sharing without it."
+msgstr "Screen audio could not start; sharing without it."
+
+#: components/rtc/state.tsx
+msgid "Screen audio could not be encrypted, so nothing was sent in the clear. Your computer's sound has stopped reaching the call and stays off for the rest of it — rejoin to try again."
+msgstr "Screen audio could not be encrypted, so nothing was sent in the clear. Your computer's sound has stopped reaching the call and stays off for the rest of it — rejoin to try again."
+
+#: components/rtc/state.tsx
+msgid "Screen audio stopped. The screen is still being shared."
+msgstr "Screen audio stopped. The screen is still being shared."
+
+#: components/rtc/state.tsx
 msgid "A moderator muted you in this server. Your microphone and camera stay off for everyone until they lift it."
 msgstr "A moderator muted you in this server. Your microphone and camera stay off for everyone until they lift it."
 
@@ -4894,6 +4915,18 @@ msgstr "On"
 #: components/modal/modals/ScreenShareSettings.tsx
 msgid "On macOS the browser can only capture audio when sharing a tab — restart the share and pick a tab to include its sound."
 msgstr "On macOS the browser can only capture audio when sharing a tab — restart the share and pick a tab to include its sound."
+
+#: components/modal/modals/ScreenShareSettings.tsx
+msgid "Only entire-screen shares carry your computer's audio. Restart the share and pick a whole screen instead of a window."
+msgstr "Only entire-screen shares carry your computer's audio. Restart the share and pick a whole screen instead of a window."
+
+#: components/modal/modals/ScreenShareSettings.tsx
+msgid "This share is silent because \"Share audio\" is turned off. Tick it above and restart the share to include your computer's sound."
+msgstr "This share is silent because \"Share audio\" is turned off. Tick it above and restart the share to include your computer's sound."
+
+#: components/modal/modals/ScreenShareSettings.tsx
+msgid "Sloga couldn't capture your computer's audio for this share."
+msgstr "Sloga couldn't capture your computer's audio for this share."
 
 #: components/app/interface/settings/user/appearance/LayoutArrangement.tsx
 msgid "On the same side as the channels, the member list shares their column. Overrides Ultrawide layout's member list placement."

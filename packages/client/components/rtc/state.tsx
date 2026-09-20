@@ -6621,6 +6621,31 @@ class Voice {
                 }
               ).displaySurface
             : undefined;
+          // 🔴 ENTIRE SCREEN ONLY, and computed HERE — off the RAW track,
+          // before the shield below replaces it.
+          //
+          // The Windows native capture is the whole system mix minus our own
+          // process subtree, so publishing it for a WINDOW or TAB share would
+          // send the user's music, their notifications and every other
+          // application to the call while they believe they are sharing one
+          // window — something Chromium never offered for a window share and
+          // nothing in the UI would tell them.
+          //
+          // `undefined` counts as a monitor share: that is what the privacy
+          // shield already assumes, and on this shell getDisplayMedia does
+          // report the surface.
+          //
+          // 🔴 One value, read once, used by BOTH the publish decision below
+          // and the settings modal. The modal cannot re-derive it: a
+          // `LocalTrack`'s `mediaStreamTrack` getter returns
+          // `processor?.processedTrack ?? _mediaStreamTrack`, and the shield
+          // is attached and awaited before that modal opens, so by then the
+          // surface reads as a canvas capture stream with no `displaySurface`
+          // at all. It would land on the `undefined ⇒ monitor` fallback and be
+          // right only by the coincidence that the shield attaches on monitor
+          // shares — which ends the moment a window share can carry audio.
+          const entireScreen =
+            displaySurface === "monitor" || displaySurface === undefined;
           if (this.#settings.screenShareShield && localTrack.videoTrack) {
             const surface = displaySurface;
             if (surface === "monitor" || surface === undefined) {
@@ -6686,19 +6711,11 @@ class Voice {
           // unchanged — including its `screenAudioSupported(true)` refresh,
           // which is never called on the Windows arm.
           if (suppressPickerAudio) {
-            // 🔴 ENTIRE SCREEN ONLY. The native capture is the whole system
-            // mix minus our own process subtree, so publishing it for a WINDOW
-            // or TAB share would send the user's music, their notifications
-            // and every other application to the call while they believe they
-            // are sharing one window — something Chromium never offered for a
-            // window share and nothing in the UI would tell them.
+            // `entireScreen` is computed once beside `displaySurface` above,
+            // off the raw track — see its note there for why it cannot be
+            // re-derived later, and why the settings modal is handed the same
+            // value rather than asking the track again.
             //
-            // `undefined` counts as a monitor share: that is what the privacy
-            // shield above already assumes, and on this shell getDisplayMedia
-            // does report the surface. The value is read above for the shield,
-            // so this costs nothing.
-            const entireScreen =
-              displaySurface === "monitor" || displaySurface === undefined;
             // The browser checkbox is GONE on this path, so the native capture
             // is the only source of system audio there is — and `wantsAudio`
             // (the stored setting, or the picker's answer, or a pending
@@ -6883,6 +6900,7 @@ class Voice {
                 }),
                 audio: !!screenAudioTrack,
                 audioChoice: needsAudioChoice,
+                entireScreen,
                 callback: async (qualityName, audio) => {
                   callback(qualityName, audio);
                   // Native screen audio was published MUTED while consent
