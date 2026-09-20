@@ -20,6 +20,7 @@ import {
 
 import {
   type AudioCaptureOptions,
+  type LocalTrack,
   type LocalTrackPublication,
   type TrackPublishOptions,
   type VideoCaptureOptions,
@@ -1313,11 +1314,14 @@ class Voice {
    * The single publish-gate reason SET (FE-3/R2-1/R2-7). Local upstream
    * publishing flows ONLY when this is empty; the session adds/removes its
    * reasons (`negotiating`/`enable-window`/`mixed`). The screenshare quality
-   * modal keeps its own PER-TRACK pause but its resume defers to this gate
-   * (it only resumes when the set is empty — the gate owner resumes every
-   * publication when the set empties). Every LocalTrackPublished +
-   * UpstreamResumed/TrackProcessorUpdate re-asserts the gate so a late
-   * publication or livekit's unconditional resumes can never bypass it.
+   * modal keeps its own PER-TRACK pause, named apart from this set in
+   * `#consentHeld`: its consent callback resumes directly only over an EMPTY
+   * set and otherwise defers to the gate's own 1->0 sweep, and that sweep
+   * never resumes a track still consent-held (the `resume` arm in
+   * `publishGate.ts` skips a `consentHeld` publication). Every
+   * LocalTrackPublished + UpstreamResumed/TrackProcessorUpdate re-asserts
+   * the gate so a late publication or livekit's unconditional resumes can
+   * never bypass it.
    */
   #publishGate = new Set<PublishGateReason>();
   /**
@@ -1383,11 +1387,48 @@ class Voice {
    * The `LocalTrackPublished` handler reads it to tell the one born-paused
    * publication an emptied gate still owes a resume apart from every other
    * `{flag: true, quiet}` publication in the map -- the screen-share
-   * consent-pending pause -- which an empty-gate map sweep would wrongly
-   * resume (final audit F1). A WeakSet so a track dropped by livekit is
-   * never held here.
+   * consent-pending pause -- which an empty-gate map sweep used to wrongly
+   * resume (final audit F1). Since wave 4 that pause is ALSO named by
+   * `#consentHeld`, and the `resumeLanded` arm passes the hold as the born
+   * adapter's flag: a share whose republish straddled the 1->0 edge is
+   * re-tagged here but not resumed while its consent is pending. A WeakSet
+   * so a track dropped by livekit is never held here.
    */
   #bornPaused = new WeakSet<object>();
+  /**
+   * The tracks whose upstream is paused for VIEWER CONSENT -- the screen
+   * share (and its audio) while the quality ask-modal is open -- keyed by
+   * the `LocalTrack` object, never the publication or its sid.
+   *
+   * Why the track: the E2EE-flip republish every escape press causes
+   * (`setE2EEEnabled` -> `republishAllTracks`) lands the SAME `LocalTrack`
+   * under a NEW `trackSid` and a NEW publication (`unpublishTrack` runs
+   * `publication.setTrack(undefined)`; `republishAllTracks` builds a fresh
+   * publication over the same track), so a name-keyed ledger would be
+   * looking for a name the republish retired while the pause it named is
+   * still in force, and a resume issued over the captured PUBLICATION is
+   * `this.track?.resumeUpstream()` over `undefined` -- a masked no-op. The
+   * track survives the republish; the pause and the hold ride with it, and
+   * every pause/resume on the consent path is issued over the track.
+   *
+   * Read at the two empty-gate resume paths: `#sweepPublishGate` hands
+   * `(t) => this.#consentHeld.has(t)` to `gatedPublicationsFrom`, so the
+   * 1->0 sweep's `resume` arm skips a held track, and the `resumeLanded`
+   * kick passes the same read as the born adapter's flag. Written only on
+   * the screen-share start path: added as soon as `consentPending` is
+   * decided (before the first await that could let a 1->0 edge land),
+   * re-added at each consent pause. Released: the share FIRST in the
+   * consent callback, the audio only when audio was GRANTED (declined,
+   * it stays held until the untick unpublish drops the object);
+   * `onCancel` deletes both only AFTER its unpublish RESOLVES and keeps
+   * them on a rejection -- livekit awaits a pending republish before it
+   * unpublishes, so a rejecting republish leaves the share published and
+   * paused, and a `finally` release would hand it to the next 1->0 sweep
+   * unconsented. The born-paused mic is never added, so the wave-1 F1
+   * strand stays resumed at 1->0. A WeakSet for the same reason as
+   * `#bornPaused`.
+   */
+  #consentHeld = new WeakSet<object>();
   /**
    * Every flag a held-gate episode carries — the permanent spend set, the
    * DRIVE-scoped pending set, the confirm dedupe, the confirming-pass phase
@@ -3239,10 +3280,11 @@ class Voice {
       // `publishGateOp` answers `resume` for EVERY `{flag: true, quiet}`
       // publication under an empty gate, and the map holds pauses the gate
       // does not own: the screen-share consent-pending pause
-      // (`if (consentPending) localTrack.pauseUpstream()` below), which an
-      // empty-gate map sweep resumed on ANY later publish -- the share's own
-      // native audio landing, a camera toggle while the ask-modal was open
-      // -- on every shell, plain web included (final audit F1). What an
+      // (`if (consentPending) shareTrack.pauseUpstream()` below, the track
+      // held in `#consentHeld`), which an empty-gate map sweep resumed on
+      // ANY later publish -- the share's own native audio landing, a camera
+      // toggle while the ask-modal was open -- on every shell, plain web
+      // included (final audit F1). What an
       // empty gate still owes is the F1 strand: a born-paused publication
       // whose gate emptied DURING its offer/answer lands here as
       // `{flag: true, sender.track: null}`, and the 1->0 resume sweep and
@@ -3251,8 +3293,14 @@ class Voice {
       // tagged at `LocalSenderCreated`, so the empty-gate arm resumes THAT
       // publication alone, through the same `applyPublishGate` op over a
       // publication built from the track (`resume`: no-op on a live sender,
-      // `failed` if the attach threw) -- nothing is lost. The tag is
-      // consumed here whichever arm runs, so it cannot outlive one publish.
+      // `failed` if the attach threw) -- nothing is lost. The born adapter's
+      // flag is `#consentHeld.has(pub.track)`: a republish under a held gate
+      // whose offer/answer straddled the 1->0 edge re-tags the consent-held
+      // share born-paused and lands it here on an empty gate, and without
+      // the flag this arm would resume it ahead of its consent answer; at a
+      // first publish the hold is not yet set and the flag reads false. The
+      // tag is consumed here whichever arm runs, so it cannot outlive one
+      // publish.
       // `failed` is the report key: `unproven` is filled by the op arms
       // (`pause`/`repause`, which an empty gate never reaches; the resume
       // arm's only route into it is the outer catch's `unreadable` path,
@@ -3276,11 +3324,14 @@ class Voice {
       ) {
         void applyPublishGate(
           [
-            gatedPublicationFromSender({
-              source: pub.source,
-              sid: pub.trackSid,
-              track: pub.track,
-            }),
+            gatedPublicationFromSender(
+              {
+                source: pub.source,
+                sid: pub.trackSid,
+                track: pub.track,
+              },
+              this.#consentHeld.has(pub.track),
+            ),
           ],
           this.#gateHeld,
           {},
@@ -4563,18 +4614,23 @@ class Voice {
         passes: this.#gateSweeper?.passes() ?? null,
         currentRoom: this.room() === room,
       });
-    // The 1->0 resume sweep. PRE-EXISTING GAP, named by the wave-4
-    // completion audit (F3) and NOT fixed here: under an empty gate this
-    // sweep resumes EVERY `{flag: true, quiet}` publication in
-    // `trackPublications`, including pauses the gate never issued -- a
-    // screen share born-paused under a held gate whose consent-pending pause
-    // (`if (consentPending) localTrack.pauseUpstream()` below) then landed
-    // on an already-true flag is resumed here, ahead of its viewer-consent
-    // answer. It is the same ownership gap wave 4 closed at the publish-time
-    // kick (`publishKickAction`: an empty gate resumes only what the hook
-    // tagged), one edge over. Follow-up: an episode-scoped "paused by the
-    // gate" set, so this sweep's `resume` arm touches only publications the
-    // gate itself paused.
+    // The 1->0 resume sweep. Under an empty gate it resumes every
+    // `{flag: true, quiet}` publication in `trackPublications` EXCEPT a
+    // consent-held one: `#sweepPublishGate` hands `#consentHeld` to
+    // `gatedPublicationsFrom` as its predicate, and the `resume` arm in
+    // `publishGate.ts` returns null over a `consentHeld` publication. That
+    // closes the gap the wave-4 completion audit named here (F3): a screen
+    // share born-paused under a held gate whose consent-pending pause
+    // (`if (consentPending) shareTrack.pauseUpstream()` below) landed on an
+    // already-true flag was resumed by this sweep ahead of its viewer-consent
+    // answer -- and every `local_confirm` press produces exactly this edge.
+    // The hold is keyed by the `LocalTrack`, not by an episode or a name: an
+    // episode-scoped set is cleared by the `endEpisode` above BEFORE this
+    // sweep could read it, and a name-keyed ledger cannot work because the
+    // E2EE-flip republish the same press causes lands the SAME track under a
+    // NEW sid -- the name the ledger claimed is retired while the pause it
+    // named is still in force. The track survives the republish, so the
+    // hold does.
     await this.#applyPublishGate(room);
     // The gate's 1->0 edge (emitted on every resume that leaves the set
     // empty, not only the first). Re-run the mic pipeline sync AFTER the
@@ -4711,7 +4767,13 @@ class Voice {
       // UNFILTERED on purpose: the no-track skip belongs to
       // `gatedPublicationsFrom`, where a spec reaches it. Pre-filtering here
       // would put that line back in the file nothing can load.
-      gatedPublicationsFrom(room.localParticipant.trackPublications.values()),
+      gatedPublicationsFrom(
+        room.localParticipant.trackPublications.values(),
+        // Consulted only under an empty gate: the `resume` arm skips a track
+        // still paused for viewer consent. Passed on EVERY pass -- this
+        // closure is the coalescing sweeper's, shared by every trigger.
+        (t) => this.#consentHeld.has(t),
+      ),
       this.#gateHeld,
       // Re-supplied by reference on every pass, so the episode can arm the
       // next pass from this one's report. `repauseSpent` is PERMANENT for the
@@ -6649,20 +6711,51 @@ class Voice {
         let screenAudioTrack = room.localParticipant.getTrackPublication(
           Track.Source.ScreenShareAudio,
         );
+        // The audio TRACK, re-captured after each `screenAudioTrack`
+        // assignment. Its absence is a real state (no audio was captured),
+        // so it is the one object on this path an optional chain may target.
+        let audioTrack: LocalTrack | undefined = screenAudioTrack?.track;
 
         this.#setScreenshare(room.localParticipant.isScreenShareEnabled);
 
         if (localTrack) {
+          // The share TRACK, captured before any await: every pause/resume
+          // on this path is issued over it, never over `localTrack`. A
+          // republish (the E2EE flip, the signal reconnect, the declaration
+          // seam) runs `publication.setTrack(undefined)` on THIS publication
+          // and builds a new one over the SAME track, so a later
+          // `localTrack.pauseUpstream()` / `.resumeUpstream()` is
+          // `this.track?.…()` over `undefined` -- a silent no-op. Fail-loud
+          // narrowing, inside the try so `onErr` surfaces it: livekit types
+          // the field optional, and an optional chain here would be exactly
+          // that no-op class. `videoTrack`, not `track`: the same object for
+          // a ScreenShare publication (`isVideoTrack(this.track) ? this.track
+          // : undefined`), typed `LocalVideoTrack`, so every video read below
+          // -- hint, settings, shield, encoding -- goes through it instead of
+          // a fresh read of the publication's getter, which a republish turns
+          // `undefined` (the publication's track is cleared) and which then
+          // silently skipped whatever it guarded.
+          const shareTrack = localTrack.videoTrack;
+          if (!shareTrack)
+            throw new Error("screen share published without a video track");
+          // The consent decision, made HERE (its inputs are all in hand) so
+          // the hold is set before the first await below: a 1->0 edge
+          // landing during `setProcessor(shield)` or `screenAudioSupported`
+          // would otherwise resume a born-paused share ahead of the
+          // ask-modal. Byte-for-byte the modal condition further down.
+          const consentPending =
+            !screenPickerQualityName &&
+            this.#settings.screenShareQualityAsk &&
+            Object.keys(qualities).length > 1;
+          if (consentPending) this.#consentHeld.add(shareTrack);
+
           // Tell the encoder what to protect BEFORE anything else. `callback`
           // below sets this too, but it only runs when the picker returned a
           // quality or the ask-dialog is on — a share started from a stored
           // quality would otherwise publish with the browser's default hint,
           // which treats screen content as motion and spends the bitrate on
           // holding framerate instead of keeping text legible.
-          if (localTrack.videoTrack) {
-            localTrack.videoTrack.mediaStreamTrack.contentHint =
-              initialQuality.contentHint;
-          }
+          shareTrack.mediaStreamTrack.contentHint = initialQuality.contentHint;
 
           // Privacy shield: pixelates the OS-toast corner when something
           // pops in, before frames reach the encoder (and therefore before
@@ -6673,13 +6766,11 @@ class Voice {
           // continues RAW — the user chose to share; silently blocking the
           // share would be the worse surprise. The gate's
           // TrackProcessorUpdate handler squares this with pause/resume.
-          const displaySurface = localTrack.videoTrack
-            ? (
-                localTrack.videoTrack.mediaStreamTrack.getSettings() as MediaTrackSettings & {
-                  displaySurface?: string;
-                }
-              ).displaySurface
-            : undefined;
+          const displaySurface = (
+            shareTrack.mediaStreamTrack.getSettings() as MediaTrackSettings & {
+              displaySurface?: string;
+            }
+          ).displaySurface;
           // 🔴 ENTIRE SCREEN ONLY, and computed HERE — off the RAW track,
           // before the shield below replaces it.
           //
@@ -6705,14 +6796,12 @@ class Voice {
           // shares — which ends the moment a window share can carry audio.
           const entireScreen =
             displaySurface === "monitor" || displaySurface === undefined;
-          if (this.#settings.screenShareShield && localTrack.videoTrack) {
+          if (this.#settings.screenShareShield) {
             const surface = displaySurface;
             if (surface === "monitor" || surface === undefined) {
               try {
                 const shield = new ScreenShieldProcessor();
-                await (localTrack.videoTrack as LocalVideoTrack).setProcessor(
-                  shield,
-                );
+                await shareTrack.setProcessor(shield);
                 this.#screenShield = shield;
               } catch (error) {
                 console.error("screen shield attach failed", error);
@@ -6741,10 +6830,7 @@ class Voice {
           // degrades to a no-audio share, never a failed share. When the
           // in-app picker ran (Windows/EL3), ITS audio answer governs, not
           // the stored setting — the two can disagree in both directions.
-          const consentPending =
-            !screenPickerQualityName &&
-            this.#settings.screenShareQualityAsk &&
-            Object.keys(qualities).length > 1;
+          // (`consentPending` itself is decided at the capture above.)
           const wantsAudio =
             consentPending ||
             (screenPickerQualityName !== undefined
@@ -6791,8 +6877,12 @@ class Voice {
               // Linux arm's pause; the awaits differ, the exposure does not.
               // Safe even when the probe then says no: `consentPending` is
               // exactly the condition under which the ask-modal opens, and its
-              // callback is what resumes the upstream.
-              if (consentPending) localTrack.pauseUpstream();
+              // callback is what resumes the upstream. The hold re-add is
+              // idempotent too (set at the capture above).
+              if (consentPending) {
+                this.#consentHeld.add(shareTrack);
+                shareTrack.pauseUpstream();
+              }
               // Probe-bounded, and answers "no" when unsettled. Safe HERE
               // precisely because the checkbox question was answered
               // separately and synchronously above: the degrade is a silent
@@ -6816,6 +6906,7 @@ class Voice {
                     generation,
                     consentPending,
                   )) ?? screenAudioTrack;
+                audioTrack = screenAudioTrack?.track;
               }
             }
           } else if (
@@ -6826,8 +6917,12 @@ class Voice {
             // The capture path awaits seconds (IPC, enumerate, gUM) — do
             // not let the just-published video stream to the call for that
             // long before the user has answered the ask-modal: pause it
-            // now; the modal path pauses again idempotently below.
-            if (consentPending) localTrack.pauseUpstream();
+            // now; the modal path pauses again idempotently below. The
+            // hold re-add is idempotent too (set at the capture above).
+            if (consentPending) {
+              this.#consentHeld.add(shareTrack);
+              shareTrack.pauseUpstream();
+            }
             // Bounded inside resolveScreenAudioTarget: the upstream is
             // already paused here, so a shell call that never settled
             // would strand viewers on a frozen tile with no way out.
@@ -6851,6 +6946,7 @@ class Voice {
                 consentPending,
                 plan,
               );
+              audioTrack = screenAudioTrack?.track;
             }
           }
 
@@ -6860,65 +6956,65 @@ class Voice {
           ) => {
             const quality = qualities[qualityName] || qualities.low!;
 
-            if (localTrack.videoTrack) {
-              await localTrack.videoTrack.mediaStreamTrack.applyConstraints({
-                frameRate: { max: quality.resolution.frameRate },
-                width:
-                  quality.resolution.width === 0
-                    ? undefined
-                    : { max: quality.resolution.width },
-                height:
-                  quality.resolution.width === 0
-                    ? undefined
-                    : { max: quality.resolution.height },
-              });
-              localTrack.videoTrack.mediaStreamTrack.contentHint =
-                quality.contentHint;
-              // Re-cap the publish bitrate to the picked tier. applyConstraints
-              // above only changes the captured resolution/framerate; the RTP
-              // sender keeps whatever maxBitrate was set at publish time, so a
-              // 720p->1440p switch would otherwise stay starved (or, going the
-              // other way, keep an over-large cap). Best-effort — a failure
-              // just leaves the publish-time cap in place.
-              await this.#applyScreenShareEncoding(
-                localTrack.videoTrack,
-                quality,
-              );
-              // Tiers disagree about what to protect, so this has to move with
-              // the tier rather than being set once at publish. Best-effort:
-              // a failure just leaves the previous preference in place.
-              await localTrack.videoTrack
-                .setDegradationPreference(quality.degradationPreference)
-                .catch(() => undefined);
-              if (!audio && screenAudioTrack?.track) {
-                // 🔴 Branch on PROVENANCE, not on liveness. `suppressPickerAudio`
-                // is the same platform decision that chose the capture path for
-                // this share, so a publication held here under it can only have
-                // come from `#publishWinScreenAudio` — the browser checkbox was
-                // removed, so gUM produced no audio track to publish. Asking
-                // `winScreenAudioActive()` instead would be asking whether the
-                // module is live RIGHT NOW: if it self-tore-down between the
-                // publish and this untick (a death, or the E2EE assertion) while
-                // `screenAudioTrack` is still held, that reads false and the
-                // Linux unpublish/`stopScreenAudio` pair would run against a
-                // Windows publication. Correct only by coincidence today.
-                if (suppressPickerAudio) {
-                  // Windows: the module owns the unpublish (its host closure
-                  // resolves the publication BY TRACK, which is the only
-                  // lookup that survives the publish window and
-                  // `republishAllTracks`), and it also owns the AudioContext
-                  // and the worklet that a bare unpublish would leak.
-                  // Idempotent and silent when the session is already gone.
-                  await teardownWinScreenAudio();
-                } else {
-                  room.localParticipant.unpublishTrack(screenAudioTrack.track);
-                }
-                // The native PipeWire session (Linux) dies with the untick;
-                // no-op on every other surface.
-                void stopScreenAudio(this.#screenAudioSessionId);
+            // Through the captured `shareTrack`, never the publication getter:
+            // after a republish that getter is `undefined` (the publication's
+            // track was cleared) and the guard that used to wrap this body
+            // silently skipped ALL of it -- the constraints, the hint, the
+            // encoding, AND the audio-untick unpublish below, so declined
+            // system audio kept streaming.
+            await shareTrack.mediaStreamTrack.applyConstraints({
+              frameRate: { max: quality.resolution.frameRate },
+              width:
+                quality.resolution.width === 0
+                  ? undefined
+                  : { max: quality.resolution.width },
+              height:
+                quality.resolution.width === 0
+                  ? undefined
+                  : { max: quality.resolution.height },
+            });
+            shareTrack.mediaStreamTrack.contentHint = quality.contentHint;
+            // Re-cap the publish bitrate to the picked tier. applyConstraints
+            // above only changes the captured resolution/framerate; the RTP
+            // sender keeps whatever maxBitrate was set at publish time, so a
+            // 720p->1440p switch would otherwise stay starved (or, going the
+            // other way, keep an over-large cap). Best-effort — a failure
+            // just leaves the publish-time cap in place.
+            await this.#applyScreenShareEncoding(shareTrack, quality);
+            // Tiers disagree about what to protect, so this has to move with
+            // the tier rather than being set once at publish. Best-effort:
+            // a failure just leaves the previous preference in place.
+            await shareTrack
+              .setDegradationPreference(quality.degradationPreference)
+              .catch(() => undefined);
+            if (!audio && audioTrack) {
+              // 🔴 Branch on PROVENANCE, not on liveness. `suppressPickerAudio`
+              // is the same platform decision that chose the capture path for
+              // this share, so a publication held here under it can only have
+              // come from `#publishWinScreenAudio` — the browser checkbox was
+              // removed, so gUM produced no audio track to publish. Asking
+              // `winScreenAudioActive()` instead would be asking whether the
+              // module is live RIGHT NOW: if it self-tore-down between the
+              // publish and this untick (a death, or the E2EE assertion) while
+              // `screenAudioTrack` is still held, that reads false and the
+              // Linux unpublish/`stopScreenAudio` pair would run against a
+              // Windows publication. Correct only by coincidence today.
+              if (suppressPickerAudio) {
+                // Windows: the module owns the unpublish (its host closure
+                // resolves the publication BY TRACK, which is the only
+                // lookup that survives the publish window and
+                // `republishAllTracks`), and it also owns the AudioContext
+                // and the worklet that a bare unpublish would leak.
+                // Idempotent and silent when the session is already gone.
+                await teardownWinScreenAudio();
+              } else {
+                room.localParticipant.unpublishTrack(audioTrack);
               }
-              this.sound.playSound("streamStart");
+              // The native PipeWire session (Linux) dies with the untick;
+              // no-op on every other surface.
+              void stopScreenAudio(this.#screenAudioSessionId);
             }
+            this.sound.playSound("streamStart");
           };
 
           if (screenPickerQualityName) {
@@ -6926,18 +7022,27 @@ class Voice {
               screenPickerQualityName || "low",
               screenPickerAudio || false,
             );
-          } else if (this.#settings.screenShareQualityAsk) {
-            if (Object.keys(qualities).length > 1) {
-              localTrack.pauseUpstream();
-              screenAudioTrack?.pauseUpstream();
-              this.openModal({
-                onCancel: async () => {
-                  // Cancel never passes the toggle's disable branch (F1):
-                  // doom any in-flight capture and stop the native audio
-                  // session here too. livekit's own teardown unpublishes
-                  // and stops the tracks.
-                  this.#screenAudioGen++;
-                  void stopScreenAudio(this.#screenAudioSessionId);
+          } else if (consentPending) {
+            // ONE decision: the hoisted `consentPending` the hold was set
+            // on at the capture. Re-reading the setting here, four awaits
+            // later, let a flip in another window run the stored callback
+            // over a share still held -- paused for the whole call with
+            // nothing left to release it.
+            // Idempotent re-adds (the share was held at the capture); the
+            // audio track joins the hold here, where it first exists.
+            this.#consentHeld.add(shareTrack);
+            if (audioTrack) this.#consentHeld.add(audioTrack);
+            shareTrack.pauseUpstream();
+            audioTrack?.pauseUpstream();
+            this.openModal({
+              onCancel: async () => {
+                // Cancel never passes the toggle's disable branch (F1):
+                // doom any in-flight capture and stop the native audio
+                // session here too. livekit's own teardown unpublishes
+                // and stops the tracks.
+                this.#screenAudioGen++;
+                void stopScreenAudio(this.#screenAudioSessionId);
+                try {
                   // Windows: same stop path, and it must run BEFORE the
                   // unpublish for the same reason as the toggle's disable
                   // branch. A cancel landing while the graph is still being
@@ -6946,72 +7051,112 @@ class Voice {
                   // share the user has just cancelled.
                   await teardownWinScreenAudio();
                   await room.localParticipant.setScreenShareEnabled(false);
-                  this.#setScreenshare(
-                    room.localParticipant.isScreenShareEnabled,
+                } catch (error) {
+                  // livekit awaits a pending republish BEFORE it
+                  // unpublishes, so a rejection can leave the share
+                  // published and consent-paused: keep the hold (a share
+                  // stuck paused beats one streaming pre-consent), leave
+                  // `screenshare()` true so the stop button stays the way
+                  // out, and say so. Also the only handler this rejection
+                  // has: `onCancel` is typed `() => void` and called bare.
+                  console.error(
+                    "screen share cancel could not unpublish; consent hold kept",
+                    error,
                   );
-                },
-                type: "screen_share_settings",
-                trackReference: {
-                  participant: room.localParticipant,
-                  publication: localTrack,
-                  source: Track.Source.ScreenShare,
-                },
-                qualities: Object.keys(qualities).map((k) => {
-                  const v = qualities[k as ScreenShareQualityName]!;
-                  return { name: k, fullName: v.fullName };
-                }),
-                audio: !!screenAudioTrack,
-                audioChoice: needsAudioChoice,
-                entireScreen,
-                callback: async (qualityName, audio) => {
-                  callback(qualityName, audio);
-                  // Native screen audio was published MUTED while consent
-                  // was pending (F8/E3) — unmute now that the user said
-                  // yes, once the gate is empty and (on E2EE) the sender
-                  // transform is asserted. This covers the Windows arm too:
-                  // `#publishWinScreenAudio` mutes on the same edge, and
-                  // `#unmuteScreenAudioWhenSafe` is platform-neutral (it
-                  // keys on the publication's `LocalAudioTrack`, not on how
-                  // the track was captured).
-                  if (audio && screenAudioTrack?.track?.isMuted) {
-                    void this.#unmuteScreenAudioWhenSafe(
-                      room,
-                      screenAudioTrack,
-                      generation,
-                    );
+                  this.onErr(error);
+                  return;
+                }
+                // Only after a SUCCESSFUL unpublish, never before it: a
+                // 1->0 sweep in that window would resume the doomed share
+                // for the length of the unpublish.
+                this.#consentHeld.delete(shareTrack);
+                if (audioTrack) this.#consentHeld.delete(audioTrack);
+                this.#setScreenshare(
+                  room.localParticipant.isScreenShareEnabled,
+                );
+              },
+              type: "screen_share_settings",
+              trackReference: {
+                participant: room.localParticipant,
+                publication: localTrack,
+                source: Track.Source.ScreenShare,
+              },
+              qualities: Object.keys(qualities).map((k) => {
+                const v = qualities[k as ScreenShareQualityName]!;
+                return { name: k, fullName: v.fullName };
+              }),
+              audio: !!screenAudioTrack,
+              audioChoice: needsAudioChoice,
+              entireScreen,
+              callback: async (qualityName, audio) => {
+                // Consent given: release the hold FIRST, so whichever
+                // path resumes the share -- the direct resume below over
+                // an empty gate, or the gate's own 1->0 sweep later -- is
+                // no longer told to skip it.
+                this.#consentHeld.delete(shareTrack);
+                // The audio hold goes ONLY with a grant. Declined, the
+                // track keeps its hold until the untick unpublish inside
+                // `callback` drops the object: a 1->0 sweep landing in
+                // that window could otherwise resume an unmuted,
+                // upstream-paused getDisplayMedia audio track the user
+                // just said no to.
+                if (audioTrack && audio) this.#consentHeld.delete(audioTrack);
+                callback(qualityName, audio);
+                // Native screen audio was published MUTED while consent
+                // was pending (F8/E3) — unmute now that the user said
+                // yes, once the gate is empty and (on E2EE) the sender
+                // transform is asserted. This covers the Windows arm too:
+                // `#publishWinScreenAudio` mutes on the same edge, and
+                // `#unmuteScreenAudioWhenSafe` is platform-neutral (it
+                // keys on the publication's `LocalAudioTrack`, not on how
+                // the track was captured). Read through the captured
+                // TRACK: after a republish `screenAudioTrack.track` is
+                // `undefined` and the helper would return silently,
+                // leaving a live OS capture muted for the rest of the call.
+                if (audio && audioTrack?.isMuted) {
+                  void this.#unmuteScreenAudioWhenSafe(
+                    room,
+                    { track: audioTrack },
+                    generation,
+                  );
+                }
+                // Publish-gate coexistence (R2-8): the quality modal's
+                // per-track resume must never override a held session gate
+                // (negotiating / mixed / enable-window) — a direct resume
+                // here would briefly publish a plaintext screenshare into a
+                // mixed call before the UpstreamResumed backstop re-pauses
+                // it. If the gate is held, skip the resume: the gate owner
+                // resumes EVERY publication when the set empties, and the
+                // hold deleted above is what lets its `resume` arm include
+                // this share. Evaluated ONCE, here; the resume is over the
+                // captured tracks (the publication is stale after a
+                // republish, and its resume would be a masked no-op).
+                if (this.#publishGate.size === 0) {
+                  shareTrack.resumeUpstream();
+                  if (audio) {
+                    audioTrack?.resumeUpstream();
                   }
-                  // Publish-gate coexistence (R2-8): the quality modal's
-                  // per-track resume must never override a held session gate
-                  // (negotiating / mixed / enable-window) — a direct resume
-                  // here would briefly publish a plaintext screenshare into a
-                  // mixed call before the UpstreamResumed backstop re-pauses
-                  // it. If the gate is held, skip the resume: the gate owner
-                  // resumes EVERY publication when the set empties.
-                  if (this.#publishGate.size === 0) {
-                    localTrack.resumeUpstream();
-                    if (audio) {
-                      screenAudioTrack?.resumeUpstream();
-                    }
-                  }
-                  // Slice 2, LAST: the checkbox above was the consent to
-                  // send sound; the chooser asks which app. Deliberately
-                  // after this dialog has been answered and the video
-                  // share resumed, rather than stacked on top of it — one
-                  // question at a time, and the share is already settled
-                  // by the time the second one appears.
-                  if (audio && needsAudioChoice) {
-                    this.#chooseScreenAudioApp(room, generation).catch(
-                      (error) => this.onErr(error),
-                    );
-                  }
-                },
-              });
-            } else {
-              callback(
-                this.#settings.screenShareQuality || "low",
-                this.#settings.screenShareAudio,
-              );
-            }
+                }
+                // Slice 2, LAST: the checkbox above was the consent to
+                // send sound; the chooser asks which app. Deliberately
+                // after this dialog has been answered and the video
+                // share resumed, rather than stacked on top of it — one
+                // question at a time, and the share is already settled
+                // by the time the second one appears.
+                if (audio && needsAudioChoice) {
+                  this.#chooseScreenAudioApp(room, generation).catch((error) =>
+                    this.onErr(error),
+                  );
+                }
+              },
+            });
+          } else if (this.#settings.screenShareQualityAsk) {
+            // Ask-mode with a single tier: nothing to ask, the stored
+            // answer stands.
+            callback(
+              this.#settings.screenShareQuality || "low",
+              this.#settings.screenShareAudio,
+            );
           }
 
           // No ask-dialog will open (the picker answered, "don't ask me
@@ -7031,6 +7176,14 @@ class Voice {
         // Backing out of a picker — the browser's NotAllowedError or the
         // Electron shell's AbortError "Error starting capture" — is not an
         // error to the user who just cancelled; everything else surfaces.
+        //
+        // A rejection PAST the hold (`captureScreenAudio`, awaited bare
+        // inside `#publishNativeScreenAudio`, is the one call there that
+        // can reject) leaves the share published, upstream-paused and
+        // held, with no modal open: fail-closed. `onErr` says so and the
+        // stop button is the way out. No teardown here on purpose -- an
+        // await in an error path over a half-built share is more surface
+        // than the stuck share.
         if (!isScreenShareCancel(e)) this.onErr(e);
       } finally {
         this.#screenshareStarting = false;

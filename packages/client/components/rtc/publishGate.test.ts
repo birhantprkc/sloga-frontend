@@ -312,6 +312,14 @@ class FakeLocalTrack {
 function gated(
   track: FakeLocalTrack,
   name = "microphone/TR_1",
+  /**
+   * The screen-share consent hold (wave 4), passed through AS GIVEN: `true`
+   * is a share whose modal is open; `undefined`, `false` and an omitted
+   * argument are the publication the gate has always swept, because the
+   * sweep's only read is `=== true` — which the consent specs at the end of
+   * this file pin rather than assume. Every call above this line omits it.
+   */
+  consentHeld?: boolean,
 ): GatedPublication {
   return {
     name,
@@ -321,6 +329,7 @@ function gated(
     upstream: () => track.upstream(),
     pauseUpstream: () => track.pauseUpstream(),
     resumeUpstream: () => track.resumeUpstream(),
+    consentHeld,
   };
 }
 
@@ -2024,5 +2033,279 @@ for (const wire of WIRES) {
     await drainMacro(1);
     assert.equal(midOp.upstream(), "quiet");
     assert.equal(midOp.paused, true);
+  });
+}
+
+// ---- The consent hold (wave 4) ---------------------------------------------
+//
+// `state.tsx` pauses a freshly published screen share while its consent modal
+// is open — the ONLY non-gate pause ever placed on a publication the gate also
+// sweeps — and every `local_confirm` press produces a 1→0 edge whose `resume`
+// arm would put that share on the wire BEFORE the modal is answered. So the
+// arm skips a publication flagged `consentHeld` (`null`, "not this sweep's
+// promise"; the pause stays), and NOTHING else does: under a held gate the
+// share is paused and repaused like any other, because the gate's invariant
+// does not care why a sender is quiet.
+//
+// The hold is keyed by the `LocalTrack` OBJECT upstream, never by name: the
+// E2EE-flip republish the same press causes lands the same track under a new
+// `trackSid`. So the fake here is ONE `FakeLocalTrack`, re-adapted under a new
+// name after `republish`, exactly as `gatedPublicationsFrom` re-adapts the
+// same track under its new sid — and the consent GRANT is a fresh adapter
+// over the same track that reads `false`, exactly as the next sweep's adapter
+// does after `#consentHeld.delete(track)`.
+//
+// Every spec runs on both {@link WireModel}s. Most of what they assert is a
+// resume that did NOT happen, and on a `macro` wire the resume they are
+// guarding against would land on a later tick: a spec that only drained
+// microtasks would pass against a sweep that resumed the share.
+
+/**
+ * A screen share sitting under its consent pause — `shareTrack.pauseUpstream()`
+ * in `state.tsx` — with the pause landed: {flag: true, quiet}, i.e. a stale
+ * `true` flag over a detached sender.
+ */
+async function consentPaused(wire: WireModel): Promise<FakeLocalTrack> {
+  const share = new FakeLocalTrack("screen", wire);
+  await share.pauseUpstream();
+  await drainMacro(1);
+  assert.equal(share.upstream(), "quiet");
+  assert.equal(share.paused, true);
+  assert.deepEqual(share.sender!.writes, [null]);
+  return share;
+}
+
+/** Absent from EVERY list the sweep reports: not judged at all. */
+function assertUnjudged(result: PublishGateSweep, name: string): void {
+  assert.deepEqual(
+    {
+      unproven: result.unproven.filter((n) => n === name),
+      failed: result.failed.filter((n) => n === name),
+      proven: result.proven.filter((n) => n === name),
+    },
+    { unproven: [], failed: [], proven: [] },
+    `${name} was reported by a sweep that must not judge it`,
+  );
+}
+
+for (const wire of WIRES) {
+  /**
+   * Kills `gate-resume-ignores-consent-hold` (the `resume` arm without its
+   * `consentHeld` check): the held share gets a live write, its flag clears
+   * and its wire reads live — with the modal still open. The sibling mic in
+   * the same sweep proves the arm still RUNS; a mutation that made the whole
+   * sweep a no-op would leave the mic muted.
+   */
+  test(`consent hold: an empty gate leaves a consent-held share paused, and resumes its sibling (${wire} wire)`, async () => {
+    const share = await consentPaused(wire);
+    const mic = new FakeLocalTrack("mic", wire);
+    await applyPublishGate([gated(mic)], held); // the gate's own pause
+    assert.equal(mic.upstream(), "quiet");
+    const before = [...share.sender!.writes];
+
+    // The 1→0 edge a `local_confirm` press produces, over both publications.
+    const result = await applyPublishGate(
+      [gated(mic), gated(share, "screen_share/TR_2", true)],
+      empty,
+    );
+    await drainMacro(1);
+
+    assertUnjudged(result, "screen_share/TR_2");
+    assert.deepEqual(
+      share.sender!.writes,
+      before,
+      "the empty-gate sweep wrote to the held share's sender",
+    );
+    assert.equal(share.paused, true, "the consent pause was cleared");
+    assert.equal(
+      share.upstream(),
+      "quiet",
+      "the share went on the wire before its modal was answered",
+    );
+    // The arm still ran for the sibling.
+    assert.deepEqual(result.failed, []);
+    assert.equal(mic.upstream(), "live", "the sibling mic was not resumed");
+    assert.equal(mic.paused, false);
+    assert.equal(mic.sender!.writes.at(-1), "mic");
+  });
+
+  /**
+   * Kills `gate-consent-hold-blocks-pause` (the check hoisted above
+   * `switch (op)`, so a HELD gate issues nothing for a held share): the pause
+   * is never CALLED, `proven` is empty, and the share stays live under a held
+   * gate — the hold has become a gate bypass. Both held-gate arms are driven:
+   * `pause` on a live, unflagged share (published with consent pending, before
+   * any pause reached it) and `repause` after the E2EE-flip republish.
+   */
+  test(`consent hold: a held gate still pauses, and repauses, a consent-held share (${wire} wire)`, async () => {
+    const share = new FakeLocalTrack("screen", wire);
+    assert.equal(share.upstream(), "live");
+    assert.equal(share.paused, false);
+
+    const paused = await applyPublishGate(
+      [gated(share, "screen_share/TR_2", true)],
+      held,
+    );
+    assert.deepEqual(
+      paused.proven,
+      ["screen_share/TR_2"],
+      "a held gate did not prove the held share quiet",
+    );
+    assert.deepEqual(paused.unproven, []);
+    assert.equal(share.pauseCalls, 1, "the pause was not ISSUED");
+    assert.equal(share.sender!.writes.at(-1), null);
+    assert.equal(share.upstream(), "quiet", "the held share stayed live");
+    assert.equal(share.paused, true);
+
+    // The republish: a new sender carrying the same track, flag stale-true.
+    share.republish();
+    assert.equal(share.upstream(), "live");
+    assert.equal(share.paused, true);
+    const repaused = await applyPublishGate(
+      [gated(share, "screen_share/TR_3", true)],
+      held,
+    );
+    assert.deepEqual(repaused.proven, ["screen_share/TR_3"]);
+    assert.deepEqual(repaused.unproven, []);
+    assert.equal(share.pauseCalls, 2, "the repause was not ISSUED");
+    assert.deepEqual(
+      share.sender!.writes,
+      ["screen", null],
+      "resume-then-pause did not reach the new sender",
+    );
+    assert.equal(share.upstream(), "quiet", "the rebuilt share stayed live");
+    assert.equal(share.paused, true);
+  });
+
+  /**
+   * The republish case end to end, and the reason the hold is TRACK-keyed.
+   * Kills `gate-resume-ignores-consent-hold` a second way, over the NEW
+   * sender a republish built: `setE2EEEnabled` under a held gate hands the
+   * gate a new sender carrying the same track under a stale-true flag, the
+   * `LocalSenderCreated` listener repauses it at birth (`pauseAtBirth` over
+   * the born adapter with NO consent flag — held-gate ops only, as production
+   * passes it), and the 1→0 edge then finds the same track under a new name
+   * with the hold still standing. Then the GRANT: `state.tsx` deletes the
+   * track from `#consentHeld`, the next adapter over the same track reads
+   * `false`, and the empty gate's resume is what puts the share live.
+   */
+  test(`consent hold: a republished share stays un-resumed at 1→0 under its new name, and resumes once the hold clears (${wire} wire)`, async () => {
+    const share = await consentPaused(wire);
+    const oldSender = share.sender!;
+    let bornSweep: Promise<PublishGateSweep> | null | undefined;
+    let bornTrack: FakeLocalTrack | undefined;
+    share.republish((t, sender) => {
+      bornTrack = t;
+      assert.notEqual(sender, oldSender, "the republish kept the old sender");
+      assert.equal(t.paused, true, "the republish cleared the flag");
+      bornSweep = pauseAtBirth(
+        gatedPublicationFromSender({
+          source: "screen_share",
+          sid: null,
+          track: t,
+        }),
+        held,
+      );
+    });
+    assert.equal(bornTrack, share, "the hook saw a different track object");
+    assert.ok(bornSweep, "a held gate must run a sweep at birth");
+    assertClean(await bornSweep);
+    await drainMacro(1);
+    const newSender = share.sender!;
+    assert.notEqual(newSender, oldSender);
+    // The known, accepted blip: the born repause's resume-then-pause is the
+    // only live write the new sender sees while the hold stands.
+    assert.deepEqual(newSender.writes, ["screen", null]);
+    assert.equal(share.upstream(), "quiet");
+    assert.equal(share.paused, true);
+
+    // The 1→0 edge, with the share re-adapted under its NEW name and the
+    // track-keyed hold still reading true.
+    const edge = await applyPublishGate(
+      [gated(share, "screen_share/TR_9", true)],
+      empty,
+    );
+    await drainMacro(1);
+    assertUnjudged(edge, "screen_share/TR_9");
+    assert.deepEqual(
+      newSender.writes,
+      ["screen", null],
+      "the 1→0 sweep wrote to the republished share's new sender",
+    );
+    assert.equal(share.paused, true, "the consent pause was cleared at 1→0");
+    assert.equal(
+      share.upstream(),
+      "quiet",
+      "the republished share went on the wire before its modal was answered",
+    );
+
+    // Consent granted: the hold cleared on the SAME fake, same name.
+    const granted = await applyPublishGate(
+      [gated(share, "screen_share/TR_9", false)],
+      empty,
+    );
+    await drainMacro(1);
+    assert.deepEqual(granted.failed, []);
+    assertUnjudged(granted, "screen_share/TR_9");
+    assert.deepEqual(
+      newSender.writes,
+      ["screen", null, "screen"],
+      "the resume did not reach the sender after the grant",
+    );
+    assert.equal(share.paused, false);
+    assert.equal(
+      share.upstream(),
+      "live",
+      "the consented share is still muted upstream",
+    );
+  });
+
+  /**
+   * The `=== true` read, pinned: `undefined`, `false` and an OMITTED key are
+   * all the publication the gate has always swept — paused under a held gate,
+   * resumed under an empty one. Kills no listed mutation on its own; it is
+   * the guard against a future `!== false` or truthiness read, which would
+   * turn a share whose consent was never asked into one that never resumes.
+   */
+  test(`consent hold: undefined, false and an omitted flag all read as not held (${wire} wire)`, async () => {
+    for (const flag of [undefined, false]) {
+      const track = new FakeLocalTrack("mic", wire);
+      const publication = gated(track, "microphone/TR_1", flag);
+      assert.equal(publication.consentHeld, flag);
+      const heldResult = await applyPublishGate([publication], held);
+      assert.deepEqual(heldResult.proven, ["microphone/TR_1"]);
+      assert.equal(track.upstream(), "quiet");
+
+      const result = await applyPublishGate([publication], empty);
+      await drainMacro(1);
+      assertClean(result);
+      assert.equal(
+        track.upstream(),
+        "live",
+        `consentHeld: ${String(flag)} was read as held`,
+      );
+      assert.equal(track.paused, false);
+    }
+
+    // And no key at all — every adapter in this file before wave 4, and what
+    // `gatedPublicationsFrom` builds for a microphone or a camera.
+    const track = new FakeLocalTrack("mic", wire);
+    await track.pauseUpstream();
+    await drainMacro(1);
+    const absent: GatedPublication = {
+      name: "microphone/TR_1",
+      get upstreamPaused() {
+        return track.isUpstreamPaused;
+      },
+      upstream: () => track.upstream(),
+      pauseUpstream: () => track.pauseUpstream(),
+      resumeUpstream: () => track.resumeUpstream(),
+    };
+    assert.equal("consentHeld" in absent, false);
+    const result = await applyPublishGate([absent], empty);
+    await drainMacro(1);
+    assertClean(result);
+    assert.equal(track.upstream(), "live", "an omitted flag was read as held");
+    assert.equal(track.paused, false);
   });
 }

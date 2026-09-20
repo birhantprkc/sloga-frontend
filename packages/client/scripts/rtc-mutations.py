@@ -140,12 +140,20 @@ HARNESS = "mlsCallSession.harness.ts"
 #:       `publishKickAction({gateHeld, bornPaused})`: `"sweep"` runs the full
 #:       `#applyPublishGate(room)` (held gate; pause/repause arms only, nothing
 #:       resumed), `"resumeLanded"` runs
-#:       `applyPublishGate([gatedPublicationFromSender({source, sid:
-#:       pub.trackSid, track})], this.#gateHeld, {})` over the landed
-#:       publication ALONE — the empty-gate arm resumes ONLY the tagged track;
-#:       a pause the hook did not issue (screen-share consent pending, a user
-#:       mute) is somebody else's decision and stays — and `"none"` touches
-#:       nothing. After it, `#syncMicPipelineIfLanded(room, pub)` re-runs
+#:       `applyPublishGate([gatedPublicationFromSender({ source, sid, track },
+#:       this.#consentHeld.has(pub.track))], this.#gateHeld, {})` over the
+#:       landed publication ALONE — the empty-gate arm resumes ONLY the
+#:       tagged track, and since wave 4 only when that track is not
+#:       consent-held: the second argument is the born adapter's
+#:       `consentHeld` flag, read from the `#consentHeld` WeakSet by the
+#:       landed `pub.track` (xiv), and the `resume` arm returns null over a
+#:       held publication. A pause the hook did not issue stays put ONLY
+#:       because of that flag: the screen-share consent pause is a true
+#:       flag over a quiet sender — the exact shape this arm resumes — and
+#:       waves 1 through 3 resumed it here whenever a republish's
+#:       offer/answer straddled a 1→0, ahead of the user's answer — and
+#:       `"none"` touches nothing. After it, `#syncMicPipelineIfLanded(room,
+#:       pub)` re-runs
 #:       `#syncMicPipeline` when the landed track is the mic and the gate is
 #:       empty. That is the F4 re-run (the D6 attach for a mic whose gate
 #:       emptied mid-offer) but NOT only that: it fires on EVERY microphone
@@ -313,6 +321,62 @@ HARNESS = "mlsCallSession.harness.ts"
 #:        `banner-disproved-does-not-park` pin the PREDICATE; whether the
 #:        overlay asks it (rather than `!== "none"`, the round-5 defect
 #:        that parked the player for a whole call) is unmeasured.
+#:
+#: 🔴 AND THE WAVE-4 CONSENT-HOLD WIRINGS (banner-honesty wave 4,
+#: 2026-09-20), live-only for the same reason — `state.tsx` cannot be
+#: loaded by `node --test`:
+#:  (xii)  the `#consentHeld` `WeakSet` adds and deletes in
+#:        `setScreenShareEnabled`. Keyed by the `LocalTrack` OBJECT
+#:        (`shareTrack = localTrack.videoTrack`, the same object as
+#:        `localTrack.track` for a ScreenShare publication, captured before
+#:        the first await and fail-loud when absent), never by the
+#:        publication or its sid:
+#:        the E2EE-flip republish every escape press causes lands the SAME
+#:        track under a NEW sid and a NEW publication, so a sid-keyed hold
+#:        dies on it while the pause it names is still in force. The adds:
+#:        `if (consentPending) this.#consentHeld.add(shareTrack)` right
+#:        after `consentPending` is decided (before `setProcessor(shield)`
+#:        / `screenAudioSupported` can let a 1→0 edge land); the idempotent
+#:        re-add of `shareTrack` at the audio-branch consent pause; the
+#:        re-add of `shareTrack` plus `audioTrack` at the ask-modal pause.
+#:        The deletes: the consent callback's FIRST act releases the SHARE
+#:        (before its own empty-gate direct resume); the audio track is
+#:        released there ONLY when audio was GRANTED (`if (audioTrack &&
+#:        audio)`) — declined, it stays held until the untick unpublish
+#:        inside `callback` drops the object, so a 1→0 sweep landing in
+#:        that window cannot resume an unmuted, upstream-paused
+#:        getDisplayMedia audio track the user just refused. `onCancel`
+#:        deletes both only AFTER `setScreenShareEnabled(false)` RESOLVES
+#:        and KEEPS them when it rejects (it returns from its `catch` with
+#:        the hold intact, `onErr` fired, `screenshare()` still true so the
+#:        stop button stays the way out): livekit 2.15.13's
+#:        `setTrackEnabled` awaits a pending `republishPromise` BEFORE it
+#:        looks the publication up, so a rejecting republish rejects the
+#:        cancel with the share still published and consent-paused, and a
+#:        `finally` release would hand it to the next 1→0 sweep
+#:        unconsented; deleting before the await would open the same
+#:        window for the length of the unpublish. The GATE and EPISODE
+#:        entries below pin what a held flag DOES; nothing here can pin
+#:        that `state.tsx` still sets it, clears it at those two sites and
+#:        no other, gates the audio release on the grant, keeps the hold
+#:        on a rejected cancel, or keys it by the track — drop every add
+#:        and the share streams pre-consent at the next 1→0 with every
+#:        spec green.
+#:  (xiii) `#sweepPublishGate` passing `(t) => this.#consentHeld.has(t)`
+#:        into `gatedPublicationsFrom` on EVERY pass (the coalescing
+#:        sweeper's closure is shared by every trigger; consulted only
+#:        under an empty gate). `episode-consent-hold-not-stamped` pins
+#:        what the adapter does with a predicate; drop the argument and the
+#:        adapter's getter honestly reads `false`, every share resumes
+#:        pre-consent at the next 1→0, and every spec is green.
+#:  (xiv)  the `resumeLanded` arm of the `LocalTrackPublished` handler:
+#:        `gatedPublicationFromSender({ source, sid, track },
+#:        this.#consentHeld.has(pub.track))`.
+#:        `episode-born-adapter-ignores-consent-flag` pins that the born
+#:        adapter stamps its argument; pass nothing there and a republish
+#:        whose offer/answer straddled a 1→0 (signal reconnect, declaration
+#:        seam) re-tags the held share born-paused and resumes it ahead of
+#:        its consent answer, every spec green.
 STATE = "state.tsx"
 GATE = "publishGate.ts"
 EPISODE = "publishGateEpisode.ts"
@@ -1216,6 +1280,43 @@ MUTATIONS += [
         replace="""""",
         specs=[GATE_SPEC],
     ),
+    # ---- the consent hold (banner-honesty wave 4) ---------------------------
+    #
+    # The screen-share consent pause is the ONLY non-gate pause on a
+    # publication the gate also pauses, and a 1→0 sweep's `resume` arm cannot
+    # tell it from the gate's own. `GatedPublication.consentHeld` is how the
+    # adapter says "not yours to lift"; `runOne`'s `resume` arm returns `null`
+    # (the existing "not this sweep's promise" verdict) over it, ABOVE
+    # `issued = true`, and the held-gate arms never consult it. Two walls,
+    # one entry each; the `state.tsx` side that SETS the flag is header
+    # admission (xii)–(xiv).
+    Mutation(
+        id="gate-resume-ignores-consent-hold",
+        what="the `resume` arm drops its `consentHeld` check, so a 1→0 sweep resumes a screen share whose viewer-consent modal is still open — the share streams before the user answered",
+        file=GATE,
+        # The whole line INCLUDING its newline, so the replacement is empty and
+        # `issued = true;` follows the comment block directly — a mutant that
+        # still type-checks and still reads as the pre-wave-4 arm.
+        search="""        if (publication.consentHeld === true) return null;
+""",
+        replace="""""",
+        specs=[GATE_SPEC],
+    ),
+    Mutation(
+        id="gate-consent-hold-blocks-pause",
+        what="the `consentHeld` check is HOISTED above the held-gate arms, so a consent-held share is never paused or repaused under a HELD gate — the hold, meant only to stop a resume, now stops the gate's own pause",
+        file=GATE,
+        # `switch (op) {` opens `runOne`'s arm dispatch and occurs ONCE in the
+        # file, so it anchors alone; the early return is inserted at the
+        # switch's own indentation. The `resume` arm's check stays (redundant
+        # under the hoist) — the defect is the return BEFORE `pause`/`repause`.
+        search="""    switch (op) {
+""",
+        replace="""    if (publication.consentHeld === true) return null;
+    switch (op) {
+""",
+        specs=[GATE_SPEC],
+    ),
     # ---- the session-level invariant ---------------------------------------
     Mutation(
         id="latch-skips-the-negotiating-fold",
@@ -1549,10 +1650,11 @@ MUTATIONS += [
     # two ways that are not the same evidence: after a confirming re-sweep
     # actually ran (two observations a macrotask apart), and because the
     # consecutive-confirm budget was spent (ONE observation, taken microtasks
-    # after a livekit op that may simply not have landed). Wave 2 promotes
-    # `callPauseDisproved` to a `chipState` input, so a consumer that cannot
-    # tell them apart reddens off the guess with the disproof's weight: the
-    # 2026-09-08 false red one level up.
+    # after a livekit op that may simply not have landed). `callPauseDisproved`
+    # feeds `callBanner()`'s pause clause ONLY — it is not a `chipState`
+    # input and the chip never reads it — so a consumer that cannot tell
+    # them apart warns off the guess with the disproof's weight: the
+    # 2026-09-08 false red one level up, on the banner's pause line.
     #
     # 🔴 THE FIRST TWO ENTRIES ARE A PAIR, IN OPPOSITE DIRECTIONS, and the
     # second is the reason the pair exists. A suite that only ever asserts
@@ -2145,6 +2247,32 @@ MUTATIONS += [
         # reports a vacuous green, so the list says where the evidence is.
         specs=[EPISODE_SPEC],
     ),
+    # ---- the consent hold (banner-honesty wave 4) ---------------------------
+    #
+    # The adapter side of the two GATE entries above: `gatedPublicationOf`
+    # exposes `consentHeld` as a LAZY getter over the predicate
+    # `gatedPublicationsFrom` is handed (`state.tsx` passes its `WeakSet`
+    # read), and `gatedPublicationFromSender` stamps the flag its caller
+    # already knows (`resumeLanded` passes the same read; `pauseAtBirth`
+    # passes nothing). Either one hard-coded false leaves `publishGate.ts`'s
+    # check fully specified and never true — the share resumes pre-consent
+    # with the GATE entries still red on their own spec.
+    Mutation(
+        id="episode-consent-hold-not-stamped",
+        what="the adapter's `consentHeld` getter answers false regardless of the predicate it was handed, so the sweep's `resume` arm never sees a held share and lifts the consent pause at the next 1→0",
+        file=EPISODE,
+        search="""      return consentHeld?.() === true;""",
+        replace="""      return false;""",
+        specs=[EPISODE_SPEC],
+    ),
+    Mutation(
+        id="episode-born-adapter-ignores-consent-flag",
+        what="the born adapter stamps `consentHeld: false` whatever its caller passed, so the `resumeLanded` kick resumes a consent-held share whose republish straddled the 1→0 edge",
+        file=EPISODE,
+        search="""    () => consentHeld,""",
+        replace="""    () => false,""",
+        specs=[EPISODE_SPEC],
+    ),
 ]
 
 
@@ -2694,7 +2822,9 @@ MUTATIONS += [
 #
 # `mlsCallModePolicy.ts`: rows 3–5 of `chipState`'s order of record (the ONE
 # rule that yields `cannot_verify` and the two conjuncts that keep it honest),
-# `isTerminalLoud` / `callBannerState` accepting the second loud value, and
+# `isTerminalLoud` / `redBannerKind` (wave 3 moved the red guard there out of
+# the former `callBannerState`; `callBanner` composes it) accepting the second
+# loud value, and
 # the `local_confirm` arms (`mixed` released from `negotiating`; the in-app
 # `via: "app"` variant announcing nothing and minting a NON-sticky interlude).
 # `mlsCallSession.ts`: `#latchLoud`'s `mediaKeyed` snapshot and its single

@@ -180,7 +180,18 @@ function sweepOf(partial: Partial<PublishGateSweep> = {}): PublishGateSweep {
  * synchronous), and firing it is the spec's job — which is what makes the
  * confirm's macrotask boundary observable instead of assumed.
  */
-function makeEpisode(options: { gateHeld?: boolean } = {}) {
+function makeEpisode(
+  options: {
+    gateHeld?: boolean;
+    /**
+     * `#sweepPublishGate`'s consent predicate (wave 4), `(t) =>
+     * this.#consentHeld.has(t)` in `state.tsx`. OPTIONAL and defaulting to
+     * `undefined`, so every call site that passes nothing drives
+     * `gatedPublicationsFrom` exactly as it did before the hold existed.
+     */
+    isConsentHeld?: (track: object) => boolean;
+  } = {},
+) {
   const state = {
     gateHeld: options.gateHeld ?? true,
     stillCurrent: true,
@@ -229,7 +240,7 @@ function makeEpisode(options: { gateHeld?: boolean } = {}) {
     /** `state.tsx`'s `#sweepPublishGate`, minus the room and the reason set. */
     async sweep(pubs: LocalPublicationLike[]): Promise<PublishGateSweep> {
       const result = await applyPublishGate(
-        gatedPublicationsFrom(pubs),
+        gatedPublicationsFrom(pubs, options.isConsentHeld),
         () => state.gateHeld,
         {
           repauseSpent: episode.repauseSpent(),
@@ -544,6 +555,304 @@ test("the born publication's upstreamPaused is a LIVE read of the flag", () => {
   assert.equal(born.upstreamPaused, true, "the flag was snapshotted");
   track.isUpstreamPaused = false;
   assert.equal(born.upstreamPaused, false);
+});
+
+// ---- The screen-share consent hold (wave 4) --------------------------------
+//
+// `state.tsx` pauses a freshly published screen share while its consent modal
+// is open — the ONLY non-gate pause ever placed on a publication the gate also
+// sweeps — and keys that hold by the `LocalTrack` OBJECT in a `WeakSet`,
+// because the E2EE-flip republish every escape press causes lands the SAME
+// track under a NEW `trackSid`. The adapters carry the hold to the sweep as
+// `GatedPublication.consentHeld`: the map adapter as a LAZY getter over the
+// predicate `#sweepPublishGate` passes on every pass, the born adapter as a
+// flag the `resumeLanded` site reads off the same `WeakSet`. `publishGate.ts`'s
+// `resume` arm — and ONLY that arm — skips a held publication (`null`, "not
+// this sweep's promise"). These specs pin the adapter side and its
+// composition with the real sweep; the arm itself is `publishGate.test.ts`'s
+// (`gate-resume-ignores-consent-hold`, `gate-consent-hold-blocks-pause`), and
+// the `WeakSet` adds/deletes are `state.tsx` wiring no runner can load.
+//
+// `assert` here is `node:assert/strict`, so every `assert.equal` below is
+// `strictEqual`: an `undefined` (the pre-wave-4 shape, with no such field)
+// does NOT pass as `false`.
+
+test("consentHeld reads TRUE for a track the predicate holds and FALSE for one it does not", () => {
+  // Kills `episode-consent-hold-not-stamped`: a getter that answers `false`
+  // regardless of the predicate lets the `resume` arm put a consent-pending
+  // share on the wire at the next 1→0 — with the `WeakSet` correctly
+  // populated and every gate spec green. Both directions, strict, so neither
+  // a constant `false` nor a constant `true` survives.
+  const held = new FakePub("screenshare", "TR_1");
+  const free = new FakePub("screenshare", "TR_2");
+  const holds = new Set<object>([held.track!]);
+  const gated = gatedPublicationsFrom([held, free], (t) => holds.has(t));
+  assert.equal(gated[0]!.name, "screenshare/TR_1");
+  assert.equal(gated[0]!.consentHeld, true, "the held share reads unheld");
+  assert.equal(gated[1]!.consentHeld, false, "the free share reads held");
+});
+
+test("the predicate is asked with the publication's TRACK object, never the name, sid or publication", () => {
+  // `state.tsx`'s `WeakSet` is keyed by the `LocalTrack` object, the one
+  // thing about a publication that survives a republish. Asked with anything
+  // else the hold can never hit — `has(name)` against a set of tracks is
+  // `false` on every pass, which is the pre-consent leak behind a green
+  // adapter. Identity, not shape.
+  const pub = new FakePub("screenshare", "TR_1");
+  const asked: unknown[] = [];
+  const gated = gatedPublicationsFrom([pub], (t) => {
+    asked.push(t);
+    return false;
+  });
+  const read = gated[0]!.consentHeld;
+  assert.equal(read, false);
+  assert.equal(asked.length, 1, "the predicate was not asked on the read");
+  assert.equal(
+    asked[0],
+    pub.track,
+    "asked with something other than the track",
+  );
+  assert.notEqual(asked[0], pub, "asked with the publication");
+});
+
+test("with no predicate at all consentHeld is a strict FALSE, never undefined", () => {
+  // Every caller that passes nothing (`#gateTraceCensus`, this file's own
+  // pre-wave-4 specs) must get the one value `publishGate.ts`'s `=== true`
+  // read takes as "not held" — and one this spec can tell apart from the base
+  // module, where the field does not exist and reads `undefined`.
+  const gated = gatedPublicationsFrom([new FakePub("screenshare", "TR_1")]);
+  assert.equal(gated[0]!.consentHeld, false);
+});
+
+test("consentHeld is a LIVE read of the predicate, not a snapshot at build", () => {
+  // The getter-not-snapshot sibling of `episode-adapter-snapshots-the-wire`,
+  // one field over, which `publishGateEpisode.ts` documents on the shared
+  // builder: `state.tsx` adds to and deletes from its `WeakSet` on its own
+  // schedule (the consent callback, `onCancel`'s `finally`), and a value
+  // stamped when the array was built answers for that moment rather than the
+  // one `runOne` asks in. Build FIRST, then move the hold under it.
+  const pub = new FakePub("screenshare", "TR_1");
+  const holds = new Set<object>();
+  const gated = gatedPublicationsFrom([pub], (t) => holds.has(t))[0]!;
+  assert.equal(gated.consentHeld, false);
+  holds.add(pub.track!);
+  assert.equal(gated.consentHeld, true, "the hold was snapshotted at build");
+  holds.delete(pub.track!);
+  assert.equal(gated.consentHeld, false, "the release was snapshotted");
+});
+
+test("the born adapter stamps consentHeld from its flag: TRUE when told, FALSE when absent or false", () => {
+  // Kills `episode-born-adapter-ignores-consent-flag`. The `resumeLanded`
+  // site passes `#consentHeld.has(pub.track)` because a republish whose
+  // offer/answer straddles a 1→0 re-tags a consent-held share born-paused,
+  // and `LocalTrackPublished` under the now-empty gate would otherwise resume
+  // it pre-consent; an adapter that stamps `false` regardless of its argument
+  // is that leak with the wiring in place. All three shapes, so a constant in
+  // either direction goes red.
+  const track = new FakeBornTrack();
+  const input = { source: "screenshare", sid: "TR_1", track };
+  assert.equal(
+    gatedPublicationFromSender(input, true).consentHeld,
+    true,
+    "a share the site says is held reads unheld",
+  );
+  assert.equal(
+    gatedPublicationFromSender(input).consentHeld,
+    false,
+    "the absent flag (`pauseAtBirth`'s call) reads held",
+  );
+  assert.equal(gatedPublicationFromSender(input, false).consentHeld, false);
+});
+
+test("a consent-held share under an EMPTY gate is left PAUSED by the real sweep, and resumes once the hold is cleared", async () => {
+  // The hold end to end through `applyPublishGate`, mirroring "the adapter
+  // drives the REAL sweep" above: the map adapter reads the predicate, the
+  // `resume` arm returns `null`, and the share is absent from EVERY list —
+  // `unproven`, `failed` AND `proven` — because "not this sweep's promise" is
+  // the existing convention and not a new verdict kind. Then the consent
+  // callback deletes the track from the `WeakSet`, and the next empty-gate
+  // sweep (a share consented under a still-held gate resumes at the gate's
+  // own 1→0) puts it live through the same arm. Both halves in ONE spec, so a
+  // `resume` arm that never resumes anything cannot pass the first half by
+  // accident. Through `makeEpisode`'s `sweep`, so the options bag is
+  // `#sweepPublishGate`'s and not a spec-only shape.
+  const holds = new Set<object>();
+  const h = makeEpisode({
+    gateHeld: false,
+    isConsentHeld: (t) => holds.has(t),
+  });
+  const pub = new FakePub("screenshare", "TR_1");
+  // The consent modal's own pause, issued over the track by `state.tsx`.
+  pub.track!.isUpstreamPaused = true;
+  pub.track!.sender!.track = null;
+  holds.add(pub.track!);
+
+  const held = await h.sweep([pub]);
+  assert.equal(
+    pub.resumeCalls,
+    0,
+    "an empty-gate sweep resumed a share whose consent is still pending",
+  );
+  assert.equal(
+    pub.track!.isUpstreamPaused,
+    true,
+    "the consent pause was undone",
+  );
+  assert.equal(
+    pub.track!.sender!.track,
+    null,
+    "the share is on the wire pre-consent",
+  );
+  assert.deepEqual(held.unproven, [], "a held share was reported unproven");
+  assert.deepEqual(held.failed, [], "a held share was reported failed");
+  assert.deepEqual(held.proven, [], "an empty gate proved something");
+
+  // Consent granted: the callback clears the hold, and the next sweep is the
+  // gate's own resume.
+  holds.delete(pub.track!);
+  const released = await h.sweep([pub]);
+  assert.equal(pub.resumeCalls, 1, "the cleared hold did not resume the share");
+  assert.equal(pub.track!.isUpstreamPaused, false);
+  assert.equal(
+    pub.track!.sender!.track,
+    "raw",
+    "the wire is not live after consent",
+  );
+  assert.deepEqual(released.failed, []);
+});
+
+test("under a HELD gate the hold is IGNORED: a consent-held share is paused, or repaused, like any other", async () => {
+  // The episode-side witness of GATE mutation `gate-consent-hold-blocks-pause`
+  // (the `consentHeld` check hoisted above the held-gate arms). That entry's
+  // `specs=` is `publishGate.test.ts`; this is corroboration through the real
+  // adapter and the real sweep, not the entry's kill. The gate's invariant
+  // does not care why a sender is quiet: a held share that is LIVE — a
+  // `handleTrackUnmuteEvent` resume, say — must be detached under a held gate
+  // whether or not consent is pending, and a stale-true flag over a live
+  // sender (the republish shape) takes the repause path, exactly as the
+  // held-gate specs above show for an unheld publication.
+  const holds = new Set<object>();
+  const h = makeEpisode({ isConsentHeld: (t) => holds.has(t) });
+
+  // (a) live under a false flag: `pause`.
+  const live = new FakePub("screenshare", "TR_1");
+  holds.add(live.track!);
+  const paused = await h.sweep([live]);
+  assert.equal(
+    live.pauseCalls,
+    1,
+    "a held gate left a consent-held share live",
+  );
+  assert.equal(live.resumeCalls, 0);
+  assert.equal(live.track!.isUpstreamPaused, true);
+  assert.equal(live.track!.sender!.track, null, "the wire is not quiet");
+  assert.deepEqual(paused.proven, [live.name]);
+  assert.deepEqual(paused.unproven, []);
+
+  // (b) live under a stale-true flag: `repause` — resume, then pause.
+  const stale = new FakePub("screenshare", "TR_2");
+  stale.track!.isUpstreamPaused = true;
+  holds.add(stale.track!);
+  const repaused = await h.sweep([stale]);
+  assert.equal(stale.resumeCalls, 1, "the stale flag was not cleared first");
+  assert.equal(stale.pauseCalls, 1, "the repause did not pause");
+  assert.equal(stale.track!.isUpstreamPaused, true);
+  assert.equal(stale.track!.sender!.track, null, "the wire is not quiet");
+  assert.deepEqual(repaused.proven, [stale.name]);
+  assert.deepEqual(repaused.unproven, []);
+});
+
+test("a born-paused microphone is NEVER consent-held unless told: its empty-gate landing sweep RESUMES it", async () => {
+  // The wave-1 F1 strand — a born-paused microphone left mute after its
+  // landing — must not return by way of the hold. The born adapter's default
+  // is `false`, and `resumeLanded` (`LocalTrackPublished` for a born-paused
+  // track under an EMPTY gate) sweeps the microphone through
+  // `applyPublishGate` with `#consentHeld.has(pub.track)`, which is `false`
+  // for every track the screen-share path never added. A default of `true`,
+  // or a hold keyed by anything a microphone shares with a share, leaves the
+  // seat mute for the call. Same call shape as the `resumeLanded` site: one
+  // born publication, the gate thunk, an empty options bag.
+  const track = new FakeBornTrack();
+  // `pauseAtBirth` paused it under the held gate…
+  track.isUpstreamPaused = true;
+  track.sender!.track = null;
+  const born = gatedPublicationFromSender({
+    source: "microphone",
+    sid: "TR_1",
+    track,
+  });
+  assert.equal(born.consentHeld, false, "a microphone was born consent-held");
+  // …and the gate is empty by the time it lands.
+  const landed = await applyPublishGate([born], () => false, {});
+  assert.equal(
+    track.resumeCalls,
+    1,
+    "the born-paused microphone was not resumed at its landing",
+  );
+  assert.equal(track.isUpstreamPaused, false);
+  assert.equal(track.sender!.track, "raw", "the microphone is still detached");
+  assert.deepEqual(landed.failed, []);
+});
+
+test("a born-paused share the resumeLanded site says is HELD stays paused at its empty-gate landing, and lands live once it says not", async () => {
+  // The (vii) shape end to end — the SECOND killer of
+  // `episode-born-adapter-ignores-consent-flag`, through the real sweep
+  // rather than the stamped field the spec above reads. It pins the
+  // `resumeLanded` arm's flag read (`rtc-mutations.py` header admission
+  // (xiv)): `LocalTrackPublished` for a born-paused track under an EMPTY
+  // gate sweeps `gatedPublicationFromSender({ source, sid, track },
+  // this.#consentHeld.has(pub.track))` with the gate thunk and an empty
+  // options bag. A republish whose offer/answer straddled a 1→0 re-tags a
+  // consent-held share born-paused, so a born adapter that stamps `false`
+  // whatever it was told — or a `resume` arm that ignores the field — puts
+  // the share on the wire ahead of its consent answer, right here. Same
+  // call shape as the microphone spec above; only the flag differs, and the
+  // flag is the whole decision. Both halves in ONE spec over the SAME
+  // track, so a `resume` arm that never resumes anything cannot pass the
+  // held half by accident.
+  const track = new FakeBornTrack();
+  // `pauseAtBirth` paused it under the held gate…
+  track.isUpstreamPaused = true;
+  track.sender!.track = null;
+  const input = { source: "screenshare", sid: "TR_1", track };
+
+  // …the gate is empty by the time it lands, and consent is still pending.
+  const held = gatedPublicationFromSender(input, true);
+  const landedHeld = await applyPublishGate([held], () => false, {});
+  assert.equal(
+    track.resumeCalls,
+    0,
+    "the landing sweep resumed a share whose consent is still pending",
+  );
+  assert.equal(
+    track.isUpstreamPaused,
+    true,
+    "the consent pause was undone at the landing",
+  );
+  assert.equal(
+    track.sender!.track,
+    null,
+    "the share is on the wire pre-consent",
+  );
+  assert.deepEqual(
+    landedHeld.unproven,
+    [],
+    "a held share was reported unproven",
+  );
+  assert.deepEqual(landedHeld.failed, [], "a held share was reported failed");
+  assert.deepEqual(landedHeld.proven, [], "an empty gate proved something");
+
+  // The same input, told it is NOT held: the ordinary born-paused landing.
+  const free = gatedPublicationFromSender(input, false);
+  const landedFree = await applyPublishGate([free], () => false, {});
+  assert.equal(
+    track.resumeCalls,
+    1,
+    "the unheld share was not resumed at its landing",
+  );
+  assert.equal(track.isUpstreamPaused, false);
+  assert.equal(track.sender!.track, "raw", "the share is still detached");
+  assert.deepEqual(landedFree.failed, []);
 });
 
 // ---- The confirm phase ------------------------------------------------------

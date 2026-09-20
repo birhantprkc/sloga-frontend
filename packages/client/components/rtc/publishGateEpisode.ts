@@ -142,10 +142,15 @@
  * apart; one reached because a confirm bound was gone rests on a single
  * unconfirmed observation. Both write the same `value: true`. The
  * discriminator used to live only in `detail`, whose only consumer is
- * `console.error` — so wave 2, which promotes `callPauseDisproved` to a
- * `chipState` input, would have reddened off a budget-exhausted guess with a
- * confirmed disproof's weight: the 2026-09-08 false red, one level up. The
- * confidence therefore travels WITH the value.
+ * `console.error`. The verdict's one consumer is `callBanner()` in
+ * `state.tsx` (the pure `callBanner` in `mlsCallModePolicy.ts`, reading
+ * `pauseDisproved` AND `pauseDisproofConfirmed`; the chip never reads it — a
+ * disproof is a withdrawal-only signal, never a chip input). A consumer that
+ * could not tell the two apart would have withdrawn the banner's pause claim
+ * off a budget-exhausted guess with a confirmed disproof's weight: the
+ * 2026-09-08 false red, one level up. The confidence therefore travels WITH
+ * the value, and only a CONFIRMED true reaches the banner as `pause:
+ * "disproved"`; an unconfirmed one keeps the hedged `held` copy.
  *
  * 🔴 AND IT TRAVELS IN NAMED FIELDS, never as a positional pair, which is the
  * whole reason {@link PauseDisproofVerdict} is a type and not two parameters.
@@ -164,9 +169,10 @@
  * is its spec and its mutation entries. Nothing guards the `state.tsx` side.
  *
  * 🔴 What this module does NOT decide is what a consumer may do with either
- * confidence. The chip precedence is wave 2's rule; this module's obligation
- * is only that the distinction exists, is honest, and is not reachable only
- * through a log line.
+ * confidence. The banner's pause clause is `callBanner`'s rule
+ * (`mlsCallModePolicy.ts`); this module's obligation is only that the
+ * distinction exists, is honest, and is not reachable only through a log
+ * line.
  */
 import {
   type GatedPublication,
@@ -361,7 +367,8 @@ export interface EpisodeDeps {
    * transition and every empty gate leaves behind. NEITHER field, in any
    * combination, ever means "proven paused".
    *
-   * 🔴 PRECONDITION, stated because wave 2 makes this a `chipState` input:
+   * 🔴 PRECONDITION, stated because `callBanner()` in `state.tsx` reads this
+   * into the banner's pause clause (the chip never reads it):
    * TRUE is only ever written while {@link gateHeld} is true, and is only
    * MEANINGFUL while the gate is held. An empty gate makes no pause claim, so
    * there is nothing under one to withdraw — and there is no path back to
@@ -488,6 +495,23 @@ export function upstreamOf(
  * every call, for the reason on {@link upstreamOf}: a republish swaps the
  * sender, and the post-condition must judge the one that exists THEN.
  *
+ * `consentHeld` is the screen-share consent hold (wave 4). While it reads
+ * true, `publishGate.ts`'s `resume` arm leaves this publication PAUSED at a
+ * 1→0 sweep: the pause it carries is the consent modal's, not the gate's,
+ * and only the consent callback may lift it. A GETTER like the two reads
+ * above, not a value: the hold lives in a `WeakSet` keyed by the `LocalTrack`
+ * object that `state.tsx` adds to and deletes from on its own schedule, and
+ * a value stamped at construction answers for the moment this array was
+ * built rather than the moment `runOne` asks. Today `runOne` asks at the top
+ * of its `resume` arm, in the same synchronous turn as the build, so the two
+ * coincide — but nothing in `applyPublishGate`'s contract promises that, its
+ * other two reads are repeated AFTER awaited ops as the post-condition, and
+ * a snapshot here is the defect `episode-adapter-snapshots-the-wire` exists
+ * to catch, one field over. Absent (the born adapter under `pauseAtBirth`,
+ * every pre-wave-4 caller) it reads `false`, which `publishGate.ts`'s
+ * `=== true` read takes as "not held" — the only value under which a resume
+ * is ever issued.
+ *
  * Not exported. The two adapters are its only callers, and each names its
  * publication differently for a reason each one states.
  */
@@ -496,6 +520,7 @@ function gatedPublicationOf(
   track: LocalTrackLike,
   pause: () => Promise<void>,
   resume: () => Promise<void>,
+  consentHeld?: () => boolean,
 ): GatedPublication {
   return {
     name,
@@ -505,6 +530,9 @@ function gatedPublicationOf(
     upstream: (): UpstreamState => upstreamOf(track.sender),
     pauseUpstream: pause,
     resumeUpstream: resume,
+    get consentHeld() {
+      return consentHeld?.() === true;
+    },
   };
 }
 
@@ -518,9 +546,20 @@ function gatedPublicationOf(
  * reports carry it. It is stable for the life of a publication, which is what
  * lets a spend made on one pass be lifted by a later one — and is exactly why
  * the born-paused adapter below must NOT use it.
+ *
+ * `isConsentHeld` is asked with `pub.track` — the SAME `LocalTrack` object
+ * `state.tsx` keys its consent `WeakSet` by, and the one thing about a
+ * publication that survives an E2EE-flip republish (livekit's `unpublishTrack`
+ * clears `publication.track`, and `republishAllTracks` builds a NEW
+ * publication with a NEW sid over the SAME track). Neither the name nor the
+ * publication would do: a hold keyed by either is lost on the republish
+ * every escape press causes, and the share would resume pre-consent at the
+ * next 1→0. `#sweepPublishGate` passes it on EVERY pass; absent, nothing is
+ * held.
  */
 export function gatedPublicationsFrom(
   publications: Iterable<LocalPublicationLike>,
+  isConsentHeld?: (track: object) => boolean,
 ): GatedPublication[] {
   const gated: GatedPublication[] = [];
   for (const pub of publications) {
@@ -535,6 +574,7 @@ export function gatedPublicationsFrom(
         track,
         () => pub.pauseUpstream(),
         () => pub.resumeUpstream(),
+        () => isConsentHeld?.(track) === true,
       ),
     );
   }
@@ -585,21 +625,35 @@ export function gatedPublicationsFrom(
  * listener a `LocalTrack`, which carries its own `pauseUpstream` /
  * `resumeUpstream` (the publication's are thin forwards to them) and is the
  * thing that does not yet have a publication.
+ *
+ * `consentHeld` is a FLAG here rather than a predicate because both callers
+ * know the answer at the call. {@link pauseAtBirth} passes nothing: it runs
+ * only under a HELD gate, where the `resume` arm is unreachable and the hold
+ * is moot. `state.tsx`'s `resumeLanded` site — a `LocalTrackPublished` for a
+ * born-paused track under an EMPTY gate — passes its `WeakSet` read for
+ * `pub.track`, because a republish whose offer/answer straddles a 1→0
+ * (signal reconnect, declaration seam) re-tags a consent-held share
+ * born-paused and would otherwise resume it pre-consent right there. Default
+ * `false` = not held.
  */
-export function gatedPublicationFromSender(input: {
-  source: string;
-  sid: string | null;
-  track: LocalTrackLike & {
-    pauseUpstream(): Promise<void>;
-    resumeUpstream(): Promise<void>;
-  };
-}): GatedPublication {
+export function gatedPublicationFromSender(
+  input: {
+    source: string;
+    sid: string | null;
+    track: LocalTrackLike & {
+      pauseUpstream(): Promise<void>;
+      resumeUpstream(): Promise<void>;
+    };
+  },
+  consentHeld = false,
+): GatedPublication {
   const { track } = input;
   return gatedPublicationOf(
     `${input.source}/${input.sid ?? "no-sid"}#born`,
     track,
     () => track.pauseUpstream(),
     () => track.resumeUpstream(),
+    () => consentHeld,
   );
 }
 
@@ -928,10 +982,11 @@ export class PublishGateEpisode {
     //     a livekit op that may simply not have landed yet.
     //
     // Both write `{ value: true }`; only the first is a confirmed disproof.
-    // Carrying the discriminator in `detail` ALONE put it where the
-    // only consumer is `console.error`, so wave 2 — which promotes
-    // `callPauseDisproved` to a `chipState` input — would have reddened off
-    // the guess with the same weight as the disproof.
+    // Carrying the discriminator in `detail` ALONE put it where the only
+    // consumer is `console.error`, so `callBanner()` in `state.tsx` — the
+    // verdict's one consumer, which withdraws the banner's pause claim only
+    // off a CONFIRMED disproof and keeps the hedged `held` copy otherwise —
+    // would have had to weigh the guess the same as the disproof.
     //
     // ONE expression feeds both consumers so they cannot drift apart: the log's
     // `confirmBudgetExhausted` is exactly `!confirmed`, always.
@@ -1014,9 +1069,9 @@ export class PublishGateEpisode {
    * `gateHeld()` check does not stop it either. The result was `#spent`
    * populated (a PERMANENT per-episode disarm) and
    * `setPauseDisproved({ value: true, confirmed: true })`, both in a brand-new
-   * episode, off the previous episode's single observation. Wave 2 promotes
-   * `callPauseDisproved` to a `chipState` input: that is a wrong chip in a
-   * call that is fine.
+   * episode, off the previous episode's single observation. `callBanner()` in
+   * `state.tsx` turns a confirmed disproof into the banner's `disproved`
+   * pause clause: that is a wrong banner in a call that is fine.
    *
    * 🔴 DEMOTED, not refused, and the difference was chosen rather than
    * defaulted into. The alternative — an episode generation token compared in
