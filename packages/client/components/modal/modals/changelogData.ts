@@ -94,36 +94,43 @@ export const CHANGELOGS: ChangelogResponse[] = [
   // `,
   // },
   // ==========================================================================
-  // v0.60.5 (2026-09-20). Copy constraints, load-bearing:
-  // - This release exists to carry the v0.60.4 text fix into the Windows,
-  //   Linux and Android apps. They bundle their own copy of the client and
-  //   were built before the fix landed, so they shipped showing internal ids.
-  // - Web already had the fix inside 0.60.4. Do not tell web users something
-  //   was broken for them; name the apps it affected.
-  // - macOS is STILL held at 0.59.0 for the keybinds fix. No bullet may say
-  //   "every app" or name the Mac.
-  // - The bug was cosmetic: the labels were unreadable, but every option did
-  //   what it said. Nothing was lost or mis-saved. Do not imply a data fix.
-  // - 🔴 NATIVE WINDOWS SCREEN-SHARE AUDIO MERGED IN THIS RELEASE AND IS
-  //   DELIBERATELY NOT MENTIONED. `ENABLE_WIN_NATIVE_SCREEN_AUDIO` is dark in
-  //   every dist, so it is unreachable and describing it would be false. Its
-  //   entry is the held-back comment block at the top of this array and stays
-  //   commented until the flag is lit. This silence is a decision, not an
-  //   oversight — do not "fix" it by adding a bullet.
-  // - No live click-through was done before this shipped. Nothing here may
-  //   claim one.
+  // v0.61.0 (2026-09-20). Copy constraints, load-bearing:
+  // - A MINOR bump, not a patch: the encrypted-call banner changes what users
+  //   are told about their own call. The label fix alone would have been
+  //   0.60.5; that version was cut and never published, so its entry was
+  //   replaced by this one rather than kept alongside it.
+  // - 🔴 HEDGE THE BANNER COPY EXACTLY AS THE PRODUCT DOES. The strings say
+  //   your audio and video "should" stay paused, never "are" paused, because
+  //   the client cannot prove the send actually stopped. Do not upgrade
+  //   "should" to "will" here. See the bytes-cannot-prove-plaintext finding.
+  // - 🔴 NO LIVE LEG WAS RUN. The two-native-seat leg was skipped by operator
+  //   ruling. Nothing here may say this was verified in a real call.
+  // - Never claim a call IS encrypted. The whole point of the slice is that
+  //   "encrypted", "not encrypted" and "cannot be confirmed" are three
+  //   different states that previously looked like two.
+  // - macOS is STILL held at 0.59.0. No bullet may say "every app" or name
+  //   the Mac.
+  // - 🔴 Native Windows screen-share audio is merged but DARK
+  //   (ENABLE_WIN_NATIVE_SCREEN_AUDIO off in every dist). It is unreachable,
+  //   so it is not mentioned. Its entry stays the held-back comment block
+  //   above. That silence is a decision, not an oversight.
   {
-    id: "sloga-2026-09-20b",
+    id: "sloga-2026-09-20c",
     title: "Patch Notes",
-    published_at: "2026-09-20T23:30:00.000Z",
-    web_version: "0.60.5",
-    markdown_content: `## v0.60.5 — the menus say what they mean again
+    published_at: "2026-09-20T23:59:00.000Z",
+    web_version: "0.61.0",
+    markdown_content: `## v0.61.0 — encrypted calls say what they actually know
+
+### 🔒 Call encryption
+- **"Not encrypted" and "we can't confirm this is encrypted" are now two different messages.** They used to look the same, which meant a call that was merely still setting up looked as alarming as one that genuinely was not protected.
+- **While a call is still being secured it says so** — *Securing this call* — instead of flashing a warning you cannot act on.
+- **When something is wrong, it says what to do about it.** If encryption could not be confirmed, or someone in the call turned it off, you are told which it is, and told that your microphone and camera **should** stay held back until it is sorted. We say *should* deliberately: Sloga holds your audio and video back, but it cannot promise a device has stopped sending, so if it matters, leave the call.
+- **If a participant turns encryption off mid-call, you find out.** Previously that could change quietly underneath you.
+- **If this device's encryption is not registered to your account**, the call now explains that plainly and offers you the three real choices: set encryption up again, continue without it, or leave.
 
 ### 🔤 Fixes
-- **The Windows, Linux and Android apps were showing codes like \`6kwTPA\` where menu labels belong.** It hit the forum auto-archive durations — **5, 10, 15, 20 and 25 days**, **Custom**, and the **Minutes / Hours / Days** units — along with the **A-Z** view button, **Use this order for everyone**, and the description under it. They read properly now.
-- Only the labels were wrong: every one of those options already did exactly what it was meant to. If you set an auto-archive duration while it looked like gibberish, it was saved correctly and there is nothing to redo.
-
-This is the only change you will notice in this release. The A-Z forums, info boards and fixes listed under v0.60.4 below arrived in that release and are unchanged.
+- **The Windows, Linux and Android apps were showing codes like \`6kwTPA\` where menu labels belong** — the forum auto-archive durations, the **A-Z** view button, **Use this order for everyone** and the description under it. They read properly now. Only the labels were wrong; every one of those options already did what it said, so nothing you set needs redoing.
+- **Read receipts keep up across your devices**, and unread marks stop getting lost when you close a tab mid-read.
 `,
   },
   // v0.60.4 (2026-09-20). Copy constraints, load-bearing:

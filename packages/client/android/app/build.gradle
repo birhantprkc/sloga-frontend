@@ -32,13 +32,14 @@ android {
         // and Play order releases by, and it must never go backwards. vc66 is
         // what Play carries (as 0.60.0), so this release is vc68: vc67 was
         // built and published as the 0.60.4 SIDELOAD apk but never uploaded to
-        // Play, which is why Play skips it.
+        // Play, which is why Play skips it. A vc68 artifact was also built for
+        // a 0.60.5 cut that was never published, so 68 is still unburned.
         //
-        // The versionName jumps 0.60.0 -> 0.60.5 rather than stepping: Android
-        // was skipped for 0.60.1, 0.60.2 and 0.60.3, so this single build is
-        // the first time Play users receive any of them.
+        // The versionName jumps 0.60.0 -> 0.61.0 rather than stepping: Android
+        // was skipped for 0.60.1 through 0.60.5, so this single build is the
+        // first time Play users receive any of them.
         versionCode 68
-        versionName "0.60.5"
+        versionName "0.61.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
