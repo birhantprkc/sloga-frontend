@@ -713,43 +713,6 @@ export function chipState(inputs: ChipInputs): ChipState {
   return allVerified ? "e2ee" : "e2ee_unverified";
 }
 
-/**
- * ME-10 terminal-loud (slice 6.5): the call FAILED to secure — the banner
- * offers the blocking Leave / Stay-unencrypted choice, plus Reset encryption
- * on a store-owner mismatch.
- *
- * Two shapes count. `negotiating` is the original one: retry exhaustion or a
- * loud failure while the verdict was still pending. `mode === undefined` with
- * a latched error is the same state seen one step earlier: a refusal thrown
- * inside establish() (the store-owner mismatch is exactly this) fails the
- * session before it ever emits a mode verdict, so the UI's mode signal still
- * reads undefined — requiring `negotiating` made the banner, and with it the
- * only Reset-encryption control in a call, unreachable on precisely the
- * install it was built for. The latched-error requirement keeps this off
- * web/plaintext calls: their chip also reads not_encrypted (open-group
- * attribution, no session), but nothing ever latches there.
- *
- * A loud verdict that lands AFTER the mode reached `e2ee` is folded into the
- * first shape by the session, not widened here: `loudModeFallback` drops the
- * mode back to `negotiating` (re-asserting the negotiating publish gate in
- * lockstep), so the same banner, the same "Stay unencrypted" / Leave escape
- * and the same `confirmPlaintext` guard serve it.
- *
- * Both LOUD chip values count: `cannot_verify` is a control latch taken while
- * keyed, which `#onLoud` folds to `negotiating` (or leaves before any
- * verdict) exactly like `not_encrypted`; the gate is held either way and the
- * same escape serves it.
- */
-export function isTerminalLoud(
-  mode: CallMode | undefined,
-  chip: ChipState,
-  latchedError: boolean,
-): boolean {
-  if (chip !== "not_encrypted" && chip !== "cannot_verify") return false;
-  if (mode?.kind === "negotiating") return true;
-  return mode === undefined && latchedError;
-}
-
 // ---- Which banner a chip must carry (the no-dead-end invariant) ------------
 
 /**
@@ -898,7 +861,8 @@ export interface CallBannerInputs {
  * the kind's copy would otherwise hedge. Nothing on the pause axis can turn a
  * `none` into a banner or a banner into a `none`.
  *
- * It did not hold before. `isTerminalLoud` requires a latched error, and the
+ * It did not hold before. The loud rule of the day (now `redBannerKind`'s
+ * latched `terminal_loud` arm) required a latched error, and the
  * chip's two NO-SESSION branches (ME-7 "capable, no session, open group" and
  * the §0.2 #9 self-attribution) latch nothing — nobody attempted encryption,
  * so nothing could fail. Those were read as attribution rather than failure and
@@ -981,11 +945,13 @@ function redBannerKind(inputs: CallBannerInputs): CallBannerKind {
   }
 
   // A `ready` device with a red chip is a CALL failure. Everything left lands
-  // here — the two `isTerminalLoud` shapes, the `call_full` auto-leave, and any
-  // red state a future change invents — so nothing can return `none` from here
-  // by omission. `isTerminalLoud` has no production caller any more (the
-  // `callTerminalLoud` accessor is gone); only the harness's `terminalLoud()`
-  // and the specs read it, and it is not the gate for this.
+  // here — a loud verdict at `negotiating` (retry exhaustion, a failure while
+  // the verdict was pending) or before any verdict (a refusal thrown inside
+  // establish(), the store-owner mismatch), the `call_full` auto-leave, and
+  // any red state a future change invents — so nothing can return `none` from
+  // here by omission. This arm IS the terminal-loud rule: there is no separate
+  // predicate for it, and the harness's `terminalLoud()` reads
+  // `callBanner(...).kind` rather than a rule of its own.
   //
   // The latch is what makes the loud copy true. Every reachable red chip on a
   // `ready` device has one: `sessionSetupDecision` latches on every
@@ -1270,9 +1236,10 @@ export function rotationWindowMs(
  * Only `e2ee` moves: a loud latch there (a failed commit, a media-plane
  * missing key outside every window, a destroyed envelope, a failed
  * self-enrolment re-check) left the chip red with NO banner and no way out —
- * `isTerminalLoud` renders the Leave / Stay-unencrypted banner for
- * `negotiating` (or no verdict yet) only, and `confirmPlaintext` guards its
- * terminal escape on `negotiating` too. Dropping to `negotiating` through the
+ * the loud rule of the day rendered the Leave / Stay-unencrypted banner for
+ * `negotiating` (or no verdict yet) only. `redBannerKind`'s `terminal_loud`
+ * arm no longer reads the mode, but `confirmPlaintext` still guards its
+ * terminal escape on `negotiating`. Dropping to `negotiating` through the
  * session's `#setMode` also re-asserts the negotiating publish gate, so the
  * banner's `held` pause clause is honest (fail-closed, I3): a
  * session that can no longer vouch for the group must not keep publishing as
@@ -1296,7 +1263,9 @@ export function loudModeFallback(mode: CallMode): CallMode | null {
  * `mix_detected` → `mix_cleared` cycle under the latch (a peer's leave +
  * rejoin, a browser peer joining and leaving) ends in the T2 warm resume,
  * which wrote `e2ee` back — publish gate empty, chip still red from the
- * latched error, `isTerminalLoud` false, `confirmPlaintext` refusing.
+ * latched error, no banner under the mode-keyed loud rule of the day (today
+ * `redBannerKind` raises `terminal_loud` on the latch regardless of mode, but
+ * the gate would still be empty), `confirmPlaintext` refusing.
  * Measured live 2026-09-07 on the L3 receiver after the publisher's rejoin:
  * red chip, no banner, no way out but leaving the call, and the pause the
  * banner had promised silently lifted.

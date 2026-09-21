@@ -23,13 +23,13 @@
  * Every capable-but-sessionless arm is now one outcome: keep the gate the
  * R2-5 pre-connect assertion put there, latch the structured error so the
  * existing loud state renders (the NOT-ENCRYPTED chip and the Leave / Stay
- * banner through `isTerminalLoud`), and let the user's explicit "Stay
- * unencrypted" press be the only path to plaintext
- * (`canConfirmNoSessionPlaintext`). Construction itself is synchronous, so
- * no new wait is needed; the one asynchronous setup step — registering the
- * native keys-changed listener — is bounded by the transport's 45 s
- * per-request deadline before this decision runs, so it always arrives here
- * as an input.
+ * banner through `callBanner` — `redBannerKind`'s latched `terminal_loud`
+ * arm), and let the user's explicit "Stay unencrypted" press be the only
+ * path to plaintext (`canConfirmNoSessionPlaintext`). Construction itself
+ * is synchronous, so no new wait is needed; the one asynchronous setup step
+ * — registering the native keys-changed listener — is bounded by the
+ * transport's 45 s per-request deadline before this decision runs, so it
+ * always arrives here as an input.
  *
  * A NON-capable shell (web without a bridge, a plain browser, "Encrypt my
  * calls" off, E2EE proven off on this device, a worker that failed to

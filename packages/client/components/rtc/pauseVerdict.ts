@@ -8,17 +8,28 @@
  * two one-line `createMemo` bodies in a file with no spec, no mutation entry
  * and no import that loads under `node --test`.
  *
- * 🔴 THIS IS A MEASURED DEFECT, not a hypothesis. A completion audit swapped
+ * 🔴 THIS WAS A MEASURED GAP, not a hypothesis. A completion audit swapped
  * those two bodies in place and ran the whole bare gate: `tsc`, `prettier`,
  * `eslint`, the whole suite and both scripts returned exit 0, with zero failing
- * checks. In production that swap inverts exactly one of the four verdict
- * states, and it is the state this slice exists for — `{ value: true,
- * confirmed: false }`, a disproof reached off a single budget-exhausted
- * observation on a genuinely live wire — into `callPauseDisproved() === false`.
- * `VoiceCallDowngradeBanner.tsx`'s `<Show>` then takes its fallback arm and
- * goes on promising the user that their audio and video stay paused, while
- * media is on the wire. Silent false-green, in the one direction the whole
- * banner-honesty slice is about.
+ * checks. Two same-typed accessors transposed in one keystroke, and nothing
+ * could see it.
+ *
+ * What that swap does TODAY, stated honestly: nothing the user can see. The
+ * only runtime consumer of the two readers is `callBanner` — `state.tsx`
+ * feeds it both `callPauseDisproved()` and `callPauseDisproofConfirmed()`,
+ * and the fold in `mlsCallModePolicy.ts` is `pauseDisproved &&
+ * pauseDisproofConfirmed`. A transposition maps `{ value: true, confirmed:
+ * false }` to `{ false, true }` and BOTH read `pause: "held"`; `{ false,
+ * false }` and `{ true, true }` are fixed points. The banner's pause
+ * `<Switch>` hedges "should stay paused" either way, so there is no present
+ * false-green to report, and this comment does not claim one.
+ *
+ * What the module and `pauseVerdict.test.ts` still guarantee is that the two
+ * values are NAMED and discriminated BY NAME, so a future consumer that
+ * weighs them differently — or a `disproved`-only reader, which is exactly
+ * what the wave-1 banner was — cannot be fed a transposed pair. The mutation
+ * `pause-verdict-readers-transposed` in `scripts/rtc-mutations.py` stays as
+ * that pin.
  *
  * So the derivation lives HERE, in a module a runner can load, where
  * `pauseVerdict.test.ts` asserts it over all four states by name and
@@ -44,9 +55,9 @@
  * wrapping around these two accessors: a memo's `===` equality is what gives
  * each reader the notification shape the two original separate boolean signals
  * had, so each notifies only when its OWN boolean changes. Moving the memo in
- * here would change when the banner's `<Show>` re-runs, and pulling `solid-js`
- * into this module would put it right back out of reach of `node --test`, which
- * is the entire point of the extraction.
+ * here would change when `callBanner()` re-derives the pause clause, and
+ * pulling `solid-js` into this module would put it right back out of reach of
+ * `node --test`, which is the entire point of the extraction.
  */
 import type { PauseDisproofVerdict } from "./publishGateEpisode";
 

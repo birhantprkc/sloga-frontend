@@ -100,11 +100,14 @@ HARNESS = "mlsCallSession.harness.ts"
 #: `pauseVerdict.ts`; it cannot see these two writes. They are two same-typed
 #: `Accessor<boolean>`s, transposable in one keystroke, and a swap was MEASURED
 #: to pass the entire bare gate — tsc, prettier, eslint, every spec and both
-#: scripts, exit 0 — while inverting `{value: true, confirmed: false}` so the
-#: banner keeps promising a pause over a live wire. Worse, nothing consumes
-#: `callPauseDisproofConfirmed` at runtime yet, so the swap's only observable
-#: effect is the harmful half. Closing it needs ONE write instead of two, not
-#: another entry here.
+#: scripts, exit 0 — while mapping `{value: true, confirmed: false}` to
+#: `{ false, true }`. Since wave 3 the only runtime consumer of both readers is
+#: `callBanner` (`state.tsx` feeds it `callPauseDisproved()` and
+#: `callPauseDisproofConfirmed()`), whose fold is the symmetric AND
+#: `pauseDisproved && pauseDisproofConfirmed`: the swap is banner-invisible
+#: today — no PRESENT false-green to report — and a false-green for any
+#: `disproved`-only reader, which is exactly what the wave-1 banner was.
+#: Closing it needs ONE write instead of two, not another entry here.
 #:
 #: 🔴 AND THE TWO BORN-PAUSED WIRINGS (plan D0, wave 1, 2026-09-14), which
 #: this table reaches no better than the rest of `state.tsx`:
@@ -1777,16 +1780,19 @@ MUTATIONS += [
     # 🔴 This module exists because of a MEASURED defect, not a hypothesis. The
     # remediation completion audit swapped the two derived accessors in
     # `state.tsx` and ran the whole bare gate: tsc, prettier, eslint, all specs
-    # and both scripts returned exit 0 with zero failing checks. In production
-    # that swap inverts exactly one of the four verdict states, and it is the
-    # one the slice is for -- `{value: true, confirmed: false}`, a disproof off
-    # a single budget-exhausted observation on a live wire, reads as
-    # `callPauseDisproved() === false`, so the banner goes on promising a
-    # pause. `state.tsx` can carry no spec and no entry; extracting the
-    # derivation here is what lets these two exist at all.
+    # and both scripts returned exit 0 with zero failing checks. The swap maps
+    # exactly one of the four verdict states -- `{value: true, confirmed:
+    # false}`, an UNCONFIRMED disproof off a single budget-exhausted
+    # observation -- to `{ false, true }` at every consumer. Under today's
+    # only consumer, `callBanner`'s symmetric AND fold, that is invisible:
+    # both pairs read `pause: "held"`, and no present false-green is claimed.
+    # It IS a false-green for any `disproved`-only reader, which the wave-1
+    # banner was; the guarantee these two entries pin is that the readers are
+    # discriminated BY NAME. `state.tsx` can carry no spec and no entry;
+    # extracting the derivation here is what lets these two exist at all.
     Mutation(
         id="pause-verdict-readers-transposed",
-        what="the two verdict readers are swapped — an UNCONFIRMED disproof on a live wire reads `callPauseDisproved() === false`, so the banner keeps promising a pause it cannot honour",
+        what="the two verdict readers are swapped — an UNCONFIRMED disproof reaches every consumer as `{ false, true }`; invisible under today's symmetric AND fold, a false-green for any `disproved`-only reader",
         file=VERDICT,
         search="""    disproved: () => verdict().value,
     disproofConfirmed: () => verdict().confirmed,""",
@@ -2822,9 +2828,10 @@ MUTATIONS += [
 #
 # `mlsCallModePolicy.ts`: rows 3–5 of `chipState`'s order of record (the ONE
 # rule that yields `cannot_verify` and the two conjuncts that keep it honest),
-# `isTerminalLoud` / `redBannerKind` (wave 3 moved the red guard there out of
-# the former `callBannerState`; `callBanner` composes it) accepting the second
-# loud value, and
+# `redBannerKind` (wave 3 moved the red guard there out of the former
+# `callBannerState`; `callBanner` composes it, and since wave 5 it is the ONE
+# loud rule — the harness's `terminalLoud()` reads `callBanner(...).kind`)
+# giving the second loud value its own `cannot_verify` arm, and
 # the `local_confirm` arms (`mixed` released from `negotiating`; the in-app
 # `via: "app"` variant announcing nothing and minting a NON-sticky interlude).
 # `mlsCallSession.ts`: `#latchLoud`'s `mediaKeyed` snapshot and its single
@@ -2834,7 +2841,9 @@ MUTATIONS += [
 # Every entry `expect="red"`; the wirings no spec can load are in the header
 # admission (v)–(viii). The `MissingLocalFrameKeyError` entry was OWED at first
 # (no harness seam); the wave-2 fix pass added `failLocalKeyOnce` and the
-# falsered spec, and it is listed below, pinned `must_red`.
+# falsered spec, and it is listed below, pinned `must_red`; wave 5 added its
+# Remove-immediate twin (`rotation-immediate-local-key-reads-media`), the
+# same exclusion driven through `applyKeys` rather than the Add-grace path.
 
 MUTATIONS += [
     # ---- row 4 and its conjuncts --------------------------------------------
@@ -2875,11 +2884,11 @@ MUTATIONS += [
         specs=[POLICY_SPEC],
     ),
     Mutation(
-        id="terminal-loud-cannot-verify-arm-dropped",
-        what="isTerminalLoud only knows `not_encrypted`, so a `cannot_verify` chip renders no Leave / Stay-unencrypted escape — parked behind a chip",
+        id="banner-cannot-verify-collapses-to-terminal-loud",
+        what="`redBannerKind` folds `cannot_verify` into `terminal_loud`: the chip loses its own copy and its Rejoin action, and the banner frames a plaintext the media plane may not have",
         file=POLICY,
-        search="""  if (chip !== "not_encrypted" && chip !== "cannot_verify") return false;""",
-        replace="""  if (chip !== "not_encrypted") return false;""",
+        search="""  if (inputs.chip === "cannot_verify") return "cannot_verify";""",
+        replace="""  if (inputs.chip === "cannot_verify") return "terminal_loud";""",
         specs=[POLICY_SPEC],
     ),
     Mutation(
@@ -2993,6 +3002,31 @@ MUTATIONS += [
         # pass, 2026-09-20). Killed by falsered's missing-local-frame-key spec
         # at BOTH the emission deepEqual (`mediaKeyed: false`) and the chip
         # assert (`not_encrypted`, never `cannot_verify`).
+        specs=[FALSERED_SPEC],
+        must_red=[FALSERED_SPEC],
+        expect="red",
+    ),
+    Mutation(
+        id="rotation-immediate-local-key-reads-media",
+        what="the Remove-immediate install's catch routes to `#onMediaError`, so a REMOVED leaf's `MissingLocalFrameKeyError` takes the re-securing debounce as a MEDIA latch instead of the by-class control latch — amber over a device native just said is no sender",
+        file=SESSION,
+        # The four-line anchor (catch + close of `#applyEpoch`'s install): the
+        # bare `this.#onRotationError(error);` line counts 2 — the Add-grace
+        # deferred-local call carries it too — so the catch is matched with its
+        # closing braces. Driven through `failLocalKeyOnce` on the IMMEDIATE
+        # path (`applyKeys`); killed by falsered fr11 (wave 5) at the emission
+        # deepEqual (`origin: "control", mediaKeyed: false`) and the
+        # `negotiating` fold.
+        search="""    } catch (error) {
+      this.#onRotationError(error);
+    }
+  }
+""",
+        replace="""    } catch (error) {
+      this.#onMediaError(error);
+    }
+  }
+""",
         specs=[FALSERED_SPEC],
         must_red=[FALSERED_SPEC],
         expect="red",

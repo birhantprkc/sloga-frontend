@@ -152,21 +152,22 @@ async function peerAnnouncesPlaintext(world: World): Promise<void> {
 }
 
 /**
- * The only witness this world has for an ANNOUNCE effect: the bridge fake
- * stubs no `callAnnounce`, so an attempted announce throws at the property
- * read, inside `#announceDowngrade`'s try — which is the best-effort catch
- * the product has — and lands as exactly one `console.warn` with this
- * message. `bridgeCalls` cannot see it (only stubbed methods are recorded),
- * and the harness journals no effect list. The CONTROL spec at the end
- * proves the witness fires for a native confirm, so a zero here is evidence.
+ * The witness for an ANNOUNCE effect: `#announceDowngrade` reaches the bridge
+ * as `callAnnounce` (then `mlsSendCtl`), and the fake records the name of
+ * every stubbed method into `world.bridgeCalls` as it is called. Arming
+ * snapshots the log's length; the counter reads how many `callAnnounce`
+ * entries landed AFTER it, so a confirm's own announce (7 CONTROL) is never
+ * charged to the epoch advances that follow it (8 / 8 CONTROL). It counts
+ * ATTEMPTS at the bridge, not deliveries: the product's catch around the
+ * announce is best-effort, and "did the session try to announce" is the
+ * question every site here asks. The harness journals no effect list, so
+ * this log is the only place the effect is visible. The CONTROL specs prove
+ * the witness fires for a native confirm, so a zero here is evidence.
  */
-const ANNOUNCE_FAILED =
-  "[mls] downgrade announce failed (peers converge via mix)";
-
-function watchAnnounces(t: TestContext): () => number {
-  const warn = t.mock.method(console, "warn");
+function watchAnnounces(world: World): () => number {
+  const armedAt = world.bridgeCalls.length;
   return () =>
-    warn.mock.calls.filter((c) => c.arguments[0] === ANNOUNCE_FAILED).length;
+    world.bridgeCalls.slice(armedAt).filter((n) => n === "callAnnounce").length;
 }
 
 // ---- 1. The terminus the button was dead under --------------------------------
@@ -539,7 +540,7 @@ test("7 — confirmLocalPlaintext emits no announce (kills escape-app-confirm-an
   // a null group: the only thing keeping the announce out is the effect list.
   await latchLoud(t, world);
   assert.equal(world.session.hasUsableGroup(), true);
-  const announces = watchAnnounces(t);
+  const announces = watchAnnounces(world);
 
   await world.session.confirmLocalPlaintext();
   await flush();
@@ -551,7 +552,7 @@ test("7 CONTROL — the announce witness fires for a NATIVE confirm on the same 
   const world = newWorld(t, "creator", "ch-escape-7c");
   await bringUpCreator(t, world);
   await latchLoud(t, world);
-  const announces = watchAnnounces(t);
+  const announces = watchAnnounces(world);
 
   await world.session.confirmPlaintext(NO_NAMES);
   await flush();
@@ -584,7 +585,7 @@ test("8 — an app-confirmed interlude with an intact group does NOT re-announce
   assert.equal(world.confirmDowngrades(), 1);
   assert.deepEqual(world.session.callMode(), interludeVia("app"));
   assert.equal(world.session.hasUsableGroup(), true, "the group did not hold");
-  const announces = watchAnnounces(t);
+  const announces = watchAnnounces(world);
 
   // Two inbound commits, neither a Welcome: each reaches the ME-4 site with
   // the interlude still confirmed (asserted, so a zero is never vacuous).
@@ -611,7 +612,7 @@ test("8 CONTROL — a NATIVELY-confirmed interlude re-announces on every epoch a
   await flush();
   assert.equal(world.confirmDowngrades(), 1);
   assert.deepEqual(world.session.callMode(), interludeVia("native"));
-  const announces = watchAnnounces(t);
+  const announces = watchAnnounces(world);
 
   await world.commit(1);
   assert.deepEqual(world.session.callMode(), interludeVia("native"));

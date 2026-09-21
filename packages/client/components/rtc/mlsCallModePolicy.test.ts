@@ -31,7 +31,6 @@ import {
   classifyEncryptionError,
   classifyMediaError,
   interludeStickyAcrossResecure,
-  isTerminalLoud,
   keyPairId,
   latestPresentAddedAt,
   loudHealVerdict,
@@ -792,69 +791,6 @@ test("chip negotiating with an open group → amber (not green, not none)", () =
   );
 });
 
-// ---- terminal-loud banner predicate (ME-10) ---------------------------------
-
-test("terminal-loud: loud failure while negotiating (original ME-10 shape)", () => {
-  assert.equal(isTerminalLoud(NEGOTIATING, "not_encrypted", true), true);
-  // Retry exhaustion can go loud without a structured error latched while
-  // the mode still reads negotiating — the original condition, unchanged.
-  assert.equal(isTerminalLoud(NEGOTIATING, "not_encrypted", false), true);
-});
-
-test("terminal-loud: refusal inside establish() — failed before ANY mode verdict (store-owner mismatch)", () => {
-  // The session dies before onCallModeChanged ever fires, so the UI's mode
-  // signal still reads undefined. This is the case the banner's Reset
-  // encryption leg exists for; requiring `negotiating` made it unreachable.
-  assert.equal(isTerminalLoud(undefined, "not_encrypted", true), true);
-});
-
-test("terminal-loud: attribution chips without a latched error are not a LOUD failure", () => {
-  // chipState reads not_encrypted with NO session for the ME-7/§0.2#9
-  // branches (web participant, a device with no encryption set up). Nothing
-  // was attempted, so nothing latched and nothing is paused — the loud
-  // banner's copy and its "Stay unencrypted" release would both be wrong.
-  // They are NOT bannerless: `callBanner` gives them the device arms.
-  assert.equal(isTerminalLoud(undefined, "not_encrypted", false), false);
-});
-
-test("terminal-loud: any emitted mode verdict other than negotiating is not terminal", () => {
-  // mixed/interlude have their own banner arms; off is a quiet plain call.
-  assert.equal(isTerminalLoud({ kind: "off" }, "not_encrypted", true), false);
-  assert.equal(isTerminalLoud(MIXED, "not_encrypted", true), false);
-});
-
-test("terminal-loud: requires the loud chip", () => {
-  assert.equal(isTerminalLoud(NEGOTIATING, "resecuring", true), false);
-  assert.equal(isTerminalLoud(undefined, "none", true), false);
-});
-
-test("🔴 terminal-loud: cannot_verify counts exactly like not_encrypted (kills terminal-loud-cannot-verify-arm-dropped)", () => {
-  // A keyed control latch is folded to `negotiating` by `#onLoud` (or lands
-  // before any verdict) exactly like a media one; the gate is held either way
-  // and the same escape serves it. Both shapes, and both non-shapes.
-  assert.equal(isTerminalLoud(NEGOTIATING, "cannot_verify", true), true);
-  assert.equal(isTerminalLoud(NEGOTIATING, "cannot_verify", false), true);
-  assert.equal(isTerminalLoud(undefined, "cannot_verify", true), true);
-  assert.equal(isTerminalLoud(undefined, "cannot_verify", false), false);
-  const modes: (CallMode | undefined)[] = [
-    undefined,
-    NEGOTIATING,
-    { kind: "off" },
-    E2EE,
-    MIXED,
-    INTERLUDE_UNCONF,
-    INTERLUDE_NATIVE,
-    { kind: "call_full" },
-  ];
-  for (const mode of modes)
-    for (const latchedError of [false, true])
-      assert.equal(
-        isTerminalLoud(mode, "cannot_verify", latchedError),
-        isTerminalLoud(mode, "not_encrypted", latchedError),
-        JSON.stringify({ mode, latchedError }),
-      );
-});
-
 // ---- Which banner a chip carries (the no-dead-end invariant) ----------------
 
 // Wave-3 defaults: a session exists — so the `securing` question is LIVE for
@@ -907,13 +843,9 @@ test("banner: a ready device with a red chip is a CALL failure — terminal loud
 test("🔴 banner: call_full is no longer silent (it latches, and the gate is held)", () => {
   // `#onCallFull` runs `#onLoud` before `#applyMode({type:"call_full"})`, so
   // the error is latched and `loudModeFallback` has re-asserted the
-  // negotiating gate — the loud copy is true. `isTerminalLoud` returns false
-  // here (the mode is not negotiating), which is precisely why routing the
-  // banner through it left this red chip bare.
-  assert.equal(
-    isTerminalLoud({ kind: "call_full" }, "not_encrypted", true),
-    false,
-  );
+  // negotiating gate — the loud copy is true. `redBannerKind` reads the latch,
+  // not the mode: the old mode-keyed predicate the banner once routed through
+  // read false here (the mode is not negotiating) and left this red chip bare.
   assert.equal(
     callBanner(
       baseBanner({
@@ -2322,10 +2254,10 @@ test("🔴 rotation window: a submitted commit is a known rotation for the whole
 
 test("🔴 a loud latch in e2ee drops the mode to negotiating (banner + escape hatch)", () => {
   // The known gap "loud after mode reached e2ee → red chip, no banner, no
-  // way out": isTerminalLoud and confirmPlaintext both key on negotiating.
+  // way out": confirmPlaintext keys on negotiating, and the banner's
+  // `terminal_loud` arm under it is pinned on `callBanner` above.
   const fallback = loudModeFallback(E2EE);
   assert.deepEqual(fallback, NEGOTIATING);
-  assert.equal(isTerminalLoud(fallback!, "not_encrypted", true), true);
 });
 
 test("a loud latch anywhere else keeps the mode", () => {
@@ -2352,7 +2284,6 @@ test("🔴 under a loud latch, e2ee is unreachable: it folds to negotiating", ()
   // the latched error, no banner, no escape, the promised pause lifted.
   const folded = modeUnderLoudLatch(E2EE, true);
   assert.deepEqual(folded, NEGOTIATING);
-  assert.equal(isTerminalLoud(folded, "not_encrypted", true), true);
 });
 
 test("without a latch the label passes through unchanged", () => {
@@ -2386,7 +2317,6 @@ test("composition: latch → mix → mix cleared → the T2 resume cannot reach 
   ]);
   const t2 = modeUnderLoudLatch(E2EE, true); // what the timer may write
   assert.deepEqual(t2, NEGOTIATING);
-  assert.equal(isTerminalLoud(t2, "not_encrypted", true), true);
 });
 
 test("chip: negotiating + latched error is loud; negotiating without one is amber", () => {

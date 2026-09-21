@@ -1,8 +1,8 @@
 // The ME-10 banner's central promise, as a session-level invariant.
 //
-// "This call could not be secured. Your audio and video stay paused — leave,
-// or continue without encryption." That sentence is a claim about the publish
-// gate, and until the 2026-09-08 join-race legs nothing asserted it: the
+// "This call's encryption could not be confirmed. Your audio and video should
+// stay paused." That sentence is a claim about the publish gate, and until the
+// 2026-09-08 join-race legs nothing asserted it: the
 // harness binding did not implement `pausePublishing` at all, so every spec
 // ran with the gate invisible and `#latchLoud`'s comment ("fail-closed: the
 // banner says publishing is paused, and it is") was structurally unverified.
@@ -22,10 +22,11 @@
 // upgrade is ONE emission that never re-reads keyed. The one control latch
 // that is keyed on BOTH flags yet must not read so — `MissingLocalFrameKeyError`
 // out of `#onRotationError` — is reached through the harness's `failLocalKeyOnce`
-// seam on the Add-grace install (the immediate path installs the local key
-// inside `applyKeys`, which the fake does not route through the seam; both
-// paths converge on `#onRotationError`), and this file pins that its snapshot
-// reads un-keyed by the class exclusion alone.
+// seam on BOTH install paths (the fake installer's `applyKeys` composes the
+// same one-shot check as its `applyLocalKey`, so the Add-grace timer and the
+// Remove-immediate install each throw into their own catch), and this file
+// pins that its snapshot reads un-keyed by the class exclusion alone,
+// whichever catch handed it over.
 //
 // Scope, stated so the next reader does not over-read these: this file pins the
 // SESSION's half — the reason set and the order of its edges, and the meta the
@@ -44,6 +45,7 @@ import {
   GROUP,
   latchLoud,
   newWorld,
+  PEER,
   PEER_ID,
   peerLeaves,
   peerRejoins,
@@ -72,10 +74,11 @@ function assertGateHeld(world: World, where: string): void {
  * provably keyed — the second, unfixed half of the 2026-09-08 legs — so
  * asserting it would have read as a regression the day the split landed.
  * The split gives a keyed control latch its own chip (`cannot_verify`) and
- * `isTerminalLoud` accepts both loud chips, so the banner question and the
- * WHICH-chip question are separate: this asserts the banner; each spec pins
- * the chip. The gate assertion holds either way: a device that cannot prove
- * who is in the call must not send, whatever the banner ends up saying.
+ * `callBanner` gives both loud chips a latched banner (`terminal_loud` /
+ * `cannot_verify`), so the banner question and the WHICH-chip question are
+ * separate: this asserts the banner; each spec pins the chip. The gate
+ * assertion holds either way: a device that cannot prove who is in the call
+ * must not send, whatever the banner ends up saying.
  */
 function assertMe10(world: World, where: string): void {
   assert.equal(world.terminalLoud(), true, `no ME-10 banner at ${where}`);
@@ -329,6 +332,81 @@ test("any other failure from the Add-grace install stays on the media debounce",
   assert.equal(world.chip(), "not_encrypted");
   assertGateHeld(world, "the escalated media debounce");
   assertMe10(world, "the escalated media debounce");
+});
+
+/**
+ * The Remove-IMMEDIATE local install THROWS `error`. An inbound commit that
+ * removed a device leaves the inbound memo `removed`, so the epoch classifies
+ * `immediate` and `onLocalKeysChanged` installs everything at once through
+ * `applyKeys` — the fake's `applyKeys` composes the same one-shot
+ * `failLocalKeyOnce` check as its `applyLocalKey` — and the throw lands in
+ * the immediate path's OWN catch, the second of the two sites that hand to
+ * `#onRotationError`. No clock advance: nothing on this path arms a timer,
+ * so a scripted failure still unspent once the commit resolves means the
+ * epoch took the Add-grace path instead, and the spec would be pinning the
+ * wrong catch. Returns the `states` index from before the commit.
+ */
+async function immediateInstallThrows(
+  world: World,
+  error: Error,
+): Promise<number> {
+  world.failLocalKeyOnce(error);
+  const before = world.states.length;
+  await world.commit(1, [PEER]); // an inbound Remove at epoch 1: all keys now
+  assert.equal(
+    world.localKeyFailure,
+    null,
+    "the scripted throw never fired inside the commit: not the immediate path",
+  );
+  return before;
+}
+
+test("the missing-local-frame-key latch off the Remove-immediate install reads mediaKeyed: false by exclusion and never cannot_verify", async (t) => {
+  // Kills `rotation-immediate-local-key-reads-media`: the immediate path's
+  // catch in `onLocalKeysChanged` handing to `#onMediaError(error)` instead of
+  // `#onRotationError(error)`. The spec above cannot see that — its throw
+  // comes out of the Add-grace timer's catch — and those two catches are the
+  // ONLY callers of `#onRotationError`, so a defect in either is invisible to
+  // a spec driving the other.
+  const world = newWorld(t, "creator", "chan-fr11");
+  await bringUpCreator(t, world);
+  assert.equal(world.chip(), "e2ee");
+  assert.equal(world.publishing(), true);
+  // As in the Add-grace spec: every OTHER row-4 conjunct holds explicitly.
+  world.localPublications = [
+    { trackSid: "TR_local", encryption: ENCRYPTION_TYPE_GCM },
+  ];
+  assert.deepEqual(world.decodeWitness().dropping, []);
+
+  // The shape a REMOVED leaf takes, on the path a Remove actually drives: the
+  // epoch that dropped a member carries no send key for this device. Both
+  // flags still read keyed from epoch 0's install.
+  const error = new MissingLocalFrameKeyError(GROUP, 1);
+  const before = await immediateInstallThrows(world, error);
+  // ONE emission, control origin, NOT keyed — the exclusion, through the
+  // other catch. `#dropModeToNegotiating` folded the mode before the latch,
+  // so the gate re-asserted in lockstep. Under the mutation the class takes
+  // the media debounce instead: no control latch, the mode stays `e2ee`, and
+  // this device goes on publishing under epoch 0's key — the key the members
+  // who removed it still hold.
+  assert.deepEqual(loudsWithMeta(world, before), [
+    { state: "loud", error, meta: { origin: "control", mediaKeyed: false } },
+  ]);
+  assert.equal(world.session.callMode().kind, "negotiating");
+  // Row 5, never row 4: the same verdict as the Add-grace spec, from the
+  // catch that spec never reaches.
+  assert.equal(world.chip(), "not_encrypted");
+  assert.notEqual(world.chip(), "cannot_verify");
+  assert.equal(
+    world.chip({
+      decodeWitness: { available: true, dropping: [], live: [PEER_ID] },
+    }),
+    "not_encrypted",
+    "a clean witness softened the Remove-immediate missing-frame-key latch",
+  );
+  assertGateHeld(world, "the Remove-immediate missing-local-frame-key latch");
+  assertMe10(world, "the Remove-immediate missing-local-frame-key latch");
+  assert.deepEqual([...world.gate], ["negotiating"]);
 });
 
 test("a control verdict under a media latch upgrades it in ONE emission that never re-reads keyed", async (t) => {

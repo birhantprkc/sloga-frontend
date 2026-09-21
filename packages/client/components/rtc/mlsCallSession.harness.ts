@@ -44,13 +44,12 @@ import {
   ENCRYPTION_TYPE_GCM,
 } from "./localPublicationEncryption.ts";
 import {
-  type CallMode,
   type ChipLatch,
   type ChipState,
   type DecodeWitness,
   type LoudLatchMeta,
+  callBanner,
   DECODE_WITNESS_UNAVAILABLE,
-  isTerminalLoud,
   summarizeDecodeWitness,
 } from "./mlsCallModePolicy.ts";
 import type {
@@ -116,6 +115,8 @@ export const THIRD_ID = identityOf(THIRD);
 type BridgeStubs = { [K in keyof E2EEBridge]?: E2EEBridge[K] };
 type FetchCommitsResult = Awaited<ReturnType<E2EEBridge["mlsFetchCommits"]>>;
 type SubmitCommitResult = Awaited<ReturnType<E2EEBridge["mlsSubmitCommit"]>>;
+/** `MlsCtlPayload` — not re-exported by `@revolt/client`, so read off the bridge. */
+type CtlPayload = Awaited<ReturnType<E2EEBridge["callAnnounce"]>>;
 
 /** A bridge that throws on any method the ladder touches without a stub. */
 function fakeBridge(stubs: BridgeStubs): E2EEBridge {
@@ -261,8 +262,8 @@ export class World {
    * The binding used to leave `pausePublishing` unimplemented and stub
    * `resumePublishing` as a no-op, so the gate was invisible to every
    * session-level spec — which is how the ME-10 banner's central promise
-   * ("your audio and video stay paused") went six review rounds without one
-   * assertion behind it.
+   * ("your audio and video stay paused" — the then-unhedged copy) went six
+   * review rounds without one assertion behind it.
    */
   gate = new Set<PublishGateReason>(["negotiating"]);
   /** Every gate edge in order (`+reason` / `-reason`) — kept out of `events`. */
@@ -685,10 +686,15 @@ export class World {
    * when the egress carries no entry for this device (`mlsCallKeys.ts`), and
    * the session routes that class — and ONLY that class — past the media
    * debounce to `#onRotationError` → `#dropModeToNegotiating` +
-   * `#latchLoud(error, "control")`. `applyLocalKey` runs on the Add-grace
-   * path alone (`#scheduleGraceLocal`; the immediate path installs the local
-   * key inside `applyKeys`), so the driver is a plain Add commit on a device
-   * that already holds a key, then the grace:
+   * `#latchLoud(error, "control")`. The real installer switches the local
+   * send key on BOTH rotation paths — inside `applyKeys` on the immediate
+   * (Remove-driven) path, through `applyLocalKey` on the Add-grace path
+   * (`#scheduleGraceLocal`) — and can throw that class from either, so the
+   * fake's `applyKeys` IS its `applyLocalKey` (the one-shot check, then the
+   * install): the scripted throw fires on whichever path the session drives
+   * next. A Remove-driven epoch reaches it on the immediate path with no
+   * timer; a plain Add commit on a device that already holds a key defers it
+   * to the grace:
    *
    *   world.failLocalKeyOnce(new MissingLocalFrameKeyError(GROUP, 1));
    *   await world.commit(1);        // Add-grace: remotes now, local deferred
@@ -1135,22 +1141,28 @@ export class World {
   }
 
   /**
-   * `state.tsx`'s `callTerminalLoud()` — the ONE condition the ME-10 banner
-   * renders on, and with it the sentence "Your audio and video stay paused".
-   *
-   * `mode` defaults to the LIVE mode; passing `undefined` explicitly drives
-   * `isTerminalLoud`'s `mode === undefined` arm (a latch with no session
-   * mode), which `state.tsx` reaches but no ladder here can. A rest tuple
-   * rather than a default parameter, because a default would swallow an
-   * explicit `undefined` and make that arm undrivable again.
+   * The product's banner rule (`callBanner(...).kind`) reduced to "a
+   * latched-loud banner is up": `terminal_loud` or `cannot_verify` — the two
+   * kinds `redBannerKind` raises off a latched loud chip, and with them the
+   * hedged sentence "Your audio and video should stay paused". Not a second
+   * rule: `state.tsx`'s `callBanner()` feeds the same policy, and every input
+   * it declares is passed here at the value a session-level ladder has for
+   * it — readiness `ready` and a session (a session exists at all only on a
+   * ready device), the chip and mode live, the latch from the replayed
+   * protocol, and no pause disproof (no witness episode runs in these
+   * ladders; `publishGateEpisode.test.ts` owns that axis).
    */
-  terminalLoud(...args: [mode?: CallMode | undefined]): boolean {
-    const mode = args.length === 0 ? this.session.callMode() : args[0];
-    return isTerminalLoud(
-      mode,
-      this.chip(),
-      this.#replay().latch !== undefined,
-    );
+  terminalLoud(): boolean {
+    const kind = callBanner({
+      chip: this.chip(),
+      mode: this.session.callMode(),
+      latchedError: this.#replay().latch !== undefined,
+      readiness: "ready",
+      hasSession: true,
+      pauseDisproved: false,
+      pauseDisproofConfirmed: false,
+    }).kind;
+    return kind === "terminal_loud" || kind === "cannot_verify";
   }
 
   /**
@@ -1294,6 +1306,10 @@ export class World {
  * before posting anything, where the real one throws
  * `MissingLocalFrameKeyError` — ahead of its first await, so the rejection
  * reaches the caller's `catch` with no microtask gap, as the real one does.
+ * `applyKeys` is that same function: the real installer switches the local
+ * send key inside its immediate-path install too, so a scripted local-key
+ * failure must be reachable from the immediate path as well as the grace.
+ * Only `applyRemoteKeys` bypasses the check — it installs no local key.
  */
 function fakeInstaller(world: World): KeyInstaller {
   const install = async () => {
@@ -1314,7 +1330,7 @@ function fakeInstaller(world: World): KeyInstaller {
     await install();
   };
   return {
-    applyKeys: install,
+    applyKeys: applyLocalKey,
     applyRemoteKeys: install,
     applyLocalKey,
     resetForGroup: () => {},
@@ -1700,6 +1716,32 @@ function bridgeFor(world: World): E2EEBridge {
     callClearDowngrade: record("callClearDowngrade", async (groupId) => {
       world.clearDowngradeCalls.push(groupId);
     }),
+    // ---- The §3.4 mode announce (ME-4 / ME-12), best-effort ----
+    //
+    // `e2ee_call_announce` builds the group-encrypted ctl payload natively and
+    // `mlsSendCtl` relays it; `#announceDowngrade` calls them in that order
+    // inside one try. Both resolve, so the announce completes without its
+    // catch: an announce is counted by the "callAnnounce" entry in
+    // `bridgeCalls` (the escape suite's `watchAnnounces`), not by the warn the
+    // catch emitted while these were unstubbed — that warn was the Proxy's
+    // "not stubbed" throw being swallowed, so it counted attempts that never
+    // reached the wire. Stubbing one without the other leaves it firing from
+    // the other. The ciphertext is opaque to the session (never parsed on
+    // the send side), so any string is a well-formed payload.
+    callAnnounce: record(
+      "callAnnounce",
+      async (groupId, _userId): Promise<CtlPayload> => ({
+        group_id: groupId,
+        ciphertext: "b3BhcXVlLWN0bC1hbm5vdW5jZQ",
+      }),
+    ),
+    mlsSendCtl: record(
+      "mlsSendCtl",
+      async (): Promise<MlsHttpResult<void>> => ({
+        kind: "ok",
+        body: undefined,
+      }),
+    ),
   };
   return fakeBridge(stubs);
 }

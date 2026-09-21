@@ -406,8 +406,8 @@ export interface PublishGateSweep {
    * for a few microtasks, so the caller must confirm with a bounded re-sweep
    * before treating it as a failure — see `state.tsx`. What the caller must not
    * do is DROP it: nothing else in the stack ever reads the wire, so a discarded
-   * survivor makes the banner's "your audio and video stay paused"
-   * unfalsifiable.
+   * survivor makes the banner's `held` pause clause ("your audio and video
+   * should stay paused") unfalsifiable.
    */
   unproven: string[];
   /**

@@ -1,5 +1,5 @@
 // Which field of a `PauseDisproofVerdict` feeds which public reader — the one
-// derivation the banner's `<Show>` discriminator is built out of.
+// derivation `callBanner`'s pause inputs are built out of.
 //
 // 🔴 THIS FILE EXISTS BECAUSE THE SWAP WAS MEASURED GREEN. A completion audit
 // transposed the two `createMemo` bodies in `state.tsx` and ran the full bare
@@ -36,8 +36,8 @@ const QUIET: PauseDisproofVerdict = { value: false, confirmed: false };
 /**
  * 🔴 THE LOAD-BEARING ONE. A disproof reached off a SINGLE observation because
  * the confirm bound was already spent — an unconfirmed alarm on a genuinely
- * live wire. This is the state a swapped derivation inverts, and inverting it
- * leaves the downgrade banner promising a pause that is not happening.
+ * live wire. This is the state a swapped derivation inverts; today's AND fold
+ * cannot see it, a `disproved`-only consumer would.
  */
 const UNCONFIRMED_DISPROOF: PauseDisproofVerdict = {
   value: true,
@@ -96,9 +96,11 @@ test("CONFIRMED_DISPROOF — { value: true, confirmed: true } reads true / true"
 
 test("🔴 UNCONFIRMED_DISPROOF — { value: true, confirmed: false } reads true / false", () => {
   // The state Control C inverted. A swapped derivation answers
-  // `disproved: false` here, `VoiceCallDowngradeBanner`'s `<Show>` takes its
-  // fallback arm, and the user is told their audio and video stay paused while
-  // media is on the wire.
+  // `disproved: false` here. Banner-invisible today (`callBanner`'s fold is
+  // `pauseDisproved && pauseDisproofConfirmed`, symmetric, so `{ true, false }`
+  // and `{ false, true }` both read `pause: "held"`); what this pins is that
+  // the two values reach any consumer BY NAME, so a `disproved`-only reader —
+  // the wave-1 banner — cannot be fed a transposed pair.
   assert.deepEqual(read(UNCONFIRMED_DISPROOF), {
     disproved: true,
     disproofConfirmed: false,

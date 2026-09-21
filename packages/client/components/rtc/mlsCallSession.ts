@@ -3509,11 +3509,17 @@ export class MlsCallSession {
    * §4.4 / M3: a MID-CALL re-establish must drop the mode back to
    * `negotiating` (via `#setMode`, which keeps the publish-gate reason in
    * lockstep — re-securing publishes nothing). Without this, `#callMode`
-   * stays `"e2ee"` through the re-establish, and if the ladder then exhausts,
-   * `isTerminalLoud` (which requires `negotiating`) never lets the terminal
-   * banner render — the chip flips, publishing pauses, and the user is
-   * parked muted behind a chip with no "Stay unencrypted" escape: the exact
-   * state this design exists to eliminate. A NATIVELY-confirmed plaintext
+   * stays `"e2ee"` through the re-establish with no `negotiating` hold on
+   * the publish gate, so a session re-securing a group it can no longer
+   * vouch for keeps publishing. The banner does not need the mode —
+   * `redBannerKind` raises `terminal_loud` on the latch regardless of mode —
+   * but `confirmReachable` still keys the terminal escape on `negotiating`,
+   * so if the ladder then exhausted at `e2ee` the user would, but for
+   * `#latchLoud`'s `loudModeFallback` fold, see a banner whose `held` pause
+   * clause covers a live mic and whose escape button does nothing: the
+   * exact state this design exists to eliminate, with that fold as the
+   * second net.
+   * A NATIVELY-confirmed plaintext
    * interlude is exempt — the user authorized plaintext through the native
    * dialog against a real group, and `#resetEnableState` deliberately keeps
    * it publishing through a re-secure. An APP-confirmed interlude
@@ -3799,8 +3805,12 @@ export class MlsCallSession {
    * So it goes straight to the terminus: `#dropModeToNegotiating` re-asserts
    * the negotiating publish gate in lockstep (nothing more goes out under the
    * superseded key) and the latch takes a CONTROL origin, which the heal never
-   * clears. Both together are what `isTerminalLoud` needs to render the
-   * Leave / "Stay unencrypted" banner, so this is a terminus the user can act
+   * clears. The latch alone raises the banner: `redBannerKind`'s
+   * `terminal_loud` arm reads it regardless of mode (this error class is
+   * excluded from `mediaKeyed` in `#latchLoud`, so the chip is
+   * `not_encrypted`, never `cannot_verify`). The mode drop is what makes that
+   * banner's `held` pause clause true and lets `confirmReachable` admit the
+   * Leave / "Stay unencrypted" escape, so this is a terminus the user can act
    * on rather than a hang.
    */
   #onRotationError(error: unknown): void {
@@ -4582,12 +4592,17 @@ export class MlsCallSession {
     this.#clearResecureTimer("joiner");
     this.#clearResecureTimer("media");
     // A loud verdict after the mode reached `e2ee` used to leave the chip red
-    // with NO banner and no escape: `isTerminalLoud` and `confirmPlaintext`
-    // both key on `negotiating`. Fold it into that shape (`loudModeFallback`)
-    // — serialized on the mode chain so an in-flight transition cannot
-    // clobber it — which re-asserts the negotiating publish gate in lockstep
-    // (fail-closed: the banner says publishing is paused, and it is) and
-    // offers the same Leave / Stay-unencrypted choice as a failed negotiation.
+    // with NO banner and no escape: the loud rule of the day and
+    // `confirmPlaintext` both keyed on `negotiating`. The banner no longer
+    // does — `redBannerKind` raises `terminal_loud` on the latch regardless
+    // of mode — but `confirmReachable` still guards the terminal escape on
+    // `negotiating`, and at `e2ee` the publish gate is EMPTY under a banner
+    // whose pause clause reads `held`. Fold it into that shape
+    // (`loudModeFallback`) — serialized on the mode chain so an in-flight
+    // transition cannot clobber it — which re-asserts the negotiating publish
+    // gate in lockstep (fail-closed: the banner says publishing should be
+    // paused, and it is) and admits the same Leave / Stay-unencrypted choice
+    // as a failed negotiation.
     const fallback = loudModeFallback(this.#callMode);
     if (fallback) this.#setModeChained(fallback);
   }

@@ -1143,9 +1143,6 @@ class Voice {
    */
   callEncryptionReadiness: Accessor<CallEncryptionReadiness>;
   #setCallEncryptionReadiness: Setter<CallEncryptionReadiness>;
-  /** For a remote announce (T4): the user who announced plaintext (banner copy). */
-  callAnnouncedBy: Accessor<string | undefined>;
-  #setCallAnnouncedBy: Setter<string | undefined>;
   /** The VERIFIED MLS roster + divergent ghosts for the 6.5 roster panel. */
   callRoster: Accessor<{
     members: readonly MlsRosterMember[];
@@ -1778,11 +1775,11 @@ class Voice {
     // (Solid, livekit, `@revolt/client`) and carries no mutation entries, so
     // for as long as the two reader bodies were written out here, swapping
     // them was checked by nothing: a completion audit transposed them and
-    // `tsc`, `prettier`, `eslint`, every spec and both scripts stayed green,
-    // while in production that swap turns a budget-exhausted single
-    // observation on a genuinely live wire into `callPauseDisproved() ===
-    // false` and leaves the banner promising "your audio and video stay
-    // paused".
+    // `tsc`, `prettier`, `eslint`, every spec and both scripts stayed green.
+    // In production that swap would have reached the wave-1 `<Show>` as
+    // `callPauseDisproved() === false`; today `callBanner()`'s symmetric fold
+    // reads `held` either way, and the readers stay named so a
+    // `disproved`-only consumer cannot be fed a transposed pair.
     //
     // 🔴 That is NOT now a compile error, and nothing here should say it
     // is. `disproved` and `disproofConfirmed` are two same-typed accessors and
@@ -1800,8 +1797,8 @@ class Voice {
     // created in this constructor, which `VoiceContext` runs inside its own
     // component owner, so they are disposed with it.
     //
-    // Names, types and arity are unchanged — `VoiceCallDowngradeBanner` reads
-    // `callPauseDisproved()` as a live `<Show>` discriminator.
+    // Names, types and arity are unchanged — `state.tsx`'s `callBanner()`
+    // feeds both readers to the policy.
     const readers = pauseVerdictReaders(pauseVerdict);
     this.callPauseDisproved = createMemo(readers.disproved);
     this.callPauseDisproofConfirmed = createMemo(readers.disproofConfirmed);
@@ -1873,12 +1870,6 @@ class Voice {
       createSignal<CallEncryptionReadiness>("unsupported");
     this.callEncryptionReadiness = encryptionReadiness;
     this.#setCallEncryptionReadiness = setEncryptionReadiness;
-
-    const [callAnnouncedBy, setCallAnnouncedBy] = createSignal<
-      string | undefined
-    >();
-    this.callAnnouncedBy = callAnnouncedBy;
-    this.#setCallAnnouncedBy = setCallAnnouncedBy;
 
     const [callRoster, setCallRoster] = createSignal<{
       members: readonly MlsRosterMember[];
@@ -4137,7 +4128,6 @@ class Voice {
       this.#setCallMode(undefined);
       this.#setCallE2EECapable(false);
       this.#setCallEncryptionReadiness("unsupported");
-      this.#setCallAnnouncedBy(undefined);
       this.#setCallRoster({ members: [], ghosts: [] });
       this.#setCallChannelHasOpenGroup(false);
       this.#setCallRosterPanelOpen(false);
@@ -4482,7 +4472,6 @@ class Voice {
         batch(() => {
           this.#setCallMode(mode);
           this.#setCallNonEnrolled(detail.nonEnrolled);
-          this.#setCallAnnouncedBy(detail.announcedBy);
         });
       },
       onRosterState: (members, ghosts) => {
@@ -7452,11 +7441,12 @@ class Voice {
       // sit on a dead PeerConnection. A `try/catch` answers rejection and does
       // nothing about a hang.
       //
-      // The caller is holding `localTrack.pauseUpstream()` and the ask-modal
-      // does not open until this method returns, so an unbounded await here
-      // reproduces the frozen-tile-with-no-modal failure the module's own
-      // STARTING-window bounds exist to prevent — from the one call site that
-      // is outside the module.
+      // The caller is holding `shareTrack.pauseUpstream()` plus the
+      // `#consentHeld` hold, and the ask-modal does not open until this
+      // method returns, so an unbounded await here reproduces the
+      // frozen-tile-with-no-modal failure the module's own STARTING-window
+      // bounds exist to prevent — from the one call site that is outside
+      // the module.
       //
       // Usually redundant: `die()` and `teardownScreenAudio()` each already
       // ran `host.unpublish()` under their own 2 s settle. It is kept for the

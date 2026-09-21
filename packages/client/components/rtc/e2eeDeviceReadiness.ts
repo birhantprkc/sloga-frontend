@@ -6,18 +6,22 @@
  * WHY THIS EXISTS. `e2eeCapable` is an AND of six terms and everything
  * downstream reads only the boolean. False means "not an E2EE call": no
  * session, no publish gate, plaintext publications — and, in a channel that
- * HAS an open MLS group, a red NOT-ENCRYPTED chip with no banner and nothing
- * to press (`chipState`'s no-session branches; `isTerminalLoud` needs a
- * latched error, and with no session nothing latches). That is honest for a
- * browser, which can never encrypt. It is NOT honest for a desktop install
- * that simply has no encryption set up on it: the same red, with a remedy the
- * user is never offered. Recorded live 2026-09-08 (rejoin-beat plan §7.4/§8 —
- * a device whose account owner changed, red chip, no banner, NONE-declared
- * publications).
+ * HAS an open MLS group, a red NOT-ENCRYPTED chip (`chipState`'s no-session
+ * branches). Before this split that red chip had no banner and nothing to
+ * press: the banner's loud arms — today `redBannerKind`'s `cannot_verify`
+ * and latched `terminal_loud` — both need a latch, and with no session
+ * nothing latches. That is honest for a browser, which can never encrypt.
+ * It is NOT honest for a desktop install that simply has no encryption set
+ * up on it: the same red, with a remedy the user is never offered. Recorded
+ * live 2026-09-08 (rejoin-beat plan §7.4/§8 — a device whose account owner
+ * changed, red chip, no banner, NONE-declared publications).
  *
  * Splitting the boolean into a REASON costs nothing at the call site (`ready`
  * is still the only value that builds a session) and lets the call chrome say
- * which of the three states it is in.
+ * which of the three states it is in: `redBannerKind` switches on this
+ * readiness ABOVE its latched arm, so a red chip on an `unsupported` shell
+ * reads `device_unsupported` and one on a `needs_setup` / `owned_elsewhere`
+ * install reads `device_not_set_up`, with no latch required.
  *
  * PURE: no I/O, no Room, no Client — `node --test` loads it directly.
  */

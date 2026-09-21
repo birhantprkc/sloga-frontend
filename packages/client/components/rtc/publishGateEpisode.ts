@@ -357,9 +357,9 @@ export interface EpisodeDeps {
    */
   scheduleConfirm(run: () => void): void;
   /**
-   * `callPauseDisproved` — TRUE withdraws the banner's "your audio and video
-   * stay paused" claim. Only ever a withdrawal of a claim this module just
-   * disproved, never a claim of its own.
+   * `callPauseDisproved` — TRUE, once `confirmed`, flips the banner's pause
+   * axis to `disproved`, withdrawing its hedged `held` clause. Only ever a
+   * withdrawal of a claim this module just disproved, never a claim of its own.
    *
    * 🔴 A ONE-DIRECTIONAL ALARM, and `confirmed` does not change that. TRUE is
    * "a held gate could not prove the wire quiet"; FALSE is "no live disproof"
