@@ -107,6 +107,14 @@ import {
 } from "@revolt/ui/components/features/voice/participantIdentity";
 import { ReactiveMap } from "@solid-primitives/map";
 import {
+  type PublishRefusal,
+  afkJoinPlan,
+  isAfkChannel,
+  permissionFallReasons,
+  publishToggleRefusal,
+  voicePublishPermission,
+} from "./afkPolicy";
+import {
   keyActionAfterConnect,
   startAttemptCancelled,
   startAttemptStale,
@@ -2829,24 +2837,45 @@ class Voice {
     // Guarded on the FALLING edge only: the initial grant arrives as a change
     // from undefined, and a re-grant (the mute being lifted) is not something
     // to interrupt anyone about.
+    //
+    // 🔴 The publish edge has TWO causes now. The AFK channel revokes publish
+    // at the SFU for everyone who enters it — the server owner included — so
+    // the old unconditional "a moderator muted you" would have told every
+    // single AFK member something untrue. The classification lives in
+    // `afkPolicy.permissionFallReasons` so it is testable; only the copy is
+    // here.
     room.on(RoomEvent.ParticipantPermissionsChanged, (prev, participant) => {
       if (participant !== room.localParticipant) return;
       const now = participant.permissions;
 
-      if (prev?.canPublish && !now?.canPublish) {
-        this.onErr(
-          new Error(
-            t`A moderator muted you in this server. Your microphone and camera stay off for everyone until they lift it.`,
-          ),
-        );
-      }
+      const reasons = permissionFallReasons({
+        prevCanPublish: prev?.canPublish,
+        nowCanPublish: now?.canPublish,
+        prevCanSubscribe: prev?.canSubscribe,
+        nowCanSubscribe: now?.canSubscribe,
+        isAfkChannel: this.isAfkChannel,
+      });
 
-      if (prev?.canSubscribe && !now?.canSubscribe) {
-        this.onErr(
-          new Error(
-            t`A moderator deafened you in this server. You won't hear this call until they lift it.`,
-          ),
-        );
+      for (const reason of reasons) {
+        if (reason === "afk-publish") {
+          this.onErr(
+            new Error(
+              t`You're in the AFK channel. Your microphone and camera stay off for everyone here — move to another voice channel to talk.`,
+            ),
+          );
+        } else if (reason === "moderator-mute") {
+          this.onErr(
+            new Error(
+              t`A moderator muted you in this server. Your microphone and camera stay off for everyone until they lift it.`,
+            ),
+          );
+        } else {
+          this.onErr(
+            new Error(
+              t`A moderator deafened you in this server. You won't hear this call until they lift it.`,
+            ),
+          );
+        }
       }
     });
 
@@ -2979,18 +3008,27 @@ class Voice {
       primeWinScreenAudioProbe();
       this.#watchDuck.attach(room);
       this.#playEntranceSound(channel);
-      const isAfk = channel.name?.toLowerCase() === "afk";
-      // Honour the persisted pre-call state (the sidebar user bar makes
-      // muting/deafening before a call a first-class action): a deafened or
-      // explicitly muted user must never join with a hot microphone, even in
-      // open-mic mode. Only reconcile micOn against the actual track when we
-      // asked for it — a deafen/AFK-forced "off" is not a mute preference.
-      const wantMic = !isAfk && !this.#settings.deafen && this.#settings.micOn;
+      // AFK is now the SERVER's designation (`Server.afk_channel_id`), read
+      // through the reactive accessor — not the channel's name, which any
+      // rename granted or removed. This is the only place the plan still
+      // needs a value AT a moment in time (the join), and even here it is a
+      // fresh read rather than a captured const.
+      const { wantMic, attachMicPipeline, forceCameraOff } = afkJoinPlan({
+        isAfkChannel: this.isAfkChannel,
+        // Honour the persisted pre-call state (the sidebar user bar makes
+        // muting/deafening before a call a first-class action): a deafened or
+        // explicitly muted user must never join with a hot microphone, even
+        // in open-mic mode. Only reconcile micOn against the actual track
+        // when we asked for it — a deafen/AFK-forced "off" is not a mute
+        // preference.
+        deafened: this.#settings.deafen,
+        micOn: this.#settings.micOn,
+      });
       if (this.speakingPermission)
         this.#setMicEnabled(room, wantMic)
           .then((track) => {
             if (wantMic) this.#settings.micOn = track != null;
-            if (!isAfk && track?.audioTrack) {
+            if (attachMicPipeline && track?.audioTrack) {
               // Processor/E2EE ordering (§4.3) — DO NOT REORDER: the mic
               // pipeline (RNNoise AudioWorklet + voice shaper + gain) and
               // camera effects are PRE-encode track processors on the raw
@@ -3021,7 +3059,7 @@ class Voice {
                 this.#reportCaptureDenied("microphone");
             }
           });
-      if (isAfk) room.localParticipant.setCameraEnabled(false);
+      if (forceCameraOff) room.localParticipant.setCameraEnabled(false);
       for (const p of room.remoteParticipants.values()) {
         const screenShareTrack = p.getTrackPublication(
           Track.Source.ScreenShare,
@@ -5199,7 +5237,20 @@ class Voice {
       // the gate happens to be open this instant, so pressing DEAFEN during a
       // pause between words used to switch the microphone on.
       const undeafening = this.#settings.deafen;
-      const wantMic = undeafening && (this.#settings.micOn || !!fromMute);
+      // 🔴 The AFK term belongs HERE too, not only in `toggleMute`. Pressing
+      // Unmute while deafened does not run `toggleMute`'s body at all — it
+      // delegates straight to this method with `fromMute`, which would have
+      // walked around the guard and re-armed the microphone in the AFK
+      // channel. Undeafening itself is never refused: AFK revokes publish,
+      // never subscribe, so there is no reason to keep anyone from hearing.
+      const wantMic =
+        undeafening &&
+        (this.#settings.micOn || !!fromMute) &&
+        !publishToggleRefusal({
+          enabling: true,
+          isAfkChannel: this.isAfkChannel,
+          permitted: this.speakingPermission,
+        });
       await this.#setMicEnabled(room, wantMic);
 
       this.#settings.deafen = !undeafening;
@@ -5243,6 +5294,19 @@ class Voice {
       // happened to be doing at the moment of the press — hit MUTE during a
       // pause between words and it turned the microphone ON.
       const want = !this.#settings.micOn;
+      // 🔴 The AFK / permission guard. Without it the whole AFK feature was
+      // defeated by one click: the join handler muted you, and the very next
+      // Unmute press put you back on the wire. Only the ENABLING direction is
+      // refused — a mute must always take.
+      const refusal = publishToggleRefusal({
+        enabling: want,
+        isAfkChannel: this.isAfkChannel,
+        permitted: this.speakingPermission,
+      });
+      if (refusal) {
+        this.onErr(new Error(this.#publishRefusalText(refusal, "microphone")));
+        return;
+      }
       await this.#setMicEnabled(room, want);
 
       // Muting always takes. Unmuting can fail (permission denied, no
@@ -5389,6 +5453,19 @@ class Voice {
       if (!room) throw "invalid state";
 
       const enabling = !room.localParticipant.isCameraEnabled;
+
+      // AFK, or a missing `Video` bit. Turning the camera OFF is never
+      // refused, so a designation change mid-call cannot strand a live
+      // camera behind a dead button.
+      const refusal = publishToggleRefusal({
+        enabling,
+        isAfkChannel: this.isAfkChannel,
+        permitted: this.videoPermission,
+      });
+      if (refusal) {
+        this.onErr(new Error(this.#publishRefusalText(refusal, "camera")));
+        return;
+      }
 
       if (enabling) {
         const { capture, publish } = this.#cameraCaptureOptions();
@@ -6518,6 +6595,30 @@ class Voice {
   async toggleScreenshare() {
     const room = this.room();
     if (!room) throw "invalid state";
+
+    // 🔴 AFK / `Video` guard, placed ABOVE the Android branch on purpose. The
+    // Android screen leg is a second SFU participant that mints its own grant
+    // and hard-codes both screen sources, so a guard inside the web path
+    // would leave the phone able to share from the AFK channel. Screen share
+    // was never blocked by the old name-keyed implementation at all.
+    //
+    // The leg's own state decides "enabling" there, because the local
+    // participant's `screenshare()` stays false for the whole native share.
+    // Stopping is never refused, on either surface.
+    const enablingShare = nativeScreenShareAvailable()
+      ? this.#androidLegStartingFor === undefined && !this.#androidLeg?.active()
+      : !this.screenshare();
+    const shareRefusal = publishToggleRefusal({
+      enabling: enablingShare,
+      isAfkChannel: this.isAfkChannel,
+      permitted: this.videoPermission,
+    });
+    if (shareRefusal) {
+      this.onErr(
+        new Error(this.#publishRefusalText(shareRefusal, "screenshare")),
+      );
+      return;
+    }
 
     // Native Android branch (screen-leg plan §7.2) — returns BEFORE the web
     // path so the three `#setScreenshare(isScreenShareEnabled)` reads below
@@ -8611,13 +8712,81 @@ class Voice {
     return !!channel.havePermission("Listen");
   }
 
+  /**
+   * Whether the channel we are in is the server's designated AFK channel.
+   *
+   * 🔴 A REACTIVE ACCESSOR, deliberately not a `const` read once inside the
+   * one-shot `room "connected"` handler. What shipped before was exactly that
+   * — a name check captured at join — which is why the whole feature died the
+   * moment anything changed: pressing Unmute defeated it, and renaming a
+   * channel granted or removed it. Read through here at every use site so the
+   * mic button, the camera button and the toggles all follow a designation
+   * that changes mid-call.
+   */
+  get isAfkChannel() {
+    const channel = this.channel();
+    return isAfkChannel(channel?.server?.afkChannelId, channel?.id);
+  }
+
   get speakingPermission() {
     const channel = this.channel();
-    if (!channel) return false;
-    // DMs and group DMs don't have server permissions — always allow speaking
-    if (channel.type === "DirectMessage" || channel.type === "Group")
-      return true;
-    return !!channel.havePermission("Speak");
+    // 🔴 AFK is folded in here rather than being a permission override,
+    // because the backend gate has to sit outside the permission calculus
+    // (plan D2): `calculate_channel_permissions` short-circuits to
+    // `GrantAllSafe` for the server owner and for privileged accounts, so
+    // `havePermission("Speak")` is structurally AFK-blind and stays TRUE in
+    // the AFK channel. Without this term the owner's mic button stays
+    // enabled and the press fails at the SFU with no explanation.
+    return voicePublishPermission({
+      hasChannel: !!channel,
+      // DMs and group DMs don't have server permissions — always allow.
+      isPrivateChannel:
+        channel?.type === "DirectMessage" || channel?.type === "Group",
+      isAfkChannel: this.isAfkChannel,
+      havePermission: !!channel?.havePermission("Speak"),
+    });
+  }
+
+  /**
+   * The camera / screen-share counterpart to {@link speakingPermission}.
+   *
+   * New: the `Video` permission bit exists and is enforced at the SFU, but it
+   * had no client affordance at all, so a denied publish reached the user as
+   * an opaque capture error. The toggles below consult this, which makes both
+   * a missing `Video` bit and the AFK designation legible instead of silent.
+   */
+  get videoPermission() {
+    const channel = this.channel();
+    return voicePublishPermission({
+      hasChannel: !!channel,
+      isPrivateChannel:
+        channel?.type === "DirectMessage" || channel?.type === "Group",
+      isAfkChannel: this.isAfkChannel,
+      havePermission: !!channel?.havePermission("Video"),
+    });
+  }
+
+  /**
+   * User-facing copy for a refused publish toggle. Kept in `state.tsx` rather
+   * than in `afkPolicy.ts` because the lingui macros must stay out of the
+   * dependency-free module that `node --test` loads.
+   */
+  #publishRefusalText(
+    refusal: PublishRefusal,
+    kind: "microphone" | "camera" | "screenshare",
+  ) {
+    if (refusal === "afk") {
+      if (kind === "microphone")
+        return t`You're in the AFK channel, so your microphone stays off for everyone here. Move to another voice channel to talk.`;
+      if (kind === "camera")
+        return t`You're in the AFK channel, so your camera stays off for everyone here. Move to another voice channel to turn it on.`;
+      return t`You're in the AFK channel, so you can't share your screen here. Move to another voice channel to share.`;
+    }
+    if (kind === "microphone")
+      return t`You don't have permission to speak in this channel.`;
+    if (kind === "camera")
+      return t`You don't have permission to turn on your camera in this channel.`;
+    return t`You don't have permission to share your screen in this channel.`;
   }
 
   /**
