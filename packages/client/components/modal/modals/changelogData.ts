@@ -52,6 +52,13 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //   entries below instead, so this copy cannot drift from them.
   // - Screen-share system audio stays Windows + Linux only. The Mac coming
   //   current does NOT give it system audio.
+  // - 🔴 The floating-call-card bullet covers the MUTED case ONLY. Both the
+  //   before and the after were seen in a real two-seat call, but the pane
+  //   that drove both seats blocks the microphone, so every participant read
+  //   as muted: an unmuted column and the speaking ring are unverified. No
+  //   copy here may describe what an unmuted person's card looks like. The
+  //   four-person cap is named on purpose - it is a trade, not a feature, and
+  //   a big call now shows fewer faces in that card than it used to.
   // - 🔴 The double-click bullet must NOT promise a join. Nobody has
   //   double-clicked a real voice channel: the path is covered by a unit
   //   spec and the typecheck, never by use, so the copy says what the
@@ -77,6 +84,7 @@ export const CHANGELOGS: ChangelogResponse[] = [
 
 ### 🔔 Fixes
 - **Notifications stop coming back every time you open Sloga.** Channels you had already read were being marked unread again at startup, so the app opened with a pile of notifications for channels that had nothing new in them. Your read positions were saved correctly the whole time — the app was throwing them away as it started, and now it keeps them.
+- **The small floating call card no longer hides whoever is muted.** When someone muted, their mute icon was drawn on top of their avatar instead of beside it, so their face vanished altogether — with two people in the card you saw one face and one mute icon, and the icon read as a marker on the person next to them. Everyone in the card now has their name under their avatar, and a muted person gets a small mute icon of their own between the two. The card names up to four people and counts the rest, since names need more room than the bare icons did.
 - **In forum settings, "Use this order for everyone" saves.** It was failing with an error every time while the rest of the screen, auto-archive included, saved fine.
 - **A channel menu item that read \`a/HlD/\` says "Move to category" again.**
 
