@@ -31,6 +31,7 @@ import { TextWithEmoji } from "@revolt/markdown";
 import { useModals } from "@revolt/modal";
 import { useNavigate } from "@revolt/routing";
 import { useVoice } from "@revolt/rtc";
+import { isAfkChannel } from "@revolt/rtc/afkPolicy";
 import { useState } from "@revolt/state";
 import { LAYOUT_SECTIONS } from "@revolt/state/stores/Layout";
 import {
@@ -998,6 +999,19 @@ function Entry(
 
   const inCall = () => props.channel.id === voice.channel()?.id;
 
+  /**
+   * Whether this is the server's designated AFK channel, which is what the
+   * muted-mic icon means.
+   *
+   * This used to key off the channel NAME (`name?.toLowerCase() === "afk"`), so
+   * renaming any channel to "afk" earned the icon, renaming the real one lost
+   * it, and "AFK Channel" or "💤 AFK" got nothing — while the server muted a
+   * completely different channel. An accessor rather than a value so a
+   * designation change repaints without a reload.
+   */
+  const isAfkVoiceChannel = () =>
+    isAfkChannel(props.channel.server?.afkChannelId, props.channel.id);
+
   // Colour of the mic icon while we're connected to this voice channel.
   // Deliberately not --md-sys-color-primary: the theme sets that to the same
   // #00B2FF as --md-sys-color-primary-container, which is the selected-channel
@@ -1035,7 +1049,7 @@ function Entry(
             <Switch fallback={<Symbol>edit</Symbol>}>
               <Match when={props.channel.isVoice}>
                 <Symbol color={inCall() ? inCallIconColour() : undefined}>
-                  {props.channel.name?.toLowerCase() === "afk" ? "mic_off" : "mic"}
+                  {isAfkVoiceChannel() ? "mic_off" : "mic"}
                 </Symbol>
               </Match>
               <Match when={props.channel.type === "Forum"}>
