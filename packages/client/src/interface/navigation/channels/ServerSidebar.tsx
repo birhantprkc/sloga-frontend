@@ -1145,9 +1145,6 @@ export const ServerSidebar = (props: Props) => {
           // ever changes. The MODE is expressed through `disabled`, which is
           // reactive and re-read on every gesture.
           longPress={isMobile}
-          //TODO - No channel ordering on mobile due to usability issue
-          //Consider adding a way to enable reordering with dragHandles in server settings
-          //
           // Must stay in lockstep with the channels zone inside `Category`:
           // `inNestedZone` (`Draggable.tsx:142`) suppresses this outer zone
           // whenever an inner `data-dnd-zone` is on the touch path, WITHOUT
@@ -1661,9 +1658,6 @@ function Category(
             channelIds,
           });
         }}
-        //TODO - No channel ordering on mobile due to usability issue
-        //Consider adding a way to enable reordering with dragHandles in server settings
-        //
         // Kept in lockstep with the categories zone in `ServerSidebar`; see the
         // `inNestedZone` note there for what a disagreement costs. `!isOpen()`
         // is what stops a drag ever rewriting the filtered list a collapsed
