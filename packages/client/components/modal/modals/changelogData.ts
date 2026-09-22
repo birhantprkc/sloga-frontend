@@ -16,7 +16,9 @@ export const CHANGELOGS: ChangelogResponse[] = [
   // use. That is exactly why the wording below is what it is:
   // - Windows DESKTOP SHELL only. Never claim it for the web — a Windows
   //   browser tab has no native capture and still echoes the call — and never
-  //   for macOS, which is held at 0.59.0 and receives none of this release.
+  //   for macOS, which ships this release but has no native system-audio
+  //   capture of its own. (It is NOT held back any more — see the macOS
+  //   bullet below, which supersedes the old "never name the Mac" rule.)
   // - The upstream Chromium bug was DRAFTED, NOT FILED. Say the browser engine
   //   needs the fix; do not say a bug is open.
   // - ENTIRE-SCREEN shares only. Re-verified 2026-09-21: `state.tsx` gates the
@@ -40,7 +42,16 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //   SLOGA_NO_SCREEN_AUDIO=1 opt-out all degrade to a silent share.
   // - No live click-through of anything in this release. Nothing here may claim
   //   one, and no bullet may promise an outcome.
-  // - macOS is held at 0.59.0. No bullet may say "every app" or name the Mac.
+  // - 🔴 macOS COMES CURRENT in this release (0.59.0 -> 0.62.0), so the old
+  //   "never name the Mac" rule is LIFTED and the Mac section below exists
+  //   because of it. It ships only once the keybinds clear-lock fix is in the
+  //   build; if the Mac slips out of this release, that section must come out
+  //   with it. 🔴 Nothing GATES that — there is no SLOGA_EXPECT_* variable for
+  //   the Mac the way there is for screen audio — so the copy is hedged
+  //   ("is coming current with") rather than stated as accomplished fact. Do not enumerate what 0.60/0.61 contained — point at the
+  //   entries below instead, so this copy cannot drift from them.
+  // - Screen-share system audio stays Windows + Linux only. The Mac coming
+  //   current does NOT give it system audio.
   {
     id: "sloga-2026-09-21",
     title: "Patch Notes",
@@ -59,6 +70,9 @@ export const CHANGELOGS: ChangelogResponse[] = [
 - **Notifications stop coming back every time you open Sloga.** Channels you had already read were being marked unread again at startup, so the app opened with a pile of notifications for channels that had nothing new in them. Your read positions were saved correctly the whole time — the app was throwing them away as it started, and now it keeps them.
 - **In forum settings, "Use this order for everyone" saves.** It was failing with an error every time while the rest of the screen, auto-archive included, saved fine.
 - **A channel menu item that read \`a/HlD/\` says "Move to category" again.**
+
+### 🍎 If you are on a Mac
+The Mac app has been held back at 0.59.0 while we fixed a keybinds problem that only affected it. It is coming current with this release, so everything in the entries below — from v0.61.0 down to v0.60.0 — arrives on the Mac at once. None of that is new in this release; it is just new to the Mac.
 
 ### What has not changed
 - This is the Windows desktop app. Sharing system audio **in a web browser still picks up everything the machine is playing, the call included** — that one needs a fix in the browser engine itself, and we are chasing it upstream.
