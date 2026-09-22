@@ -177,7 +177,7 @@ The Mac app has been held back at 0.59.0 while we fixed a keybinds problem that 
   //   copy of the client, so they get this with their next build; the entry
   //   must not promise it everywhere.
   // - "Never" is a real option (0 minutes on the wire). Say it plainly.
-  // - Existing forums become 7 days for NEW posts. That is a behaviour change
+  // - Existing forums become 7 days for NEW posts. That is a behavior change
   //   for every forum that never chose one, so it is stated.
   // - Who can change a post's setting is exact: its author, or anyone with
   //   Manage Channel. An author who cannot post in the forum cannot change it
@@ -241,7 +241,7 @@ The Mac app has been held back at 0.59.0 while we fixed a keybinds problem that 
   //   are DISABLED and cannot be bound at all. Only the three in-app actions
   //   (start screen share, fullscreen, theater) work there. An earlier draft
   //   said bindings "still fire while Sloga is focused", which would send a
-  //   Mac user to a greyed-out row to file a bug.
+  //   Mac user to a grayed-out row to file a bug.
   // - The lone-Ctrl caution is deliberate, not a hedge: a bare Ctrl binding
   //   fires on every Ctrl shortcut system-wide AND on every AltGr, because
   //   Windows synthesizes ControlLeft before AltRight. Users who bind it
@@ -274,7 +274,7 @@ The Mac app has been held back at 0.59.0 while we fixed a keybinds problem that 
 - **The key still works in whatever you are using.** Sloga acts on it and the game or app in front of you receives it as normal, so binding a key you already use somewhere else will not break it there.
 - **A key on its own works, and so does a combination.** Ctrl by itself is a valid binding, and so is Ctrl+H. Bear in mind that a lone Ctrl fires on *every* Ctrl shortcut you press — and on AltGr, which Windows reports as Ctrl — so binding it together with a regular key is usually what you want. Sloga warns you when a binding is a key you are likely to type.
 - Starting a screen share, fullscreen and theater mode are bound too, but they need Sloga in front of you.
-- Keys that work outside the app are **Windows only for now.** On macOS, Linux and the web the system-wide group is greyed out with a note saying why; the three that need Sloga in front of you — starting a screen share, fullscreen and theater mode — can still be bound, and still work.
+- Keys that work outside the app are **Windows only for now.** On macOS, Linux and the web the system-wide group is grayed out with a note saying why; the three that need Sloga in front of you — starting a screen share, fullscreen and theater mode — can still be bound, and still work.
 - **CapsLock can be bound**, and capturing AltGr reads as "Ctrl + Right Alt", which is the binding that works on those layouts.
 - **Keybinds are saved on the device you set them on** and are not carried between your devices.
 
@@ -415,7 +415,7 @@ The Mac app has been held back at 0.59.0 while we fixed a keybinds problem that 
   //   so the copy names the mode rather than implying every muted user was
   //   being broadcast.
   // - This entry CLEARS the held-back list from the 0.58.0 entry: group-chat
-  //   calls, the cancelled-picker dialog, the shorter join banner, the
+  //   calls, the canceled-picker dialog, the shorter join banner, the
   //   immediate pause when a plain browser joins, and the chip after people
   //   churn. Those were held back for want of a live leg they never got; they
   //   ship announced here under the same waiver as the rest of this entry.
@@ -439,13 +439,13 @@ The Mac app has been held back at 0.59.0 while we fixed a keybinds problem that 
 
 ### 🎙️ Your microphone does what the button says
 - **Muting yourself now holds.** On Voice Activity input mode, talking could re-open your microphone a moment after you started — while the button still read muted. If your audio interface has a mute of its own, that one always worked, which is the detail that gave the bug away.
-- **Your microphone no longer freezes while Sloga is in the background.** Minimising the window or alt-tabbing into a game stopped voice detection outright, leaving your microphone stuck however it was last set: unable to open until you came back, or still open when you thought you were quiet.
+- **Your microphone no longer freezes while Sloga is in the background.** Minimizing the window or alt-tabbing into a game stopped voice detection outright, leaving your microphone stuck however it was last set: unable to open until you came back, or still open when you thought you were quiet.
 - **Mute and deafen follow what you pressed.** They used to flip whatever your microphone happened to be doing at that instant, so pressing mute during a pause between words could switch it on.
 
 ### 🖥️ Screen sharing
 - **The resolution and frame-rate options are visible when the call is full screen.** They were opening behind it, so the share sat paused waiting on a dialog you could not see.
 - **Retrying a share no longer stacks up dialogs** behind the first one.
-- **Cancelling the screen picker counts as cancelling**, instead of raising an error about it.
+- **Canceling the screen picker counts as canceling**, instead of raising an error about it.
 
 ### 💬 Forums
 - **A forum can no longer require a tag it does not have.** Turning on "every post needs a tag" without adding any tags left the New Post button dead with nothing on screen explaining why. Settings now says which of the two to change, and the composer says what is missing.
@@ -468,7 +468,7 @@ The Mac app has been held back at 0.59.0 while we fixed a keybinds problem that 
   //   markers.
   // - EXCLUDED, no live leg on this build: the shorter join banner, the
   //   immediate pause when a plain browser joins, the chip after people churn,
-  //   group-chat calls, the cancelled-picker dialog. They ride the next sweep's
+  //   group-chat calls, the canceled-picker dialog. They ride the next sweep's
   //   entry once they have been seen live.
   // - `web_version` is what Settings will print once this entry reaches the web.
   {
