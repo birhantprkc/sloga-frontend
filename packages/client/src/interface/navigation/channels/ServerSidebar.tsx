@@ -590,7 +590,9 @@ function ServerInfo(
         width="narrow"
         variant={props.server.banner ? "_header" : "standard"}
         onPress={() => navigate(`/server/${props.server.id}/events`)}
-        use:floating={{ tooltip: { placement: "bottom", content: "Server Events" } }}
+        use:floating={{
+          tooltip: { placement: "bottom", content: "Server Events" },
+        }}
       >
         <Symbol>calendar_month</Symbol>
       </IconButton>
@@ -1064,7 +1066,9 @@ function Entry(
             <Switch fallback={<Symbol>edit</Symbol>}>
               <Match when={props.channel.isVoice}>
                 <Symbol color={inCall() ? inCallIconColour() : undefined}>
-                  {props.channel.name?.toLowerCase() === "afk" ? "mic_off" : "mic"}
+                  {props.channel.name?.toLowerCase() === "afk"
+                    ? "mic_off"
+                    : "mic"}
                 </Symbol>
               </Match>
               <Match when={props.channel.type === "Forum"}>
@@ -1080,8 +1084,14 @@ function Entry(
                 css={{ marginEnd: "0.2em" }}
               />
             </Show>
-            <Show when={parseChannelPassword(props.channel.description).passwordHash}>
-              <Symbol size={14} style={{ opacity: "0.6" }}>lock</Symbol>
+            <Show
+              when={
+                parseChannelPassword(props.channel.description).passwordHash
+              }
+            >
+              <Symbol size={14} style={{ opacity: "0.6" }}>
+                lock
+              </Symbol>
             </Show>
           </>
         }
