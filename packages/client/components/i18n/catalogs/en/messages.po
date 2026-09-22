@@ -8795,3 +8795,6 @@ msgstr "Push to talk matches a single key, so the modifiers you held were not sa
 msgid "Keybinds"
 msgstr "Keybinds"
 
+#: components/app/menus/ChannelContextMenu.tsx
+msgid "Move to category"
+msgstr "Move to category"
