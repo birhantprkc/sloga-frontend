@@ -65,6 +65,17 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //   gesture DOES in the channel list and stops there. It is also the one
   //   change in this release that alters what an existing habit does, which
   //   is why the bullet names the off switch in the same breath.
+  // - 🔴 The channel-reordering bullets must NOT promise that a drag succeeds
+  //   on any given handset. NO DEVICE LEG WAS EVER RUN. The feature is covered
+  //   by a 30-case unit spec, tsc, eslint and prettier and by nothing else - it
+  //   has never executed on a phone, on any OS (operator ruling 2026-09-22
+  //   skipped the leg; the approved plan had written it in as a hard merge
+  //   gate). That is why the second bullet names the failure modes out loud
+  //   rather than claiming coverage, why neither bullet says the gesture
+  //   "works", and why both lean on Save being the only thing that writes.
+  //   Runsheet still owed in full: ~/Downloads/CHANREORDER-HANDOFF.md.
+  //   🔴 This is the THIRD user-visible change in v0.62.0 with its live leg
+  //   skipped, after the screen-audio legs and double-click join.
   {
     id: "sloga-2026-09-21",
     title: "Patch Notes",
@@ -81,6 +92,10 @@ export const CHANGELOGS: ChangelogResponse[] = [
 
 ### 🎧 Getting into a voice channel
 - **Double-click a voice channel to join it.** Until now the channel list only opened a voice channel and the join sat behind the call button in the header; a double-click now does both steps at once. A single click is unchanged — it still just opens the channel — so nothing you already do behaves differently. Not to your taste? Settings → Voice → Voice Channels turns it off.
+
+### 📱 On your phone
+- **Channels can be rearranged from the phone app.** Press and hold a channel or a category header, choose **Rearrange channels**, then hold a row to pick it up and drag it where you want it. **Save** applies the new order and **Cancel** throws it away — nothing is written to your server until you press Save. Reordering had been desktop-only; on a phone there was no way to do it at all.
+- **This part is brand new, and phones differ.** Press-and-hold has to share the screen with scrolling and with Android's own press-and-hold menu, and that arrangement is not the same on every handset. If a row will not pick up, or the page slides away mid-drag, tell us which phone you are on — and remember nothing changes for anyone else unless you press Save.
 
 ### 🔔 Fixes
 - **Notifications stop coming back every time you open Sloga.** Channels you had already read were being marked unread again at startup, so the app opened with a pile of notifications for channels that had nothing new in them. Your read positions were saved correctly the whole time — the app was throwing them away as it started, and now it keeps them.
