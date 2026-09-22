@@ -14,12 +14,14 @@ import {
   on,
   onCleanup,
   onMount,
+  untrack,
 } from "solid-js";
 import { Portal } from "solid-js/web";
 import { Motion, Presence } from "solid-motionone";
 
 import { autoUpdate, flip, offset, shift } from "@floating-ui/dom";
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
+import { useMutation } from "@tanstack/solid-query";
 import type { API, Channel, Server, ServerFlags } from "stoat.js";
 import { styled } from "styled-system/jsx";
 
@@ -35,6 +37,7 @@ import { shouldJoinOnDoubleClick } from "@revolt/rtc/doubleClickJoinPolicy";
 import { useState } from "@revolt/state";
 import { LAYOUT_SECTIONS } from "@revolt/state/stores/Layout";
 import {
+  Button,
   Column,
   Draggable,
   Header,
@@ -61,7 +64,17 @@ import { ServerMemberSidebar } from "../../channels/text/MemberSidebar";
 
 import { parseChannelPassword } from "../../../lib/channelPassword";
 
+import {
+  CategoryPayload,
+  StagedCategory,
+  applyCategoryOrder,
+  applyMove,
+  hasDuplicateChannel,
+  seedStaged,
+  toEditPayload,
+} from "./channelReorder";
 import { SidebarBase } from "./common";
+import { exitReorderMode, reorderMode } from "./reorderMode";
 
 interface Props {
   /**
@@ -95,6 +108,15 @@ interface Props {
  */
 type CategoryData = Omit<API.Category, "channels"> & { channels: Channel[] };
 
+/**
+ * One drag result, as `Draggable` delivers it.
+ *
+ * `moved` used to ride along here so `handleOrdering` could tell a
+ * cross-category drop from a within-category one and defer the first of the
+ * two events it produces. Nothing defers any more — both events are applied
+ * to one staged array — so the flag has no reader and is gone. See
+ * `handleOrdering` for the coalescing that replaced it.
+ */
 type OrderingEvent =
   | {
       type: "categories";
@@ -104,7 +126,6 @@ type OrderingEvent =
       type: "category";
       id: string;
       channelIds: string[];
-      moved: boolean;
     };
 
 /**
@@ -116,6 +137,7 @@ export const ServerSidebar = (props: Props) => {
   const client = useClient();
   const state = useState();
   const sides = useLayoutSides();
+  const { showError } = useModals();
 
   let memberScrollTarget: HTMLDivElement | undefined;
   let channelScrollTarget: HTMLDivElement | undefined;
@@ -402,47 +424,655 @@ export const ServerSidebar = (props: Props) => {
 
   const noOrdering = () => !props.server.havePermission("ManageChannel");
 
-  let heldEvent: OrderingEvent & { type: "category" } = null!;
-  function handleOrdering(event: OrderingEvent) {
-    if (event.type === "category" && event.moved && !heldEvent) {
-      heldEvent = event;
+  /**
+   * Whether THIS server's channel list is in the mobile rearrange mode.
+   *
+   * Compared against the server id, never a boolean, because this component is
+   * re-rendered with new props on a server switch rather than unmounted —
+   * `src/interface/Sidebar.tsx:151-155` is a NON-KEYED `<Match
+   * when={params.server}>`. A boolean would leak a mode (and, with it, a
+   * staged order that belongs to another server's channels) straight into the
+   * next server's sidebar.
+   */
+  const inReorderMode = () => reorderMode() === props.server.id;
+
+  /**
+   * The order being staged: category order plus each category's channel ids.
+   *
+   * A signal this component OWNS, deliberately not a derivation of the store.
+   * Two reasons, both load-bearing:
+   *
+   * - `Draggable`'s items effect (`Draggable.tsx:517`) rewrites its rendered
+   *   rows from `props.items` on every touch of anything that expression
+   *   reads. `props.server.orderedChannels` is a getter recomputed on every
+   *   access, over `channelIds` and `categories`, so any unrelated server
+   *   traffic would snap a half-finished arrangement back.
+   * - Nothing is written to the server until Save, so the staged order is the
+   *   only place the user's work exists. It has to outlive every render.
+   *
+   * Seeded from RAW ids (see the seeding effect below), never from resolved
+   * channels.
+   */
+  const [staged, setStaged] = createSignal<StagedCategory[]>([]);
+
+  /**
+   * Set when a staged session was thrown away because the channel list changed
+   * underneath it; drives the notice that replaces the Save/Cancel bar.
+   */
+  const [discardedNotice, setDiscardedNotice] = createSignal(false);
+  let discardedNoticeTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /**
+   * True while our own Save is in flight.
+   *
+   * The `ServerUpdate` our save causes usually arrives over the websocket
+   * BEFORE the PATCH's own response resolves, and the race watcher below would
+   * read it as somebody else editing the server and bin the very reorder that
+   * produced it. Plain `let`, not a signal: only event handlers read it.
+   *
+   * It is the ONLY suppressor on the `serverUpdate` half of that watcher, so a
+   * value stuck at `true` is not a stuck save — it is a watcher switched off.
+   * And "stuck" means stuck for the lifetime of the SIDEBAR, not of the
+   * session: this component is not unmounted on a server switch (the non-keyed
+   * `<Match when={params.server}>` at `src/interface/Sidebar.tsx:152`
+   * re-renders it with new props), so a PATCH that never settles leaves every
+   * later session on every server this component renders deaf to other
+   * people's re-categorisation — and Save then writes a stale full-replace
+   * array straight over their work. Hence both resets below.
+   */
+  let committing = false;
+
+  /**
+   * Fail-safe for the flag above.
+   *
+   * `onSettled` is the only thing that lowers it, and a request that never
+   * settles never runs it, so the flag needs a way down that does not depend
+   * on the network coming back.
+   *
+   * The window it actually has to cover is the gap between our PATCH leaving
+   * and the `ServerUpdate` it causes arriving over the websocket — a second or
+   * two. If a save really is slower than this, the cost is that its own echo
+   * is read as somebody else's edit and the session is discarded WITH THE
+   * NOTICE: visible, explained, and the save itself still lands. That is
+   * strictly better than a permanently deaf watcher, which is silent and
+   * overwrites other people's changes.
+   */
+  const COMMITTING_GUARD_MS = 15_000;
+  let committingTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** Suppress the race watcher for the duration of our own save */
+  function beginCommitting() {
+    committing = true;
+    clearTimeout(committingTimer);
+    committingTimer = setTimeout(() => {
+      committing = false;
+    }, COMMITTING_GUARD_MS);
+  }
+
+  /** Re-arm the race watcher */
+  function endCommitting() {
+    committing = false;
+    clearTimeout(committingTimer);
+  }
+
+  /**
+   * Throw a staged session away because the list it describes no longer
+   * matches the server.
+   *
+   * Reordering on top of a channel that has been deleted (or missing one that
+   * was just created) is worse than losing the arrangement, because Save is a
+   * FULL REPLACE: `server.edit({ categories })` writes exactly the array it is
+   * given, so a stale staged list would delete or strand real channels.
+   */
+  function discardStaged() {
+    exitReorderMode();
+    setStaged([]);
+    setDiscardedNotice(true);
+    clearTimeout(discardedNoticeTimer);
+    discardedNoticeTimer = setTimeout(() => setDiscardedNotice(false), 8000);
+  }
+
+  onCleanup(() => {
+    clearTimeout(discardedNoticeTimer);
+    clearTimeout(committingTimer);
+    // Same reason as the `props.server.id` effect below: neither of these is
+    // keyed, and a retained batch pins a whole category array for as long as
+    // the closure lives.
+    desktopBatch = undefined;
+    lastDesktopFlush = undefined;
+  });
+
+  // Seed on entry, drop on exit. The body of `on(...)` runs untracked, which
+  // is exactly what we want: the seed is a SNAPSHOT of the server's raw state
+  // at the moment the mode opens, and must not re-run when that state moves.
+  createEffect(
+    on(inReorderMode, (active) => {
+      if (!active) {
+        setStaged([]);
+        return;
+      }
+
+      setDiscardedNotice(false);
+      clearTimeout(discardedNoticeTimer);
+
+      // A new session must not inherit the last one's suppression. If the
+      // previous Save's PATCH never settled, `committing` is still true and
+      // the race watcher armed below would ignore every `serverUpdate` for
+      // this session too — silently, and for as long as the sidebar lives.
+      endCommitting();
+
+      // RAW ids only. `orderedChannels` resolves ids through
+      // `client.channels`, and the client is only ever sent the channels the
+      // viewer may see — so a staged list seeded from it silently omits every
+      // hidden channel, and saving it (a full replace) evicts them from their
+      // categories for everybody. `categories` + `channelIds` carry the ids
+      // whether or not we can resolve them.
+      setStaged(
+        seedStaged(props.server.categories ?? [], [...props.server.channelIds]),
+      );
+    }),
+  );
+
+  /*
+   * Leave the mode when this component is destroyed.
+   *
+   * It IS destroyed, on paths that have nothing to do with reordering. The
+   * sidebar renders under `<Show when={showSidebar()}>`
+   * (`src/interface/Sidebar.tsx:150`), and `showSidebar()`
+   * (`src/interface/Sidebar.tsx:96-98`) is false whenever the primary sidebar
+   * section is collapsed or the path starts with `/discover`; inside it, the
+   * `<Match when={params.server}>` is false on a DM. So collapsing the
+   * sidebar, opening Discover or opening a DM all dispose this component —
+   * and the staged order lives ONLY here, so it dies with it.
+   *
+   * `reorderMode()` does not: it is a module-level signal
+   * (`./reorderMode.ts`). Without this, coming back re-enters the mode, the
+   * seed effect re-seeds from the server's current state, and the user is
+   * shown a Save/Cancel bar over an arrangement that no longer exists —
+   * pressing Save would write the order they never made. Neither the
+   * `props.server.id` effect (`{ defer: true }`, and the id has not changed)
+   * nor the seed effect covers this, because both are inside the component
+   * that just went away.
+   *
+   * Exits SILENTLY, and the alternative is the dishonest one. The only notice
+   * this component can show (`discardedNotice`) is rendered by this component,
+   * so a notice raised during its own cleanup is never painted; surfacing one
+   * would mean moving it into module state, where it would appear over an
+   * unrelated screen — Discover, a DM — describing a sidebar the user is no
+   * longer looking at. A silent exit at least matches what the user sees: the
+   * rearrange UI left the screen together with the sidebar that hosted it, and
+   * the next visit shows the server's real order rather than a bar over
+   * nothing.
+   *
+   * Guarded on the id so a session another server's sidebar owns is never
+   * cancelled from here.
+   *
+   * That guard reads a tracked LOCAL rather than `props.server`, and the
+   * difference is a crash. `src/interface/Sidebar.tsx:242` passes
+   * `server={server()}`, which babel-preset-solid compiles to a plain
+   * NON-MEMOISED getter, so every read re-evaluates
+   * `client()!.servers.get(params().serverId!)` (`Sidebar.tsx:216`). By the
+   * time a cleanup runs, `useSmartParams` has already stopped matching
+   * `RE_SERVER` (`components/routing/index.tsx:22`) on the Discover, DM and
+   * Home paths, so `serverId` is undefined, `Collection.get` returns
+   * undefined rather than throwing
+   * (`packages/stoat.js/src/collections/Collection.ts:137-138`), and the `!`
+   * is erased at runtime. Reading `props.server.id` here threw a
+   * `TypeError` on two of the three paths this cleanup exists for.
+   *
+   * Nothing contained that throw. Solid runs cleanups LIFO and `cleanNode`
+   * has no try/catch, so ONE throwing cleanup aborts every remaining one, and
+   * no `ErrorBoundary` covers this subtree. It took the timer cleanup at
+   * `:534` down with it, and the pre-existing scroll-listener plus
+   * `ResizeObserver` cleanup at `:354` as well, leaking an observer that
+   * pins the detached scroller and this whole closure.
+   *
+   * `props.server?.id` is NOT the fix. It silences the crash but compares
+   * against undefined, which never equals a server id, so the mode would stay
+   * open on exactly the two paths that motivated this cleanup.
+   */
+  // Seeded untracked on purpose: this read is a SNAPSHOT for the case where
+  // the component is disposed before its first effect flushes, and the effect
+  // below is what keeps it current. Without `untrack` the bare read makes
+  // `solid/reactivity` warn that the change would be ignored, which here it
+  // is not.
+  let ownedServerId = untrack(() => props.server.id);
+  createEffect(() => (ownedServerId = props.server.id));
+
+  onCleanup(() => {
+    if (reorderMode() === ownedServerId) exitReorderMode();
+  });
+
+  // A different server is a different list. The mode is keyed by id so the UI
+  // has already stopped matching, but the module-level signal and the staged
+  // array would both still be holding the previous server's session — and the
+  // synthesised uncategorised category is hardcoded `id:"default"` on every
+  // server, so a leaked staged entry would look like it belonged here.
+  createEffect(
+    on(
+      () => props.server.id,
+      (id) => {
+        if (reorderMode() !== undefined && reorderMode() !== id)
+          exitReorderMode();
+        setStaged([]);
+        setDiscardedNotice(false);
+        clearTimeout(discardedNoticeTimer);
+        // The desktop path is keyed by nothing, so it has to be dropped by
+        // hand. Both of these describe the PREVIOUS server, and the seed
+        // below chains from `lastDesktopFlush` for as long as a PATCH is
+        // pending — which a hung request makes forever. Stamping the entry
+        // stops it being USED here; clearing it stops it being held, and
+        // stops a later return to that server resuming a batch the user
+        // walked away from.
+        desktopBatch = undefined;
+        lastDesktopFlush = undefined;
+      },
+      { defer: true },
+    ),
+  );
+
+  // Watch for the list changing underneath a staged session.
+  //
+  // Only mounted while the mode is open, so the ordinary sidebar pays nothing
+  // for it. `channelIds` cannot stand in for the create half of this:
+  // stoat.js never calls `channelIds.add` (`ChannelCollection.ts` only ever
+  // deletes), so a new channel is invisible to any memo over that set until a
+  // full rehydrate — the event is the only signal there is.
+  createEffect(() => {
+    if (!inReorderMode()) return;
+
+    const liveClient = client();
+    const serverId = props.server.id;
+
+    /**
+     * Somebody else re-ordered or re-categorised the server.
+     * @param server the updated server
+     * @param previousServer its state before the update
+     */
+    function onServerUpdate(
+      server: { id: string; categories?: API.Category[] },
+      previousServer: { categories?: API.Category[] },
+    ) {
+      if (server.id !== serverId || committing) return;
+      // `ServerUpdate` fires for every field; only a categories change can
+      // invalidate a staged order, and a rename or a banner swap must not
+      // throw the user's work away.
+      if (
+        JSON.stringify(previousServer.categories) ===
+        JSON.stringify(server.categories)
+      )
+        return;
+      discardStaged();
+    }
+
+    /**
+     * A channel appeared in or vanished from this server.
+     * @param channel the channel, or (on delete) its final snapshot
+     */
+    function onChannelChange(channel: {
+      serverId?: string;
+      channelType?: string;
+    }) {
+      if (channel.serverId !== serverId) return;
+      // Threads are never listed in a category, so they cannot invalidate an
+      // ordering. Busy forums would otherwise cancel the mode constantly.
+      if (channel.channelType === "Thread") return;
+      discardStaged();
+    }
+
+    /**
+     * `channelCreate` hands over a live `Channel`, whose thread test is a
+     * getter rather than the hydrated `channelType` field.
+     * @param channel the created channel
+     */
+    function onChannelCreate(channel: Channel) {
+      onChannelChange({
+        serverId: channel.serverId,
+        channelType: channel.isThread ? "Thread" : undefined,
+      });
+    }
+
+    liveClient.on("serverUpdate", onServerUpdate);
+    liveClient.on("channelCreate", onChannelCreate);
+    liveClient.on("channelDelete", onChannelChange);
+
+    onCleanup(() => {
+      liveClient.removeListener("serverUpdate", onServerUpdate);
+      liveClient.removeListener("channelCreate", onChannelCreate);
+      liveClient.removeListener("channelDelete", onChannelChange);
+    });
+  });
+
+  /**
+   * The categories as they should be RENDERED.
+   *
+   * Outside the mode this is the store's own view. Inside it, it is the staged
+   * order resolved for display: ids we cannot resolve are dropped here and
+   * here only — they stay in `staged()` and round-trip through Save untouched.
+   */
+  const displayCategories = createMemo<CategoryData[]>(() => {
+    if (!inReorderMode()) return props.server.orderedChannels;
+
+    const channels = client().channels;
+    return staged().map((category) => ({
+      id: category.id,
+      title: category.title,
+      channels: category.channels
+        .map((id) => channels.get(id))
+        .filter((channel): channel is Channel => !!channel),
+    }));
+  });
+
+  /**
+   * Put back the channels a drag could not have seen.
+   *
+   * `Draggable` reports the ids it RENDERED, and a category can hold ids the
+   * viewer cannot resolve (a private channel). Handing that rendered list
+   * straight to `applyMove` — which replaces a category's array wholesale —
+   * would delete those ids from the category, which is the same data loss the
+   * raw-id seeding exists to prevent, one level down.
+   *
+   * Survival is decided by membership of the rendered list, NOT by
+   * resolvability, and the difference matters in both directions: an id that
+   * resolves but is absent genuinely moved to another category and must go,
+   * while an id that does not resolve was never on screen and must stay. A row
+   * deleted between render and drop resolves to nothing yet is still in the
+   * rendered list — testing membership first is what stops it being re-added
+   * alongside itself as a duplicate, which the backend rejects outright.
+   *
+   * Hidden ids keep their place behind the last surviving id they followed, so
+   * a reorder that never touched them does not visibly move them either.
+   * @param previous this category's staged ids, before the drag
+   * @param rendered the ids `Draggable` handed back
+   */
+  function reinsertUnrenderedChannels(
+    previous: string[],
+    rendered: string[],
+  ): string[] {
+    const channels = client().channels;
+    const renderedIds = new Set(rendered);
+
+    const head: string[] = [];
+    const trailing = new Map<string, string[]>();
+    let anchor: string | undefined;
+
+    for (const id of previous) {
+      if (renderedIds.has(id)) {
+        anchor = id;
+        continue;
+      }
+      if (channels.get(id)) continue; // on screen, and dragged elsewhere
+
+      if (anchor === undefined) head.push(id);
+      else trailing.set(anchor, [...(trailing.get(anchor) ?? []), id]);
+    }
+
+    if (head.length === 0 && trailing.size === 0) return rendered;
+
+    // One pass places every hidden id there is. `trailing`'s keys are only
+    // ever set while standing on an id that `renderedIds` contained, so each
+    // key is met again while walking `rendered`; none can be left over.
+    //
+    // A second sweep used to sit here for "the anchor was itself dragged into
+    // another category, so its hidden followers are homeless". That case
+    // cannot occur: an id that left this category is absent from `rendered`,
+    // and an id absent from `rendered` is never recorded as an anchor. A
+    // hidden id whose visible predecessor moved away falls to the previous
+    // surviving anchor instead, or to `head` when there is none.
+    const merged = [...head];
+
+    for (const id of rendered) {
+      merged.push(id);
+      const after = trailing.get(id);
+      if (after) merged.push(...after);
+    }
+
+    return merged;
+  }
+
+  /**
+   * Fold one drag result into a staged list.
+   * @param list the staged list to apply it to
+   * @param event the drag result
+   */
+  function applyOrderingEvent(
+    list: StagedCategory[],
+    event: OrderingEvent,
+  ): StagedCategory[] {
+    if (event.type === "categories") return applyCategoryOrder(list, event.ids);
+
+    const previous =
+      list.find((category) => category.id === event.id)?.channels ?? [];
+
+    return applyMove(
+      list,
+      event.id,
+      reinsertUnrenderedChannels(previous, event.channelIds),
+    );
+  }
+
+  const commitOrdering = useMutation(() => ({
+    mutationFn: (categories: CategoryPayload[]) =>
+      props.server.edit({ categories }),
+    // Every `server.edit()` ordering call in this file used to be un-awaited
+    // with no `.catch()`, so a rejected reorder vanished without a trace.
+    onError: showError,
+  }));
+
+  /**
+   * The desktop drag path's in-flight edit, if a burst is being collected.
+   *
+   * A cross-category drop dispatches `finalize` to BOTH zones — the
+   * destination first, then the origin — from one synchronous call
+   * (`svelte-dnd-action/src/pointerAction.js`, `finalizeWithinZone`). Applying
+   * only the first and committing would send a payload with the channel in two
+   * categories at once, and the backend rejects the WHOLE edit with
+   * `InvalidOperation` on a repeated id. So the burst is collected and flushed
+   * in a microtask, which cannot run between two synchronous dispatches.
+   *
+   * This replaces the old `heldEvent`, which held the first event in a field
+   * and waited for a partner that the `type:"categories"` path never cleared —
+   * and since this component is never unmounted on a server switch, a held
+   * move survived into the next server, where the synthetic uncategorised
+   * category has the same hardcoded `id:"default"` and would happily absorb
+   * it. Nothing is held here: a lone event flushes on its own.
+   */
+  let desktopBatch: StagedCategory[] | undefined;
+
+  /**
+   * The last batch `flushDesktopOrdering` actually sent.
+   *
+   * `Server.edit` writes the store only AFTER its PATCH resolves
+   * (`packages/stoat.js/src/classes/Server.ts:434-447`), so between a flush
+   * and its response `props.server.categories` still describes the PRE-drag
+   * list. Seeding the next burst from it there replays the previous drag's
+   * starting point: the channel that just moved is present in both its old and
+   * its new category, `hasDuplicateChannel` trips, and the second drag is
+   * discarded. Two quick desktop drags is all it takes.
+   *
+   * Only consulted while `commitOrdering.isPending`, so a FAILED commit is
+   * never chained onto: once the mutation settles the store is authoritative
+   * again — unchanged on failure, updated on success — and seeding goes back
+   * to it. Nothing here mutates a category object (`applyMove` copies), so
+   * sharing entries between this and `desktopBatch` cannot alias.
+   *
+   * STAMPED with the server it describes, because "in flight" is not the same
+   * question as "the same list". This component is not remounted on a server
+   * switch (non-keyed `<Show when={server()}>`; Solid compares `!a === !b`,
+   * so truthy to truthy keeps the branch), and `server.edit({ categories })`
+   * is a FULL REPLACE. An unstamped entry let a drag on server B chain onto
+   * server A's list, and the PATCH — whose `mutationFn` reads
+   * `props.server` at mutate time — wrote A's category ids and titles onto
+   * B while deleting B's own, for everyone, with no undo. A hung PATCH pins
+   * `isPending` true indefinitely, so one hang poisoned every later drag on
+   * every server.
+   */
+  let lastDesktopFlush:
+    | { serverId: string; list: StagedCategory[] }
+    | undefined;
+
+  /** Send the collected desktop burst as one edit */
+  function flushDesktopOrdering() {
+    const batch = desktopBatch;
+    desktopBatch = undefined;
+    if (!batch) return;
+
+    // A real guard, not a formality — and REACHABLE, whatever the comment
+    // that used to sit here claimed. The backend walks every category's
+    // channels through one `HashSet` and rejects the WHOLE edit with
+    // `InvalidOperation` on a repeated id, so sending one would lose the drag
+    // anyway, with an error naming nothing.
+    //
+    // Reported rather than swallowed. A drag that silently does nothing and
+    // then snaps back when an earlier response lands reads as the feature
+    // being broken, and is exactly how the in-flight reseed above stayed
+    // hidden. Not lingui-ised for the same reason as `ReorderNotice` below.
+    if (hasDuplicateChannel(batch)) {
+      showError(
+        new Error(
+          "That move could not be applied, because the channel list moved underneath it. Nothing was changed - try again.",
+        ),
+      );
       return;
     }
 
-    const normalisedCategories = props.server.orderedChannels.map(
-      (category) => ({
-        ...category,
-        channels: category.channels.map((channel) => channel.id),
-      }),
-    );
+    lastDesktopFlush = { serverId: props.server.id, list: batch };
+    commitOrdering.mutate(toEditPayload(batch).categories);
+  }
 
-    if (event.type === "categories") {
-      props.server.edit({
-        categories: event.ids
-          .map((id) => normalisedCategories.find((cat) => cat.id === id)!)
-          .filter((cat) => cat),
-      });
-    } else {
-      props.server.edit({
-        categories: normalisedCategories.map((category) => {
-          if (heldEvent && category.id === heldEvent.id) {
-            return {
-              ...category,
-              channels: heldEvent.channelIds,
-            };
-          } else if (category.id === event.id) {
-            return {
-              ...category,
-              channels: event.channelIds,
-            };
-          } else {
-            return category;
-          }
-        }),
-      });
-
-      heldEvent = null!;
+  /**
+   * Serialise a drag result — the one entry point for both paths.
+   *
+   * In the mobile reorder mode nothing is sent: the staged signal is the whole
+   * effect, and Save is what reaches the server. On desktop the drag IS the
+   * commit, so a freshly seeded list is mutated and flushed.
+   * @param event the drag result
+   */
+  function handleOrdering(event: OrderingEvent) {
+    if (inReorderMode()) {
+      // `applyMove` returns the same array reference for a no-op, so a drag
+      // that landed back where it started does not re-render the sidebar.
+      setStaged((list) => applyOrderingEvent(list, event));
+      return;
     }
+
+    // A mobile drag must never reach the desktop commit path, even though
+    // `inReorderMode()` is false by the time we get here. `discardStaged()`
+    // flips the mode off, but a long-press drag finalises from a
+    // `window.setTimeout(..., dropAnimationDurationMs)` and can land after
+    // it; a WITHIN-category drag is a single event with no duplicate to trip
+    // the guard below, so it would fall through and PATCH the server
+    // immediately after the user was told their changes were discarded. On
+    // mobile the drop zones are `disabled` outside the mode, so a drag
+    // arriving here can only have started inside it.
+    if (isMobile || noOrdering()) return;
+
+    if (!desktopBatch) {
+      // Seeded from RAW ids for the same reason the mobile path is: the
+      // previous implementation built this from `orderedChannels` and so
+      // deleted every channel the mover could not see out of its category.
+      //
+      // Unless our own last edit has not come back yet, in which case the
+      // store still holds the PRE-drag list and seeding from it would replay a
+      // move that has already been sent — see `lastDesktopFlush`.
+      desktopBatch =
+        commitOrdering.isPending &&
+        lastDesktopFlush?.serverId === props.server.id
+          ? lastDesktopFlush.list
+          : seedStaged(props.server.categories ?? [], [
+              ...props.server.channelIds,
+            ]);
+      queueMicrotask(flushDesktopOrdering);
+    }
+
+    desktopBatch = applyOrderingEvent(desktopBatch, event);
+  }
+
+  /**
+   * Whether the staged order differs from what the server holds.
+   *
+   * Memoised because it is not cheap — a full re-seed of every category plus
+   * two `JSON.stringify` of the whole channel list — and it is read from
+   * `canSave()`, which `isDisabled={!canSave()}` re-runs on every touch of
+   * `props.server.categories`, `props.server.channelIds` or `staged()`. On a
+   * busy server that is every ack and every membership change.
+   */
+  const unsavedChanges = createMemo(
+    () =>
+      JSON.stringify(toEditPayload(staged())) !==
+      JSON.stringify(
+        toEditPayload(
+          seedStaged(props.server.categories ?? [], [
+            ...props.server.channelIds,
+          ]),
+        ),
+      ),
+  );
+
+  /**
+   * The staged list is holding one channel in two places at once.
+   *
+   * Transiently normal: in the mode every drag event is applied straight to
+   * `staged()` with no coalescing, and a cross-category drop is TWO events —
+   * the destination gains the channel before the origin loses it — dispatched
+   * from one synchronous call, so nothing ever renders in between.
+   *
+   * Permanently, it is a wedge, and it is reachable: the library only
+   * dispatches to the origin zone when the shadow ended up somewhere else, so
+   * an origin that disappeared mid-drag (its category removed) leaves the
+   * destination half applied on its own. `canSave()` is then false forever and
+   * — before this — the bar showed a dead Save button and no reason at all,
+   * with Cancel the only exit and nothing saying so.
+   *
+   * Deliberately NOT self-healed by dropping one of the two copies: which copy
+   * is the wrong one is exactly what we do not know, and guessing moves a
+   * channel the user never dragged. Saying so and offering Cancel is honest;
+   * silently rearranging their server is not.
+   */
+  const stagedBlockedByDuplicate = createMemo(
+    () => inReorderMode() && hasDuplicateChannel(staged()),
+  );
+
+  /**
+   * Whether Save may be pressed.
+   *
+   * `hasDuplicateChannel` is a HARD precondition, not a nicety: the backend
+   * walks every category's channels through one `HashSet` and rejects the
+   * entire edit with `InvalidOperation` the moment an id repeats, so a single
+   * duplicate would discard the user's whole rearrangement with an error that
+   * names nothing.
+   */
+  const canSave = () =>
+    !noOrdering() &&
+    !stagedBlockedByDuplicate() &&
+    unsavedChanges() &&
+    !commitOrdering.isPending;
+
+  /** Commit the staged order as a single edit */
+  function saveOrdering() {
+    if (!canSave()) return;
+
+    beginCommitting();
+    commitOrdering.mutate(toEditPayload(staged()).categories, {
+      onSuccess: () => {
+        exitReorderMode();
+        setStaged([]);
+        // A save slower than COMMITTING_GUARD_MS un-mutes the race watcher
+        // mid-flight, so our OWN echoing `ServerUpdate` is read as somebody
+        // else editing the server and `discardStaged()` raises the notice.
+        // The work was not discarded - it was saved - so the notice must not
+        // outlive the response it contradicts.
+        setDiscardedNotice(false);
+        clearTimeout(discardedNoticeTimer);
+      },
+      onSettled: endCommitting,
+    });
+  }
+
+  /** Leave the mode, throwing the staged order away */
+  function cancelOrdering() {
+    exitReorderMode();
+    setStaged([]);
   }
 
   return (
@@ -504,10 +1134,33 @@ export const ServerSidebar = (props: Props) => {
         <Draggable
           dragHandles
           type="category"
+          // A CONSTANT, and it has to stay one. `Draggable` captures this with
+          // `untrack` inside `onMount`, which runs once, while the effect that
+          // arms the zone re-runs: a reactive value here means either no
+          // listener is ever attached (the feature silently does nothing) or —
+          // worse — the zone is left armed with nothing to re-arm it, and the
+          // library's non-passive `touchmove` `preventDefault`s every scroll
+          // for the rest of the list's life. `useDevice().isMobile` is
+          // assigned once from a UA test. A DEV `console.warn` fires if this
+          // ever changes. The MODE is expressed through `disabled`, which is
+          // reactive and re-read on every gesture.
+          longPress={isMobile}
           //TODO - No channel ordering on mobile due to usability issue
           //Consider adding a way to enable reordering with dragHandles in server settings
-          disabled={isMobile || noOrdering()}
-          items={props.server.orderedChannels}
+          //
+          // Must stay in lockstep with the channels zone inside `Category`:
+          // `inNestedZone` (`Draggable.tsx:142`) suppresses this outer zone
+          // whenever an inner `data-dnd-zone` is on the touch path, WITHOUT
+          // asking whether that inner zone is itself accepting drags. If the
+          // two expressions disagree there is a band of rows where the inner
+          // one bails on `disabled` and this one bails on nesting, so a long
+          // press does nothing at all and reads as flakiness. Both are `false`
+          // in reorder mode and both `true` on mobile outside it. They do
+          // differ on desktop with a collapsed category, which is inert:
+          // `longPress` is false there, and `inNestedZone` is only consulted
+          // from inside the long-press layer's `start()`.
+          disabled={!inReorderMode() && (isMobile || noOrdering())}
+          items={displayCategories()}
           onChange={(ids) => handleOrdering({ type: "categories", ids })}
         >
           {(entry) => (
@@ -519,6 +1172,7 @@ export const ServerSidebar = (props: Props) => {
               dragDisabled={entry.dragDisabled}
               setDragDisabled={entry.setDragDisabled}
               noOrdering={noOrdering}
+              inReorderMode={inReorderMode}
               handleOrdering={handleOrdering}
             />
           )}
@@ -550,9 +1204,149 @@ export const ServerSidebar = (props: Props) => {
           />
         </div>
       </Show>
+      {/*
+        Last child of `SidebarBase` on purpose, and NOT between the channel
+        scroller and `DividerHandle`: the divider's arithmetic assumes those
+        two are the adjacent pair it is splitting, and a non-flexible element
+        wedged in between would offset every drag. Both flexible siblings
+        already have floors (`min-height: 0` on the scroller, `min-height:
+        48px` on the members) and `beginDividerDrag` re-reads the column height
+        live on every pointermove, so the divider cannot be dragged over this
+        bar and the divider code needs no change. `SidebarBase` is a direct
+        child of `MainBar`, which pads every child by
+        `--layout-height-user-footer` (`src/interface/Sidebar.tsx:59-63`) to
+        clear the floating user pill — padding on a flex container sits below
+        its last item, so this bar lands above the pill rather than under it.
+      */}
+      <Show when={inReorderMode()}>
+        {/*
+          No `Row` here. `Row justify="stretch"` compiles to `& * { flex: 1 }`
+          (`components/ui/components/layout/Row.tsx:37-41`), a DESCENDANT
+          selector, so the `flex: 1` lands on the ripple, the label and every
+          icon INSIDE each button as well as on the buttons. `ReorderBar` does
+          the row itself, with a direct-child rule.
+        */}
+        <ReorderBar>
+          <Button size="sm" variant="text" onPress={cancelOrdering}>
+            <Trans>Cancel</Trans>
+          </Button>
+          <Show
+            when={!stagedBlockedByDuplicate()}
+            fallback={
+              /*
+                Why Save is gone, in the one place the user is looking for it.
+                Same non-lingui reasoning as `ReorderNotice` below — a msgid
+                absent from the compiled catalog renders as its raw hash.
+              */
+              <ReorderBlocked>
+                That move could not be applied. Cancel to start again.
+              </ReorderBlocked>
+            }
+          >
+            <Button size="sm" onPress={saveOrdering} isDisabled={!canSave()}>
+              <Trans>Save</Trans>
+            </Button>
+          </Show>
+        </ReorderBar>
+      </Show>
+      <Show when={discardedNotice()}>
+        {/*
+          Deliberately NOT a lingui message. A msgid that is not in the
+          compiled catalog renders as its raw hash, and the extract that would
+          add one is a later task — shipping a hash to users is worse than
+          shipping the untranslated English this file already ships in its
+          tooltips and `title` attributes. Lingui-ise it in the same pass that
+          does those.
+        */}
+        <ReorderNotice onClick={() => setDiscardedNotice(false)}>
+          The channel list changed while you were rearranging, so your changes
+          were discarded.
+        </ReorderNotice>
+      </Show>
     </SidebarBase>
   );
 };
+
+/**
+ * Save/Cancel bar for the mobile rearrange mode.
+ *
+ * `styled("div", ...)`, and it has to be a STRING TAG. `styled(SomeComponent,
+ * …)` from `styled-system/jsx` evaluates its argument at module scope, and
+ * much of `components/ui` sits in an import cycle, so the reference lands in
+ * the temporal dead zone and the whole bundle boots to a blank page with
+ * `ReferenceError: Cannot access 'xr' before initialization`. `tsc`, `eslint`
+ * and `vite build` are all green on it — this shipped once and was caught only
+ * by loading the built page. Wrap `Row`/`Button` as children instead.
+ */
+const ReorderBar = styled("div", {
+  base: {
+    // `flex: 0 0 auto`, spelled out so the panda `flex` utility cannot
+    // reinterpret the shorthand.
+    flexGrow: 0,
+    flexShrink: 0,
+    flexBasis: "auto",
+
+    display: "flex",
+    alignItems: "center",
+    gap: "var(--gap-md)",
+    padding: "var(--gap-md)",
+    borderTop: "1px solid var(--md-sys-color-outline-variant)",
+    background: "var(--md-sys-color-surface-container-low)",
+
+    // The two buttons share the bar evenly. A DIRECT-CHILD selector, which is
+    // the whole difference from `Row justify="stretch"`: that one is `& *`, so
+    // it also stretches the ripple, the label and any icon inside each button.
+    // It also has to be a nested selector rather than a prop, because `Button`
+    // overwrites both `class` and `style`
+    // (`components/ui/components/design/Button.tsx:132-146`) — and being
+    // nested is what beats `Button`'s own `flexShrink: 0` on specificity
+    // (0,1,1 against 0,1,0).
+    "& > button": {
+      flexGrow: 1,
+      flexShrink: 1,
+      flexBasis: 0,
+    },
+  },
+});
+
+/**
+ * Stands in for Save when the staged order cannot be saved at all.
+ *
+ * See `stagedBlockedByDuplicate`. A string tag, for the reason spelled out on
+ * `ReorderBar` above.
+ */
+const ReorderBlocked = styled("div", {
+  base: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 0,
+
+    display: "flex",
+    alignItems: "center",
+    color: "var(--md-sys-color-error)",
+
+    ...typography.raw({ class: "label", size: "small" }),
+  },
+});
+
+/**
+ * Notice shown when a staged rearrangement had to be thrown away
+ */
+const ReorderNotice = styled("div", {
+  base: {
+    flexGrow: 0,
+    flexShrink: 0,
+    flexBasis: "auto",
+
+    padding: "var(--gap-md)",
+    cursor: "pointer",
+    borderTop: "1px solid var(--md-sys-color-outline-variant)",
+    background: "var(--md-sys-color-surface-container-high)",
+    color: "var(--md-sys-color-on-surface-variant)",
+
+    ...typography.raw({ class: "label", size: "small" }),
+  },
+});
 
 /**
  * Server Information
@@ -778,6 +1572,7 @@ function Category(
     category: CategoryData;
     channelId: string | undefined;
     noOrdering: Accessor<boolean>;
+    inReorderMode: Accessor<boolean>;
     handleOrdering: (event: OrderingEvent) => void;
   } & Pick<Props, "menuGenerator"> & {
       dragDisabled: Accessor<boolean>;
@@ -789,14 +1584,22 @@ function Category(
   const { isMobile } = useDevice();
   const { openModal } = useModals();
 
+  // A collapsed category renders only its unread/active channels. Handing that
+  // filtered list to a drop zone would write it back as the category's WHOLE
+  // channel array on the next drag, silently deleting every channel the filter
+  // hid — so in reorder mode every category renders expanded and unfiltered,
+  // and the `disabled` expression below refuses drags on a filtered list
+  // anywhere else.
   const channels = createMemo(() =>
-    props.category.channels.filter(
-      (channel) =>
-        props.category.id === "default" ||
-        isOpen() ||
-        channel.unread ||
-        channel.id === props.channelId,
-    ),
+    props.inReorderMode()
+      ? props.category.channels
+      : props.category.channels.filter(
+          (channel) =>
+            props.category.id === "default" ||
+            isOpen() ||
+            channel.unread ||
+            channel.id === props.channelId,
+        ),
   );
 
   return (
@@ -804,8 +1607,17 @@ function Category(
       <Show when={props.category.id !== "default"}>
         <div use:floating={props.menuGenerator(props.category as never)}>
           <CategoryBase
-            open={isOpen()}
+            // Forced open in reorder mode so the chevron matches the rows that
+            // are actually on screen.
+            open={props.inReorderMode() ? true : isOpen()}
             onClick={() => {
+              // RENDER-ONLY EXPANSION, IN BOTH DIRECTIONS. This handler writes
+              // PERSISTED layout state (`State.write` queues a
+              // `localforage.setItem`), so a tap on a header while rearranging
+              // would collapse the category in the store and the user would
+              // find it collapsed once they saved — a change they never asked
+              // for, made by a gesture that looked like nothing happened.
+              if (props.inReorderMode()) return;
               state.layout.toggleSectionState(props.category.id, true);
             }}
             {...createDragHandle(props.dragDisabled, props.setDragDisabled)}
@@ -838,19 +1650,30 @@ function Category(
       </Show>
       <Draggable
         type="channels"
+        // Constant, exactly as on the categories zone above — see the comment
+        // there for what a reactive value does to the press-and-hold layer.
+        longPress={isMobile}
         items={channels()}
         onChange={(channelIds) => {
-          const current = channels();
           props.handleOrdering({
             type: "category",
             id: props.category.id,
             channelIds,
-            moved: channelIds.length !== current.length,
           });
         }}
         //TODO - No channel ordering on mobile due to usability issue
         //Consider adding a way to enable reordering with dragHandles in server settings
-        disabled={isMobile || props.noOrdering() || !isOpen()}
+        //
+        // Kept in lockstep with the categories zone in `ServerSidebar`; see the
+        // `inNestedZone` note there for what a disagreement costs. `!isOpen()`
+        // is what stops a drag ever rewriting the filtered list a collapsed
+        // category renders, and it is deliberately not consulted in reorder
+        // mode, where nothing is filtered.
+        disabled={
+          props.inReorderMode()
+            ? false
+            : isMobile || props.noOrdering() || !isOpen()
+        }
         minimumDropAreaHeight="32px"
       >
         {(entry) => (
@@ -858,6 +1681,7 @@ function Category(
             channel={entry.item}
             active={entry.item.id === props.channelId}
             channelId={props.channelId}
+            reordering={props.inReorderMode()}
             menuGenerator={props.menuGenerator}
           />
         )}
@@ -942,6 +1766,8 @@ function Entry(
     channel: Channel;
     active: boolean;
     channelId: string | undefined;
+    /** Whether the sidebar is in the mobile rearrange mode */
+    reordering: boolean;
   } & Pick<Props, "menuGenerator">,
 ) {
   const state = useState();
@@ -1015,6 +1841,10 @@ function Entry(
    * easiest affordance in the app to fire twice by accident.
    */
   function onDoubleClick(e: MouseEvent) {
+    // Rearranging must not be able to join a call. Two taps in quick
+    // succession are exactly what a failed drag looks like.
+    if (props.reordering) return;
+
     const join = shouldJoinOnDoubleClick({
       isVoiceChannel: props.channel.isVoice,
       settingEnabled: state.voice.joinVoiceOnDoubleClick,
@@ -1054,7 +1884,49 @@ function Entry(
   return (
     <Column gap="sm">
       <MenuButton
+        // No navigation while rearranging. A plain tap on a row is easy to
+        // land during a drag, and on a phone following the link ALSO slides
+        // the drawer shut (`MenuButton`'s own `onClick` calls
+        // `appDrawer()?.setShown(true)`), which takes the Save/Cancel bar off
+        // screen with staged work still live and no obvious way back to it.
+        //
+        // But the `href` STAYS. Dropping it was the old way of doing this, and
+        // it took the row out of the keyboard and screen-reader order with it:
+        // `MenuButton`'s no-href branch renders a bare `<div>` with no
+        // `tabindex`, no `role` and no `aria-*`
+        // (`components/ui/components/design/MenuButton.tsx:114-130`), so the
+        // whole channel list became mouse-only for as long as the mode was
+        // open. Cancelling the click covers both halves instead:
+        //
+        //  - navigation: `@solidjs/router`'s document-level
+        //    `handleAnchorClick` bails on `evt.defaultPrevented`
+        //    (`@solidjs/router/dist/index.js:1394-1395`), and it is registered
+        //    AFTER Solid's delegated click dispatch (`:1464-1465`, "ensure
+        //    delegated event run first"), so this `preventDefault` has already
+        //    run by the time it looks. It also stops the browser following the
+        //    `<a>` itself, which is what covers ctrl/cmd-click — there the
+        //    router bails anyway.
+        //  - the drawer: `MenuButton` only calls `appDrawer()?.setShown(true)`
+        //    when `!local.noDrawer` (`MenuButton.tsx:83-87`), so `noDrawer`
+        //    below still suppresses the slide-out, exactly as before.
+        //  - the iOS callout: with the link back, a press-and-hold on a phone
+        //    is a press-and-hold ON A LINK, and iOS answers it with its own
+        //    preview/share sheet — over the very gesture that picks the row up
+        //    (`Draggable`'s press-and-hold layer is the only way to drag
+        //    on mobile). Android raises that as `contextmenu`, which
+        //    `Draggable` already vetoes
+        //    (`components/ui/components/utils/Draggable.tsx:289-303`); iOS
+        //    raises no event to veto, so the property is the only lever
+        //    left. Scoped to the mode, so an ordinary row keeps the
+        //    platform's normal long-press behaviour on a link.
+        style={
+          props.reordering ? { "-webkit-touch-callout": "none" } : undefined
+        }
         href={`/server/${props.channel.serverId}/channel/${props.channel.id}`}
+        noDrawer={props.reordering}
+        onClick={(event: MouseEvent) => {
+          if (props.reordering) event.preventDefault();
+        }}
         onDblClick={onDoubleClick}
         use:floating={props.menuGenerator(props.channel)}
         size="normal"
@@ -1155,7 +2027,22 @@ function Entry(
           return (
             <ThreadNest>
               <MenuButton
+                // Same reasoning as the channel row above, accessibility
+                // included: a nested thread is part of a draggable row, so a
+                // tap on it while rearranging must not navigate away or close
+                // the drawer — but it must stay focusable, so the link stays
+                // and the click is cancelled instead.
+                // iOS callout suppressed for the same reason as above.
+                style={
+                  props.reordering
+                    ? { "-webkit-touch-callout": "none" }
+                    : undefined
+                }
                 href={`/server/${thread.serverId}/channel/${thread.id}`}
+                noDrawer={props.reordering}
+                onClick={(event: MouseEvent) => {
+                  if (props.reordering) event.preventDefault();
+                }}
                 use:floating={props.menuGenerator(thread)}
                 size="normal"
                 alert={threadAlert()}

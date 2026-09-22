@@ -3,6 +3,7 @@ import { For, Match, Show, Switch } from "solid-js";
 import { Trans } from "@lingui-solid/solid/macro";
 import { Channel } from "stoat.js";
 
+import { useDevice } from "@revolt/common";
 import { useModals } from "@revolt/modal";
 import { useState } from "@revolt/state";
 
@@ -17,6 +18,9 @@ import MdLogout from "@material-design-icons/svg/outlined/logout.svg?component-s
 import MdMarkChatRead from "@material-design-icons/svg/outlined/mark_chat_read.svg?component-solid";
 import MdSettings from "@material-design-icons/svg/outlined/settings.svg?component-solid";
 import MdShare from "@material-design-icons/svg/outlined/share.svg?component-solid";
+import MdSwapVert from "@material-design-icons/svg/outlined/swap_vert.svg?component-solid";
+
+import { enterReorderMode } from "../../../src/interface/navigation/channels/reorderMode";
 
 import {
   ContextMenu,
@@ -32,6 +36,7 @@ import { NotificationContextMenu } from "./shared/NotificationContextMenu";
 export function ChannelContextMenu(props: { channel: Channel }) {
   const state = useState();
   const { openModal } = useModals();
+  const { isMobile } = useDevice();
 
   /**
    * Mark channel as read
@@ -131,6 +136,26 @@ export function ChannelContextMenu(props: { channel: Channel }) {
   }
 
   /**
+   * Put this channel's server sidebar into channel-reorder mode.
+   *
+   * The mode is keyed by server id, so it is only reachable from a channel
+   * that actually sits in a server -- this menu is also used for DMs, groups
+   * and Saved Notes, where `server` is undefined and there is nothing to
+   * rearrange.
+   *
+   * Nothing here closes the menu: `FloatingManager` registers a bubble-phase
+   * `document` click listener that hides whatever context menu is shown
+   * (`components/ui/components/floating/FloatingManager.tsx:157-161`), so a
+   * plain `onClick` dismisses it for free.
+   */
+  function rearrangeChannels() {
+    const serverId = props.channel.server?.id;
+    if (!serverId) return;
+
+    enterReorderMode(serverId);
+  }
+
+  /**
    * Copy channel link to clipboard
    */
   function copyLink() {
@@ -201,6 +226,15 @@ export function ChannelContextMenu(props: { channel: Channel }) {
               <Trans>No category</Trans>
             </ContextMenuButton>
           </ContextMenuSubMenu>
+        </Show>
+        {/* Desktop already reorders by dragging in the sidebar itself, so the
+            explicit mode is mobile-only. `isMobile` is a readonly field frozen
+            at Device construction, not a signal, so this never re-evaluates --
+            which is how the rest of the codebase gates on it too. */}
+        <Show when={isMobile}>
+          <ContextMenuButton icon={MdSwapVert} onClick={rearrangeChannels}>
+            <Trans>Rearrange channels</Trans>
+          </ContextMenuButton>
         </Show>
       </Show>
       <Show when={props.channel.havePermission("ManageChannel")}>
