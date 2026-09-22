@@ -232,11 +232,32 @@ test("a rising or absent edge says nothing", () => {
 //
 // `state.tsx` is ~9.8k lines and its class cannot be instantiated here (Solid
 // signals, livekit `Room`, stoat.js client), so the wiring itself is
-// unreachable by `node --test`. These two checks are the cheapest honest
+// unreachable by `node --test`. These checks are the cheapest honest
 // substitute: they hold the production file to CALLING the rules above rather
-// than re-implementing them, which is the failure mode that lets a revert ship
-// green. They are not a substitute for a live call — see the report.
+// than re-implementing them, and to PASSING them the designation rather than a
+// constant — the two failure modes that let a revert ship green. They are not
+// a substitute for a live call — see the report.
 const STATE = readFileSync(new URL("./state.tsx", import.meta.url), "utf8");
+
+/**
+ * Crude comment stripper, the same shape the sibling AFK spec uses. Every scan
+ * below has to read code, not prose: the block itself quotes both the old
+ * name-keyed expression and the exact property value it pins, and `state.tsx`
+ * is free to quote them back when it explains why they went. A scan that
+ * cannot tell the warning from the offence fires on its own documentation.
+ *
+ * It cuts deep — `state.tsx` is around 62% comment by character, so most of
+ * the file goes. That is why the count below is pinned rather than just
+ * bounded: if a stray `/*` inside a string literal ever swallows a live
+ * region, the sites disappear with it and the count is what notices.
+ */
+function stripComments(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^[ \t]*\/\/.*$/gm, "");
+}
+
+const STATE_CODE = stripComments(STATE);
 
 test("state.tsx calls the extracted rules instead of restating them", () => {
   for (const fn of [
@@ -247,7 +268,7 @@ test("state.tsx calls the extracted rules instead of restating them", () => {
     "permissionFallReasons(",
   ]) {
     assert.ok(
-      STATE.includes(fn),
+      STATE_CODE.includes(fn),
       `state.tsx no longer calls ${fn} — the rule was inlined or dropped`,
     );
   }
@@ -258,8 +279,10 @@ test("the name-keyed AFK check is gone from state.tsx", () => {
   // Renaming any channel granted the behaviour; renaming the real one removed
   // it. If this string ever comes back, the server designation is being
   // second-guessed by a string compare.
+  // Comments stripped: the replacement is entitled to quote the expression it
+  // removed, and this scan must not fire on that explanation.
   assert.ok(
-    !/toLowerCase\(\)\s*===\s*"afk"/.test(STATE),
+    !/toLowerCase\(\)\s*===\s*"afk"/.test(STATE_CODE),
     'state.tsx still name-checks for "afk"',
   );
 });
@@ -271,11 +294,59 @@ test("every publish entry point consults the guard", () => {
   // delegates to toggleDeafen, so a three-site guard has a door in it. The
   // pre-AFK code had zero AFK references in any of them, which is why one
   // click defeated the whole feature.
-  const calls = STATE.match(/publishToggleRefusal\(\{/g) ?? [];
+  const calls = STATE_CODE.match(/publishToggleRefusal\(\{/g) ?? [];
   assert.equal(
     calls.length,
     4,
     `expected 4 guard call sites, saw ${calls.length}`,
+  );
+});
+
+// --- The property value, not just the identifier ----------------------------
+//
+// 🔴 Flipping one token at `state.tsx:5303` — `isAfkChannel: this.isAfkChannel`
+// to `isAfkChannel: false` — puts the shipped bug back exactly as it was: join
+// muted, press Unmute, you are live. That revert was run against this tree and
+// it passed EVERYTHING. All of the specs above, the full 1765-test suite, `tsc`
+// and `vite build` all stayed green on it. The scans above stay green too: the
+// identifier is still in the file because the accessor at `:8728` still calls
+// the rule, and the call-site count is still four because no call site was
+// touched. The guard travels as a PROPERTY VALUE, and until now no assertion
+// read one. The live two-seat call that would have caught it is out of scope,
+// so these two checks are the only thing standing there.
+//
+// Both halves are needed. The value check is what closes the hole, and it goes
+// on covering a ninth site the day one is added, with no edit here. The count
+// check covers the other way to lose a site — deleting the property outright
+// leaves every surviving value correct, and would leave the value check with
+// nothing to object to. Adding a site is meant to fail the count until the
+// number is bumped on purpose; that is the prompt to check the new site got
+// the accessor and not a constant.
+//
+// Eight sites, re-derive with `grep -n isAfkChannel state.tsx`: 2856, 3017,
+// 5251, 5303, 5462, 6613, 8745, 8764 — plus the import at `:112`, the accessor
+// at `:8726` and its single call at `:8728`, which carry no `isAfkChannel:`.
+const AFK_PROPERTY_VALUES = [
+  ...STATE_CODE.matchAll(/isAfkChannel\s*:\s*([^,\n]+)/g),
+].map((match) => match[1].trim());
+
+test("🔴 no isAfkChannel property in state.tsx is wired to a constant", () => {
+  for (const value of AFK_PROPERTY_VALUES) {
+    assert.equal(
+      value,
+      "this.isAfkChannel",
+      `a state.tsx isAfkChannel property reads \`${value}\` — anything but the accessor pins the flag to a constant and the channel stops being AFK`,
+    );
+  }
+});
+
+test("all eight isAfkChannel property sites are still present", () => {
+  // A site removed rather than falsified: every remaining value passes the
+  // check above, and the consumer of the deleted one silently loses the flag.
+  assert.equal(
+    AFK_PROPERTY_VALUES.length,
+    8,
+    `expected 8 isAfkChannel property sites, saw ${AFK_PROPERTY_VALUES.length}`,
   );
 });
 
