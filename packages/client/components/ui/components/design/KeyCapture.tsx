@@ -119,6 +119,17 @@ export type KeyCaptureProps = {
   /** Block capture entirely. */
   readonly disabled?: boolean;
 
+  /**
+   * Block CLEARING separately from capture; defaults to `disabled`.
+   *
+   * 🔴 Deliberately a second flag rather than a reuse of `disabled`. A row can
+   * be closed to new chords while the chord already in it must still be
+   * removable — otherwise a disabled row is a one-way door. Only the clear
+   * control and `clear()` read this; the capture trigger and the teardown
+   * effect keep reading `disabled`, because clearing is not capturing.
+   */
+  readonly disableClear?: boolean;
+
   readonly copy: KeyCaptureCopy;
 };
 
@@ -425,7 +436,7 @@ export function KeyCapture(props: KeyCaptureProps) {
   }
 
   function clear() {
-    if (props.disabled) return;
+    if (props.disableClear ?? props.disabled) return;
     props.onConflict?.(null);
     props.onClear();
   }
@@ -461,10 +472,10 @@ export function KeyCapture(props: KeyCaptureProps) {
         <ClearButton
           type="button"
           aria-label={props.copy.clear}
-          disabled={props.disabled}
+          disabled={props.disableClear ?? props.disabled}
           onClick={clear}
         >
-          <Ripple disabled={props.disabled} />
+          <Ripple disabled={props.disableClear ?? props.disabled} />
           <Symbol size={18}>close</Symbol>
         </ClearButton>
       </Show>

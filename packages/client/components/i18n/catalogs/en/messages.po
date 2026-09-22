@@ -8639,8 +8639,8 @@ msgid "Checking whether this device can register system-wide keys…"
 msgstr "Checking whether this device can register system-wide keys…"
 
 #: components/app/interface/settings/user/Keybinds.tsx
-msgid "This device cannot register system-wide keys, so nothing in this group will fire. The Windows desktop app can."
-msgstr "This device cannot register system-wide keys, so nothing in this group will fire. The Windows desktop app can."
+msgid "This device cannot register system-wide keys, so any keys you have bound here will only fire while Sloga is focused. The Windows desktop app can register them everywhere."
+msgstr "This device cannot register system-wide keys, so any keys you have bound here will only fire while Sloga is focused. The Windows desktop app can register them everywhere."
 
 #: components/app/interface/settings/user/Keybinds.tsx
 msgid "Sloga checks whether this device can register system-wide keys when you bind the first one."
