@@ -144,6 +144,7 @@ import { decideKeybindDispatch } from "./keybindDispatchPolicy";
 import { watchLocalUserId } from "./localUserIdentity";
 import { isPermissionDeniedError } from "./mediaAccessPolicy";
 import { anyPeerCouldEncrypt } from "./mlsRosterPolicy";
+import { MOVE_PRECONNECT_BUDGET_MS, moveDecision } from "./movePolicy";
 import { RemoteControl } from "./remoteControl";
 import {
   type RemoteControlQueue,
@@ -805,8 +806,146 @@ class Voice {
    * cancel the very loop that issued them.
    */
   #rejoinSeq = 0;
-  /** TRUE while `#autoRejoin`'s own connect() attempt is running. */
+  /**
+   * TRUE while `#autoRejoin`'s own connect() attempt is running — a fact
+   * about the LOOP, read by `disconnect()` so the loop's own leading teardown
+   * does not cancel the loop that issued it.
+   *
+   * 🔴 NOT an answer to "is THIS attempt the rejoin's". `connect()` used to
+   * read it that way when deciding whether to retire the involuntary-drop
+   * marker, and a join the USER made while the loop already had a connect in
+   * flight then kept a marker for a channel it was not dialling. That
+   * decision is per attempt now — see `opts.rejoinAttempt` on `connect()`.
+   */
   #rejoinConnectInFlight = false;
+  /**
+   * TRUE across the SYNCHRONOUS prefix of a server-ordered MOVE's
+   * `connect()` — which is exactly the leading `disconnect()` that tears the
+   * old room down (`UserMoveVoiceChannel`; see `#handleVoiceMove`). A move is
+   * ONE event to the user — "a moderator put me in another channel" — not a
+   * hang-up followed by a join, so the leave chime that teardown would play
+   * must be suppressed: leave-then-enter a second apart reads as the call
+   * dying and restarting.
+   *
+   * 🔴 Scoped to that prefix rather than held until the connect settles, and
+   * the narrow scope is the correct one twice over. `connect()` is `async`
+   * and runs the refusal latch, the marker clear and `disconnect()` before
+   * its first await, so the prefix covers the teardown completely; while a
+   * flag held to the end also answered for teardowns that are not this
+   * move's — a HANG-UP during the move's connect was silenced, and a second
+   * move event re-set the flag so the first attempt's clear ran under the
+   * second. A move whose connect FAILS does now play one leave chime, from
+   * `#connectAttempt`'s own failure teardown, which is honest: that path
+   * ends in no call, with no join chime to pair it with.
+   *
+   * Deliberately its OWN flag rather than borrowing `#rejoinConnectInFlight`.
+   * That one also suppresses the `#rejoinSeq` bump in `disconnect()` (which a
+   * move needs — see `#handleVoiceMove`), and `#autoRejoin`'s `finally`
+   * clears it unconditionally, so a move landing during a rejoin loop would
+   * have its suppression torn off by a loop it has nothing to do with.
+   */
+  #moveLeadingTeardown = false;
+  /**
+   * The channel this session was in when the SFU dropped it WITHOUT the user
+   * asking, and the wall-clock moment that happened. Together they are the
+   * two inputs `moveDecision`'s clause (b) addresses a move by.
+   *
+   * Why they have to exist even though the backend now publishes the move
+   * FIRST. `move_user_to_voice_channel`
+   * (`crates/core/database/src/voice/mod.rs`) emits
+   * `EventV1::UserMoveVoiceChannel` and only THEN calls
+   * `voice_client.remove_user` — verified in-tree, and the comment above that
+   * emit says the order is the fix. What the reordering buys is the removal
+   * of a GUARANTEED loss, not of the race: `remove_user` is a LiveKit
+   * `RemoveParticipant`, which puts a `Leave` straight down our signalling
+   * socket in one hop, while the event still has to travel LiveKit→delta, a
+   * Redis publish, bonfire and then our socket — at least two hops more. Both
+   * legs leave delta at nearly the same instant by different routes, so
+   * either can win on jitter or a busy fan-out: the `disconnected` listener
+   * can STILL run first, and whenever it does this session is no longer
+   * `CONNECTED` to `from` and has nothing but
+   * this marker left to prove it was the session being moved. Without it the
+   * real target answers `ignore`/`not-in-call` and the member lands in no
+   * call at all — silently. Under the old order that outcome was certain;
+   * under this one it is a scheduling accident, which is no comfort to the
+   * member it happens to.
+   *
+   * 🔴 SET from the Room's `disconnected` listener and nowhere else, and that
+   * is the whole point rather than an accident of convenience: a plain
+   * hang-up never reaches that listener, because `disconnect()` strips the
+   * listeners before tearing the room down. Arriving there IS the proof that
+   * the drop was not asked for. Recording on the `disconnect()` path, or
+   * inferring involuntariness from a state sniff, would mark a deliberate
+   * leave as involuntary and let a stale move yank the session back into a
+   * call the user had just chosen to leave.
+   *
+   * CLEARED at two places, both of which mean "this session has gone
+   * somewhere of its own accord, so what last happened to it is no longer the
+   * drop": the top of `connect()` (a join that has STARTED) and the Room's
+   * `connected` listener (a join that has FINISHED). See each for why one is
+   * not enough.
+   */
+  #lastInvoluntaryChannelId: string | undefined;
+  #lastInvoluntaryLeftAt: number | undefined;
+  /**
+   * The device id this session's LiveKit identity was qualified with on its
+   * most recent join — the `{device_id}` half of `{user_id}:{device_id}` — or
+   * `undefined` when it joined bare (not E2EE-capable, the store is owned
+   * elsewhere, or the key provider/worker failed to construct; see where
+   * `e2eeDeviceId` is resolved in `#connectAttempt`).
+   *
+   * It is the one input `moveDecision` addresses a move by that another
+   * session of the same user cannot forge. Both channel-keyed clauses can be
+   * satisfied by two sessions at once: `Channel.joinCall` defaults
+   * `forceDisconnect = true`, so a user carrying their own call from desktop
+   * to phone makes the DESKTOP record an involuntary drop from A at the
+   * moment the phone joins A. A move out of A landing inside
+   * `MOVE_VERIFIED_WINDOW_MS` is then answered by the phone under clause (a)
+   * AND by the idle desktop under clause (b) — and the move token is minted
+   * ONCE, for ONE identity. Both redeem it, the SFU evicts one on duplicate
+   * identity, and the evicted one can be the seat the user is actually
+   * sitting at; the idle desktop can meanwhile land in the destination and
+   * publish its microphone into a call nobody is sitting at. The AFK sweep that
+   * drives these moves is a timer, so "within ten seconds of a join" is not a
+   * coincidence to be waved away, it is the schedule.
+   *
+   * The server names the identity it minted the token for (`device_id` on the
+   * event, `deviceId` once stoat.js has normalized it), so the addressed
+   * session can prove it is the one and the bystanders cannot.
+   *
+   * 🔴 Sourced from the id we actually PRESENTED at join time, NOT from the
+   * E2EE bridge read live when the event arrives. The two disagree exactly
+   * where it matters: `#connectAttempt` deliberately withholds the qualified
+   * identity on an `owned_elsewhere` verdict or a failed provider/worker, and
+   * the bridge can provision a different device id mid-session — while the
+   * token is minted against whatever identity the SFU still holds in the OLD
+   * room (`get_voice_participant_identity`). A live bridge read would both
+   * miss real moves and hand a matching answer to a session whose identity
+   * never carried that id.
+   *
+   * 🔴 On the MOVE path there is no "id we are about to present" to record at
+   * join time: the identity is fixed by the PRE-MINTED token, which the
+   * server built from the OLD room's ingress mapping, and the bridge's
+   * current answer is not it. That path therefore leaves this field standing
+   * until `room.connect()` has returned and then re-states it from
+   * `room.localParticipant.identity` — the identity the SFU actually issued.
+   * Writing the bridge's answer there instead reproduced the very bug the
+   * device test exists to stop: a bridge that re-provisions mid-session
+   * leaves the session sitting in B as `{user}:D1` while this field claims
+   * `D2`, and the NEXT move — minted from B's mapping, so `D1` again — fails
+   * the device test, is ignored in silence, and leaves the member in no call
+   * at all once `remove_user` has evicted them.
+   *
+   * 🔴 NOT cleared by `disconnect()`, and that is deliberate rather than an
+   * omission: clause (b) is consulted precisely AFTER this session has been
+   * dropped, so a field cleared on teardown would read `undefined` on every
+   * move that needs the marker at all — which `moveDecision` treats as "this
+   * session cannot prove it is the one" and ignores, disabling the feature on
+   * its main path. The value belongs to the seat, not to the call, so it is
+   * simply re-stated by each join, to a device id or to `undefined`, and
+   * never goes stale against the identity we last presented.
+   */
+  #sessionDeviceId: string | undefined;
   /** Resolves the rejoin loop's pending backoff wait early (cancellation). */
   #cancelRejoinWait: (() => void) | undefined;
   /**
@@ -2070,6 +2209,30 @@ class Voice {
       });
     });
 
+    // A moderator moved this user to another voice channel. App-lifetime for
+    // the same reason as the two subscriptions above: the event can arrive
+    // while this session is in NO call at all (it is a private topic — see
+    // `#handleVoiceMove`), so a connect/disconnect-scoped subscription would
+    // be deaf exactly when the decision "is this about me?" has to be taken.
+    //
+    // The roster caches are NOT this handler's business: stoat.js keeps them
+    // itself off the channel-topic `VoiceChannelMove`, which every client in
+    // either channel receives. This is only the moved session's own leg.
+    createEffect(() => {
+      const client = this.getClient();
+      if (!client) return;
+      const onMoved = (move: {
+        node: string;
+        url: string;
+        deviceId: string | undefined;
+        from: string;
+        to: string;
+        token: string;
+      }) => this.#handleVoiceMove(move);
+      client.addListener("userMoveVoiceChannel", onMoved);
+      onCleanup(() => client.removeListener("userMoveVoiceChannel", onMoved));
+    });
+
     // Live captions relayed by the server. Same app-lifetime shape as the
     // soundboard above, and for the same reason: a connect/disconnect
     // subscription would go dead after the first call.
@@ -2462,10 +2625,24 @@ class Voice {
    * (the user hung up while connecting, or a newer join superseded it).
    * Callers chaining capture toggles ("start a video call") must gate on it:
    * an ungated toggle after a doomed join lands in whatever call survived.
+   *
+   * `auth` pre-empts the `joinCall` round trip with credentials the caller
+   * already holds — the server-ordered move path, which is handed a token
+   * minted for it. `opts.movePreConnectBudgetMs` is that path's wall-clock
+   * bound on everything BEFORE `room.connect()`; both are absent on every
+   * user-initiated join, which keeps its existing unbounded behavior.
+   *
+   * `opts.rejoinAttempt` marks the auto-rejoin loop's OWN attempt — the one
+   * join that must NOT retire the involuntary-drop marker (see below). It is
+   * passed per attempt on purpose: the field that used to answer this
+   * question, `#rejoinConnectInFlight`, is true for as long as the LOOP has a
+   * connect in flight, which includes the whole of a join the user makes
+   * alongside it.
    */
   async connect(
     channel: Channel,
     auth?: { url: string; token: string },
+    opts?: { movePreConnectBudgetMs?: number; rejoinAttempt?: boolean },
   ): Promise<boolean> {
     // A terminal refusal the server already gave for this channel and that
     // a retry cannot change (joinRefusalPolicy): answer from the latch —
@@ -2483,11 +2660,47 @@ class Voice {
       this.onErr(new Error(this.#joinRefusalText(channel, refusal.reason)));
       return false;
     }
+    // 🔴 Retire the involuntary-drop marker as soon as a join STARTS, not only
+    // when one finishes. The `connected` listener also clears it, and that
+    // clear is not enough on its own: between here and it the state is
+    // `CONNECTING`, which is exactly what `moveDecision`'s clause (b) requires
+    // (`callState !== "CONNECTED"`), so a session dropped from A whose user has
+    // just chosen to join C is still "addressed" by an A-move for the whole
+    // length of `room.connect()` — and answering it aborts the user's own
+    // deliberate join and sends them somewhere they did not ask to go. Starting
+    // a join is itself the proof that the drop is no longer the last thing that
+    // happened to this session.
+    //
+    // NOT for the auto-rejoin loop's own attempt. That attempt is dialling the
+    // channel we were just dropped FROM, on nobody's instruction, and losing
+    // the marker under it hands the race back to the bug `#handleVoiceMove`
+    // cancels the loop for: the move arrives mid-rejoin, clause (a) is false
+    // (not `CONNECTED` yet) and clause (b) would now be false too, so the move
+    // is dropped in silence and the session rejoins the channel a moderator
+    // just moved it out of. The marker still expires on its own clock, so
+    // holding it across a rejoin costs nothing beyond
+    // `MOVE_VERIFIED_WINDOW_MS`. A move's OWN `connect()` does clear it: its
+    // decision has already been taken off that marker and acted on.
+    //
+    // 🔴 Read off THIS attempt's own option, never off `#rejoinConnectInFlight`.
+    // That field says "the rejoin loop has a connect in flight somewhere",
+    // which is a different question and answers this one wrongly in the case
+    // that matters: dropped from A, the loop waits out its backoff and dials
+    // A, and while that is in flight the user clicks C. `connect(C)` reading
+    // the flag takes itself for the rejoin, skips the clear, and carries A's
+    // marker through C's entire CONNECTING window — where an A-move landing
+    // inside it supersedes the join the user just made, which is the exact
+    // thing this clear was added to stop. The loop only ever dials the channel
+    // the marker names, so the option carries the whole distinction.
+    if (!opts?.rejoinAttempt) {
+      this.#lastInvoluntaryChannelId = undefined;
+      this.#lastInvoluntaryLeftAt = undefined;
+    }
     this.disconnect();
     const pendingToken = ++this.#joinPendingSeq;
     this.#setJoinPending(channel.id);
     try {
-      return await this.#connectAttempt(channel, auth);
+      return await this.#connectAttempt(channel, auth, opts);
     } finally {
       // Only the newest attempt owns the flag: a superseded attempt settling
       // late must not clear what its successor set.
@@ -2499,11 +2712,48 @@ class Voice {
   async #connectAttempt(
     channel: Channel,
     auth?: { url: string; token: string },
+    opts?: { movePreConnectBudgetMs?: number },
   ): Promise<boolean> {
     // Supersession token: a later connect() runs disconnect() first and bumps
     // this, so a stale invocation resuming after an await can detect it lost
     // and bail (gate HIGH — async-registration race).
     const gen = ++this.#connectGen;
+
+    // 🔴 A server-ordered move is handed a token that is ALREADY TICKING: the
+    // backend mints it with a ten-second TTL and the user is out of the old
+    // room before the event even leaves the server. A normal join is immune
+    // to that clock because it mints its own token BELOW, after every piece
+    // of setup has finished — the move path cannot, so the setup above
+    // `room.connect()` has to be bounded or the token dies inside it. The
+    // worst offender is the MLS keys-changed registration, which races
+    // `MLS_REQUEST_DEADLINE_MS` = 45 s: more than four times the token's
+    // whole life, so a slow key exchange would eat it outright, every time,
+    // and land the user in NEITHER channel.
+    //
+    // ONE shared wall-clock deadline rather than a budget per await: two
+    // independent 3 s budgets sum to 6 s and put the connect handshake past
+    // the TTL with nothing over-budget anywhere. Undefined for every
+    // user-initiated join, where each `?? unbounded` arm below is the
+    // behavior that shipped.
+    const preConnectDeadlineAt =
+      opts?.movePreConnectBudgetMs === undefined
+        ? undefined
+        : Date.now() + opts.movePreConnectBudgetMs;
+    /** Milliseconds left of the move budget, or undefined when unbounded. */
+    const preConnectBudgetLeft = () =>
+      preConnectDeadlineAt === undefined
+        ? undefined
+        : Math.max(0, preConnectDeadlineAt - Date.now());
+    /** TRUE when this attempt is a move, for the chime suppression below. */
+    const isMove = preConnectDeadlineAt !== undefined;
+    /**
+     * TRUE when this attempt was handed a token it did not mint — the move
+     * path. Kept distinct from `isMove` deliberately: that one asks whether
+     * this attempt runs under the move BUDGET, this one asks whether the
+     * identity we present is the SERVER's choice rather than ours, which is
+     * the question both `#sessionDeviceId` writes below turn on.
+     */
+    const preMintedAuth = auth !== undefined;
 
     // Pin the saved microphone with an EXACT constraint when it is currently
     // present. `audioCaptureDefaults` hands getUserMedia a bare string, which
@@ -2522,7 +2772,22 @@ class Voice {
     if (audioInputDevice) {
       let present = false;
       try {
-        const inputs = await Room.getLocalDevices("audioinput", false);
+        // Device enumeration carries no timeout of its own and can hang
+        // behind a stalled OS audio service. On a normal join that is just a
+        // slow join; on a move it is the token expiring, so bound it against
+        // the shared budget and treat a timeout exactly as the catch below
+        // does — "not enumerable", keep the bare string hint, never a
+        // stricter constraint than before.
+        const enumeration = Room.getLocalDevices("audioinput", false);
+        const budgetMs = preConnectBudgetLeft();
+        const inputs = await (budgetMs === undefined
+          ? enumeration
+          : Promise.race([
+              enumeration,
+              new Promise<MediaDeviceInfo[]>((resolve) =>
+                setTimeout(() => resolve([]), budgetMs),
+              ),
+            ]));
         present = inputs.some((d) => d.deviceId === audioInputDevice);
       } catch {
         // enumeration unavailable — keep the best-effort hint
@@ -2729,6 +2994,37 @@ class Voice {
       this.#e2eeWorker !== undefined
         ? bridge?.status.get("state")?.device_id
         : undefined;
+    // Record the id THIS session is about to present, because the
+    // `userMoveVoiceChannel` handler cannot reach this local and must not read
+    // the bridge live instead (see `#sessionDeviceId` for why those two answers
+    // differ exactly when it matters).
+    //
+    // Written unconditionally, including the `undefined` case: a bare identity
+    // is a fact about this session as much as a qualified one is, and the
+    // server derives no device id from a bare identity either, so the two ends
+    // agree on `undefined` without either of them special-casing it. Leaving a
+    // previous call's id standing here instead would let a plaintext join
+    // inherit an encrypted call's proof of identity. `?? undefined` because
+    // `device_id` is nullable on the status record and `moveDecision` must have
+    // ONE absent value to test — the same normalization stoat.js does on the
+    // wire field.
+    //
+    // Gated on the supersession token: a doomed attempt that resumes from an
+    // await after a newer join has already passed this line must not overwrite
+    // the identity that newer join is presenting. It will bail at its next
+    // generation check regardless.
+    //
+    // 🔴 And NOT on the move path, where `preMintedAuth` says the identity is
+    // not ours to choose: the token was built by the server from the OLD
+    // room's ingress mapping, while `e2eeDeviceId` above is only what the
+    // bridge thinks TODAY. The two part company the moment the bridge
+    // re-provisions mid-session, and writing the bridge's answer here is what
+    // re-opened the hole the device test closes (see `#sessionDeviceId`). That
+    // path re-states the field below, after `room.connect()`, from the
+    // identity the SFU actually issued; until then the id we last presented
+    // stands — which is also the right answer if this move never connects.
+    if (!preMintedAuth && gen === this.#connectGen)
+      this.#sessionDeviceId = e2eeDeviceId ?? undefined;
 
     // Resolved once so the Room option and the post-connect sink switch below
     // can never disagree about which audio path this call is on.
@@ -2942,6 +3238,23 @@ class Voice {
 
     room.addListener("connected", () => {
       this.#setState("CONNECTED");
+      // A connect that succeeded retires any involuntary-drop marker:
+      // wherever we were dropped from, it is not where this session is now.
+      //
+      // The second of the marker's two clear sites, and the pair is not
+      // redundant. `connect()` clears on the way IN, which is what stops an
+      // A-move from aborting the user's own deliberate join to C while it is
+      // still `CONNECTING` — but it deliberately skips the auto-rejoin loop's
+      // own attempt (see there), so for a rejoin this is the only clear there
+      // is, and it is the one that retires the marker once the session is
+      // demonstrably back in a call. For every other join this clear is
+      // defence in depth: `moveDecision`'s clause (b) is already gated on the
+      // session not being `CONNECTED`, so no rule hangs on it — but a marker
+      // that outlives its meaning is a loaded footgun for the next reader of
+      // those two fields, and retiring it at the one moment it is provably
+      // stale costs two assignments.
+      this.#lastInvoluntaryChannelId = undefined;
+      this.#lastInvoluntaryLeftAt = undefined;
       // 🔴 The participants already in the call when we joined never bump this
       // otherwise. livekit routes `ParticipantConnected` through
       // `emitWhenConnected`, which DROPS it unless the room is already
@@ -3007,7 +3320,15 @@ class Voice {
       // Windows shell; the Linux probe has its own refresh-on-share path.
       primeWinScreenAudioProbe();
       this.#watchDuck.attach(room);
-      this.#playEntranceSound(channel);
+      // Not on a server-ordered move. The entrance sound is the server's
+      // "so-and-so has arrived" fanfare, played for everyone in the room; a
+      // move already plays the leave/join pair's other half, and re-announcing
+      // someone a moderator has just shuffled between two channels is the
+      // room hearing the same person arrive twice in two seconds. Read off
+      // the local, not a field: this handler fires inside `room.connect()`,
+      // and a mutable flag cleared by whichever attempt settles first would
+      // be the wrong one's answer.
+      if (!isMove) this.#playEntranceSound(channel);
       // AFK is now the SERVER's designation (`Server.afk_channel_id`), read
       // through the reactive accessor — not the channel's name, which any
       // rename granted or removed. This is the only place the plan still
@@ -3072,6 +3393,27 @@ class Voice {
     });
 
     room.addListener("disconnected", (reason) => {
+      // 🔴 The involuntary-drop marker, recorded FIRST and unconditionally.
+      // Reaching this listener at all is the signal: the SFU dropped us and
+      // the user did not ask, because a deliberate hang-up goes through
+      // `disconnect()`, which strips these listeners before it tears the room
+      // down (the note below says the same thing from the other direction).
+      // `moveDecision`'s clause (b) reads these two fields to recognize the
+      // session a server-ordered MOVE is actually addressed to — see the
+      // field declarations for why it cannot just ask whether we are
+      // `CONNECTED` to `from`.
+      //
+      // Above the branch, not inside it, because BOTH outcomes are
+      // involuntary. `PARTICIPANT_REMOVED` — what a moderator's move looks
+      // like on the wire — is denied by `NO_REJOIN_DISCONNECT_REASONS` and
+      // lands in the `DISCONNECTED` arm; a removal the SDK reports with an
+      // absent or unrecognised reason fails OPEN and lands in the
+      // `RECONNECTING` arm instead, which starts dialling the OLD channel
+      // back. That second arm is the one where losing the marker silently
+      // undoes the moderator, so recording per-arm would fix the visible half
+      // of the bug and leave the worse half in place.
+      this.#lastInvoluntaryChannelId = channel.id;
+      this.#lastInvoluntaryLeftAt = Date.now();
       // 🔴 The SFU dropped us, and this path does NOT run `disconnect()`. The
       // patched worker's heartbeat is a module-scope interval that keeps
       // posting `{participants: []}` regardless, and an empty window
@@ -3555,8 +3897,20 @@ class Voice {
           // Stay banner. A registration that settles late is unlistened on
           // arrival — no session will ever be built for it. A native REFUSAL
           // lands on the same hold (it used to tear the call down).
+          // 🔴 Clamped to what is left of a MOVE's budget when there is one.
+          // `MLS_REQUEST_DEADLINE_MS` is 45 s against a move token that lives
+          // 10 s, so the unclamped wait cannot be reached without the token
+          // already being dead — waiting it out would trade "joined without
+          // the listener, gate held loud" for "in neither channel". The
+          // shorter deadline lands on the SAME arm: the attempt carries on
+          // without the listener and `sessionSetupDecision`'s `hold_loud`
+          // holds the publish gate, so nothing publishes unencrypted because
+          // we hurried.
+          const moveBudgetLeftMs = preConnectBudgetLeft();
           const deadline = requestDeadlineSignal(
-            MLS_REQUEST_DEADLINE_MS,
+            moveBudgetLeftMs === undefined
+              ? MLS_REQUEST_DEADLINE_MS
+              : Math.min(MLS_REQUEST_DEADLINE_MS, moveBudgetLeftMs),
             new Error(
               "E2EE call setup timed out: the native key-change listener did not register",
             ),
@@ -3754,6 +4108,19 @@ class Voice {
         room.disconnect();
         return false;
       }
+      // 🔴 The move path's `#sessionDeviceId`, re-stated from the identity the
+      // SFU actually issued instead of from the bridge (see the withheld write
+      // above and the field's own note). We were handed this token, so its
+      // identity — and with it the device half the NEXT move's token will be
+      // minted for — is the server's answer off the OLD room's mapping, and
+      // nothing local can predict it. Read off `{user_id}:{device_id}`, the
+      // same grammar the identity assertion below asserts; a bare identity has
+      // no device half and is recorded as `undefined`, exactly as a bare join
+      // is. The ownership check immediately above guards it and no await
+      // separates the two.
+      if (preMintedAuth)
+        this.#sessionDeviceId =
+          room.localParticipant.identity.split(":")[1] || undefined;
       // Sweep any already-published local track under the gate (a track can
       // publish during `await room.connect`).
       if (this.#publishGate.size > 0) await this.#applyPublishGate(room);
@@ -4292,7 +4659,11 @@ class Voice {
       // Not during the rejoin loop's own churn: tearing down the dead room
       // before an attempt (and after a failed one) is not the user leaving,
       // and a leave blip per retry reads as the call dying over and over.
-      if (!this.#rejoinConnectInFlight) this.sound.playSound("userLeaveVoice");
+      // Nor during a server-ordered move's leading teardown, for the same
+      // reason: the user did not leave, they were moved, and the leave chime
+      // immediately followed by the join chime reads as the call dying.
+      if (!this.#rejoinConnectInFlight && !this.#moveLeadingTeardown)
+        this.sound.playSound("userLeaveVoice");
     } catch (e) {
       this.onErr(e);
     }
@@ -4325,8 +4696,10 @@ class Voice {
         this.#rejoinConnectInFlight = true;
         // true ⇒ recovered (the `connected` handler set CONNECTED);
         // false ⇒ a manual join or hang-up took over mid-attempt. Done
-        // either way.
-        await this.connect(channel);
+        // either way. `rejoinAttempt` marks THIS attempt as the loop's, so it
+        // keeps the involuntary-drop marker a move may still be addressed by
+        // — a join the user makes alongside this one does not.
+        await this.connect(channel, undefined, { rejoinAttempt: true });
         return;
       } catch (error) {
         console.warn(`[rtc] rejoin attempt ${attempt + 1} failed`, error);
@@ -4374,6 +4747,269 @@ class Voice {
       window.addEventListener("online", onOnline);
       this.#cancelRejoinWait = finish;
     });
+  }
+
+  /**
+   * A moderator moved this user to another voice channel
+   * (`UserMoveVoiceChannel`). The backend has ALREADY removed them from the
+   * old room by the time this lands and minted a token for the new one, so a
+   * client that does nothing leaves the user in no call at all — which is
+   * exactly what shipped, because stoat.js discarded the event.
+   *
+   * 🔴 This is a PRIVATE topic, which reaches EVERY session of the moved user
+   * — an idle phone, a spare browser tab, a second desktop. Which session (if
+   * any) may act on it is `moveDecision`'s call and nothing here re-states it:
+   * this method resolves the world honestly, hands it over, and obeys the
+   * answer. An `ignore` is SILENT — no toast, no log line — because the
+   * alternative is one real move plus one spurious error per device the user
+   * owns.
+   */
+  #handleVoiceMove(move: {
+    node: string;
+    url: string;
+    deviceId: string | undefined;
+    from: string;
+    to: string;
+    token: string;
+  }) {
+    // `node` is the node NAME and is not connectable; `url` is the endpoint.
+    const destination = this.getClient()?.channels.get(move.to);
+    const decision = moveDecision({
+      callState: this.state(),
+      currentChannelId: this.channel()?.id,
+      lastInvoluntaryChannelId: this.#lastInvoluntaryChannelId,
+      lastInvoluntaryLeftAt: this.#lastInvoluntaryLeftAt,
+      now: Date.now(),
+      from: move.from,
+      to: move.to,
+      url: move.url,
+      token: move.token,
+      // The device the server minted this token for, against the device this
+      // session actually presented at join time. Handed over as two separate
+      // facts rather than compared here: the channel clauses alone let two of
+      // the user's own sessions answer the same single-mint token (see
+      // `#sessionDeviceId`), and which of them may act is `moveDecision`'s
+      // call like every other addressing rule in this slice.
+      deviceId: move.deviceId,
+      sessionDeviceId: this.#sessionDeviceId,
+      destinationKnown: destination !== undefined,
+    });
+
+    // Not addressed to this session, and silent — no toast, no log line —
+    // because the alternative is one real move plus one spurious error per
+    // device this user owns.
+    //
+    // 🔴 There is no exception to that rule here any more, and the absence is
+    // the point. An earlier cut of this handler re-typed the "addressed, but
+    // too late to act" test beside this line — the marker comparison, the
+    // `!== "CONNECTED"` gate and the device match, all written out a second
+    // time — so that it could turn one `ignore` loud. It was correct, and it
+    // was still the defect: an addressing rule sitting where no spec in this
+    // repo can reach it is a rule a one-token revert ships green. That case is
+    // `moveDecision`'s step 6 now — `fail-loud` / `stale-notice`, which also
+    // covers the unverifiable late seat the local copy dropped in silence — so
+    // the whole ladder lives in ONE place, the pure module, under the spec.
+    // Every `ignore` that reaches this line is genuinely nothing to tell
+    // anyone about, and every loud outcome arrives below with a reason.
+    if (decision.action === "ignore") return;
+
+    // 🔴 THE single highest-value mitigation in this handler, and the reason
+    // it runs unconditionally for every answer that gets past the return
+    // above: past the addressing tests this session really is the one being
+    // moved, and the server has already removed it from the old room either
+    // way.
+    //
+    // The old room's `disconnected` listener (registered in
+    // `#connectAttempt`) closes over the OLD `channel` and runs
+    // `#autoRejoin(channel)` whenever `shouldAutoRejoin` says yes — and that
+    // rule is a DENY-list that FAILS OPEN: an absent reason recovers, and the
+    // SDK omits the reason on some transport closes. A `remove_user` that
+    // arrives as `PARTICIPANT_REMOVED` is denied by the list; the one that
+    // arrives bare is not, and a rejoin of the OLD channel racing our move
+    // would silently undo a moderator's decision.
+    //
+    // `disconnect()` alone does not close it. It only bumps `#rejoinSeq` when
+    // `#rejoinConnectInFlight` is false, so a rejoin whose own `connect()` is
+    // already in flight is NOT cancelled by it — whichever invocation bumps
+    // `#connectGen` last wins, and by the time that settles the move token's
+    // ten seconds are gone. So cancel the loop by hand, resolve any pending
+    // backoff wait, and strip the old room's listeners outright (the same
+    // "FE-9c" move `#connectAttempt`'s supersession checks make) so no late
+    // `disconnected` can reach `shouldAutoRejoin` at all.
+    this.#rejoinSeq++;
+    this.#cancelRejoinWait?.();
+    this.room()?.removeAllListeners();
+
+    if (decision.action !== "move") {
+      // The move is happening whatever this client manages, so the local
+      // state must stop claiming a call we are no longer in — a card left up
+      // as CONNECTED shows a live call with nobody on the other end. It is
+      // also what finally closes the rejoin loop: the `#rejoinSeq` bump above
+      // does not cancel an attempt whose `connect()` is ALREADY in flight,
+      // and the `#connectGen` bump in here dooms it.
+      this.disconnect();
+      // `unknown-channel`: nothing to point the card at, and deliberately NOT
+      // the old channel — a Rejoin there would put the user straight back
+      // into the channel a moderator just moved them out of. The `!destination`
+      // half reads the same binding `destinationKnown` was taken from, so it
+      // cannot disagree with the reason; it is there to narrow the type for
+      // the arms below, which all assert the card ON the destination.
+      if (decision.reason === "unknown-channel" || !destination) {
+        this.onErr(
+          new Error(
+            t`A moderator moved you to another voice channel, but this app doesn't know that channel yet. You've left your old call — reload Sloga, then open the channel you were moved to.`,
+          ),
+        );
+        return;
+      }
+      // Every other arm resolved the destination, so the card is re-asserted
+      // ON IT: DISCONNECTED with a channel asserted is exactly the state the
+      // Rejoin affordance renders from (`#autoRejoin`'s own give-up state),
+      // and a Rejoin there is an ordinary join that mints its own token —
+      // precisely the recovery each of these arms needs.
+      batch(() => {
+        this.#setChannel(destination);
+        this.#setState("DISCONNECTED");
+      });
+      // 🔴 A `switch` with a `never` default, rather than the chain of `if`s
+      // that stood here, and the shape is the repair rather than a tidy-up.
+      // The chain ended in an UNGUARDED `no-url` arm, so the moment
+      // `movePolicy` grew a fourth reason the new one fell straight through to
+      // it and told the user the server had not said which voice server to use
+      // — copy describing a fault that had not happened, on a path no textual
+      // scan in this repo asserts over. Under this shape a fifth reason is a
+      // compile error at the default below, not a wrong toast in front of a
+      // member.
+      switch (decision.reason) {
+        case "no-url":
+          // The destination resolved; the node row carried no endpoint.
+          this.onErr(
+            new Error(
+              t`A moderator moved you to another voice channel, but the server didn't say which voice server to use. You've left your old call — the new channel is on your call card, so press Rejoin to connect to it.`,
+            ),
+          );
+          return;
+        case "unverified-session":
+          // 🔴 Nothing this user did, and nothing they can fix. This seat
+          // joined on a bare identity — web, the Electron shell, a member who
+          // has never enrolled a device — so the event cannot name it and no
+          // client-side proof exists that it is the session the token was
+          // minted for. The move itself is real and the server has already
+          // carried it out, so say that plainly and point at the button rather
+          // than describing a fault.
+          this.onErr(
+            new Error(
+              t`A moderator moved you to another voice channel. This device can't follow a move on its own, so you've left your old call — the new channel is on your call card, press Rejoin to connect to it.`,
+            ),
+          );
+          return;
+        case "stale-notice":
+          // The notice is real and the server carried the move out, but it
+          // landed past `MOVE_VERIFIED_WINDOW_MS`: the token is dead, so no
+          // client was going to follow it automatically. Telling the user is
+          // what stops this session's rejoin loop quietly handing them the OLD
+          // channel back with nobody told a moderator's decision was reversed.
+          // One arm for both populations — the verified seat whose token
+          // expired and the seat that can show no device at all — because past
+          // that window the device distinction changes nothing either does.
+          this.onErr(
+            new Error(
+              t`A moderator moved you to another voice channel, but the notice reached this device too late to follow on its own. You've left your old call — the new channel is on your call card, so press Rejoin to connect to it.`,
+            ),
+          );
+          return;
+        default: {
+          // Unreachable: `MoveFailReason` is exhausted above. The annotation is
+          // the enforcement — add a reason to `movePolicy` without an arm here
+          // and this assignment stops compiling.
+          const unhandled: never = decision.reason;
+          void unhandled;
+          return;
+        }
+      }
+    }
+
+    // `destinationKnown` above was read off this exact binding, so a `move`
+    // answer means it resolved. The re-test narrows the type; it is not a
+    // second copy of the rule and cannot disagree with it.
+    if (!destination) return;
+
+    // 🔴 A latched join refusal on the DESTINATION must not swallow a move.
+    // `connect()` answers straight from the latch and returns false when the
+    // user tried to join `to` themselves within `JOIN_REFUSAL_HOLD_MS` and
+    // the server said no — which would drop a server-ORDERED move on the
+    // floor behind a stale toast about a request the user made a moment ago.
+    // A move is not a join request: the server has already decided, and it
+    // minted a token to prove it.
+    this.#releaseJoinRefusal(decision.to);
+
+    // Suppresses the leading teardown's leave chime (the entrance sound is
+    // suppressed inside `#connectAttempt`, off its own local): a move is one
+    // event to the user, not a hang-up followed by a join.
+    this.#moveLeadingTeardown = true;
+    void this.connect(
+      destination,
+      { url: decision.url, token: decision.token },
+      // 🔴 The token is already ticking — see `MOVE_PRECONNECT_BUDGET_MS`.
+      { movePreConnectBudgetMs: MOVE_PRECONNECT_BUDGET_MS },
+    )
+      // A `false` answer is a supersession (the user hung up, or joined
+      // somewhere themselves mid-move) and needs no telling. A REJECTION is a
+      // move that failed with the user already out of the old channel, which
+      // is the one thing they must not have to guess at.
+      .catch((error) => {
+        // 🔴 A bare `onErr(error)` here strands the user on NO CALL CARD AT
+        // ALL. `connect()` opens with a `disconnect()` and `connected` never
+        // fired, so the channel and state signals are already cleared by the
+        // time we get here — and `#connectAttempt` rethrows raw, because its
+        // `classifyJoinRefusal` branch only ever classifies `join_call`'s own
+        // answer and the move path never calls `joinCall`. Net: an untranslated
+        // livekit `ConnectionError` in the modal and nothing on screen to
+        // press. That is strictly worse than the `no-url` arm above, which is
+        // careful to leave a DISCONNECTED card pointed AT the destination.
+        //
+        // And the likeliest cause is the one thing nothing bounds:
+        // `MOVE_PRECONNECT_BUDGET_MS` bounds our own work AFTER the event
+        // arrives, but nothing bounds how long the event took to arrive and
+        // the client never checks the token's age. A websocket in backoff can
+        // hand us a token whose ten seconds are already spent, and the SFU
+        // refuses it outright.
+        //
+        // So re-assert the destination in exactly the shape `no-url` uses:
+        // DISCONNECTED with a channel asserted is the state the Rejoin
+        // affordance renders from, and a Rejoin there is an ordinary join
+        // that mints a FRESH token — precisely the recovery for a dead one.
+        // Skipped when something else already owns the card (a hang-up or a
+        // join of the user's own squeezing into the gap between the rejection
+        // and this handler): re-asserting there would resurrect a call they
+        // have already moved on from, so the copy changes with it rather than
+        // promising a card that is not there.
+        console.error("[rtc] server-ordered move failed to connect", error);
+        // (`destination` is narrowed to a Channel by the `if (!destination)
+        // return;` above — it is a `const`, so the narrowing survives into
+        // this closure.)
+        const carded = this.channel() === undefined;
+        if (carded) {
+          batch(() => {
+            this.#setChannel(destination);
+            this.#setState("DISCONNECTED");
+          });
+        }
+        this.onErr(
+          new Error(
+            carded
+              ? t`A moderator moved you to another voice channel, but connecting to it failed. You've left your old call — the new channel is on your call card, so press Rejoin to connect to it.`
+              : t`A moderator moved you to another voice channel, but connecting to it failed. You've left your old call — open the channel you were moved to and join it again.`,
+          ),
+        );
+      });
+    // The suppression is over here, not when the connect settles. `connect()`
+    // is `async`, so by the time it handed back its promise it had already run
+    // everything up to its first await — the leading `disconnect()` included.
+    // Held any longer it answered for teardowns that are not this move's: a
+    // hang-up mid-move went unheard, and a second move event's clear landed
+    // under the first (see the field).
+    this.#moveLeadingTeardown = false;
   }
 
   /**
