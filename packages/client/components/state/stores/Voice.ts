@@ -286,6 +286,14 @@ export interface TypeVoice extends TypeVoiceOverlay {
    */
   audioNormalizationStrength: number;
 
+  /**
+   * Join a voice channel by double-clicking its row in the channel list,
+   * instead of opening the channel and pressing the call button in the
+   * header. ON by default; the single click keeps its old meaning either
+   * way, so turning this off restores the two-step exactly.
+   */
+  joinVoiceOnDoubleClick: boolean;
+
   // The six in-game overlay keys come from `TypeVoiceOverlay` (./voiceOverlay)
   // so their defaults and clamps can be unit-tested without loading the store.
 
@@ -365,6 +373,7 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
       webAudioMix: true,
       audioNormalization: false,
       audioNormalizationStrength: NORMALIZER_DEFAULT_STRENGTH,
+      joinVoiceOnDoubleClick: true,
       ...defaultOverlaySettings(),
       userVolumes: {},
       userMutes: {},
@@ -514,6 +523,10 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
 
     if (typeof input.screenShareQualityAsk === "boolean") {
       data.screenShareQualityAsk = input.screenShareQualityAsk;
+    }
+
+    if (typeof input.joinVoiceOnDoubleClick === "boolean") {
+      data.joinVoiceOnDoubleClick = input.joinVoiceOnDoubleClick;
     }
 
     if (typeof input.screenShareAudio === "boolean") {
@@ -845,6 +858,11 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
     this.set("screenShareAudio", value);
   }
 
+  /** Set double-click-to-join for voice channels in the channel list */
+  set joinVoiceOnDoubleClick(value: boolean) {
+    this.set("joinVoiceOnDoubleClick", value);
+  }
+
   /** Set the screenshare privacy shield */
   set screenShareShield(value: boolean) {
     this.set("screenShareShield", value);
@@ -1109,6 +1127,13 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
    */
   get screenShareAudio(): boolean {
     return this.get().screenShareAudio;
+  }
+
+  /** Get double-click-to-join for voice channels (default on). A stored
+   * profile from before this key existed has no value for it, so the
+   * fallback is what existing installs read. */
+  get joinVoiceOnDoubleClick(): boolean {
+    return this.get().joinVoiceOnDoubleClick ?? true;
   }
 
   /** Get the screenshare privacy shield (default off: it redraws the share

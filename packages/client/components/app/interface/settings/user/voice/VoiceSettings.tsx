@@ -4,6 +4,7 @@ import { AttenuationOptions } from "./AttenuationOptions";
 import { EntranceSoundOptions } from "./EntranceSoundOptions";
 import { MicrophoneLevelMeter } from "./MicrophoneLevelMeter";
 import { MicrophoneTest } from "./MicrophoneTest";
+import { VoiceChannelOptions } from "./VoiceChannelOptions";
 import { VoiceInputOptions } from "./VoiceInputOptions";
 import { VoiceProcessingOptions } from "./VoiceProcessingOptions";
 
@@ -20,6 +21,7 @@ export function VoiceSettings() {
       <MicrophoneLevelMeter />
       <MicrophoneTest />
       <VoiceProcessingOptions />
+      <VoiceChannelOptions />
       <EntranceSoundOptions />
       {/* Renders nothing off desktop: the shell probe answers unsupported. */}
       <AttenuationOptions />

@@ -1435,6 +1435,18 @@ msgstr "Calls aren't available in this channel."
 msgid "Camera"
 msgstr "Camera"
 
+#: components/app/interface/settings/user/voice/VoiceChannelOptions.tsx
+msgid "Voice Channels"
+msgstr "Voice Channels"
+
+#: components/app/interface/settings/user/voice/VoiceChannelOptions.tsx
+msgid "A single click still just opens the channel, the way it always has."
+msgstr "A single click still just opens the channel, the way it always has."
+
+#: components/app/interface/settings/user/voice/VoiceChannelOptions.tsx
+msgid "Double-click a voice channel to join it"
+msgstr "Double-click a voice channel to join it"
+
 #: components/ui/components/features/voice/callCard/VoiceDeviceSelector.tsx
 #: components/app/interface/settings/user/voice/VoiceInputOptions.tsx
 msgid "Camera access is blocked"

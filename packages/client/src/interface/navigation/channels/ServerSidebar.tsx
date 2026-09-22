@@ -31,6 +31,7 @@ import { TextWithEmoji } from "@revolt/markdown";
 import { useModals } from "@revolt/modal";
 import { useNavigate } from "@revolt/routing";
 import { useVoice } from "@revolt/rtc";
+import { shouldJoinOnDoubleClick } from "@revolt/rtc/doubleClickJoinPolicy";
 import { useState } from "@revolt/state";
 import { LAYOUT_SECTIONS } from "@revolt/state/stores/Layout";
 import {
@@ -998,6 +999,33 @@ function Entry(
 
   const inCall = () => props.channel.id === voice.channel()?.id;
 
+  /**
+   * Double-click a voice channel to join it, skipping the two-step the
+   * channel list otherwise forces: open the channel, then press the call
+   * button in the header. The first click of the pair keeps its own
+   * meaning (it navigates), so this only ever ADDS the join — which is
+   * also why the setting can be turned off without changing anything
+   * else about the row.
+   *
+   * Deliberately inert when a join for this channel is already in flight
+   * or a terminal refusal holds (`joinBlocked`, joinRefusalPolicy): the
+   * header buttons disable on exactly that, and a double-click is the
+   * easiest affordance in the app to fire twice by accident.
+   */
+  function onDoubleClick(e: MouseEvent) {
+    const join = shouldJoinOnDoubleClick({
+      isVoiceChannel: props.channel.isVoice,
+      settingEnabled: state.voice.joinVoiceOnDoubleClick,
+      canConnect: !!props.channel.havePermission("Connect"),
+      alreadyInThisCall: inCall(),
+      joinBlocked: !!voice.joinBlocked(props.channel),
+    });
+    if (!join) return;
+
+    e.preventDefault();
+    void voice.connect(props.channel);
+  }
+
   // Colour of the mic icon while we're connected to this voice channel.
   // Deliberately not --md-sys-color-primary: the theme sets that to the same
   // #00B2FF as --md-sys-color-primary-container, which is the selected-channel
@@ -1025,6 +1053,7 @@ function Entry(
     <Column gap="sm">
       <MenuButton
         href={`/server/${props.channel.serverId}/channel/${props.channel.id}`}
+        onDblClick={onDoubleClick}
         use:floating={props.menuGenerator(props.channel)}
         size="normal"
         alert={alertState()}
