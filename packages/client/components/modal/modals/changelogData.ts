@@ -52,6 +52,12 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //   entries below instead, so this copy cannot drift from them.
   // - Screen-share system audio stays Windows + Linux only. The Mac coming
   //   current does NOT give it system audio.
+  // - 🔴 The double-click bullet must NOT promise a join. Nobody has
+  //   double-clicked a real voice channel: the path is covered by a unit
+  //   spec and the typecheck, never by use, so the copy says what the
+  //   gesture DOES in the channel list and stops there. It is also the one
+  //   change in this release that alters what an existing habit does, which
+  //   is why the bullet names the off switch in the same breath.
   {
     id: "sloga-2026-09-21",
     title: "Patch Notes",
@@ -65,6 +71,9 @@ export const CHANGELOGS: ChangelogResponse[] = [
 - **Whole-screen shares only, for now.** Sharing a single window still carries no sound.
 - **When we can tell why the sound did not start, we say so** — on older Windows builds, for instance, or when a second copy of Sloga is already running and holding the capture. Some setups still share silently without an explanation; if that is you, the screen-share settings dialog says what it can.
 - **This replaces the advice under v0.54.0 below,** which told Windows users to redo the share with the system-audio box ticked. On this build there is no such box.
+
+### 🎧 Getting into a voice channel
+- **Double-click a voice channel to join it.** Until now the channel list only opened a voice channel and the join sat behind the call button in the header; a double-click now does both steps at once. A single click is unchanged — it still just opens the channel — so nothing you already do behaves differently. Not to your taste? Settings → Voice → Voice Channels turns it off.
 
 ### 🔔 Fixes
 - **Notifications stop coming back every time you open Sloga.** Channels you had already read were being marked unread again at startup, so the app opened with a pile of notifications for channels that had nothing new in them. Your read positions were saved correctly the whole time — the app was throwing them away as it started, and now it keeps them.
