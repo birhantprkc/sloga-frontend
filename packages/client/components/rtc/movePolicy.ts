@@ -5,8 +5,10 @@
  * lingui, no livekit. `state.tsx` resolves the world (call state, current
  * channel, the channel this session was last involuntarily dropped from, the
  * device the token was minted for, this session's own device, the connection
- * nonce the event names and the two this session holds, whether the
- * destination is known, the node's URL) and hands the plain values in; every
+ * nonce the event names and the four this session holds (its live one, its
+ * drop marker's, the one it is dialing, and the one its rejoin replaced) with
+ * the replaced drop's time, whether the destination is known, the node's URL)
+ * and hands the plain values in; every
  * rule below is called by production and never re-typed there.
  *
  * 🔴 Why a gate exists at all. The backend emits `UserMoveVoiceChannel`
@@ -127,6 +129,11 @@ export type MoveFailReason =
    * connection and is evicting every other connection of this user from
    * `from`, so this one is going to be removed, or already has been.
    *
+   * Unless the connection the event names is one this session can show is its
+   * own under another nonce (S-a): the rejoin it is dialing
+   * (`pendingConnNonce`) or the dropped connection its current one replaced
+   * (`replacedConnNonce`). Those are addressed instead; see `moveDecision`.
+   *
    * Loud rather than an `ignore` because an ignored sibling keeps its
    * `disconnected` listener armed. The eviction can arrive with no reason,
    * `shouldAutoRejoin` fails open on that, and the rejoin dials `from` again
@@ -204,6 +211,31 @@ export interface MoveWorld {
    * marker shapes, fresh or stale.
    */
   lastInvoluntaryConnNonce: string | undefined;
+  /**
+   * S-a, marker shape. The nonce of the connection this session is DIALING
+   * right now, which is its own rejoin of the channel it was dropped from.
+   * The SFU can already list that connection while the client is still not
+   * CONNECTED, so the server may name it. Compared only when the gate is
+   * active for the marker shape, the nonces differ, and this session is
+   * dialing `from` (`currentChannelId === from`). `undefined` when nothing
+   * is being dialed.
+   */
+  pendingConnNonce: string | undefined;
+  /**
+   * S-a, CONNECTED shape. The nonce of the dropped connection that this
+   * session's CURRENT connection replaced, recorded only when the current
+   * connection was a rejoin of the channel that drop named. A late move can
+   * name that ghost connection. Compared only when the gate is active for the
+   * CONNECTED-to-`from` shape and the nonces differ.
+   */
+  replacedConnNonce: string | undefined;
+  /**
+   * When the drop recorded in `replacedConnNonce` happened, in the same time
+   * base as `lastInvoluntaryLeftAt` (it is that marker's timestamp, carried
+   * across the rejoin). Its age is judged against the same two windows the
+   * marker uses, measured from the ORIGINAL drop.
+   */
+  replacedLeftAt: number | undefined;
   /** Current time, ms epoch — injected so this stays pure. */
   now: number;
 }
@@ -430,8 +462,17 @@ export const MOVE_NOTICE_WINDOW_MS = 60_000;
  *   1. nonce gate INACTIVE, and minted
  *      for another device                 -> ignore    / other-device
  *   2. from === to                        -> ignore    / already-there
- *   N. nonce gate ACTIVE, nonces DIFFER   -> fail-loud / moved-elsewhere
- *      (the unequal half of 3, 4/5 and 6)
+ *   N. nonce gate ACTIVE, nonces DIFFER
+ *      (the unequal half of 3, 4/5 and 6):
+ *      Na. marker shape, dialing `from`,
+ *          and the event names the
+ *          PENDING nonce                  -> addressed, on to feasibility
+ *      Nb. CONNECTED to `from`, and the
+ *          event names the REPLACED nonce,
+ *          its drop inside
+ *          `MOVE_VERIFIED_WINDOW_MS`      -> addressed, on to feasibility
+ *          `MOVE_NOTICE_WINDOW_MS`        -> fail-loud / stale-notice
+ *      otherwise                          -> fail-loud / moved-elsewhere
  *   3. in `from` now                      -> addressed, on to feasibility
  *   4. marker FRESH and the label MATCHES
  *      (nonce when the gate is active,
@@ -442,7 +483,8 @@ export const MOVE_NOTICE_WINDOW_MS = 60_000;
  *   7. otherwise                          -> ignore    / other-channel |
  *                                                        not-in-call
  *
- * then, for an addressed session (3 and 4):
+ * then, for an addressed session (3, 4, Na, and Nb inside the verified
+ * window):
  *
  *   destination unresolvable            -> fail-loud / unknown-channel
  *   no usable URL                       -> fail-loud / no-url
@@ -512,6 +554,39 @@ export const MOVE_NOTICE_WINDOW_MS = 60_000;
  * connection's. The gate is only ever active in one of those shapes, so the
  * unequal half of all three is one test, placed after step 2 and ahead of
  * the addressed arms.
+ *
+ * 🔴 S-a — BEFORE THAT TEST ANSWERS `moved-elsewhere`, IT ASKS WHETHER THE
+ * NAMED CONNECTION IS THIS SESSION'S OWN UNDER ANOTHER NONCE. A session holds
+ * two nonces the gate does not compare, and in two windows the server names
+ * one of them:
+ *
+ *   (ii) Na — the rejoin is still dialing. The session was dropped from
+ *     `from` (marker nonce N1) and its rejoin loop is dialing `from` again
+ *     under a fresh token (N2). The SFU already lists N2, so a move now names
+ *     N2 while the session is not CONNECTED and compares against N1. N2 is
+ *     `pendingConnNonce`, and the event naming it is the step-3 case one
+ *     beat early: this connection is the one being moved.
+ *   (v) Nb — the rejoin finished and the event is late. The session is
+ *     CONNECTED to `from` as N2, but the SFU had not yet reaped the dropped
+ *     connection N1 and the server picked that ghost. N1 is
+ *     `replacedConnNonce`, recorded only when the current connection is a
+ *     rejoin of the channel that drop named, so the move is this session's.
+ *     It is judged by the age of the ORIGINAL drop (`replacedLeftAt`) against
+ *     the marker's own two windows: a move inside the verified window, a
+ *     `stale-notice` inside the notice window, and past that the answer is
+ *     unchanged.
+ *
+ * Neither nonce can belong to a sibling. Each is minted per `create_token`
+ * and delivered in the single `join_call` response of the connection that
+ * holds it. That is why this is safe where "treat moved-elsewhere on a
+ * just-rejoined seat as addressed" is not: that looser rule lets two
+ * siblings that dropped together both claim the move.
+ *
+ * S-a only WIDENS. It runs only inside the gate-active, nonces-differ test,
+ * so it can turn a `moved-elsewhere` into an addressed answer and can change
+ * nothing else. The gate's own activity is untouched, so G1 still holds: with
+ * a one-sided nonce these two fields are never read. No new reason exists for
+ * it. Both fields come out of this session and never off an event.
  *
  * 🔴 STEP 2 IS SECOND ON PURPOSE, AND IT OUTRANKS THE LOUD ARMS. An earlier
  * cut of this ladder let step 6 beat it and the question was left open; this
@@ -713,6 +788,21 @@ export function moveDecision(world: MoveWorld): MoveDecision {
   const nonceGate = !!world.connNonce && !!sessionSideNonce;
   const nonceMatches = nonceGate && world.connNonce === sessionSideNonce;
 
+  // The feasibility tail every ADDRESSED shape ends in, written once so that
+  // steps 3 and 4 and the S-a arms below cannot drift apart.
+  const addressed = (): MoveDecision => {
+    if (!world.destinationKnown)
+      return { action: "fail-loud", reason: "unknown-channel" };
+    if (!world.url || world.url.trim().length === 0)
+      return { action: "fail-loud", reason: "no-url" };
+    return {
+      action: "move",
+      url: world.url,
+      token: world.token,
+      to: world.to,
+    };
+  };
+
   // Step 1, ahead of every local test: the token names a device, and it is
   // not ours. Nothing else about this session's history can override that,
   // EXCEPT the nonce, which names the connection rather than the device and so
@@ -732,26 +822,39 @@ export function moveDecision(world: MoveWorld): MoveDecision {
   // those shapes, so this is the answer for all of them. The server moved a
   // different connection of this user and is evicting this one, so it must not
   // act, and it must not stay quiet while its rejoin loop is still armed.
-  if (nonceGate && !nonceMatches)
+  if (nonceGate && !nonceMatches) {
+    // S-a (ii), step Na: the named connection is the rejoin this session is
+    // dialing into `from` right now. The marker shape is the only one where
+    // a pending connection is meaningful, and `currentChannelId === from`
+    // says what is being dialed is the moved channel.
+    if (
+      markerNamesSource &&
+      world.currentChannelId === world.from &&
+      world.connNonce === world.pendingConnNonce
+    )
+      return addressed();
+    // S-a (v), step Nb: the named connection is the ghost this session's
+    // CONNECTED rejoin replaced, aged from the ORIGINAL drop on the marker's
+    // own two windows. Past the notice window it stays `moved-elsewhere`.
+    const replacedAgeMs =
+      connectedToSource &&
+      world.connNonce === world.replacedConnNonce &&
+      world.replacedLeftAt !== undefined
+        ? world.now - world.replacedLeftAt
+        : undefined;
+    if (replacedAgeMs !== undefined && replacedAgeMs < MOVE_VERIFIED_WINDOW_MS)
+      return addressed();
+    if (replacedAgeMs !== undefined && replacedAgeMs < MOVE_NOTICE_WINDOW_MS)
+      return { action: "fail-loud", reason: "stale-notice" };
     return { action: "fail-loud", reason: "moved-elsewhere" };
+  }
 
   // Steps 3 and 4 — the two addressed shapes, and the only ones that may act.
   // Step 4 accepts the claim only with the proof beside it: the nonce when the
   // gate is active (and unequal already returned above), the device when it
   // is not.
   const labelMatches = nonceGate ? nonceMatches : deviceMatches;
-  if (connectedToSource || (markerIsFresh && labelMatches)) {
-    if (!world.destinationKnown)
-      return { action: "fail-loud", reason: "unknown-channel" };
-    if (!world.url || world.url.trim().length === 0)
-      return { action: "fail-loud", reason: "no-url" };
-    return {
-      action: "move",
-      url: world.url,
-      token: world.token,
-      to: world.to,
-    };
-  }
+  if (connectedToSource || (markerIsFresh && labelMatches)) return addressed();
 
   // Step 5. The marker says we were the one moved and nothing here can confirm
   // or deny it, because the event names no device id (the token was minted
@@ -766,7 +869,8 @@ export function moveDecision(world: MoveWorld): MoveDecision {
   // already returned for a named device that is not ours, and a named device
   // that IS ours took step 4 above, so a fresh marker reaching this line can
   // only be an unverifiable seat. With the gate active a fresh marker never
-  // gets here (equal took step 4, unequal returned `moved-elsewhere`), and
+  // gets here (equal took step 4, unequal returned inside the gate-active
+  // test above, S-a arms included), and
   // `!nonceGate` says so rather than leaving it to the order of the arms.
   if (markerIsFresh && !nonceGate && !deviceKnown)
     return { action: "fail-loud", reason: "unverified-session" };

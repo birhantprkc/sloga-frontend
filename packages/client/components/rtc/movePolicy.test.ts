@@ -38,6 +38,18 @@
 // below runs with all three nonce fields `undefined` (see `decide`), so each
 // one is also a row of that truth table.
 //
+// 🔴 S-a adds a fifth dimension: the nonce this session is DIALING
+// (`pendingConnNonce`) and the one its CONNECTED rejoin REPLACED
+// (`replacedConnNonce`, aged by `replacedLeftAt`). They are read only when
+// the gate is active and the nonces differ, and they can only turn a
+// `moved-elsewhere` into an addressed answer. That is pinned three ways: a
+// fingerprint of the whole nonce sweep captured from the ladder at commit
+// 16734940, before S-a, which the new ladder must reproduce with the three
+// fields absent; a G1 sweep in which no S-a value moves an inactive-gate
+// answer; and a "widening only" sweep over every S-a shape in which every
+// changed answer was `moved-elsewhere` and is traced to the field that
+// matched.
+//
 // 🔴 There are TWO windows and the spec pins both edges of each. Inside
 // `MOVE_VERIFIED_WINDOW_MS` a marker can still buy a move; between there and
 // `MOVE_NOTICE_WINDOW_MS` it buys only a `stale-notice` toast, because the
@@ -89,12 +101,24 @@ const NOW = 1_758_000_000_000;
  */
 const NONCE = "V1StGXR8_Z5jdHi6B-myT";
 const OTHER_NONCE = "Uakgb_J5m9g-0JDMbcJqL";
+/** A third connection's nonce: a sibling's own rejoin, say. */
+const THIRD_NONCE = "7Qn2kLx9_PbVwZ4rT-sYe";
 
 /** No nonce anywhere: the world as it was before the nonce existed. */
 const NO_NONCES = {
   connNonce: undefined,
   sessionConnNonce: undefined,
   lastInvoluntaryConnNonce: undefined,
+};
+
+/**
+ * S-a's three fields, absent: nothing being dialed, nothing replaced. The
+ * world as the ladder saw it at 16734940, before S-a existed.
+ */
+const NO_SA = {
+  pendingConnNonce: undefined,
+  replacedConnNonce: undefined,
+  replacedLeftAt: undefined,
 };
 
 /**
@@ -106,7 +130,8 @@ const NO_NONCES = {
  * inactive and every pre-existing case keeps asserting exactly the answer it
  * asserted before the nonce existed. Every case written before the nonce is a
  * row of the "gate inactive => the old answer" truth table, with its expected
- * value unchanged.
+ * value unchanged. It carries no S-a field either, so every case written
+ * before S-a asserts what it asserted at 16734940.
  */
 const decide = (world: Partial<MoveWorld> = {}) =>
   moveDecision({
@@ -122,6 +147,7 @@ const decide = (world: Partial<MoveWorld> = {}) =>
     deviceId: DEVICE,
     sessionDeviceId: DEVICE,
     ...NO_NONCES,
+    ...NO_SA,
     now: NOW,
     ...world,
   });
@@ -1239,6 +1265,281 @@ test("🔴 step-7 bystanders stay SILENT whatever the nonces say", () => {
   );
 });
 
+// --- S-a: the connection named is this session's own, under another nonce --
+//
+// Window (ii): dropped from `from` as OTHER_NONCE, the rejoin is dialing
+// `from` as NONCE, the SFU already lists NONCE, and the event names it.
+// Window (v): the rejoin is CONNECTED to `from` as OTHER_NONCE, and a late
+// event names the ghost NONCE it replaced. Without S-a both are told
+// `moved-elsewhere`, the moved seat stays out of the destination, and the
+// moderator is silently undone.
+
+/** Window (ii): a rejoin of `from`, still dialing, whose pending nonce the event names. */
+const dialing = (agoMs: number) => ({
+  callState: "CONNECTING",
+  currentChannelId: FROM,
+  connNonce: NONCE,
+  lastInvoluntaryConnNonce: OTHER_NONCE,
+  pendingConnNonce: NONCE,
+  ...droppedFrom(FROM, agoMs),
+});
+
+/** Window (v): a CONNECTED rejoin of `from` whose replaced ghost the event names. */
+const rejoined = (agoMs: number) => ({
+  callState: "CONNECTED",
+  currentChannelId: FROM,
+  connNonce: NONCE,
+  sessionConnNonce: OTHER_NONCE,
+  replacedConnNonce: NONCE,
+  replacedLeftAt: NOW - agoMs,
+});
+
+const MOVED_ELSEWHERE: MoveDecision = {
+  action: "fail-loud",
+  reason: "moved-elsewhere",
+};
+const STALE_NOTICE: MoveDecision = {
+  action: "fail-loud",
+  reason: "stale-notice",
+};
+
+test("🔴 S-a (ii) — a rejoin still DIALING `from` moves when the event names its pending nonce", () => {
+  // Every marker age inside the notice window, which is exactly where the
+  // gate is active for the marker shape. The pending connection is the one
+  // the server just listed, so its move token is as fresh as step 3's and
+  // the marker's age does not bound it.
+  for (const callState of ["CONNECTING", "RECONNECTING"])
+    for (const ago of [
+      250,
+      MOVE_VERIFIED_WINDOW_MS - 1,
+      MOVE_VERIFIED_WINDOW_MS,
+      STALE_MS,
+      MOVE_NOTICE_WINDOW_MS - 1,
+    ]) {
+      const world = { ...dialing(ago), callState };
+      // Without S-a this exact world is `moved-elsewhere`.
+      assert.deepEqual(decide({ ...world, pendingConnNonce: undefined }), {
+        action: "fail-loud",
+        reason: "moved-elsewhere",
+      });
+      assert.deepEqual(decide(world), MOVED, JSON.stringify(world));
+      // The nonce replaces the device test here too, on both populations.
+      assert.deepEqual(decide({ ...world, ...UNVERIFIED }), MOVED);
+      assert.deepEqual(
+        decide({ ...world, sessionDeviceId: OTHER_DEVICE }),
+        MOVED,
+      );
+    }
+  // Addressed, so feasibility is reachable, in its usual order.
+  assert.deepEqual(decide({ ...dialing(250), destinationKnown: false }), {
+    action: "fail-loud",
+    reason: "unknown-channel",
+  });
+  for (const url of [undefined, "", "  "])
+    assert.deepEqual(decide({ ...dialing(250), url }), {
+      action: "fail-loud",
+      reason: "no-url",
+    });
+});
+
+test("🔴 S-a (ii) — adversarial: only THIS session's own dialing connection is addressed", () => {
+  // A sibling that is dialing `from` under its OWN rejoin: a different
+  // pending nonce, so the move was not its. It must stay loud-and-disarmed.
+  assert.deepEqual(
+    decide({ ...dialing(250), pendingConnNonce: THIRD_NONCE }),
+    MOVED_ELSEWHERE,
+  );
+  assert.deepEqual(
+    decide({ ...dialing(250), pendingConnNonce: OTHER_NONCE }),
+    MOVED_ELSEWHERE,
+  );
+  // The pending nonce matches, but what is being dialed is not `from`, or
+  // nothing is. The match must not be taken off the nonce alone.
+  for (const currentChannelId of [ELSEWHERE, undefined])
+    assert.deepEqual(
+      decide({ ...dialing(250), currentChannelId }),
+      MOVED_ELSEWHERE,
+      String(currentChannelId),
+    );
+  assert.deepEqual(
+    decide({
+      ...dialing(250),
+      callState: "DISCONNECTED",
+      currentChannelId: undefined,
+    }),
+    MOVED_ELSEWHERE,
+  );
+  // The pending nonce is read in the MARKER shape only. A CONNECTED session
+  // in `from` whose live nonce differs is judged by its live nonce and, for
+  // S-a, by what its rejoin replaced — never by a pending value.
+  assert.deepEqual(
+    decide({
+      callState: "CONNECTED",
+      currentChannelId: FROM,
+      connNonce: NONCE,
+      sessionConnNonce: OTHER_NONCE,
+      pendingConnNonce: NONCE,
+    }),
+    MOVED_ELSEWHERE,
+  );
+  // G1: the gate is not active for the marker shape, so the pending nonce is
+  // never read and the answer is the pre-S-a one, literally. On a BARE seat,
+  // so that the old answer is not already a move: a matching pending nonce
+  // must not rescue step 5's card into an automatic move.
+  const bare = { ...dialing(250), ...UNVERIFIED };
+  const unverified: MoveDecision = {
+    action: "fail-loud",
+    reason: "unverified-session",
+  };
+  const silent: MoveDecision = { action: "ignore", reason: "not-in-call" };
+  for (const [world, expected] of [
+    // No marker nonce: one-sided.
+    [{ ...bare, lastInvoluntaryConnNonce: undefined }, unverified],
+    [{ ...bare, lastInvoluntaryConnNonce: "" }, unverified],
+    // No event nonce: one-sided, and `""` equals `""` is still no match.
+    [{ ...bare, connNonce: undefined }, unverified],
+    [{ ...bare, connNonce: "", pendingConnNonce: "" }, unverified],
+    // The marker has aged out of the notice window.
+    [{ ...bare, ...droppedFrom(FROM, MOVE_NOTICE_WINDOW_MS) }, silent],
+    // The marker names another channel.
+    [{ ...bare, ...droppedFrom(ELSEWHERE, 250) }, silent],
+  ] as [Partial<MoveWorld>, MoveDecision][]) {
+    assert.deepEqual(decide(world), expected, JSON.stringify(world));
+    assert.deepEqual(
+      decide(world),
+      decide({ ...world, ...NO_SA }),
+      JSON.stringify(world),
+    );
+  }
+});
+
+test("🔴 S-a (v) — a CONNECTED rejoin answers a late event naming the ghost it replaced, by the ORIGINAL drop's age", () => {
+  // Inside the verified window: a move, like the marker it was carried from.
+  for (const ago of [0, 250, MOVE_VERIFIED_WINDOW_MS - 1]) {
+    assert.deepEqual(
+      decide({ ...rejoined(ago), replacedConnNonce: undefined }),
+      MOVED_ELSEWHERE,
+      "without S-a this world is moved-elsewhere",
+    );
+    assert.deepEqual(decide(rejoined(ago)), MOVED, String(ago));
+    assert.deepEqual(decide({ ...rejoined(ago), ...UNVERIFIED }), MOVED);
+    assert.deepEqual(
+      decide({ ...rejoined(ago), sessionDeviceId: OTHER_DEVICE }),
+      MOVED,
+    );
+  }
+  // From the verified window's boundary to inside the notice window: too
+  // late to act, not someone else's — the marker's own `stale-notice`.
+  for (const ago of [
+    MOVE_VERIFIED_WINDOW_MS,
+    STALE_MS,
+    MOVE_NOTICE_WINDOW_MS - 1,
+  ])
+    assert.deepEqual(decide(rejoined(ago)), STALE_NOTICE, String(ago));
+  // At and past the notice window: unchanged.
+  for (const ago of [
+    MOVE_NOTICE_WINDOW_MS,
+    MOVE_NOTICE_WINDOW_MS + 1,
+    3_600_000,
+  ])
+    assert.deepEqual(decide(rejoined(ago)), MOVED_ELSEWHERE, String(ago));
+  // Addressed inside the verified window, so feasibility is reachable…
+  assert.deepEqual(decide({ ...rejoined(250), destinationKnown: false }), {
+    action: "fail-loud",
+    reason: "unknown-channel",
+  });
+  assert.deepEqual(decide({ ...rejoined(250), url: "  " }), {
+    action: "fail-loud",
+    reason: "no-url",
+  });
+  // …and the stale arm outranks it, as step 6 does.
+  assert.deepEqual(
+    decide({
+      ...rejoined(STALE_MS),
+      destinationKnown: false,
+      url: undefined,
+    }),
+    STALE_NOTICE,
+  );
+});
+
+test("🔴 S-a (v) — adversarial: a replaced nonce buys nothing outside its own shape", () => {
+  // No timestamp for the replaced drop: nothing to age, so nothing changes.
+  assert.deepEqual(
+    decide({ ...rejoined(250), replacedLeftAt: undefined }),
+    MOVED_ELSEWHERE,
+  );
+  // A replaced nonce that is not the one named — a sibling's ghost.
+  for (const replacedConnNonce of [THIRD_NONCE, OTHER_NONCE, "", undefined])
+    assert.deepEqual(
+      decide({ ...rejoined(250), replacedConnNonce }),
+      MOVED_ELSEWHERE,
+      String(replacedConnNonce),
+    );
+  // The replaced nonce matches, but the session is in the MARKER shape: it is
+  // judged by its marker nonce and, for S-a, by what it is dialing — never
+  // by a replaced value.
+  for (const callState of ["DISCONNECTED", "RECONNECTING", "CONNECTING"])
+    assert.deepEqual(
+      decide({
+        callState,
+        currentChannelId: callState === "DISCONNECTED" ? undefined : FROM,
+        connNonce: NONCE,
+        lastInvoluntaryConnNonce: OTHER_NONCE,
+        ...droppedFrom(FROM, 250),
+        replacedConnNonce: NONCE,
+        replacedLeftAt: NOW - 250,
+      }),
+      MOVED_ELSEWHERE,
+      callState,
+    );
+  // The replaced nonce matches, but the session is CONNECTED elsewhere: a
+  // bystander, silent as it always was.
+  assert.deepEqual(decide({ ...rejoined(250), currentChannelId: ELSEWHERE }), {
+    action: "ignore",
+    reason: "other-channel",
+  });
+  // G1: this session read no live nonce, so the gate is inactive and step 1
+  // speaks exactly as before, however well the replaced nonce matches.
+  const deviceRows: [Partial<MoveWorld>, MoveDecision][] = [
+    [
+      { sessionDeviceId: OTHER_DEVICE },
+      { action: "ignore", reason: "other-device" },
+    ],
+    [{}, MOVED],
+  ];
+  for (const sessionConnNonce of [undefined, ""])
+    for (const [devices, expected] of deviceRows) {
+      const world: Partial<MoveWorld> = {
+        ...rejoined(250),
+        sessionConnNonce,
+        ...devices,
+      };
+      assert.deepEqual(decide(world), expected, JSON.stringify(world));
+      assert.deepEqual(decide(world), decide({ ...world, ...NO_SA }));
+    }
+});
+
+test("🔴 S-a never outranks already-there, and never touches an EQUAL-nonce answer", () => {
+  // Nothing moved, so nothing — S-a included — may claim it did.
+  for (const world of [dialing(250), rejoined(250)])
+    assert.deepEqual(decide({ ...world, from: FROM, to: FROM }), {
+      action: "ignore",
+      reason: "already-there",
+    });
+  // Equal nonces never reach the S-a arms. A matching live nonce moves as
+  // before, and a matching STALE marker is the step-6 `stale-notice` even
+  // when a pending nonce also matches.
+  assert.deepEqual(
+    decide({ ...rejoined(STALE_MS), sessionConnNonce: NONCE }),
+    MOVED,
+  );
+  assert.deepEqual(
+    decide({ ...dialing(STALE_MS), lastInvoluntaryConnNonce: NONCE }),
+    STALE_NOTICE,
+  );
+});
+
 // --- The sweep ------------------------------------------------------------
 
 /** A world without its three nonce fields, which the sweeps add per shape. */
@@ -1249,9 +1550,13 @@ type BaseWorld = Omit<
 
 /**
  * Cartesian sweep over every world shape the ladder distinguishes, without
- * the nonce fields. Its enumeration order is part of the fingerprint below,
- * so a change here is a change to the pinned truth table and must be
- * re-captured against the OLD ladder, not the current one.
+ * the nonce fields. Its enumeration order is part of the fingerprints below,
+ * so a change here is a change to the pinned truth tables and must be
+ * re-captured against the OLD ladders, not the current one.
+ *
+ * S-a's three fields are yielded ABSENT (`NO_SA`), so every sweep that does
+ * not add them walks exactly the worlds it walked at 16734940. The S-a
+ * sweeps overlay `SA_SHAPES` on top.
  */
 function* sweepWorlds(): Generator<BaseWorld> {
   const markers = [
@@ -1297,6 +1602,7 @@ function* sweepWorlds(): Generator<BaseWorld> {
                   now: NOW,
                   ...device,
                   ...marker,
+                  ...NO_SA,
                 };
 }
 
@@ -1368,6 +1674,39 @@ const ACTIVE_NONCES = [
 ];
 
 /**
+ * Every S-a shape the sweeps overlay: the pending and replaced nonces each
+ * absent, empty, the event's (a match), or another connection's, and the
+ * replaced drop's age absent or at every edge of both windows. 4 x 4 x 8.
+ * Only the event's nonce can match (the sweeps' `connNonce` is `NONCE`, `""`
+ * or absent), so OTHER_NONCE stands for every non-matching value.
+ */
+const SA_SHAPES: {
+  pendingConnNonce: string | undefined;
+  replacedConnNonce: string | undefined;
+  replacedLeftAt: number | undefined;
+}[] = [];
+for (const pendingConnNonce of [undefined, "", NONCE, OTHER_NONCE])
+  for (const replacedConnNonce of [undefined, "", NONCE, OTHER_NONCE])
+    for (const ago of [
+      undefined,
+      0,
+      MOVE_VERIFIED_WINDOW_MS - 1,
+      MOVE_VERIFIED_WINDOW_MS,
+      STALE_MS,
+      MOVE_NOTICE_WINDOW_MS - 1,
+      MOVE_NOTICE_WINDOW_MS,
+      MOVE_NOTICE_WINDOW_MS + 1,
+    ])
+      SA_SHAPES.push({
+        pendingConnNonce,
+        replacedConnNonce,
+        replacedLeftAt: ago === undefined ? undefined : NOW - ago,
+      });
+
+/** Every nonce shape the sweeps walk, inactive and active. */
+const ALL_NONCES = [...INACTIVE_NONCES, ...ACTIVE_NONCES];
+
+/**
  * The sweep's answers with NO nonce, from the ladder as it stood at commit
  * 66c575a8, before the nonce existed. sha256 over `answerKey` of every world,
  * in `sweepWorlds` order, joined by "\n". Captured by running this exact
@@ -1391,26 +1730,33 @@ const OLD_LADDER_HISTOGRAM = {
 };
 
 test("the decision is exhaustive — every world answers with one of three actions", () => {
-  // Cartesian sweep, WITH the nonce dimension: no combination falls off the
-  // end or returns undefined.
+  // Cartesian sweep, WITH the nonce dimension — S-a's pending and replaced
+  // nonces and the replaced drop's age included: no combination falls off
+  // the end or returns undefined. One world object per nonce shape, with the
+  // S-a fields overwritten in place, because this is 15.7M decisions.
   const actions = new Set<MoveDecision["action"]>();
   const reasons = new Set<string>();
   let worlds = 0;
   for (const base of sweepWorlds())
-    for (const nonces of [...INACTIVE_NONCES, ...ACTIVE_NONCES]) {
-      const decision = moveDecision({ ...base, ...nonces });
-      assert.ok(
-        ["ignore", "fail-loud", "move"].includes(decision.action),
-        `unexpected action ${decision.action}`,
-      );
-      actions.add(decision.action);
-      if (decision.action !== "move") reasons.add(decision.reason);
-      worlds++;
+    for (const nonces of ALL_NONCES) {
+      const world: MoveWorld = { ...base, ...nonces };
+      for (const sa of SA_SHAPES) {
+        world.pendingConnNonce = sa.pendingConnNonce;
+        world.replacedConnNonce = sa.replacedConnNonce;
+        world.replacedLeftAt = sa.replacedLeftAt;
+        const decision = moveDecision(world);
+        if (!["ignore", "fail-loud", "move"].includes(decision.action))
+          assert.fail(`unexpected action ${decision.action}`);
+        actions.add(decision.action);
+        if (decision.action !== "move") reasons.add(decision.reason);
+        worlds++;
+      }
     }
   // Not vacuous: the sweep actually walked the space it claims to.
+  assert.equal(SA_SHAPES.length, 4 * 4 * 8);
   assert.equal(
     worlds,
-    10_800 * (INACTIVE_NONCES.length + ACTIVE_NONCES.length),
+    10_800 * (INACTIVE_NONCES.length + ACTIVE_NONCES.length) * SA_SHAPES.length,
   );
   // All three are reachable, so the sweep is not vacuously passing on one.
   assert.deepEqual([...actions].sort(), ["fail-loud", "ignore", "move"]);
@@ -1507,6 +1853,187 @@ test("🔴 gate ACTIVE — the properties that hold across the whole sweep", () 
   }
   // Not vacuous: the unequal sweep did reach the new arm.
   assert.ok(seenUnequal.has("fail-loud|moved-elsewhere"));
+});
+
+/**
+ * The whole nonce sweep's answers — `sweepWorlds` x `ALL_NONCES`, S-a fields
+ * absent — from the ladder as it stood at commit 16734940, before S-a. sha256
+ * over `answerKey` of every world in that order, joined by "\n". Captured by
+ * running THIS spec with `./movePolicy.ts` replaced by `git show
+ * 16734940:packages/client/components/rtc/movePolicy.ts`, which ignores the
+ * S-a fields entirely. Like the fingerprint above it, it is NOT to be
+ * re-captured against the current ladder.
+ */
+const PRE_SA_LADDER_FINGERPRINT =
+  "1c3065324fb9cd8b4b9a0783e4d14cd9315f0262cfc8a5d9b0f75cf975465f71";
+/** The same capture's answer histogram, for a readable failure. */
+const PRE_SA_LADDER_HISTOGRAM = {
+  "fail-loud|moved-elsewhere": 8280,
+  "fail-loud|no-url": 2214,
+  "fail-loud|stale-notice": 9792,
+  "fail-loud|unknown-channel": 2952,
+  "fail-loud|unverified-session": 3072,
+  "ignore|already-there": 47640,
+  "ignore|not-in-call": 14976,
+  "ignore|other-channel": 5616,
+  "ignore|other-device": 45120,
+  [`move|${NODE_URL}|${TOKEN}|${TO}`]: 738,
+};
+
+test("🔴 S-a fields absent => exactly the 16734940 ladder's answer, over the whole nonce sweep", () => {
+  // Stronger than the 66c575a8 pin above, which only covers the no-nonce
+  // world: this one covers every nonce shape, active gates included, so the
+  // refactor that S-a needed (one shared feasibility tail) is pinned to have
+  // changed no answer that S-a does not own.
+  const keys: string[] = [];
+  const histogram: Record<string, number> = {};
+  for (const base of sweepWorlds())
+    for (const nonces of ALL_NONCES) {
+      const key = answerKey(moveDecision({ ...base, ...nonces, ...NO_SA }));
+      keys.push(key);
+      histogram[key] = (histogram[key] ?? 0) + 1;
+    }
+  assert.equal(keys.length, 10_800 * ALL_NONCES.length);
+  assert.equal(
+    createHash("sha256").update(keys.join("\n")).digest("hex"),
+    PRE_SA_LADDER_FINGERPRINT,
+    `with the S-a fields absent, the nonce sweep no longer answers as the 16734940 ladder did — histogram now ${JSON.stringify(histogram)}, was ${JSON.stringify(PRE_SA_LADDER_HISTOGRAM)}`,
+  );
+  assert.deepEqual(histogram, PRE_SA_LADDER_HISTOGRAM);
+});
+
+test("🔴 G1 under S-a — no pending, replaced or age value moves an answer while the gate is inactive", () => {
+  // The two new fields are read only inside the gate-active test. Every
+  // inactive nonce shape, under every S-a shape (matching nonces included),
+  // must answer exactly as the old ladder did with no nonce and no S-a at all.
+  const old: string[] = [];
+  for (const base of sweepWorlds())
+    old.push(answerKey(moveDecision({ ...base, ...NO_NONCES, ...NO_SA })));
+  let i = 0;
+  let worlds = 0;
+  for (const base of sweepWorlds()) {
+    for (const nonces of INACTIVE_NONCES) {
+      const world: MoveWorld = { ...base, ...nonces };
+      for (const sa of SA_SHAPES) {
+        world.pendingConnNonce = sa.pendingConnNonce;
+        world.replacedConnNonce = sa.replacedConnNonce;
+        world.replacedLeftAt = sa.replacedLeftAt;
+        const key = answerKey(moveDecision(world));
+        if (key !== old[i])
+          assert.fail(
+            `an S-a field changed an INACTIVE-gate answer: ${JSON.stringify(world)} answered ${key}, the old ladder ${old[i]}`,
+          );
+        worlds++;
+      }
+    }
+    i++;
+  }
+  assert.equal(worlds, 10_800 * INACTIVE_NONCES.length * SA_SHAPES.length);
+});
+
+test("🔴 S-a widens ONLY — every changed answer was moved-elsewhere, and is traced to the field that matched", () => {
+  // `old` is the same world with the S-a fields absent, which the fingerprint
+  // above pins to the 16734940 ladder world by world. The property: wherever
+  // S-a changes an answer, the old answer was `moved-elsewhere`, the new one
+  // is an addressed answer (a move, a feasibility failure, or the stale
+  // notice), and exactly one of the two new nonces carried it — removing
+  // that one restores the old answer — in the shape that nonce belongs to.
+  const addressed = new Set([
+    `move|${NODE_URL}|${TOKEN}|${TO}`,
+    "fail-loud|unknown-channel",
+    "fail-loud|no-url",
+    "fail-loud|stale-notice",
+  ]);
+  const byPending: Record<string, number> = {};
+  const byReplaced: Record<string, number> = {};
+  let worlds = 0;
+  let changed = 0;
+  for (const base of sweepWorlds())
+    for (const nonces of ALL_NONCES) {
+      const world: MoveWorld = { ...base, ...nonces, ...NO_SA };
+      const old = answerKey(moveDecision(world));
+      for (const sa of SA_SHAPES) {
+        world.pendingConnNonce = sa.pendingConnNonce;
+        world.replacedConnNonce = sa.replacedConnNonce;
+        world.replacedLeftAt = sa.replacedLeftAt;
+        worlds++;
+        const now = answerKey(moveDecision(world));
+        if (now === old) continue;
+        changed++;
+        const where = JSON.stringify(world);
+        if (old !== "fail-loud|moved-elsewhere")
+          assert.fail(`S-a changed a ${old} answer to ${now}: ${where}`);
+        if (!addressed.has(now))
+          assert.fail(`S-a turned moved-elsewhere into ${now}: ${where}`);
+        const withoutPending = answerKey(
+          moveDecision({ ...world, pendingConnNonce: undefined }),
+        );
+        const withoutReplaced = answerKey(
+          moveDecision({ ...world, replacedConnNonce: undefined }),
+        );
+        const pendingCarried = withoutPending === old;
+        const replacedCarried = withoutReplaced === old;
+        if (pendingCarried === replacedCarried)
+          assert.fail(
+            `the change is not traced to exactly one S-a nonce (pending ${pendingCarried}, replaced ${replacedCarried}): ${where}`,
+          );
+        if (pendingCarried) {
+          // Na: the marker shape, dialing `from`, the pending nonce named.
+          if (
+            world.callState === "CONNECTED" ||
+            world.currentChannelId !== world.from ||
+            world.lastInvoluntaryChannelId !== world.from ||
+            world.connNonce !== world.pendingConnNonce ||
+            now === "fail-loud|stale-notice"
+          )
+            assert.fail(
+              `a pending-nonce change outside its shape: ${now} ${where}`,
+            );
+          byPending[now] = (byPending[now] ?? 0) + 1;
+        } else {
+          // Nb: CONNECTED to `from`, the replaced nonce named, its drop
+          // dated and inside the notice window.
+          if (
+            world.callState !== "CONNECTED" ||
+            world.currentChannelId !== world.from ||
+            world.connNonce !== world.replacedConnNonce ||
+            world.replacedLeftAt === undefined ||
+            world.now - world.replacedLeftAt >= MOVE_NOTICE_WINDOW_MS
+          )
+            assert.fail(
+              `a replaced-nonce change outside its shape: ${now} ${where}`,
+            );
+          byReplaced[now] = (byReplaced[now] ?? 0) + 1;
+        }
+      }
+    }
+  assert.equal(worlds, 10_800 * ALL_NONCES.length * SA_SHAPES.length);
+  // Not vacuous: both arms fired, the replaced arm reached both of its
+  // answers, and the feasibility tail is reachable through each arm.
+  assert.ok(changed > 0, "S-a changed no answer anywhere in the sweep");
+  const move = `move|${NODE_URL}|${TOKEN}|${TO}`;
+  for (const [arm, seen, expected] of [
+    [
+      "pending",
+      byPending,
+      [move, "fail-loud|unknown-channel", "fail-loud|no-url"],
+    ],
+    [
+      "replaced",
+      byReplaced,
+      [
+        move,
+        "fail-loud|unknown-channel",
+        "fail-loud|no-url",
+        "fail-loud|stale-notice",
+      ],
+    ],
+  ] as const)
+    assert.deepEqual(
+      Object.keys(seen).sort(),
+      [...expected].sort(),
+      `the ${arm} arm reached ${JSON.stringify(seen)}`,
+    );
 });
 
 test("🔴 the pre-connect budget stays well inside the token's 10 s TTL", () => {
@@ -1732,6 +2259,13 @@ test("🔴 the move world is READ, never asserted as a constant", () => {
   // the opposite: the gate goes permanently inactive and the P-1 hole reopens
   // silently. The event's nonce comes off the WIRE, the other two out of THIS
   // session.
+  //
+  // S-a's three are the same family once more, and never filled from an
+  // event. `pendingConnNonce: move.connNonce` or `replacedConnNonce:
+  // move.connNonce` is one token, and it turns every session in the marker or
+  // CONNECTED-to-`from` shape into the target: a sibling that the server is
+  // evicting would redeem the single-mint token. `replacedLeftAt` must be the
+  // replaced drop's own time, not the clock, or the window never closes.
   assert.deepEqual(MOVE_WORLD, {
     callState: "this.state()",
     currentChannelId: "this.channel()?.id",
@@ -1747,6 +2281,9 @@ test("🔴 the move world is READ, never asserted as a constant", () => {
     connNonce: "move.connNonce",
     sessionConnNonce: "this.#connNonce",
     lastInvoluntaryConnNonce: "this.#lastInvoluntaryConnNonce",
+    pendingConnNonce: "this.#dialingConnNonce()",
+    replacedConnNonce: "this.#replacedConnNonce",
+    replacedLeftAt: "this.#replacedLeftAt",
     now: "Date.now()",
   });
 });
@@ -2127,6 +2664,179 @@ test("🔴 #connNonce is RECORDED once, unguarded, off the SFU's attribute, in t
           `\\b${records[0]}\\s*=\\s*[^;]*attributes\\?\\.\\[CONN_NONCE_ATTRIBUTE\\]`,
         ).test(CONNECTED_LISTENER)),
     `#connNonce is recorded from \`${records[0]}\`, which is not the SFU's CONN_NONCE_ATTRIBUTE read in the \`connected\` listener`,
+  );
+});
+
+test("🔴 S-a — #replacedConnNonce is RECORDED once, off the marker's nonce, in `connected` BEFORE the marker clear", () => {
+  // The replaced nonce is the drop marker's nonce carried across a rejoin, so
+  // it can only be read off the marker while the marker still holds it. After
+  // the `connected` listener's marker clear it is `undefined`, and a record
+  // placed there records nothing: S-a (v) goes silently dead and the late
+  // event on a just-rejoined seat is `moved-elsewhere` again. Recorded from
+  // anything else — `this.#connNonce`, the per-attempt local, the event — it
+  // names the wrong connection, and the last of those is the one-token
+  // tautology the MOVE_WORLD scan also guards.
+  const records = [
+    ...STATE_CODE.matchAll(/this\.#replacedConnNonce = ([^;]+);/g),
+  ]
+    .map((m) => m[1].replace(/\s+/g, " ").trim())
+    .filter((rhs) => rhs !== "undefined");
+  assert.deepEqual(
+    records,
+    ["this.#lastInvoluntaryConnNonce"],
+    `expected exactly one #replacedConnNonce record, off \`this.#lastInvoluntaryConnNonce\`; saw ${JSON.stringify(records)}`,
+  );
+  const record = "this.#replacedConnNonce = this.#lastInvoluntaryConnNonce;";
+  const recordAt = CONNECTED_LISTENER.indexOf(record);
+  assert.ok(
+    recordAt >= 0,
+    "the #replacedConnNonce record is not in the `connected` listener — the rejoin's CONNECTED moment is the only one at which the marker still names the connection it replaced",
+  );
+  const clearAt = CONNECTED_LISTENER.indexOf(
+    "this.#lastInvoluntaryConnNonce = undefined;",
+  );
+  assert.ok(
+    clearAt >= 0,
+    "the `connected` listener no longer clears the marker's nonce — the order scan has nothing to compare against",
+  );
+  assert.ok(
+    recordAt < clearAt,
+    "#replacedConnNonce is recorded AFTER the `connected` listener clears the marker's nonce — it records `undefined` and S-a (v) is dead",
+  );
+  // Its age, carried the same way: the ORIGINAL drop's time, off the marker,
+  // before the marker's timestamp is cleared. Off the clock instead, a late
+  // event is always inside the verified window.
+  const stamps = [...STATE_CODE.matchAll(/this\.#replacedLeftAt = ([^;]+);/g)]
+    .map((m) => m[1].replace(/\s+/g, " ").trim())
+    .filter((rhs) => rhs !== "undefined");
+  assert.deepEqual(
+    stamps,
+    ["this.#lastInvoluntaryLeftAt"],
+    `expected exactly one #replacedLeftAt record, off \`this.#lastInvoluntaryLeftAt\`; saw ${JSON.stringify(stamps)}`,
+  );
+  const stampAt = CONNECTED_LISTENER.indexOf(
+    "this.#replacedLeftAt = this.#lastInvoluntaryLeftAt;",
+  );
+  const stampClearAt = CONNECTED_LISTENER.indexOf(
+    "this.#lastInvoluntaryLeftAt = undefined;",
+  );
+  assert.ok(
+    stampAt >= 0 && stampClearAt >= 0 && stampAt < stampClearAt,
+    "#replacedLeftAt is not recorded in the `connected` listener ahead of the marker's timestamp clear",
+  );
+});
+
+test("🔴 S-a — connect() clears #replacedConnNonce beside `this.#connNonce = undefined;`", () => {
+  // The replaced nonce belongs to the CURRENT connection, like `#connNonce`:
+  // once a new join starts, that connection is being torn down, whichever
+  // join this is (rejoin attempts included). Left standing, it carries a
+  // ghost's nonce into the next connection, which then answers a move that
+  // names that ghost as its own.
+  const at = STATE_CODE.search(/^ {2}async connect\(/m);
+  assert.ok(at >= 0, "no `async connect(` method found in state.tsx");
+  const end = STATE_CODE.indexOf("this.#connectAttempt(", at);
+  assert.ok(end > at, "connect() no longer calls this.#connectAttempt(");
+  const body = STATE_CODE.slice(at, end);
+  // Adjacent: only other `this.#x = undefined;` clears may sit between them,
+  // in either order. That keeps it out of the `!opts?.rejoinAttempt` block
+  // the marker clears live in, because `#connNonce`'s clear is not there.
+  const clears = "(?:\\s*this\\.#\\w+ = undefined;)*?\\s*";
+  assert.match(
+    body,
+    new RegExp(
+      `this\\.#connNonce = undefined;${clears}this\\.#replacedConnNonce = undefined;|this\\.#replacedConnNonce = undefined;${clears}this\\.#connNonce = undefined;`,
+    ),
+    "connect() does not clear #replacedConnNonce next to `this.#connNonce = undefined;`",
+  );
+});
+
+test("🔴 S-a — the #replacedConnNonce record is guarded to the rejoin loop reconnecting the MARKER'S channel", () => {
+  // Only the auto-rejoin loop's attempt, dialing back into the very channel
+  // the marker names, replaces a connection of this seat's. Any other join
+  // replaced nothing, and a record there hands the new connection a dead
+  // one's nonce: a later move naming that ghost would read as addressed to a
+  // seat in a DIFFERENT call. `opts?.rejoinAttempt` alone is enough only for
+  // as long as the rejoin loop never dials anything but the marker's
+  // channel. That is an assumption about another code path, and the channel
+  // test turns it into a property of this one. Both halves are pinned, as a
+  // conjunction, so `||` or dropping either half fails here.
+  const record = "this.#replacedConnNonce = this.#lastInvoluntaryConnNonce;";
+  const recordAt = CONNECTED_LISTENER.indexOf(record);
+  assert.ok(
+    recordAt >= 0,
+    "no #replacedConnNonce record in the `connected` listener — the guard scan would pass vacuously",
+  );
+  // Every `if (…) { … }` in the listener whose block holds the record.
+  const guards: string[] = [];
+  for (const m of CONNECTED_LISTENER.matchAll(/\bif \(/g)) {
+    const condAt = m.index + m[0].length - 1;
+    const cond = balancedGroup(CONNECTED_LISTENER, condAt);
+    if (cond.length === 0) continue;
+    const after = CONNECTED_LISTENER.slice(condAt + cond.length);
+    const open = /^\s*\{/.exec(after);
+    if (!open) continue;
+    const blockAt = condAt + cond.length + open[0].length - 1;
+    const block = balancedGroup(CONNECTED_LISTENER, blockAt);
+    if (recordAt > blockAt && recordAt < blockAt + block.length)
+      guards.push(cond.slice(1, -1).replace(/\s+/g, " ").trim());
+  }
+  assert.ok(
+    guards.length > 0,
+    "the #replacedConnNonce record is not inside an `if (…) { … }` in the `connected` listener — every join, not just the rejoin of the marker's channel, records a replaced nonce",
+  );
+  const conjuncts = guards.flatMap((g) => g.split("&&").map((c) => c.trim()));
+  for (const term of [
+    "opts?.rejoinAttempt",
+    "channel.id === this.#lastInvoluntaryChannelId",
+  ])
+    assert.ok(
+      conjuncts.includes(term),
+      `the #replacedConnNonce record's guard does not require \`${term}\` as a conjunct — saw ${JSON.stringify(guards)}`,
+    );
+});
+
+test("🔴 S-a — the moved-elsewhere arm retires #replacedConnNonce and #replacedLeftAt before it returns", () => {
+  // The S-a record goes with the marker. A `moved-elsewhere` answer means the
+  // move it could have matched has been answered, and this seat is being
+  // disconnected. Left standing, a repeat of the event, or a later move naming
+  // the same ghost, finds the replaced nonce still set.
+  const moved = MOVE_HANDLER.indexOf('decision.reason === "moved-elsewhere"');
+  const unknown = MOVE_HANDLER.indexOf('decision.reason === "unknown-channel"');
+  assert.ok(
+    moved >= 0 && unknown > moved,
+    "no moved-elsewhere arm found ahead of the unknown-channel test — the clear scan would read the wrong span",
+  );
+  const arm = MOVE_HANDLER.slice(moved, unknown);
+  const returnAt = arm.indexOf("return;");
+  assert.ok(returnAt >= 0, "the moved-elsewhere arm does not return");
+  for (const clear of [
+    "this.#replacedConnNonce = undefined;",
+    "this.#replacedLeftAt = undefined;",
+  ]) {
+    const at = arm.indexOf(clear);
+    assert.ok(
+      at >= 0 && at < returnAt,
+      `the moved-elsewhere arm does not run \`${clear}\` before its \`return;\``,
+    );
+  }
+});
+
+test("🔴 B13 — no move notice blames a moderator; the copy is neutral", () => {
+  // The AFK sweep moves members with nobody having acted, so "A moderator
+  // moved you…" becomes a routine falsehood (D-5b2-2). One neutral copy
+  // serves both movers. Read off comment-stripped code, so a comment that
+  // quotes the old wording is not a finding, and case-insensitive, so a
+  // lower-cased revert inside a sentence is.
+  assert.doesNotMatch(
+    STATE_CODE,
+    /moderator moved you/i,
+    'state.tsx still carries "A moderator moved you…" — a sweep move would blame a moderator nobody was',
+  );
+  // Not vacuous: the neutral copy is really there, in the move handler, so
+  // the absence above cannot pass by the handler having been deleted.
+  assert.ok(
+    MOVE_HANDLER.includes("You were moved to"),
+    'the move handler carries no "You were moved to" notice — the absence check above would pass vacuously',
   );
 });
 

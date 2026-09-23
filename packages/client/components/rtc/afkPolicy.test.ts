@@ -323,9 +323,18 @@ test("every publish entry point consults the guard", () => {
 // number is bumped on purpose; that is the prompt to check the new site got
 // the accessor and not a constant.
 //
-// Eight sites, re-derive with `grep -n isAfkChannel state.tsx`: 2856, 3017,
-// 5251, 5303, 5462, 6613, 8745, 8764 — plus the import at `:112`, the accessor
-// at `:8726` and its single call at `:8728`, which carry no `isAfkChannel:`.
+// (The line numbers in the paragraph above are those of the tree the revert
+// was run against; the list below is the one to re-derive.)
+//
+// Nine sites, re-derive with `grep -n isAfkChannel state.tsx`. Eight were
+// present at `16734940`: 3213, 3415, 6023, 6075, 6234, 7385, 9517, 9536 —
+// plus the import at `:114`, the accessor at `:9498` and its single call at
+// `:9500`, which carry no `isAfkChannel:`. The ninth is Wave 5b-2's idle
+// world (`isAfkChannel: this.isAfkChannel`, handed to `idleStep`), bumped
+// here on purpose (finding I-5); `idlePolicy.test.ts` pins that it is the
+// idle world's. The idle types live in `idlePolicy.ts`, so no inline
+// `isAfkChannel: boolean` type annotation in `state.tsx` is captured below as
+// the value `boolean`.
 const AFK_PROPERTY_VALUES = [
   ...STATE_CODE.matchAll(/isAfkChannel\s*:\s*([^,\n]+)/g),
 ].map((match) => match[1].trim());
@@ -340,13 +349,14 @@ test("🔴 no isAfkChannel property in state.tsx is wired to a constant", () => 
   }
 });
 
-test("all eight isAfkChannel property sites are still present", () => {
+test("all nine isAfkChannel property sites are still present", () => {
   // A site removed rather than falsified: every remaining value passes the
   // check above, and the consumer of the deleted one silently loses the flag.
+  // The ninth is the idle world's (Wave 5b-2, I-5).
   assert.equal(
     AFK_PROPERTY_VALUES.length,
-    8,
-    `expected 8 isAfkChannel property sites, saw ${AFK_PROPERTY_VALUES.length}`,
+    9,
+    `expected 9 isAfkChannel property sites, saw ${AFK_PROPERTY_VALUES.length}`,
   );
 });
 

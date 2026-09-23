@@ -17,13 +17,17 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import {
+  type AfkTimeoutChoice,
   AFK_TIMEOUT_FALLBACK,
+  AFK_TIMEOUT_NEVER,
   AFK_TIMEOUT_PRESETS,
   afkCreateChannelFields,
   afkDesignationEdit,
+  afkTimeoutChoice,
   afkTimeoutEdit,
   effectiveAfkTimeout,
   isAfkTimeoutPreset,
+  parseAfkTimeoutChoice,
 } from "./afkChannelSettings.ts";
 
 const CHANNEL = "01JAFKCHANNELAAAAAAAAAAAAA";
@@ -341,5 +345,340 @@ test("the sidebar icon reads the designation, not the channel name", () => {
   assert.ok(
     SERVER_SIDEBAR.includes("isAfkChannel("),
     "ServerSidebar.tsx no longer calls isAfkChannel — the designation check was inlined or dropped",
+  );
+});
+
+// --- "Never": a server with no idle timeout (AFK Wave 5b-2, I-11 / P2-11) ----
+//
+// `afk_timeout: None` means nobody is ever auto-moved. It used to render as
+// five minutes, and a "Never" option read through `Number(...)` would have
+// been saved as five minutes too (`Number("never")` is NaN, and every numeric
+// path falls back to 300). These pin both halves: what is SHOWN and what is
+// SENT.
+
+test("a server with no timeout shows Never, not the five-minute fallback", () => {
+  assert.equal(afkTimeoutChoice(undefined), AFK_TIMEOUT_NEVER);
+  assert.equal(afkTimeoutChoice(null), AFK_TIMEOUT_NEVER);
+  assert.notEqual(afkTimeoutChoice(undefined), AFK_TIMEOUT_FALLBACK);
+  assert.equal(AFK_TIMEOUT_NEVER, "never");
+});
+
+test("a server holding a preset shows that preset", () => {
+  for (const preset of AFK_TIMEOUT_PRESETS) {
+    assert.equal(afkTimeoutChoice(preset), preset);
+  }
+});
+
+test("a server holding a number the route would reject is not shown as Never", () => {
+  // It does hold a timeout, so "never" would be its own lie; the existing
+  // fallback rule applies, unchanged.
+  assert.equal(afkTimeoutChoice(45), effectiveAfkTimeout(45));
+});
+
+test("the select value parses back to the same choice, Never included", () => {
+  const choices: AfkTimeoutChoice[] = [
+    AFK_TIMEOUT_NEVER,
+    ...AFK_TIMEOUT_PRESETS,
+  ];
+  for (const choice of choices) {
+    assert.equal(parseAfkTimeoutChoice(String(choice)), choice);
+  }
+  // The seed for a timeout-less server must survive the round trip as Never.
+  assert.equal(
+    parseAfkTimeoutChoice(String(afkTimeoutChoice(undefined))),
+    AFK_TIMEOUT_NEVER,
+  );
+});
+
+test("the parser refuses what the select cannot hold, and never guesses 300", () => {
+  for (const junk of ["", "NaN", "45", "7200", "Never", " never", "0"]) {
+    assert.equal(
+      parseAfkTimeoutChoice(junk),
+      undefined,
+      `${JSON.stringify(junk)} parsed as a choice`,
+    );
+  }
+});
+
+test("🔴 Never + designate removes the timeout alongside the designation", () => {
+  const payload = afkDesignationEdit({
+    designate: true,
+    channelId: CHANNEL,
+    timeout: AFK_TIMEOUT_NEVER,
+  });
+  assert.deepEqual(payload, {
+    afk_channel_id: CHANNEL,
+    remove: ["AfkTimeout"],
+  });
+  // Neither a numeric timeout (the NaN → 300 regression) nor a null one (the
+  // OptionalStruct no-op) may appear.
+  assert.equal("afk_timeout" in payload, false);
+});
+
+test("a numeric choice through the new input still sends the existing payload", () => {
+  for (const preset of AFK_TIMEOUT_PRESETS) {
+    assert.deepEqual(
+      afkDesignationEdit({
+        designate: true,
+        channelId: CHANNEL,
+        timeout: preset,
+      }),
+      { afk_channel_id: CHANNEL, afk_timeout: preset },
+    );
+  }
+});
+
+test("clearing ignores the timeout choice, Never included", () => {
+  assert.deepEqual(
+    afkDesignationEdit({
+      designate: false,
+      channelId: CHANNEL,
+      timeout: AFK_TIMEOUT_NEVER,
+    }),
+    { remove: ["AfkChannel"] },
+  );
+});
+
+test("🔴 Never on the designated channel is a remove-only edit", () => {
+  assert.deepEqual(
+    afkTimeoutEdit({
+      afkChannelId: CHANNEL,
+      channelId: CHANNEL,
+      timeout: AFK_TIMEOUT_NEVER,
+    }),
+    { remove: ["AfkTimeout"] },
+  );
+});
+
+test("Never is refused from an undesignated server or a different channel", () => {
+  for (const afkChannelId of [undefined, OTHER]) {
+    assert.equal(
+      afkTimeoutEdit({
+        afkChannelId,
+        channelId: CHANNEL,
+        timeout: AFK_TIMEOUT_NEVER,
+      }),
+      undefined,
+    );
+  }
+});
+
+test("a numeric choice through the new input still sends just the timeout", () => {
+  assert.deepEqual(
+    afkTimeoutEdit({ afkChannelId: CHANNEL, channelId: CHANNEL, timeout: 900 }),
+    { afk_timeout: 900 },
+  );
+});
+
+test("🔴 no edit ever sets and removes the same field", () => {
+  // The backend refuses `afk_channel_id` + remove AfkChannel and
+  // `afk_timeout` + remove AfkTimeout. Swept over every input, so a new arm
+  // cannot introduce the collision unnoticed. A null or undefined value is
+  // banned too: that is the silent no-op.
+  const choices: AfkTimeoutChoice[] = [
+    AFK_TIMEOUT_NEVER,
+    ...AFK_TIMEOUT_PRESETS,
+  ];
+  const payloads: object[] = [];
+  for (const timeout of choices) {
+    for (const designate of [true, false]) {
+      payloads.push(
+        afkDesignationEdit({ designate, channelId: CHANNEL, timeout }),
+      );
+    }
+    for (const afkChannelId of [undefined, CHANNEL, OTHER]) {
+      const payload = afkTimeoutEdit({
+        afkChannelId,
+        channelId: CHANNEL,
+        timeout,
+      });
+      if (payload) payloads.push(payload);
+    }
+  }
+  for (const payload of payloads) {
+    const record = payload as Record<string, unknown>;
+    const remove = (record.remove ?? []) as readonly string[];
+    for (const value of Object.values(record)) {
+      assert.notEqual(value, null, JSON.stringify(payload));
+      assert.notEqual(value, undefined, JSON.stringify(payload));
+    }
+    assert.equal(
+      "afk_channel_id" in record && remove.includes("AfkChannel"),
+      false,
+      JSON.stringify(payload),
+    );
+    assert.equal(
+      "afk_timeout" in record && remove.includes("AfkTimeout"),
+      false,
+      JSON.stringify(payload),
+    );
+  }
+});
+
+/** Everything from the AFK section's opening `<Show>` to the end of file. */
+function afkSection(source: string): string {
+  const opening = "<Show when={canConfigureAfk()}>";
+  const at = source.indexOf(opening);
+  assert.notEqual(at, -1, "Overview.tsx lost the AFK section's opening Show");
+  return source.slice(at);
+}
+
+test("the channel-settings select offers exactly one Never option, in the marked block", () => {
+  // The preset scan above reads `value="(\d+)"` and cannot see this option at
+  // all, so it has its own pin — tied to the constant the parser accepts, so
+  // the option and the parser cannot drift apart.
+  const needle = `<MenuItem value="${AFK_TIMEOUT_NEVER}">`;
+  const count = (text: string) => text.split(needle).length - 1;
+  const block = CHANNEL_OVERVIEW.split("AFK_TIMEOUT_PRESETS contract")[1];
+  assert.ok(block, "Overview.tsx lost the marked AFK timeout option block");
+  assert.equal(count(block), 1, "the marked AFK block must offer Never once");
+  assert.equal(
+    count(CHANNEL_OVERVIEW),
+    1,
+    "a Never option appeared outside the AFK timeout select",
+  );
+});
+
+test("channel settings read the select through the parser, never Number()", () => {
+  const code = stripComments(CHANNEL_OVERVIEW);
+  assert.equal(
+    /Number\(\s*afkTimeoutControl/.test(code),
+    false,
+    "Overview.tsx reads the AFK select with Number() — Never would save as 300",
+  );
+  assert.ok(
+    code.includes("parseAfkTimeoutChoice(afkTimeoutControl.value)"),
+    "Overview.tsx no longer parses the AFK select with parseAfkTimeoutChoice",
+  );
+});
+
+test("channel settings seed the select with Never for a timeout-less server", () => {
+  const code = stripComments(CHANNEL_OVERVIEW);
+  assert.ok(
+    code.includes("afkTimeoutChoice(props.channel.server?.afkTimeout)"),
+    "Overview.tsx no longer seeds the AFK select from afkTimeoutChoice",
+  );
+  assert.equal(
+    code.includes("effectiveAfkTimeout("),
+    false,
+    "Overview.tsx seeds from effectiveAfkTimeout — None would show as 5 minutes",
+  );
+});
+
+test("the AFK section says members who can't connect won't be moved, once", () => {
+  // I-18: the sweep skips a member the AFK channel refuses. Static copy, no
+  // designation-time check (that would be false confidence).
+  const line = "Members who can't connect to this channel won't be moved.";
+  const flat = (text: string) => text.replace(/\s+/g, " ");
+  const count = (text: string) => flat(text).split(line).length - 1;
+  assert.equal(count(afkSection(CHANNEL_OVERVIEW)), 1);
+  assert.equal(
+    count(CHANNEL_OVERVIEW),
+    1,
+    "the line appears outside the AFK section",
+  );
+});
+
+// --- "Never" at creation (AFK Wave 5b-2 R1, option B / A7 design) ----------
+//
+// The create route KEEPS the server's existing timeout when `afk_timeout` is
+// absent and has no remove array, so "never" has its own wire field,
+// `afk_timeout_never: true`. The backend refuses it without `afk: true` or
+// alongside `afk_timeout`; these pin that the client never sends either.
+
+test("🔴 Never at creation sends afk_timeout_never and no afk_timeout", () => {
+  const payload = afkCreateChannelFields({
+    channelType: "Voice",
+    afk: true,
+    timeout: AFK_TIMEOUT_NEVER,
+  });
+  assert.deepEqual(payload, { afk: true, afk_timeout_never: true });
+  assert.equal("afk_timeout" in payload, false);
+});
+
+test("a preset at creation sends today's payload and no afk_timeout_never", () => {
+  for (const preset of AFK_TIMEOUT_PRESETS) {
+    const payload = afkCreateChannelFields({
+      channelType: "Voice",
+      afk: true,
+      timeout: preset,
+    });
+    assert.deepEqual(payload, { afk: true, afk_timeout: preset });
+    assert.equal("afk_timeout_never" in payload, false);
+  }
+});
+
+test("a create that does not designate carries no AFK field, Never included", () => {
+  const choices: AfkTimeoutChoice[] = [
+    AFK_TIMEOUT_NEVER,
+    ...AFK_TIMEOUT_PRESETS,
+  ];
+  for (const timeout of choices) {
+    for (const [channelType, afk] of [
+      ["Voice", false],
+      ["Text", true],
+      ["Forum", true],
+      ["Text", false],
+    ] as const) {
+      assert.deepEqual(
+        afkCreateChannelFields({ channelType, afk, timeout }),
+        {},
+        `${channelType}/afk=${afk}/${timeout} carried an AFK field`,
+      );
+    }
+  }
+});
+
+test("the create dialog offers exactly one Never option, in the marked block", () => {
+  const needle = `<MenuItem value="${AFK_TIMEOUT_NEVER}">`;
+  const count = (text: string) => text.split(needle).length - 1;
+  const block = CREATE_CHANNEL.split("AFK_TIMEOUT_PRESETS contract")[1];
+  assert.ok(block, "CreateChannel.tsx lost the marked AFK timeout block");
+  assert.equal(count(block), 1, "the marked AFK block must offer Never once");
+  assert.equal(
+    count(CREATE_CHANNEL),
+    1,
+    "a Never option appeared outside the AFK timeout select",
+  );
+});
+
+test("the create dialog reads the select through the parser, never Number()", () => {
+  const code = stripComments(CREATE_CHANNEL);
+  assert.equal(
+    /Number\(\s*group\.controls\.afkTimeout/.test(code),
+    false,
+    "CreateChannel.tsx reads the AFK select with Number() — Never would send 300",
+  );
+  assert.ok(
+    code.includes("parseAfkTimeoutChoice(group.controls.afkTimeout.value)"),
+    "CreateChannel.tsx no longer parses the AFK select with parseAfkTimeoutChoice",
+  );
+});
+
+test("the create dialog seeds from the same choice helper as channel settings", () => {
+  const code = stripComments(CREATE_CHANNEL);
+  assert.ok(
+    code.includes("afkTimeoutChoice(props.server.afkTimeout)"),
+    "CreateChannel.tsx no longer seeds the AFK select from afkTimeoutChoice",
+  );
+  assert.equal(
+    code.includes("effectiveAfkTimeout("),
+    false,
+    "CreateChannel.tsx seeds from effectiveAfkTimeout — None would show as 5 minutes",
+  );
+});
+
+test("the create dialog sends the parsed choice through the pure builder", () => {
+  const code = stripComments(CREATE_CHANNEL);
+  assert.ok(
+    /afkCreateChannelFields\(\{[^}]*\btimeout: afkTimeout,[^}]*\}\)/.test(code),
+    "CreateChannel.tsx no longer passes the parsed choice to afkCreateChannelFields",
+  );
+  // The Never field exists only in the builder; a hand-written one beside it
+  // could be sent with afk_timeout, which the backend refuses.
+  assert.equal(
+    code.includes("afk_timeout_never"),
+    false,
+    "CreateChannel.tsx writes afk_timeout_never itself instead of via the builder",
   );
 });

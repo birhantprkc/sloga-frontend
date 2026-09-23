@@ -132,6 +132,14 @@ import {
 import { Attenuation } from "./attenuation";
 import { CaptureClaim } from "./captureClaim";
 import { entranceSoundFor } from "./entranceSound";
+import {
+  type IdleWorld,
+  IDLE_REFRESH_MS,
+  IDLE_TICK_MS,
+  idleFailureDisposition,
+  idleForSeconds,
+  idleStep,
+} from "./idlePolicy";
 import { dismissIncomingCall, incomingCall } from "./incomingCall";
 import {
   type JoinBlockedReason,
@@ -196,6 +204,7 @@ import {
 import { VoiceAudioPipeline } from "./voiceAudioPipeline";
 import { voiceNodeForChannel } from "./voiceNode";
 import {
+  isRejoinPreempted,
   MAX_REJOIN_ATTEMPTS,
   rejoinDelayMs,
   shouldAutoRejoin,
@@ -425,6 +434,27 @@ export const DISABLE_WEB_AUDIO_MIX_KEY = "slogaDisableWebAudioMix";
  * the attach churn without feeling laggy to a user who joined truly blocked.
  */
 const AUDIO_BLOCKED_HOLD_MS = 1_500;
+
+/**
+ * Waits before each retry of a failed "active again" DELETE of the AFK idle
+ * claim (`#postAfkIdle`). A lost DELETE leaves a claim standing that says an
+ * active user is idle, and the sweep moves on that claim, so this call is the
+ * one worth retrying. Bounded, because the claim's 180 s server TTL ends it
+ * anyway: three retries inside ~15 s cover a 429 or a network blip without a
+ * loop that could outlive the call.
+ */
+const AFK_IDLE_CLEAR_RETRY_DELAYS_MS = [1_000, 4_000, 10_000];
+
+/**
+ * How long one AFK idle request (`#postAfkIdle`, PUT or DELETE) may run before
+ * it is aborted — the whole exchange, error-body read included. A request with
+ * no bound can hang for as long as the socket does — a phone waking from sleep
+ * is the usual case — and a hung PUT would hold `#idlePutInFlight` for good
+ * while a hung DELETE would stall its own bounded retries. An aborted PUT is an
+ * UNKNOWN outcome, handled as one (see there); an aborted DELETE is simply
+ * retried.
+ */
+const AFK_IDLE_REQUEST_TIMEOUT_MS = 10_000;
 
 /**
  * Refusal shown when the Android screen leg cannot start (screen-leg plan
@@ -751,6 +781,55 @@ class Voice {
    */
   #vadGen = 0;
   /**
+   * AFK idle watch (Wave 5b-2): the per-connection state behind the idle
+   * beacon (`PUT`/`DELETE /channels/{id}/afk_idle`). The rules are
+   * `idlePolicy.ts`'s; these fields are only what they read and what the
+   * outcome of each request writes back. Started by `#startIdleWatch` in the
+   * room's `connected` listener, reset by `#stopIdleWatch` in `disconnect()`.
+   *
+   * Every time here is `performance.now()`, never wall-clock: a clock step
+   * (NTP, sleep/resume) must not be able to make an active user look idle.
+   *
+   * 🔴 The beacon is a CLIENT-CLAIMED self-report and grants nothing. The
+   * server clamps it to the join and applies the server's own timeout; the
+   * most a lying client can do is get itself moved.
+   */
+  #idleTimer: ReturnType<typeof setInterval> | undefined;
+  /**
+   * Runs one idle tick right now, outside the interval. Set by
+   * `#startIdleWatch` for the connection it watches; `undefined` otherwise.
+   * See `#noteIdleActivity` for why a tick is ever run early.
+   */
+  #idleKick: (() => void) | undefined;
+  /** Removes this connection's `ActiveSpeakersChanged` listener. */
+  #idleUnlistenSpeakers: (() => void) | undefined;
+  /**
+   * The last moment this user was seen doing something. Written by the
+   * discrete activity events (the local speaking edge, a PTT down, a keybind,
+   * input in the visible window) and carried forward by `idleStep`.
+   */
+  #idleLastActivityAt = 0;
+  /** When the previous tick ran; a long gap is missing evidence, not idle. */
+  #idleLastTickAt: number | undefined;
+  /** An idle claim this connection made is standing on the server. */
+  #idlePosted = false;
+  /** When the standing claim was last sent (the refresh cadence). */
+  #idleLastPostAt: number | undefined;
+  /** A PUT is in flight; the tick sends no second one on top of it. */
+  #idlePutInFlight = false;
+  /** Consecutive failed PUTs, for `idleFailureDisposition`. */
+  #idleFailures = 0;
+  /** A failed PUT backed off: no PUT before this moment. */
+  #idleNextPutAt: number | undefined;
+  /**
+   * This connection has stopped posting (P2-6). Reset when the server's AFK
+   * channel or timeout changes, since those are what a refusal can depend on.
+   * Stops PUTs only: a standing claim is still withdrawn on activity.
+   */
+  #idleLatched = false;
+  /** The AFK configuration the latch and failure count were taken under. */
+  #idleConfigKey: string | undefined;
+  /**
    * Global attenuation ("duck other apps while someone speaks"). Follows the
    * room's active speakers between connect and teardown; a no-op off desktop.
    */
@@ -871,7 +950,7 @@ class Voice {
    * comment above that emit says the order is the fix. What the reordering
    * buys is the removal of a GUARANTEED loss, not of the race: that removal
    * is a LiveKit `RemoveParticipant`, which puts a `Leave` straight down our
-   * signalling socket in one hop, while the event still has to travel
+   * signaling socket in one hop, while the event still has to travel
    * LiveKit→delta, a Redis publish, bonfire and then our socket — at least
    * two hops more. Both legs leave delta at nearly the same instant by
    * different routes, so
@@ -917,6 +996,23 @@ class Voice {
    * let a move addressed to that newer seat read as addressed to the old drop.
    */
   #lastInvoluntaryConnNonce: string | undefined;
+  /**
+   * S-a: the connection an auto-rejoin REPLACED. When the loop's own attempt
+   * reconnects to the channel the marker names, the `connected` listener
+   * copies the marker's nonce and drop time here just before it retires the
+   * marker, so a move event that arrives late and names the dead connection
+   * (the ghost) can still be recognized as addressed to this seat. Without it
+   * that event reads as naming ANOTHER connection and ends this call as
+   * `moved-elsewhere`, although no other connection exists.
+   *
+   * 🔴 Widening only, and only from this session's own history: recorded
+   * once, from `#lastInvoluntaryConnNonce`, never from an event. The drop time
+   * is the ORIGINAL drop's (same clock as `#lastInvoluntaryLeftAt`), so the
+   * existing move windows are measured from when the user actually lost the
+   * call. Cleared as every join starts and in the `moved-elsewhere` arm.
+   */
+  #replacedConnNonce: string | undefined;
+  #replacedLeftAt: number | undefined;
   /**
    * The per-connection nonce this session's CURRENT connection was minted
    * with — `CONN_NONCE_ATTRIBUTE` among the LiveKit token attributes, which
@@ -2177,6 +2273,22 @@ class Voice {
       window.addEventListener("blur", () => {
         this.#pttHeld = false;
       });
+
+      // AFK idle watch (D-5b2-7): input in the VISIBLE window is activity.
+      // App-lifetime like the blur listener above, and just as cheap — each
+      // one only stamps a time, and the stamp is read solely by the idle tick,
+      // which runs only while a call is up. Capture phase so a handler that
+      // stops propagation cannot hide input; passive, so a touch or wheel is
+      // never held up by this. A hidden window receives no real input, so the
+      // visibility test is a guard against synthetic events, not a policy.
+      const noteInput = () => {
+        if (document.visibilityState === "visible") this.#noteIdleActivity();
+      };
+      for (const type of ["keydown", "pointerdown", "wheel", "touchstart"])
+        window.addEventListener(type, noteInput, {
+          capture: true,
+          passive: true,
+        });
     }
 
     /**
@@ -2259,7 +2371,8 @@ class Voice {
       });
     });
 
-    // A moderator moved this user to another voice channel. App-lifetime for
+    // The server moved this user to another voice channel (a moderator, or
+    // the AFK sweep — one event, one handler, one copy). App-lifetime for
     // the same reason as the two subscriptions above: the event can arrive
     // while this session is in NO call at all (it is a private topic — see
     // `#handleVoiceMove`), so a connect/disconnect-scoped subscription would
@@ -2755,6 +2868,11 @@ class Voice {
     // up, and stripping its nonce would blind the move gate for a call that
     // is still live.
     this.#connNonce = undefined;
+    // S-a: the replaced connection belongs to the join that recorded it, and
+    // this join is a different one, so the record goes with it. A rejoin
+    // re-records it in its own `connected` listener if it reconnects.
+    this.#replacedConnNonce = undefined;
+    this.#replacedLeftAt = undefined;
     this.disconnect();
     const pendingToken = ++this.#joinPendingSeq;
     this.#setJoinPending(channel.id);
@@ -2771,7 +2889,7 @@ class Voice {
   async #connectAttempt(
     channel: Channel,
     auth?: { url: string; token: string },
-    opts?: { movePreConnectBudgetMs?: number },
+    opts?: { movePreConnectBudgetMs?: number; rejoinAttempt?: boolean },
   ): Promise<boolean> {
     // Supersession token: a later connect() runs disconnect() first and bumps
     // this, so a stale invocation resuming after an await can detect it lost
@@ -3329,6 +3447,20 @@ class Voice {
       // that outlives its meaning is a loaded footgun for the next reader of
       // those two fields, and retiring it at the one moment it is provably
       // stale costs three assignments.
+      //
+      // S-a, BEFORE that retirement because it reads the marker: when this is
+      // the auto-rejoin loop's attempt reconnecting to the very channel the
+      // marker names, the dropped connection it replaces is remembered, so a
+      // move event that arrives late and names that dead connection is still
+      // recognized as this seat's (`replacedConnNonce` in the move world).
+      // Only for that rejoin: any other join replaced nothing of this seat's.
+      if (
+        opts?.rejoinAttempt &&
+        channel.id === this.#lastInvoluntaryChannelId
+      ) {
+        this.#replacedConnNonce = this.#lastInvoluntaryConnNonce;
+        this.#replacedLeftAt = this.#lastInvoluntaryLeftAt;
+      }
       this.#lastInvoluntaryChannelId = undefined;
       this.#lastInvoluntaryLeftAt = undefined;
       this.#lastInvoluntaryConnNonce = undefined;
@@ -3388,6 +3520,9 @@ class Voice {
       void this.#announceRcCapable(channel, gen);
       this.#startPushToTalk(room);
       this.#startVAD(room);
+      // AFK idle watch: one per connection, owned by THIS attempt's `gen`, so
+      // a tick that outlives its connection does nothing (see the tick).
+      this.#startIdleWatch(room, channel, gen);
       this.#attenuation.attach(room);
       // 🔴 Warm the Windows screen-audio capability answer NOW, minutes before
       // anyone clicks Share. `winScreenAudioSupported()` sits on the
@@ -4102,6 +4237,12 @@ class Voice {
             // `device_id` is nullable on the status record; the route takes
             // "absent", not "explicitly null".
             e2eeDeviceId ?? undefined,
+            // S-b: only the auto-rejoin loop's own attempt says so. The
+            // server then answers `AlreadyConnected` instead of
+            // force-disconnecting a live seat in another channel — the seat a
+            // move carried there while this session was deaf to the event.
+            // `#autoRejoin` ends quietly on that answer.
+            opts?.rejoinAttempt,
           );
         } catch (error) {
           // 🔴 Deliberately NOT recovered here. delta refuses a device-qualified
@@ -4649,6 +4790,13 @@ class Voice {
       // `#stopPushToTalk()` below clears it too, but that is under the guard.
       this.#pttHeld = false;
 
+      // ABOVE the room guard for the same reason: a watch must not outlive
+      // the call on the no-room path either. A standing idle claim is NOT
+      // withdrawn here — leaving the call removes the voice pointer the claim
+      // needs, and the next join deletes it outright; the tick's own
+      // `#connectGen` test is what keeps a late response from acting.
+      this.#stopIdleWatch();
+
       const room = this.room();
       if (!room) {
         // The rejoin loop keeps `channel`/state asserted with NO Room so the
@@ -4782,6 +4930,43 @@ class Voice {
         await this.connect(channel, undefined, { rejoinAttempt: true });
         return;
       } catch (error) {
+        // S-b: the server turned this rejoin away because the user's call is
+        // live in another channel — a move carried another seat there while
+        // this session was deaf to the event (its socket was down too). A
+        // retry would get the same answer, and a Rejoin card would be a
+        // force-join that kicks that seat, so the call ends here as a plain
+        // leave: no channel on the card, no Rejoin, a non-modal notice.
+        //
+        // 🔴 NOT a join refusal and never latched (`isRejoinPreempted` is
+        // not in `TERMINAL_JOIN_REFUSALS`): the user's own later return to
+        // this channel is an ordinary join the server lets through.
+        //
+        // The failed attempt's teardown has already cleared the call
+        // signals. The drop marker is retired here too (P2-19), as the
+        // `moved-elsewhere` arm does, so the move event arriving late cannot
+        // run that arm on top of this and tell the user twice.
+        if (isRejoinPreempted(error)) {
+          if (seq !== this.#rejoinSeq) return;
+          this.#lastInvoluntaryChannelId = undefined;
+          this.#lastInvoluntaryLeftAt = undefined;
+          this.#lastInvoluntaryConnNonce = undefined;
+          batch(() => {
+            this.#setChannel();
+            this.#setState("DISCONNECTED");
+          });
+          const notice = t`Your call continued in another window or on another device`;
+          if (this.#snackbar) {
+            this.#snackbar.show({
+              message: notice,
+              autoCloseDelay: 8000,
+              closeable: true,
+              messageLine: 2,
+            });
+          } else {
+            this.onErr(new Error(notice));
+          }
+          return;
+        }
         console.warn(`[rtc] rejoin attempt ${attempt + 1} failed`, error);
       } finally {
         this.#rejoinConnectInFlight = false;
@@ -4830,15 +5015,36 @@ class Voice {
   }
 
   /**
-   * A moderator moved this user to another voice channel
-   * (`UserMoveVoiceChannel`). The backend mints a token for the new room,
-   * publishes this event, and only THEN evicts the user's connections from
-   * the old room — so the eviction is imminent, or has already landed if the
-   * SFU's leave beat the event here. Either way a client that does nothing
-   * leaves the user in no call at all — which is exactly what shipped, because
-   * stoat.js discarded the event. The connection being moved is named by
-   * `connNonce` (the per-connection token attribute, see `#connNonce`) when
-   * the event carries one, and by `deviceId` otherwise.
+   * S-a: the per-connection nonce of the connection this session is DIALING
+   * right now, or `undefined` once it is `CONNECTED` (that nonce is then
+   * `#connNonce`, and the move world must not see it twice) or when there is
+   * none. The SDK fills the local participant's attributes from the
+   * JoinResponse, before `connected`, so a rejoin the SFU already lists can be
+   * named here while it is still `CONNECTING`.
+   *
+   * Read off this session's own Room through `CONN_NONCE_ATTRIBUTE`, never off
+   * an event — it is the seat's proof, not the server's claim.
+   */
+  #dialingConnNonce(): string | undefined {
+    if (this.state() === "CONNECTED") return undefined;
+    return (
+      this.room()?.localParticipant.attributes?.[CONN_NONCE_ATTRIBUTE] ||
+      undefined
+    );
+  }
+
+  /**
+   * The server moved this user to another voice channel
+   * (`UserMoveVoiceChannel`) — a moderator's move or the AFK sweep's, which
+   * arrive as the same event with no reason on it. The backend mints a token
+   * for the new room, publishes this event, and only THEN evicts the user's
+   * connections from the old room — so the eviction is imminent, or has
+   * already landed if the SFU's leave beat the event here. Either way a
+   * client that does nothing leaves the user in no call at all — which is
+   * exactly what shipped, because stoat.js discarded the event. The
+   * connection being moved is named by `connNonce` (the per-connection token
+   * attribute, see `#connNonce`) when the event carries one, and by
+   * `deviceId` otherwise.
    *
    * 🔴 This is a PRIVATE topic, which reaches EVERY session of the moved user
    * — an idle phone, a spare browser tab, a second desktop. Which session (if
@@ -4883,6 +5089,14 @@ class Voice {
       connNonce: move.connNonce,
       sessionConnNonce: this.#connNonce,
       lastInvoluntaryConnNonce: this.#lastInvoluntaryConnNonce,
+      // S-a: two more nonces this seat can prove are its own, both read out
+      // of THIS session and never off the event. The nonce of the connection
+      // it is dialing right now (a rejoin the SFU may already list), and the
+      // dead connection a finished rejoin replaced, aged from the original
+      // drop. Each can only turn a `moved-elsewhere` into an addressed move.
+      pendingConnNonce: this.#dialingConnNonce(),
+      replacedConnNonce: this.#replacedConnNonce,
+      replacedLeftAt: this.#replacedLeftAt,
       destinationKnown: destination !== undefined,
     });
 
@@ -4966,6 +5180,10 @@ class Voice {
         this.#lastInvoluntaryChannelId = undefined;
         this.#lastInvoluntaryLeftAt = undefined;
         this.#lastInvoluntaryConnNonce = undefined;
+        // The S-a record goes with the marker: the move it could have
+        // matched has been answered.
+        this.#replacedConnNonce = undefined;
+        this.#replacedLeftAt = undefined;
         const channelName = destination?.name;
         const notice = channelName
           ? t`Your call was moved to #${channelName} in another window or on another device`
@@ -4991,7 +5209,7 @@ class Voice {
       if (decision.reason === "unknown-channel" || !destination) {
         this.onErr(
           new Error(
-            t`A moderator moved you to another voice channel, but this app doesn't know that channel yet. You've left your old call — reload Sloga, then open the channel you were moved to.`,
+            t`You were moved to another voice channel, but this app doesn't know that channel yet. You've left your old call — reload Sloga, then open the channel you were moved to.`,
           ),
         );
         return;
@@ -5005,6 +5223,11 @@ class Voice {
         this.#setChannel(destination);
         this.#setState("DISCONNECTED");
       });
+      // D-5b2-2: every notice below names the destination and nobody else.
+      // The same event carries a moderator's move and the AFK sweep's, and no
+      // reason travels with it, so "a moderator moved you" would be false for
+      // every sweep move.
+      const destinationName = destination.name;
       // 🔴 A `switch` with a `never` default, rather than the chain of `if`s
       // that stood here, and the shape is the repair rather than a tidy-up.
       // The chain ended in an UNGUARDED `no-url` arm, so the moment
@@ -5019,7 +5242,7 @@ class Voice {
           // The destination resolved; the node row carried no endpoint.
           this.onErr(
             new Error(
-              t`A moderator moved you to another voice channel, but the server didn't say which voice server to use. You've left your old call — the new channel is on your call card, so press Rejoin to connect to it.`,
+              t`You were moved to #${destinationName}, but the server didn't say which voice server to use. You've left your old call — the new channel is on your call card, so press Rejoin to connect to it.`,
             ),
           );
           return;
@@ -5035,7 +5258,7 @@ class Voice {
           // than describing a fault.
           this.onErr(
             new Error(
-              t`A moderator moved you to another voice channel. This device can't follow a move on its own, so you've left your old call — the new channel is on your call card, press Rejoin to connect to it.`,
+              t`You were moved to #${destinationName}. This device can't follow a move on its own, so you've left your old call — the new channel is on your call card, press Rejoin to connect to it.`,
             ),
           );
           return;
@@ -5050,7 +5273,7 @@ class Voice {
           // that window the device distinction changes nothing either does.
           this.onErr(
             new Error(
-              t`A moderator moved you to another voice channel, but the notice reached this device too late to follow on its own. You've left your old call — the new channel is on your call card, so press Rejoin to connect to it.`,
+              t`You were moved to #${destinationName}, but the notice reached this device too late to follow on its own. You've left your old call — the new channel is on your call card, so press Rejoin to connect to it.`,
             ),
           );
           return;
@@ -5131,11 +5354,13 @@ class Voice {
             this.#setState("DISCONNECTED");
           });
         }
+        // Neutral copy (D-5b2-2), as in the arms above.
+        const destinationName = destination.name;
         this.onErr(
           new Error(
             carded
-              ? t`A moderator moved you to another voice channel, but connecting to it failed. You've left your old call — the new channel is on your call card, so press Rejoin to connect to it.`
-              : t`A moderator moved you to another voice channel, but connecting to it failed. You've left your old call — open the channel you were moved to and join it again.`,
+              ? t`You were moved to #${destinationName}, but connecting to it failed. You've left your old call — the new channel is on your call card, so press Rejoin to connect to it.`
+              : t`You were moved to #${destinationName}, but connecting to it failed. You've left your old call — open the channel you were moved to and join it again.`,
           ),
         );
       });
@@ -6902,6 +7127,302 @@ class Voice {
           ? `Couldn't tell the call about the recording (${reason ?? response.status}).`
           : `Couldn't clear the recording indicator (${reason ?? response.status}).`,
       );
+    }
+  }
+
+  // --- AFK idle watch (Wave 5b-2) ------------------------------------
+
+  /**
+   * One discrete sign of life (D-5b2-7): the local speaking edge, a PTT down,
+   * a keybind, input in the visible window. Stamps the monotonic clock.
+   *
+   * 🔴 With a claim standing, the tick runs AT ONCE rather than at the next
+   * interval. The claim is only ever sent at the timeout, so a standing one
+   * is already due: every second it outlives the user's return is a second in
+   * which the sweep can move someone who is at the keyboard. Untracked,
+   * because this can be reached from a keybind dispatched inside a
+   * computation, and the tick reads signals.
+   */
+  #noteIdleActivity(): void {
+    this.#idleLastActivityAt = performance.now();
+    if (this.#idlePosted) untrack(() => this.#idleKick?.());
+  }
+
+  /**
+   * Start watching THIS connection for idleness (D-5b2-7). Called once per
+   * connection from the room's `connected` listener, with that attempt's
+   * `gen`. The join itself counts as activity, so the idle clock starts at
+   * the connect, never earlier.
+   *
+   * The speaking EDGE is recorded here; continuous speech is read per tick off
+   * `isSpeaking` (I-7). Only the SFU writes the local `isSpeaking`, and it is
+   * false while muted or with the PTT key up, which is the definition: a
+   * self-muted user goes idle on the same timer as anyone else.
+   */
+  #startIdleWatch(room: Room, channel: Channel, gen: number): void {
+    this.#stopIdleWatch();
+    this.#idleLastActivityAt = performance.now();
+    const onSpeakers = (speakers: { identity: string }[]) => {
+      if (speakers.some((p) => p.identity === room.localParticipant.identity))
+        this.#noteIdleActivity();
+    };
+    room.on(RoomEvent.ActiveSpeakersChanged, onSpeakers);
+    this.#idleUnlistenSpeakers = () => {
+      room.off(RoomEvent.ActiveSpeakersChanged, onSpeakers);
+    };
+    const tick = () => this.#idleTick(room, channel, gen);
+    this.#idleKick = tick;
+    this.#idleTimer = setInterval(tick, IDLE_TICK_MS);
+  }
+
+  /**
+   * Stop the idle watch and forget everything it held, latch included — the
+   * latch is per connection, and the next connection starts clean.
+   */
+  #stopIdleWatch(): void {
+    if (this.#idleTimer !== undefined) clearInterval(this.#idleTimer);
+    this.#idleTimer = undefined;
+    this.#idleUnlistenSpeakers?.();
+    this.#idleUnlistenSpeakers = undefined;
+    this.#idleKick = undefined;
+    this.#idleLastTickAt = undefined;
+    this.#idlePosted = false;
+    this.#idleLastPostAt = undefined;
+    this.#idlePutInFlight = false;
+    this.#idleFailures = 0;
+    this.#idleNextPutAt = undefined;
+    this.#idleLatched = false;
+    this.#idleConfigKey = undefined;
+  }
+
+  /**
+   * One idle tick: gather the world, let `idleStep` decide, act on it.
+   *
+   * 🔴 Every guard below exists because stopping the watch where the call
+   * ends is not enough (I-6). An SFU drop goes `RECONNECTING` and into
+   * `#autoRejoin` without `disconnect()`, and an SDK reconnect never changes
+   * `state()` at all. So the tick proves, each time, that it still belongs to
+   * the call (`gen`) and that the call is up in all three places — the state
+   * machine, the Room this watch was started for, and the Room's own
+   * transport. Anything less is "not connected": the idle clock restarts and
+   * a standing claim is withdrawn.
+   *
+   * The timeout is read fresh every tick and passed through as SECONDS:
+   * `idlePolicy.ts` is the only place it becomes milliseconds.
+   */
+  #idleTick(room: Room, channel: Channel, gen: number): void {
+    if (gen !== this.#connectGen) return;
+    const now = performance.now();
+    const world: IdleWorld = {
+      now,
+      lastTickAt: this.#idleLastTickAt,
+      lastActivityAt: this.#idleLastActivityAt,
+      continuousActive:
+        room.localParticipant.isSpeaking ||
+        this.#pttHeld ||
+        this.screenshare() ||
+        this.video() ||
+        this.watch.session() !== undefined,
+      connected:
+        this.state() === "CONNECTED" &&
+        this.room() === room &&
+        room.state === ConnectionState.Connected,
+      isAfkChannel: this.isAfkChannel,
+      afkChannelId: this.channel()?.server?.afkChannelId,
+      afkTimeoutSeconds: this.channel()?.server?.afkTimeout,
+      posted: this.#idlePosted,
+      lastPostAt: this.#idleLastPostAt,
+    };
+
+    // The latch and the failure count answer for ONE configuration: a refusal
+    // can depend on which channel is the AFK channel and on whether a timeout
+    // is set, so a change to either earns a fresh start (P2-6).
+    const configKey = `${world.afkChannelId ?? ""}|${world.afkTimeoutSeconds ?? ""}`;
+    if (configKey !== this.#idleConfigKey) {
+      this.#idleConfigKey = configKey;
+      this.#idleLatched = false;
+      this.#idleFailures = 0;
+      this.#idleNextPutAt = undefined;
+    }
+
+    const step = idleStep(world);
+    this.#idleLastTickAt = now;
+    this.#idleLastActivityAt = step.lastActivityAt;
+
+    if (step.action === "post-idle" || step.action === "refresh-idle") {
+      // Only the CONNECTED session posts (I-13). `idleStep` already refuses to
+      // claim when not connected; restated because a claim from a session
+      // that is not in the call is the one outcome this must never produce.
+      if (!world.connected) return;
+      if (this.#idleLatched || this.#idlePutInFlight) return;
+      if (this.#idleNextPutAt !== undefined && now < this.#idleNextPutAt)
+        return;
+      void this.#postAfkIdle(channel, true, gen);
+    } else if (step.action === "clear-idle") {
+      // Dropped locally BEFORE the request, so the next tick does not send a
+      // second DELETE on top of this one's retries; a lost DELETE is covered
+      // by those retries and, past them, by the claim's server TTL.
+      this.#idlePosted = false;
+      this.#idleLastPostAt = undefined;
+      void this.#postAfkIdle(channel, false, gen);
+    }
+  }
+
+  /**
+   * The idle beacon: `PUT /channels/{id}/afk_idle` with `{ idle_for }` in
+   * whole SECONDS (a claim, or a refresh of one — the server tells them
+   * apart), or `DELETE` to withdraw it. Raw fetch, for `#claimRecording`'s
+   * reason: the generated client sends `{}` for routes it does not know, and a
+   * PUT that silently lost its body would claim nothing.
+   *
+   * CLIENT-CLAIMED, and grants nothing: the server stamps the time itself,
+   * clamps it to the join, and applies its own timeout.
+   *
+   * Every await is followed by the `gen` test — a response for a call that
+   * has since ended or been replaced must not touch the next call's state.
+   *
+   * A failed PUT goes through `idleFailureDisposition` (P2-6): `IsBot` and
+   * `NotAVoiceChannel` stop this connection posting; anything else, a 429 or
+   * a network failure included, waits for the next refresh, and a run of
+   * `IDLE_MAX_CONSECUTIVE_FAILURES` stops it too. The latch only ever stops
+   * PUTs. A failed DELETE is the unsafe one (a standing claim over an active
+   * user), so it is retried, boundedly, until a newer claim supersedes it.
+   *
+   * 🔴 "Failed" means the server ANSWERED with a 4xx. A PUT that threw, timed
+   * out, or got a 5xx has an unknown outcome — delta may well have applied it
+   * before the response was lost or mangled — and is treated as having LANDED
+   * (A1, R-2): posted, so the user's return sends the DELETE. See the arm
+   * below for why.
+   */
+  async #postAfkIdle(
+    channel: Channel,
+    idle: boolean,
+    gen: number,
+  ): Promise<void> {
+    const attempts = idle ? 1 : AFK_IDLE_CLEAR_RETRY_DELAYS_MS.length + 1;
+    if (idle) this.#idlePutInFlight = true;
+    try {
+      for (let attempt = 0; attempt < attempts; attempt++) {
+        if (attempt > 0) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, AFK_IDLE_CLEAR_RETRY_DELAYS_MS[attempt - 1]),
+          );
+          // A claim posted since then is newer than this withdrawal.
+          if (gen !== this.#connectGen || this.#idlePosted) return;
+        }
+        const client = this.getClient();
+        if (!client) return;
+        const [header, value] = client.authenticationHeader;
+        const activityAtSend = this.#idleLastActivityAt;
+        const abort = new AbortController();
+        const timeout = setTimeout(
+          () => abort.abort(),
+          AFK_IDLE_REQUEST_TIMEOUT_MS,
+        );
+        // 🔴 The timer stays armed until the request is FULLY settled — the
+        // error body's read included (R-3) — and is cleared only in the
+        // `finally` below. The abort bounds that read too: the fetch's
+        // `signal` governs the response BODY as well as the request, so an
+        // abort after the headers arrived makes `.json()` reject, and a body
+        // that stalls can hold `#idlePutInFlight` no longer than the timeout.
+        try {
+          // `undefined` after this block means the request threw or was
+          // aborted: no answer from the server, so no knowledge of what it did.
+          let response: Response | undefined;
+          try {
+            response = await fetch(
+              `${client.options.baseURL}/channels/${channel.id}/afk_idle`,
+              {
+                method: idle ? "PUT" : "DELETE",
+                headers: idle
+                  ? { [header]: value, "Content-Type": "application/json" }
+                  : { [header]: value },
+                body: idle
+                  ? JSON.stringify({
+                      idle_for: idleForSeconds(
+                        performance.now(),
+                        activityAtSend,
+                      ),
+                    })
+                  : undefined,
+                signal: abort.signal,
+              },
+            );
+          } catch {
+            response = undefined;
+          }
+          if (gen !== this.#connectGen) return;
+
+          if (response?.ok) {
+            if (idle) {
+              this.#idlePosted = true;
+              this.#idleLastPostAt = performance.now();
+              this.#idleFailures = 0;
+              this.#idleNextPutAt = undefined;
+              // The user came back while the claim was in flight: withdraw it
+              // now, not a tick from now (see `#noteIdleActivity`).
+              if (this.#idleLastActivityAt !== activityAtSend)
+                untrack(() => this.#idleKick?.());
+            }
+            return;
+          }
+
+          if (idle) {
+            // 🔴 A1 — an UNKNOWN outcome counts as a claim that LANDED. The
+            // unknown set is: the request threw, it was aborted, or the answer
+            // was a 5xx (R-2) — a proxy's 502/504, or a delta 500 raised after
+            // the SET had already landed, says nothing about the claim. The
+            // two wrong guesses are not symmetric. Assuming it landed when it
+            // did not costs one DELETE on the user's return, which the server
+            // answers 204 whether or not a claim exists. Assuming it did not
+            // land when it did leaves a due claim standing with nothing to
+            // ever withdraw it: the user comes back, `idleStep` sees nothing
+            // posted, and the sweep moves an ACTIVE user within one of its
+            // ticks. A lost response is likeliest exactly when a phone wakes
+            // from sleep, which is also when its user has just come back. A
+            // refresh whose outcome is unknown is the same case. Recorded
+            // synchronously, before any await, so no tick can run between the
+            // loss and the record.
+            const outcomeUnknown =
+              response === undefined || response.status >= 500;
+            if (outcomeUnknown) {
+              this.#idlePosted = true;
+              this.#idleLastPostAt = performance.now();
+            }
+            // A 4xx is the server's definite answer: the claim did not land,
+            // and its type decides latch or back-off. An unknown outcome still
+            // counts toward the latch — it is the "network failure" case of
+            // P2-6 — and its type, when it has one, is read the same way. An
+            // aborted or failed body read reads as no type at all.
+            const errorType = await response
+              ?.clone()
+              .json()
+              .then((body: { type?: string }) => body?.type)
+              .catch(() => undefined);
+            if (gen !== this.#connectGen) return;
+            this.#idleFailures++;
+            if (
+              idleFailureDisposition(errorType, this.#idleFailures) === "latch"
+            ) {
+              this.#idleLatched = true;
+            } else {
+              this.#idleNextPutAt = performance.now() + IDLE_REFRESH_MS;
+            }
+            // As on success: activity during the unanswered request means the
+            // claim, if it landed, is already stale — withdraw it now.
+            if (outcomeUnknown && this.#idleLastActivityAt !== activityAtSend)
+              untrack(() => this.#idleKick?.());
+            return;
+          }
+        } finally {
+          clearTimeout(timeout);
+        }
+      }
+      console.warn(
+        "[rtc] could not withdraw the AFK idle claim; it lapses with its server TTL",
+      );
+    } finally {
+      if (idle && gen === this.#connectGen) this.#idlePutInFlight = false;
     }
   }
 
@@ -10096,6 +10617,9 @@ class Voice {
           // disarm emits no `ptt:up`, so a flag set on that path would never
           // be cleared by an event.
           this.#pttHeld = true;
+          // AFK idle watch: a talk-key press is activity even with the window
+          // unfocused, which is the whole reason the global hook exists.
+          this.#noteIdleActivity();
           // Suppressed during a whisper, same as the focused handler.
           if (this.whisper.target()) return;
           if (room.localParticipant.isMicrophoneEnabled) return;
@@ -10213,6 +10737,10 @@ class Voice {
    * modal is exactly what makes an unfocused keypress hostile.
    */
   async dispatchKeybind(action: GlobalKeybindAction): Promise<void> {
+    // AFK idle watch: a keybind press is activity whatever the guards below
+    // make of it — even a press they drop proves someone is at the keys,
+    // including one made while this window is unfocused.
+    this.#noteIdleActivity();
     const now = performance.now();
     // Untracked for the reason the precondition read always was: `room()`,
     // `incomingCall()` and `fullscreen()` are signals, and this can be

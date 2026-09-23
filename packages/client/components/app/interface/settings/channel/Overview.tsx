@@ -15,8 +15,9 @@ import type { API } from "stoat.js";
 
 import {
   afkDesignationEdit,
+  afkTimeoutChoice,
   afkTimeoutEdit,
-  effectiveAfkTimeout,
+  parseAfkTimeoutChoice,
 } from "../../../../../src/lib/afkChannelSettings";
 import {
   buildDescriptionWithHash,
@@ -84,9 +85,11 @@ export default function ChannelOverview(props: ChannelSettingsProps) {
   // from a constant: designating a channel without naming a timeout makes the
   // backend keep the existing one, which may have been chosen for a different
   // channel. The toggle sends this value back explicitly, so the timeout that
-  // gets adopted is the timeout the user could see.
+  // gets adopted is the timeout the user could see. A server with no timeout
+  // seeds "never", not five minutes: nobody is moved on such a server, and
+  // the select must not say otherwise.
   const afkTimeoutControl = createFormControl<string>(
-    String(effectiveAfkTimeout(props.channel.server?.afkTimeout)),
+    String(afkTimeoutChoice(props.channel.server?.afkTimeout)),
   );
   /* eslint-enable solid/reactivity */
 
@@ -114,6 +117,15 @@ export default function ChannelOverview(props: ChannelSettingsProps) {
     const server = props.channel.server;
     if (!server) return;
 
+    // 🔴 Parsed, never `Number(...)`: "never" is NaN as a number and would be
+    // saved as the five-minute fallback. The select cannot hold anything the
+    // parser refuses, so `undefined` is refused here rather than guessed.
+    const timeout = parseAfkTimeoutChoice(afkTimeoutControl.value);
+    if (timeout === undefined) {
+      setAfkFailed(true);
+      return;
+    }
+
     setAfkSaving(true);
     setAfkFailed(false);
     try {
@@ -121,7 +133,7 @@ export default function ChannelOverview(props: ChannelSettingsProps) {
         afkDesignationEdit({
           designate: !isDesignatedAfk(),
           channelId: props.channel.id,
-          timeoutSeconds: Number(afkTimeoutControl.value),
+          timeout,
         }) as never,
       );
       afkTimeoutControl.markDirty(false);
@@ -139,14 +151,19 @@ export default function ChannelOverview(props: ChannelSettingsProps) {
    * The mapper returns `undefined` for every request the backend would refuse
    * — no channel designated, a different channel designated, or a value
    * outside the presets — and the button is only offered when it will not.
+   * "Never" saves as a removal of the timeout; the designation stays.
    */
   async function saveAfkTimeout() {
     const server = props.channel.server;
-    const payload = afkTimeoutEdit({
-      afkChannelId: server?.afkChannelId,
-      channelId: props.channel.id,
-      timeoutSeconds: Number(afkTimeoutControl.value),
-    });
+    const timeout = parseAfkTimeoutChoice(afkTimeoutControl.value);
+    const payload =
+      timeout === undefined
+        ? undefined
+        : afkTimeoutEdit({
+            afkChannelId: server?.afkChannelId,
+            channelId: props.channel.id,
+            timeout,
+          });
     if (!server || !payload) return;
 
     setAfkSaving(true);
@@ -679,17 +696,22 @@ export default function ChannelOverview(props: ChannelSettingsProps) {
             </Trans>
           </Text>
 
-          {/* AFK_TIMEOUT_PRESETS contract: these five options are pinned to
-              AFK_TIMEOUT_PRESETS by src/lib/afkChannelSettings.test.ts, which
-              fails if they drift. Written out rather than generated from the
-              list because each needs its own lingui message, and because the
-              slowmode select above — the select this copies — is written the
-              same way. The backend rejects anything outside the five; it does
-              not clamp. */}
+          {/* AFK_TIMEOUT_PRESETS contract: the five numeric options are pinned
+              to AFK_TIMEOUT_PRESETS by src/lib/afkChannelSettings.test.ts,
+              which fails if they drift, and the one "never" option is pinned
+              to AFK_TIMEOUT_NEVER by the same file. Written out rather than
+              generated from the list because each needs its own lingui
+              message, and because the slowmode select above — the select this
+              copies — is written the same way. The backend rejects any number
+              outside the five; it does not clamp. "Never" is the server
+              holding no timeout at all, and is saved as a removal. */}
           <Form2.Select
             label={t`Move idle members here after`}
             control={afkTimeoutControl}
           >
+            <MenuItem value="never">
+              <Trans>Never</Trans>
+            </MenuItem>
             <MenuItem value="60">
               <Trans>1 minute</Trans>
             </MenuItem>
@@ -706,6 +728,12 @@ export default function ChannelOverview(props: ChannelSettingsProps) {
               <Trans>1 hour</Trans>
             </MenuItem>
           </Form2.Select>
+
+          <Text>
+            <Trans>
+              Members who can't connect to this channel won't be moved.
+            </Trans>
+          </Text>
 
           <Show when={!isDesignatedAfk()}>
             <Text>

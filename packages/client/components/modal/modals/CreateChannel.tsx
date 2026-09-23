@@ -17,7 +17,8 @@ import {
 
 import {
   afkCreateChannelFields,
-  effectiveAfkTimeout,
+  afkTimeoutChoice,
+  parseAfkTimeoutChoice,
 } from "../../../src/lib/afkChannelSettings";
 
 import { useModals } from "..";
@@ -43,9 +44,10 @@ export function CreateChannelModal(
     // the timeout the server already had — which may have been chosen for a
     // different channel by somebody else. Seeding the select from it, and
     // sending the seeded value back, is what stops that adoption being
-    // invisible.
+    // invisible. A server with no timeout seeds "never" — the same helper
+    // channel settings use — never a five-minute default nobody chose.
     afkTimeout: createFormControl(
-      String(effectiveAfkTimeout(props.server.afkTimeout)),
+      String(afkTimeoutChoice(props.server.afkTimeout)),
     ),
     category: createFormControl(props.categoryId ?? "default"),
   });
@@ -72,6 +74,15 @@ export function CreateChannelModal(
 
   async function onSubmit() {
     try {
+      // 🔴 Parsed, never `Number(...)`: "never" is NaN as a number and would
+      // be sent as the five-minute fallback. The select cannot hold anything
+      // the parser refuses, so `undefined` is refused here rather than
+      // guessed.
+      const afkTimeout = parseAfkTimeoutChoice(group.controls.afkTimeout.value);
+      if (afkTimeout === undefined) {
+        throw new Error("Unrecognized AFK timeout selection");
+      }
+
       const channel = await props.server.createChannel({
         // "Forum" is an additive server channel type the typed client
         // predates; the route passes it through verbatim.
@@ -87,11 +98,13 @@ export function CreateChannelModal(
         // voice channel. The mapper drops them on every other type, because
         // the route rejects `afk: true` outright rather than ignoring it —
         // ticking the box and then switching the radio back to Text would
-        // otherwise be a 400.
+        // otherwise be a 400. "Never" travels as `afk_timeout_never: true`,
+        // which the typed client also predates; the `as never` below covers
+        // it like the rest.
         ...afkCreateChannelFields({
           channelType: group.controls.type.value,
           afk: group.controls.afk.value,
-          timeoutSeconds: Number(group.controls.afkTimeout.value),
+          timeout: afkTimeout,
         }),
       } as never);
 
@@ -193,18 +206,24 @@ export function CreateChannelModal(
                 </Trans>
               </Text>
 
-              {/* AFK_TIMEOUT_PRESETS contract: these five options are pinned
-                  to AFK_TIMEOUT_PRESETS by src/lib/afkChannelSettings.test.ts,
-                  which fails if they drift. Written out rather than generated
-                  from the list because each needs its own lingui message, and
-                  because the slowmode select in channel settings — the select
-                  this copies — is written the same way. The value shown is the
-                  timeout this server already has, so a timeout inherited from
-                  an earlier AFK channel is visible before it is adopted. */}
+              {/* AFK_TIMEOUT_PRESETS contract: the five numeric options are
+                  pinned to AFK_TIMEOUT_PRESETS by
+                  src/lib/afkChannelSettings.test.ts, which fails if they
+                  drift, and the one "never" option is pinned to
+                  AFK_TIMEOUT_NEVER by the same file. Written out rather than
+                  generated from the list because each needs its own lingui
+                  message, and because the slowmode select in channel settings
+                  — the select this copies — is written the same way. The
+                  value shown is the timeout this server already has ("never"
+                  when it has none), so a timeout inherited from an earlier AFK
+                  channel is visible before it is adopted. */}
               <Form2.Select
                 label={t`Move idle members here after`}
                 control={group.controls.afkTimeout}
               >
+                <MenuItem value="never">
+                  <Trans>Never</Trans>
+                </MenuItem>
                 <MenuItem value="60">
                   <Trans>1 minute</Trans>
                 </MenuItem>
