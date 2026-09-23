@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Android < 12 auto-backup rules.
 
-     Two directories must NEVER ride device backups:
+     Three locations must NEVER ride device backups:
 
      1. `files/e2ee` — the native E2EE store. Its master key only unwraps via
         this install's Android Keystore entry (which does not survive
@@ -14,8 +14,16 @@
         localforage. A draft typed in an encrypted DM is plaintext; without
         this exclusion it would leave the device to Google's cloud (or a
         device-to-device transfer) entirely outside the native crypto layer
-        (slice-4 gate MEDIUM #1). -->
+        (slice-4 gate MEDIUM #1).
+
+     3. `shared_prefs/sloga_push.xml` — PushTokenPlugin.saveSubscription
+        keeps the API base URL and a live SESSION TOKEN here so
+        SlogaMessagingService can re-subscribe when FCM rotates the token.
+        A restored copy would hand another device a working login. Nothing
+        is lost by excluding it: the web layer re-saves it on every
+        signed-in launch (resyncPushSubscription). -->
 <full-backup-content>
     <exclude domain="file" path="e2ee" />
     <exclude domain="root" path="app_webview" />
+    <exclude domain="sharedpref" path="sloga_push.xml" />
 </full-backup-content>
