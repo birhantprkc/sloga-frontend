@@ -865,14 +865,16 @@ class Voice {
    * Why they have to exist even though the backend now publishes the move
    * FIRST. `move_user_to_voice_channel`
    * (`crates/core/database/src/voice/mod.rs`) emits
-   * `EventV1::UserMoveVoiceChannel` and only THEN calls
-   * `voice_client.remove_user` — verified in-tree, and the comment above that
-   * emit says the order is the fix. What the reordering buys is the removal
-   * of a GUARANTEED loss, not of the race: `remove_user` is a LiveKit
-   * `RemoveParticipant`, which puts a `Leave` straight down our signalling
-   * socket in one hop, while the event still has to travel LiveKit→delta, a
-   * Redis publish, bonfire and then our socket — at least two hops more. Both
-   * legs leave delta at nearly the same instant by different routes, so
+   * `EventV1::UserMoveVoiceChannel` and only THEN evicts every connection the
+   * SFU lists for the user in `from` via
+   * `voice_client.remove_identity_if_present` — verified in-tree, and the
+   * comment above that emit says the order is the fix. What the reordering
+   * buys is the removal of a GUARANTEED loss, not of the race: that removal
+   * is a LiveKit `RemoveParticipant`, which puts a `Leave` straight down our
+   * signalling socket in one hop, while the event still has to travel
+   * LiveKit→delta, a Redis publish, bonfire and then our socket — at least
+   * two hops more. Both legs leave delta at nearly the same instant by
+   * different routes, so
    * either can win on jitter or a busy fan-out: the `disconnected` listener
    * can STILL run first, and whenever it does this session is no longer
    * `CONNECTED` to `from` and has nothing but
@@ -962,23 +964,26 @@ class Voice {
    * where it matters: `#connectAttempt` deliberately withholds the qualified
    * identity on an `owned_elsewhere` verdict or a failed provider/worker, and
    * the bridge can provision a different device id mid-session — while the
-   * token is minted against whatever identity the SFU still holds in the OLD
-   * room (`get_voice_participant_identity`). A live bridge read would both
+   * token is minted for the connection the server picks from the OLD room's
+   * SFU participant list (`select_move_connection`; the `voice_identity`
+   * mapping is only a preference). A live bridge read would both
    * miss real moves and hand a matching answer to a session whose identity
    * never carried that id.
    *
    * 🔴 On the MOVE path there is no "id we are about to present" to record at
    * join time: the identity is fixed by the PRE-MINTED token, which the
-   * server built from the OLD room's ingress mapping, and the bridge's
-   * current answer is not it. That path therefore leaves this field standing
-   * until `room.connect()` has returned and then re-states it from
+   * server built for the connection it picks from the OLD room's SFU
+   * participant list (`select_move_connection`; the `voice_identity` mapping
+   * is only a preference), and the bridge's current answer is not it. That
+   * path therefore leaves this field standing until `room.connect()` has
+   * returned and then re-states it from
    * `room.localParticipant.identity` — the identity the SFU actually issued.
    * Writing the bridge's answer there instead reproduced the very bug the
    * device test exists to stop: a bridge that re-provisions mid-session
    * leaves the session sitting in B as `{user}:D1` while this field claims
-   * `D2`, and the NEXT move — minted from B's mapping, so `D1` again — fails
-   * the device test, is ignored in silence, and leaves the member in no call
-   * at all once `remove_user` has evicted them.
+   * `D2`, and the NEXT move — minted for the identity the SFU lists in B, so
+   * `D1` again — fails the device test, is ignored in silence, and leaves the
+   * member in no call at all once the server's eviction has removed them.
    *
    * 🔴 NOT cleared by `disconnect()`, and that is deliberate rather than an
    * omission: clause (b) is consulted precisely AFTER this session has been
@@ -3069,10 +3074,12 @@ class Voice {
     // generation check regardless.
     //
     // 🔴 And NOT on the move path, where `preMintedAuth` says the identity is
-    // not ours to choose: the token was built by the server from the OLD
-    // room's ingress mapping, while `e2eeDeviceId` above is only what the
-    // bridge thinks TODAY. The two part company the moment the bridge
-    // re-provisions mid-session, and writing the bridge's answer here is what
+    // not ours to choose: the token was built by the server for the
+    // connection it picks from the OLD room's SFU participant list
+    // (`select_move_connection`; the `voice_identity` mapping is only a
+    // preference), while `e2eeDeviceId` above is only what the bridge thinks
+    // TODAY. The two part company the moment the bridge re-provisions
+    // mid-session, and writing the bridge's answer here is what
     // re-opened the hole the device test closes (see `#sessionDeviceId`). That
     // path re-states the field below, after `room.connect()`, from the
     // identity the SFU actually issued; until then the id we last presented
@@ -4909,10 +4916,11 @@ class Voice {
     // `#connectAttempt`) closes over the OLD `channel` and runs
     // `#autoRejoin(channel)` whenever `shouldAutoRejoin` says yes — and that
     // rule is a DENY-list that FAILS OPEN: an absent reason recovers, and the
-    // SDK omits the reason on some transport closes. A `remove_user` that
-    // arrives as `PARTICIPANT_REMOVED` is denied by the list; the one that
-    // arrives bare is not, and a rejoin of the OLD channel racing our move
-    // would silently undo a moderator's decision.
+    // SDK omits the reason on some transport closes. A server eviction (a
+    // LiveKit `RemoveParticipant`, from the move's `remove_identity_if_present`
+    // or from `remove_user`) that arrives as `PARTICIPANT_REMOVED` is denied by
+    // the list; the one that arrives bare is not, and a rejoin of the OLD
+    // channel racing our move would silently undo a moderator's decision.
     //
     // `disconnect()` alone does not close it. It only bumps `#rejoinSeq` when
     // `#rejoinConnectInFlight` is false, so a rejoin whose own `connect()` is
@@ -5017,10 +5025,12 @@ class Voice {
           return;
         case "unverified-session":
           // 🔴 Nothing this user did, and nothing they can fix. This seat
-          // joined on a bare identity — web, the Electron shell, a member who
-          // has never enrolled a device — so the event cannot name it and no
-          // client-side proof exists that it is the session the token was
-          // minted for. The move itself is real and the server has already
+          // cannot be shown to be the one addressed: no nonce on one side or
+          // the other (the gate is off), and the token was minted for a bare
+          // identity — web, the Electron shell, a member who has never
+          // enrolled a device — so the event names no device id to match, and
+          // no client-side proof exists that this is the session the token
+          // was minted for. The move itself is real and the server has already
           // carried it out, so say that plainly and point at the button rather
           // than describing a fault.
           this.onErr(
@@ -10586,9 +10596,10 @@ class Voice {
    * constructs this class OUTSIDE `SnackbarProvider`, so the hook would throw.
    * The controller itself is a plain object that `src/index.tsx` builds in
    * `MountContext` BEFORE `VoiceContext` renders, so it can be passed down
-   * without calling a hook. Readers fall back to `onErr` while it is unset.
+   * without calling a hook. The parameter is required, so it cannot be unset
+   * once given; readers still fall back to `onErr` before the first call.
    */
-  setSnackbar(controller: SnackbarController | undefined) {
+  setSnackbar(controller: SnackbarController) {
     this.#snackbar = controller;
   }
 
@@ -10630,10 +10641,11 @@ const voiceContext = createContext<Voice>(null as unknown as Voice);
 export function VoiceContext(props: {
   children: JSX.Element;
   /**
-   * The app's snackbar controller. Optional: without it, notices that would
-   * be a snackbar fall back to the `onErr` modal.
+   * The app's snackbar controller, the same instance `SnackbarProvider` is
+   * given in `src/index.tsx`. Required, so dropping it at the mount site is a
+   * type error rather than a silent fallback to the `onErr` modal.
    */
-  snackbar?: SnackbarController;
+  snackbar: SnackbarController;
 }) {
   const state = useState();
   const modals = useModals();

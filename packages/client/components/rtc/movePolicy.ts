@@ -254,12 +254,14 @@ export const MOVE_PRECONNECT_BUDGET_MS = 3000;
  * and the error is in the unsafe direction at BOTH ends:
  *
  *   mint -> Leave, before our clock starts. `move_user_to_voice_channel`
- *     (`crates/core/database/src/voice/mod.rs`) mints the token FIRST, then
- *     calls `release_remote_control_for_user` — at minimum a Redis probe for
- *     the channel's grant set, and when a grant does exist, two more lookups
+ *     (`crates/core/database/src/voice/mod.rs`) lists the source room and
+ *     writes its markers, then mints the token, then calls
+ *     `release_remote_control_for_user` — at minimum a Redis probe for the
+ *     channel's grant set, and when a grant does exist, two more lookups
  *     plus `end_remote_control_grant`, which is itself a LiveKit
  *     `update_permissions` RPC and a database write — then publishes the
- *     private event, and only THEN calls `remove_user`, the RPC whose `Leave`
+ *     private event, and only THEN evicts each listed connection through
+ *     `remove_identity_if_present`, the `RemoveParticipant` whose `Leave`
  *     reaches us and writes the marker. Every one of those legs is already
  *     spent when our clock starts from zero, so a marker age of N ms is a
  *     token age of N + (mint -> Leave) ms. The marker can never be early.
@@ -529,11 +531,11 @@ export const MOVE_NOTICE_WINDOW_MS = 60_000;
  * 🔴 ADDRESSING IS NOT "AM I IN `from` RIGHT NOW". It is "am I the session
  * that WAS in `from`", because the event can arrive after this session has
  * already been thrown out of `from`. The backend now publishes
- * `EventV1::UserMoveVoiceChannel` BEFORE it calls
- * `voice_client.remove_user(...)` — the order is stated and justified at the
- * call site in `crates/core/database/src/voice/mod.rs` — precisely so the
- * real target is normally still `CONNECTED` when its own move lands. Step 3
- * is therefore the ordinary path.
+ * `EventV1::UserMoveVoiceChannel` BEFORE it evicts each listed connection with
+ * `voice_client.remove_identity_if_present(...)` — the order is stated and
+ * justified at the call site in `crates/core/database/src/voice/mod.rs` —
+ * precisely so the real target is normally still `CONNECTED` when its own
+ * move lands. Step 3 is therefore the ordinary path.
  *
  * The inversion is no longer guaranteed, but it is not gone. The two legs
  * leave delta at nearly the same instant by different routes: the event via a
@@ -752,12 +754,13 @@ export function moveDecision(world: MoveWorld): MoveDecision {
   }
 
   // Step 5. The marker says we were the one moved and nothing here can confirm
-  // or deny it, because this seat joined bare. Refuse to redeem the token — an
-  // unattended seat holding a handoff's marker would otherwise publish a
-  // microphone into an empty room — and say so out loud, so the session that
-  // really was moved gets a Rejoin instead of silence. See the 🔴 note above
-  // for the trade this encodes and the per-connection nonce that retires it
-  // wherever both sides carry one.
+  // or deny it, because the event names no device id (the token was minted
+  // for a bare identity), so there is nothing to match. Refuse to redeem the
+  // token — an unattended seat holding a handoff's marker would otherwise
+  // publish a microphone into an empty room — and say so out loud, so the
+  // session that really was moved gets a Rejoin instead of silence. See the
+  // 🔴 note above for the trade this encodes and the per-connection nonce that
+  // retires it wherever both sides carry one.
   //
   // With the gate inactive, `!deviceKnown` is the whole remaining case: step 1
   // already returned for a named device that is not ours, and a named device

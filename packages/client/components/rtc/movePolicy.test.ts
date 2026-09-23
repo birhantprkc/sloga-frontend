@@ -1536,10 +1536,12 @@ test("🔴 the verified window, the budget and the skew allowance fit inside the
   //     mint. `move_user_to_voice_channel`
   //     (`crates/core/database/src/voice/mod.rs`) mints the token, THEN
   //     releases any remote-control grant, THEN publishes the private event,
-  //     and only THEN calls `remove_user` — the RPC whose `Leave` starts our
-  //     clock. All of that is already spent at marker age zero, so a marker
-  //     age of N ms is a token age of N + (mint -> Leave) ms — the first of
-  //     the two spans the allowance reserves. The marker can never run early.
+  //     and only THEN evicts each listed connection through
+  //     `remove_identity_if_present` — the `RemoveParticipant` whose `Leave`
+  //     starts our clock. All of that is already spent at marker age zero, so
+  //     a marker age of N ms is a token age of N + (mint -> Leave) ms — the
+  //     first of the two spans the allowance reserves. The marker can never
+  //     run early.
   //   - `MOVE_PRECONNECT_BUDGET_MS` bounds only the work BEFORE
   //     `room.connect()`, but the SFU validates the JWT at the END of the
   //     handshake: the signaling round trip, ICE and DTLS all sit outside the
@@ -1992,8 +1994,10 @@ test("🔴 #sessionDeviceId has exactly two writes, each guarded by which side m
   // `.split(":")[1]` that recovers the device half of `{user}:{device}` — is
   // invisible to every other gate this repo has: `tsc`, the full suite and
   // `vite build` were all measured green on exactly that revert. It is not
-  // invisible in effect. The move token is minted by the server off the OLD
-  // room's ingress mapping, so after a bridge re-provision the two answers
+  // invisible in effect. The move token is minted by the server for the
+  // connection it picks from the OLD room's SFU participant list
+  // (`select_move_connection`; the `voice_identity` mapping is only a
+  // preference), so after a bridge re-provision the two answers
   // part company, this session records a device the server never named, and
   // the NEXT move's device test compares the wrong pair — which either
   // silences a real move or re-opens the hole the test was added to close.
@@ -2358,6 +2362,63 @@ test("🔴 Voice.setSnackbar is what assigns #snackbar", () => {
     1,
     "`this.#snackbar` is written somewhere other than Voice.setSnackbar",
   );
+});
+
+const INDEX_URL = new URL("../../src/index.tsx", import.meta.url);
+
+test("🔴 VoiceContext hands Voice the SAME snackbar controller SnackbarProvider renders", () => {
+  // The test above proves the setter assigns; this proves anything calls it,
+  // with the controller that is actually on screen. tsc covers part of it now
+  // that the prop and the setter parameter are both required: dropping the
+  // prop at the mount site, or `setSnackbar(undefined)`, no longer compiles.
+  // It does NOT cover deleting the render effect (the prop just goes unread),
+  // or `snackbar={new SnackbarController()}` in `src/index.tsx`: a second
+  // controller that no `SnackbarProvider` renders, so every notice is queued
+  // into nothing and the modal fallback never fires either. Both are silent,
+  // so both are pinned here.
+  const at = STATE_CODE.search(/^export function VoiceContext\(/m);
+  assert.ok(at >= 0, "no `export function VoiceContext(` found in state.tsx");
+  const paramsAt = at + "export function VoiceContext".length;
+  const params = balancedGroup(STATE_CODE, paramsAt);
+  assert.ok(params.length > 0, "VoiceContext's parameter list never closes");
+  const afterParams = STATE_CODE.slice(paramsAt + params.length);
+  const bodyOpen = /^\s*\{/.exec(afterParams);
+  assert.ok(bodyOpen, "VoiceContext's body does not follow its parameters");
+  const body = balancedGroup(afterParams, bodyOpen[0].length - 1);
+  assert.ok(
+    body.includes("new Voice("),
+    "the VoiceContext body found does not construct a Voice — the scan below would read the wrong span",
+  );
+  const effect = "createRenderEffect(() => voice.setSnackbar(props.snackbar));";
+  assert.equal(
+    body.split(effect).length - 1,
+    1,
+    `expected \`${effect}\` exactly once in VoiceContext — without it #snackbar stays undefined and every notice is a modal`,
+  );
+  assert.equal(
+    (STATE_CODE.match(/\.setSnackbar\(/g) ?? []).length,
+    1,
+    "state.tsx calls `.setSnackbar(` somewhere other than VoiceContext's render effect",
+  );
+
+  // The mount site. Read here rather than at module scope, so a missing file
+  // fails this test alone. Comments stripped, so a commented-out line cannot
+  // satisfy it.
+  const index = stripComments(readFileSync(INDEX_URL, "utf8"));
+  assert.equal(
+    index.split("new SnackbarController(").length - 1,
+    1,
+    "src/index.tsx must construct exactly one SnackbarController — a second one handed to VoiceContext is a queue nobody renders",
+  );
+  for (const site of [
+    "const snackbarController = new SnackbarController();",
+    "<VoiceContext snackbar={snackbarController}>",
+    "<SnackbarProvider controller={snackbarController}>",
+  ])
+    assert.ok(
+      index.includes(site),
+      `src/index.tsx no longer contains \`${site}\` — VoiceContext and SnackbarProvider may not share one controller`,
+    );
 });
 
 test("🔴 SnackbarController is imported TYPE-ONLY, so state.tsx takes no runtime edge to the Snackbar module", () => {
