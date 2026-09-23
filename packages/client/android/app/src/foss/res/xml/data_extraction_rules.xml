@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+ backup & device-transfer rules. See backup_rules.xml for
+     why the native E2EE store (files/e2ee) AND the WebView storage
+     (app_webview — holds plaintext DM drafts in localStorage/IndexedDB)
+     are excluded from both cloud backup and device transfer. -->
+<!-- foss only: this file overrides src/main/res/xml/data_extraction_rules.xml,
+     so keep the rules above in sync with it. It also excludes the
+     UnifiedPush connector's state (the "unifiedpush.connector"
+     SharedPreferences, plus the upstream-recommended database names).
+     See the foss backup_rules.xml for why. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="e2ee" />
+        <exclude domain="root" path="app_webview" />
+        <exclude domain="sharedpref" path="unifiedpush.connector.xml" />
+        <exclude domain="database" path="unifiedpush-connector" />
+        <exclude domain="database" path="unifiedpush-connector-journal" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="e2ee" />
+        <exclude domain="root" path="app_webview" />
+        <exclude domain="sharedpref" path="unifiedpush.connector.xml" />
+        <exclude domain="database" path="unifiedpush-connector" />
+        <exclude domain="database" path="unifiedpush-connector-journal" />
+    </device-transfer>
+</data-extraction-rules>

@@ -13,10 +13,11 @@ public class MainActivity extends BridgeActivity {
     private static java.lang.ref.WeakReference<MainActivity> INSTANCE;
 
     /**
-     * Whether the activity is resumed. Read by SlogaMessagingService to decide
-     * whether an incoming-call NOTIFICATION is needed at all: when the app is
-     * in front, the web layer shows its own Accept/Decline popup and a
-     * notification would give the user two separate things to decline.
+     * Whether the activity is resumed. Read by SlogaNotifier, through
+     * isForeground(), to decide whether an incoming-call NOTIFICATION is
+     * needed at all: when the app is in front, the web layer shows its own
+     * Accept/Decline popup and a notification would give the user two
+     * separate things to decline.
      */
     private static volatile boolean FOREGROUND = false;
 
