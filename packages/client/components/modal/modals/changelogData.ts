@@ -9,6 +9,34 @@ import type { ChangelogResponse } from "./Changelog";
  */
 export const CHANGELOGS: ChangelogResponse[] = [
   // ==========================================================================
+  // v0.63.0 (not yet cut). Copy constraints, load-bearing:
+  // - 🔴 PROVISIONAL ENTRY. Written when quick reactions merged, ahead of the
+  //   release. The sweep that cuts v0.63.0 sets `published_at`, retitles the
+  //   headline if a bigger change lands, and folds its other bullets in HERE
+  //   rather than adding a second entry. Any web deploy from main before then
+  //   pops this entry for everyone, so a mid-cycle hotfix must hold it back.
+  // - 🔴 The quick-reaction bullet must NOT promise more than the menu does.
+  //   Nobody has clicked the row in a signed-in session: it is covered by tsc,
+  //   eslint, and a built bundle that boots, never by use. It says what the
+  //   row IS and what a click does, and stops there.
+  // - Never name phones. Whether the phone app's long-press opens this same
+  //   menu was not checked.
+  // - The heart line is deliberate: the row sends the picker's exact heart, so
+  //   a quick heart adds to an existing heart instead of starting a twin.
+  {
+    id: "sloga-2026-09-23",
+    title: "Patch Notes",
+    published_at: "2026-09-23T23:59:00.000Z",
+    web_version: "0.63.0",
+    markdown_content: `## v0.63.0 — One-click reactions
+
+### 💬 Messages
+- **React without opening the emoji picker.** Right-click a message, or open its **⋯** menu, and 👍 👎 ❤ 🙂 🙁 sit across the top. One click adds the reaction; a highlighted one is already yours, and clicking it again takes it back off.
+- **A quick heart joins the hearts already there.** It is the same heart the emoji picker sends, so it adds to the existing count rather than starting a second one that looks identical.
+- **You only see the ones you can use.** The row is hidden where you do not have permission to react, and on a message that only accepts certain reactions, only those appear.
+`,
+  },
+  // ==========================================================================
   // v0.62.0 (2026-09-21). Copy constraints, load-bearing — READ BEFORE EDITING
   // THE SCREEN-AUDIO SECTION. It went live under the 2026-09-21 operator ruling
   // that SKIPPED the live legs (L1-L17 and the S11.9 grandchild negative
