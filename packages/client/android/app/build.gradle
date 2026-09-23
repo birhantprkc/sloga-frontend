@@ -29,17 +29,13 @@ android {
         // versionName tracks the PATCH NOTES version from v0.55.0 on (it used
         // to run its own 1.x sequence, which matched nothing users could see).
         // versionCode keeps counting up untouched — it is what ApkUpdateWorker
-        // and Play order releases by, and it must never go backwards. vc66 is
-        // what Play carries (as 0.60.0), so this release is vc68: vc67 was
-        // built and published as the 0.60.4 SIDELOAD apk but never uploaded to
-        // Play, which is why Play skips it. A vc68 artifact was also built for
-        // a 0.60.5 cut that was never published, so 68 is still unburned.
-        //
-        // The versionName jumps 0.60.0 -> 0.61.0 rather than stepping: Android
-        // was skipped for 0.60.1 through 0.60.5, so this single build is the
-        // first time Play users receive any of them.
-        versionCode 68
-        versionName "0.61.0"
+        // and Play order releases by, and it must never go backwards. vc68 was
+        // published as the 0.61.0 SIDELOAD apk, so this release is vc69. Play
+        // still carries vc66 (0.60.0): the vc67 and vc68 bundles were built but
+        // never uploaded, so Play users jump straight to whichever code is
+        // uploaded next, and skipping codes is harmless there.
+        versionCode 69
+        versionName "0.62.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
