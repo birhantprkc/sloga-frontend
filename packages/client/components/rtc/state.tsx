@@ -4,6 +4,7 @@ import {
   createContext,
   createEffect,
   createMemo,
+  createRenderEffect,
   createRoot,
   createSignal,
   JSX,
@@ -99,6 +100,7 @@ import {
   ScreenShareQualityName,
   Voice as VoiceSettings,
 } from "@revolt/state/stores/Voice";
+import type { SnackbarController } from "@revolt/ui/components/design/Snackbar";
 import { VoiceCallCardContext } from "@revolt/ui/components/features/voice/callCard/VoiceCallCard";
 import {
   dropLegPlaceholders,
@@ -144,7 +146,11 @@ import { decideKeybindDispatch } from "./keybindDispatchPolicy";
 import { watchLocalUserId } from "./localUserIdentity";
 import { isPermissionDeniedError } from "./mediaAccessPolicy";
 import { anyPeerCouldEncrypt } from "./mlsRosterPolicy";
-import { MOVE_PRECONNECT_BUDGET_MS, moveDecision } from "./movePolicy";
+import {
+  CONN_NONCE_ATTRIBUTE,
+  MOVE_PRECONNECT_BUDGET_MS,
+  moveDecision,
+} from "./movePolicy";
 import { RemoteControl } from "./remoteControl";
 import {
   type RemoteControlQueue,
@@ -634,6 +640,12 @@ class Voice {
   private sound: SoundController;
 
   private openModal;
+  /**
+   * The app's snackbar queue, for notices that must not be a modal. Handed in
+   * through `setSnackbar` by `VoiceContext` and `undefined` until then, so
+   * every reader needs a fallback.
+   */
+  #snackbar: SnackbarController | undefined;
   /** Dismiss stale dialogs whose subject this class just tore down. */
   #closeModalsOfType: ModalControllerExtended["removeOfType"];
   /** A web screen-share start is in flight (the user is in the OS picker). */
@@ -883,10 +895,42 @@ class Voice {
    * somewhere of its own accord, so what last happened to it is no longer the
    * drop": the top of `connect()` (a join that has STARTED) and the Room's
    * `connected` listener (a join that has FINISHED). See each for why one is
-   * not enough.
+   * not enough. A third, `#handleVoiceMove`'s `moved-elsewhere` arm, retires
+   * it once the server has moved ANOTHER connection of this user: the drop is
+   * accounted for, and a repeat of the event must not re-trigger the notice.
    */
   #lastInvoluntaryChannelId: string | undefined;
   #lastInvoluntaryLeftAt: number | undefined;
+  /**
+   * The third field of the involuntary-drop marker: the per-connection nonce
+   * (`CONN_NONCE_ATTRIBUTE` on the LiveKit token) of the connection that was
+   * dropped, or `undefined` when that connection carried none. Written and
+   * cleared at exactly the sites the two fields above are, and never on its
+   * own — half a marker is not a marker.
+   *
+   * 🔴 Recorded off the dropped ATTEMPT's own captured nonce, never off
+   * `#connNonce`. LiveKit emits `disconnected` asynchronously, so a
+   * superseded room's late drop can land after the next connection is up,
+   * and `#connNonce` would by then name the NEWER connection — which would
+   * let a move addressed to that newer seat read as addressed to the old drop.
+   */
+  #lastInvoluntaryConnNonce: string | undefined;
+  /**
+   * The per-connection nonce this session's CURRENT connection was minted
+   * with — `CONN_NONCE_ATTRIBUTE` among the LiveKit token attributes, which
+   * the SDK exposes on `room.localParticipant.attributes` before `connected`
+   * fires — or `undefined` when the token carried none (an SFU that does not
+   * propagate token attributes, or a token minted before the backend began
+   * issuing them). The server reads the SAME attribute off the SFU when it
+   * orders a move and names the moved connection by it (`connNonce` on the
+   * event), so the two sides cannot disagree: both see the nonce or neither.
+   *
+   * Written ONCE per connection, in the `connected` listener beside the
+   * `CONNECTED` state write, and cleared as `connect()` starts every join.
+   * An SDK full reconnect emits `Reconnected`, not `Connected`, and reuses
+   * the same token, so the value holds for the life of the connection.
+   */
+  #connNonce: string | undefined;
   /**
    * The device id this session's LiveKit identity was qualified with on its
    * most recent join — the `{device_id}` half of `{user_id}:{device_id}` — or
@@ -1382,7 +1426,8 @@ class Voice {
    * One-shot user-facing notice about a recording (saved / couldn't save).
    * Consumed and cleared by `CallRecordingNotices`, which turns it into a
    * snackbar — the Voice instance is constructed OUTSIDE `SnackbarProvider`, so
-   * it cannot show one itself.
+   * it cannot call `useSnackbar()` itself. (`setSnackbar` now hands it the
+   * controller directly; this notice keeps its own consumer.)
    *
    * This exists because the save used to fail SILENTLY: the fallback anchor
    * download reports success and writes nothing in an embedded webview, so a
@@ -2225,6 +2270,7 @@ class Voice {
         node: string;
         url: string;
         deviceId: string | undefined;
+        connNonce: string | undefined;
         from: string;
         to: string;
         token: string;
@@ -2695,7 +2741,15 @@ class Voice {
     if (!opts?.rejoinAttempt) {
       this.#lastInvoluntaryChannelId = undefined;
       this.#lastInvoluntaryLeftAt = undefined;
+      this.#lastInvoluntaryConnNonce = undefined;
     }
+    // Unconditional, rejoin attempts included: the connection the nonce named
+    // is torn down by the `disconnect()` below whichever join this is, and
+    // the new one's is written only once it is `CONNECTED`. Placed below the
+    // refusal latch on purpose — that early return leaves the current call
+    // up, and stripping its nonce would blind the move gate for a call that
+    // is still live.
+    this.#connNonce = undefined;
     this.disconnect();
     const pendingToken = ++this.#joinPendingSeq;
     this.#setJoinPending(channel.id);
@@ -3236,7 +3290,22 @@ class Voice {
       this.#setScreenshare(false);
     });
 
+    /**
+     * THIS attempt's per-connection nonce, captured when its own `connected`
+     * fires. A local rather than a read of `#connNonce` because this room's
+     * `disconnected` can land after a newer connection has overwritten the
+     * field, and the drop marker must name the connection that dropped.
+     */
+    let attemptConnNonce: string | undefined;
+
     room.addListener("connected", () => {
+      // Read here, not earlier: the SDK populates the local participant's
+      // attributes from the JoinResponse before it emits `connected`. Written
+      // unconditionally — `undefined` when the token carried no nonce — so a
+      // previous connection's value can never survive into this one.
+      attemptConnNonce =
+        room.localParticipant.attributes?.[CONN_NONCE_ATTRIBUTE] || undefined;
+      this.#connNonce = attemptConnNonce;
       this.#setState("CONNECTED");
       // A connect that succeeded retires any involuntary-drop marker:
       // wherever we were dropped from, it is not where this session is now.
@@ -3252,9 +3321,10 @@ class Voice {
       // session not being `CONNECTED`, so no rule hangs on it — but a marker
       // that outlives its meaning is a loaded footgun for the next reader of
       // those two fields, and retiring it at the one moment it is provably
-      // stale costs two assignments.
+      // stale costs three assignments.
       this.#lastInvoluntaryChannelId = undefined;
       this.#lastInvoluntaryLeftAt = undefined;
+      this.#lastInvoluntaryConnNonce = undefined;
       // 🔴 The participants already in the call when we joined never bump this
       // otherwise. livekit routes `ParticipantConnected` through
       // `emitWhenConnected`, which DROPS it unless the room is already
@@ -3414,6 +3484,9 @@ class Voice {
       // of the bug and leave the worse half in place.
       this.#lastInvoluntaryChannelId = channel.id;
       this.#lastInvoluntaryLeftAt = Date.now();
+      // THIS attempt's nonce, never `#connNonce`: a superseded room's late
+      // `disconnected` would otherwise snapshot the newer connection's nonce.
+      this.#lastInvoluntaryConnNonce = attemptConnNonce;
       // 🔴 The SFU dropped us, and this path does NOT run `disconnect()`. The
       // patched worker's heartbeat is a module-scope interval that keeps
       // posting `{participants: []}` regardless, and an empty window
@@ -4751,10 +4824,14 @@ class Voice {
 
   /**
    * A moderator moved this user to another voice channel
-   * (`UserMoveVoiceChannel`). The backend has ALREADY removed them from the
-   * old room by the time this lands and minted a token for the new one, so a
-   * client that does nothing leaves the user in no call at all — which is
-   * exactly what shipped, because stoat.js discarded the event.
+   * (`UserMoveVoiceChannel`). The backend mints a token for the new room,
+   * publishes this event, and only THEN evicts the user's connections from
+   * the old room — so the eviction is imminent, or has already landed if the
+   * SFU's leave beat the event here. Either way a client that does nothing
+   * leaves the user in no call at all — which is exactly what shipped, because
+   * stoat.js discarded the event. The connection being moved is named by
+   * `connNonce` (the per-connection token attribute, see `#connNonce`) when
+   * the event carries one, and by `deviceId` otherwise.
    *
    * 🔴 This is a PRIVATE topic, which reaches EVERY session of the moved user
    * — an idle phone, a spare browser tab, a second desktop. Which session (if
@@ -4768,6 +4845,7 @@ class Voice {
     node: string;
     url: string;
     deviceId: string | undefined;
+    connNonce: string | undefined;
     from: string;
     to: string;
     token: string;
@@ -4792,6 +4870,12 @@ class Voice {
       // call like every other addressing rule in this slice.
       deviceId: move.deviceId,
       sessionDeviceId: this.#sessionDeviceId,
+      // The same pairing for the per-connection nonce: the source connection
+      // the server named, against the nonce THIS session's current
+      // connection and its last involuntary drop carried.
+      connNonce: move.connNonce,
+      sessionConnNonce: this.#connNonce,
+      lastInvoluntaryConnNonce: this.#lastInvoluntaryConnNonce,
       destinationKnown: destination !== undefined,
     });
 
@@ -4815,9 +4899,11 @@ class Voice {
 
     // 🔴 THE single highest-value mitigation in this handler, and the reason
     // it runs unconditionally for every answer that gets past the return
-    // above: past the addressing tests this session really is the one being
-    // moved, and the server has already removed it from the old room either
-    // way.
+    // above: past the addressing tests this session is either the one being
+    // moved or (`moved-elsewhere`) a sibling connection of it, and the server
+    // is evicting it from the old room either way. For the sibling this block
+    // matters MORE, not less: an auto-rejoin of the old channel dials with
+    // `forceDisconnect`, which would kick the seat that was actually moved.
     //
     // The old room's `disconnected` listener (registered in
     // `#connectAttempt`) closes over the OLD `channel` and runs
@@ -4848,6 +4934,46 @@ class Voice {
       // does not cancel an attempt whose `connect()` is ALREADY in flight,
       // and the `#connectGen` bump in here dooms it.
       this.disconnect();
+      // `moved-elsewhere`: the event named ANOTHER connection of this user, and
+      // this one is a sibling the server is evicting alongside it. That other
+      // connection may be a second tab or window on this same device, not only
+      // another device, so the copy names both. The call lives on at that
+      // other connection, so this one ends as a plain leave: no destination on
+      // the card and no Rejoin — a Rejoin here is a join with
+      // `forceDisconnect`, which would kick the seat that was actually moved.
+      // The marker is retired too, so a repeat of the event cannot re-trigger
+      // this arm. Tested before `unknown-channel` because the answer does not
+      // depend on whether the destination is known; its name only improves
+      // the notice.
+      //
+      // The notice is a NON-modal snackbar. This device may be an idle
+      // desktop that handed its call off to a phone, and it used to say
+      // nothing at all in that case; an `error2` modal waiting on its return
+      // would treat a handoff the user did on purpose as a failure. The
+      // controller comes in through `setSnackbar` (see there for why it cannot
+      // come from `useSnackbar()`). Only when none was provided, as in a
+      // `Voice` built outside `VoiceContext`, does the notice fall back to
+      // the `onErr` modal, so the move is still said out loud.
+      if (decision.reason === "moved-elsewhere") {
+        this.#lastInvoluntaryChannelId = undefined;
+        this.#lastInvoluntaryLeftAt = undefined;
+        this.#lastInvoluntaryConnNonce = undefined;
+        const channelName = destination?.name;
+        const notice = channelName
+          ? t`Your call was moved to #${channelName} in another window or on another device`
+          : t`Your call was moved in another window or on another device`;
+        if (this.#snackbar) {
+          this.#snackbar.show({
+            message: notice,
+            autoCloseDelay: 8000,
+            closeable: true,
+            messageLine: 2,
+          });
+        } else {
+          this.onErr(new Error(notice));
+        }
+        return;
+      }
       // `unknown-channel`: nothing to point the card at, and deliberately NOT
       // the old channel — a Rejoin there would put the user straight back
       // into the channel a moderator just moved them out of. The `!destination`
@@ -10455,6 +10581,18 @@ class Voice {
   }
 
   /**
+   * Give this instance the app's snackbar controller, for notices that should
+   * not open a modal. `useSnackbar()` cannot be used here: `VoiceContext`
+   * constructs this class OUTSIDE `SnackbarProvider`, so the hook would throw.
+   * The controller itself is a plain object that `src/index.tsx` builds in
+   * `MountContext` BEFORE `VoiceContext` renders, so it can be passed down
+   * without calling a hook. Readers fall back to `onErr` while it is unset.
+   */
+  setSnackbar(controller: SnackbarController | undefined) {
+    this.#snackbar = controller;
+  }
+
+  /**
    * Error path for a mic/camera capture: blocked access gets its own message,
    * everything else goes to `onErr` as before. `onErr` drops every
    * NotAllowedError because a cancelled screen-share picker rejects with that
@@ -10489,13 +10627,24 @@ const voiceContext = createContext<Voice>(null as unknown as Voice);
 /**
  * Mount global voice context and room audio manager
  */
-export function VoiceContext(props: { children: JSX.Element }) {
+export function VoiceContext(props: {
+  children: JSX.Element;
+  /**
+   * The app's snackbar controller. Optional: without it, notices that would
+   * be a snackbar fall back to the `onErr` modal.
+   */
+  snackbar?: SnackbarController;
+}) {
   const state = useState();
   const modals = useModals();
   const sound = useSound();
   const voice = new Voice(state.voice, modals, sound, (serverId) =>
     entranceSoundFor(state.settings, serverId),
   );
+  // A render effect runs synchronously, here, before any child mounts, so the
+  // controller is in place before anything can raise a notice, and it still
+  // follows the prop if the controller is ever swapped.
+  createRenderEffect(() => voice.setSnackbar(props.snackbar));
 
   // Signing out must end the call, and nothing else does: logout replaces
   // the stoat client, but the LiveKit room is owned HERE and outlived it —

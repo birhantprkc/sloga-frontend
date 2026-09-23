@@ -4,7 +4,8 @@
  * its neighbours this module stays dependency-free: no Solid, no stoat.js, no
  * lingui, no livekit. `state.tsx` resolves the world (call state, current
  * channel, the channel this session was last involuntarily dropped from, the
- * device the token was minted for, this session's own device, whether the
+ * device the token was minted for, this session's own device, the connection
+ * nonce the event names and the two this session holds, whether the
  * destination is known, the node's URL) and hands the plain values in; every
  * rule below is called by production and never re-typed there.
  *
@@ -33,12 +34,25 @@
  * supplies one only when `callEncryptionCapable(readiness)` holds and the key
  * provider and worker both constructed. Web, the Electron/Linux shell and any
  * user who has not provisioned an E2EE device therefore join BARE. For those
- * seats `member_edit`'s `strip_prefix("{user}:")` yields `None`, the event
- * carries no `device_id` at all, and the one unforgeable addressing signal is
- * simply absent. A rule that reads "when the device is unknown, fall back to
- * the channel tests" is consequently not a rare cold-start path — it is the
- * ordinary path for most of the install base, and it is the path the forgery
- * runs down. See `moveDecision` for what is done about it.
+ * seats the identity the server picks out of the old room carries no
+ * `{user}:` device suffix, the event carries no `device_id` at all, and the
+ * device signal is simply absent. A rule that reads "when the device is
+ * unknown, fall back to the channel tests" is consequently not a rare
+ * cold-start path — it is the ordinary path for most of the install base, and
+ * it is the path the forgery runs down. See `moveDecision` for what is done
+ * about it.
+ *
+ * 🔴 THE CONNECTION NONCE IS THE ADDRESSING LABEL THAT DOES NOT NEED A DEVICE.
+ * `create_token` mints a fresh nonce into every connection's LiveKit token as
+ * the attribute `CONN_NONCE_ATTRIBUTE` ("conn"), bare seats included. At move
+ * time the server reads the SOURCE connection's attribute straight off
+ * `list_participants` for `from` — before it writes anything, mints the move
+ * token or emits — and carries it on the event as `conn_nonce`. The session
+ * reads its own from `room.localParticipant.attributes` once connected. Both
+ * sides read the same SFU data, so when the SFU does not carry the attribute
+ * NEITHER side has one, and the ladder falls back to the device rules below
+ * together on both ends; that is why the nonce test only ever runs when BOTH
+ * sides hold one.
  *
  * 🔴 THE WHOLE RULE LIVES HERE, including the part that only ever produces a
  * TOAST. An earlier cut of this slice left `state.tsx` computing its own
@@ -49,6 +63,20 @@
  * term fails a test rather than shipping green. Every outcome a move can have
  * is therefore a `MoveDecision` value, and `state.tsx` renders it.
  */
+
+/**
+ * The LiveKit participant attribute that carries a connection's nonce.
+ *
+ * 🔴 MANUAL CROSS-REPO CONTRACT: this must equal the backend's
+ * `voice_client::CONN_NONCE_ATTRIBUTE` (`crates/core/database/src/voice/
+ * voice_client.rs`), which is where the nonce is minted into the token and
+ * where the move reads it back off `list_participants`. Nothing generated ties
+ * the two together. If they drift, this client reads no nonce, the gate in
+ * `moveDecision` goes inactive on every seat, and moves fall back to the device
+ * rules without any error. The spec asserts the literal on this side, and the
+ * backend's tests assert it on theirs.
+ */
+export const CONN_NONCE_ATTRIBUTE = "conn";
 
 /** Why a session declined to act on a move that was not addressed to it. */
 export type MoveIgnoreReason =
@@ -91,7 +119,23 @@ export type MoveFailReason =
    * session's rejoin loop may be dialling the OLD channel back and would
    * otherwise reverse the moderator in silence.
    */
-  | "stale-notice";
+  | "stale-notice"
+  /**
+   * The event names a DIFFERENT connection of this user than this one: both
+   * sides carry a connection nonce and they differ, while this session is in
+   * `from`, or holds a marker for it (fresh or stale). The server moved another
+   * connection and is evicting every other connection of this user from
+   * `from`, so this one is going to be removed, or already has been.
+   *
+   * Loud rather than an `ignore` because an ignored sibling keeps its
+   * `disconnected` listener armed. The eviction can arrive with no reason,
+   * `shouldAutoRejoin` fails open on that, and the rejoin dials `from` again
+   * with `forceDisconnect` and kicks the seat that was just moved. It is not a
+   * move either: the token was minted for the other connection. What
+   * `state.tsx` owes it is the disarm and a plain notice, with no destination
+   * card and no Rejoin, since a Rejoin here would re-race the moved seat.
+   */
+  | "moved-elsewhere";
 
 export type MoveDecision =
   | { action: "ignore"; reason: MoveIgnoreReason }
@@ -131,9 +175,8 @@ export interface MoveWorld {
    * identity it recovered from the old room carried no device suffix.
    *
    * 🔴 `undefined` is the COMMON case, not the exotic one: every seat that
-   * joined bare — web, the Electron/Linux shell, any unenrolled user, plus a
-   * cold ingress identity mapping — produces it. Read it as "unknown", never
-   * as "any device may act".
+   * joined bare — web, the Electron/Linux shell, any unenrolled user —
+   * produces it. Read it as "unknown", never as "any device may act".
    */
   deviceId: string | undefined;
   /**
@@ -141,6 +184,26 @@ export interface MoveWorld {
    * time; `undefined` when it joined bare.
    */
   sessionDeviceId: string | undefined;
+  /**
+   * The nonce of the connection the server moved, straight off the event
+   * (`conn_nonce`). The server read it from that connection's
+   * `CONN_NONCE_ATTRIBUTE` attribute in `list_participants` for `from`, before
+   * any write. `undefined` or `""` when the SFU carried no attribute; both
+   * count as absent.
+   */
+  connNonce: string | undefined;
+  /**
+   * This session's own nonce, read off its local participant's attributes.
+   * Set only while it is CONNECTED, and compared only for the CONNECTED-to-
+   * `from` shape.
+   */
+  sessionConnNonce: string | undefined;
+  /**
+   * The nonce of the connection the involuntary-drop marker was recorded for,
+   * snapshotted with the marker and cleared with it. Compared only for the
+   * marker shapes, fresh or stale.
+   */
+  lastInvoluntaryConnNonce: string | undefined;
   /** Current time, ms epoch — injected so this stays pure. */
   now: number;
 }
@@ -210,12 +273,13 @@ export const MOVE_PRECONNECT_BUDGET_MS = 3000;
  * two, and the window below is cut by this allowance to put it back.
  *
  * 🔴 SAY WHAT THIS NUMBER IS: a guess. Neither span is measurable from this
- * client. The event carries `url`, `token`, `device_id`, `from` and `to` and
- * no timestamp of any kind, so there is nothing on the wire to compare a local
- * clock against, and nobody here has instrumented either leg. 2_000 is argued,
- * not measured: allow roughly 1 s for the backend leg — a Redis probe and a
- * publish are sub-millisecond on a healthy deployment, but the RPC and write
- * on the grant path are not, and delta is not always healthy — and roughly 1 s
+ * client. The event carries `url`, `token`, `device_id`, `conn_nonce`, `from`
+ * and `to` and no timestamp of any kind, so there is nothing on the wire to
+ * compare a local clock against, and nobody here has instrumented either leg.
+ * 2_000 is argued, not measured: allow roughly 1 s for the backend leg — a
+ * Redis probe and a publish are sub-millisecond on a healthy deployment, but
+ * the RPC and write on the grant path are not, and delta is not always
+ * healthy — and roughly 1 s
  * for the handshake, which is a couple of hundred ms direct and several times
  * that behind TURN, on a cold ICE gather, or on mobile data. Both terms
  * stretch on exactly the deployments where a moderator most wants the move to
@@ -361,14 +425,20 @@ export const MOVE_NOTICE_WINDOW_MS = 60_000;
  *
  * The order of the tests is the contract, not an implementation detail:
  *
- *   1. minted for another device        -> ignore    / other-device
- *   2. from === to                      -> ignore    / already-there
- *   3. in `from` now                    -> addressed, on to feasibility
- *   4. marker FRESH and device MATCHED  -> addressed, on to feasibility
- *   5. marker FRESH, device UNKNOWN     -> fail-loud / unverified-session
- *   6. marker names `from`, but STALE   -> fail-loud / stale-notice
- *   7. otherwise                        -> ignore    / other-channel |
- *                                                      not-in-call
+ *   1. nonce gate INACTIVE, and minted
+ *      for another device                 -> ignore    / other-device
+ *   2. from === to                        -> ignore    / already-there
+ *   N. nonce gate ACTIVE, nonces DIFFER   -> fail-loud / moved-elsewhere
+ *      (the unequal half of 3, 4/5 and 6)
+ *   3. in `from` now                      -> addressed, on to feasibility
+ *   4. marker FRESH and the label MATCHES
+ *      (nonce when the gate is active,
+ *      device when it is not)             -> addressed, on to feasibility
+ *   5. marker FRESH, gate inactive,
+ *      device UNKNOWN                     -> fail-loud / unverified-session
+ *   6. marker names `from`, but STALE     -> fail-loud / stale-notice
+ *   7. otherwise                          -> ignore    / other-channel |
+ *                                                        not-in-call
  *
  * then, for an addressed session (3 and 4):
  *
@@ -376,30 +446,70 @@ export const MOVE_NOTICE_WINDOW_MS = 60_000;
  *   no usable URL                       -> fail-loud / no-url
  *   otherwise                           -> move
  *
- * with the two marker terms being
+ * with the marker terms and the nonce gate being
  *
  *   markerNamesSource = not CONNECTED, the marker names `from`, it carries a
  *                       timestamp, and that timestamp is inside
  *                       `MOVE_NOTICE_WINDOW_MS`
  *   markerIsFresh     = markerNamesSource, and inside
  *                       `MOVE_VERIFIED_WINDOW_MS` as well
+ *   nonceGate         = the event's `connNonce` is non-empty AND so is this
+ *                       session's nonce FOR ITS SHAPE: `sessionConnNonce` when
+ *                       it is CONNECTED to `from`, `lastInvoluntaryConnNonce`
+ *                       when `markerNamesSource`, and none otherwise
  *
- * 🔴 STEP 1 IS THE ONLY UNFORGEABLE TEST HERE, and it is first for that
- * reason. Every other addressing signal below is this session's own account
- * of its own history; `deviceId` is the server's account of whose credential
- * this is. LiveKit identities are `user:device`, and the move token is minted
- * for exactly one of them (`move_user_to_voice_channel` recovers the device
- * suffix from the old room's participant identity and passes it to
- * `create_token`). A session whose device is not that device cannot redeem
- * the token without racing the session that can — and LiveKit resolves that
- * race by evicting one of them on duplicate identity, quite possibly the one
- * the user is sitting in front of.
+ * With the gate inactive on every clause, the ladder is exactly the
+ * seven-step device ladder this module shipped before the nonce existed, with
+ * the same answer in every world. The spec pins that against a fingerprint of
+ * the old ladder's answers.
  *
- * 🔴 It gates EVERY step below, not merely the marker ones. Because identities
- * are device-qualified, two sessions of one user CAN be in the same channel at
- * once whenever `forceDisconnect` is false, so two sessions can satisfy step 3
- * simultaneously. Gating everything is strictly safer and far easier to reason
- * about than arguing about which step is currently reachable twice.
+ * 🔴 STEP 1 AND THE NONCE TEST ARE THE ONLY UNFORGEABLE TESTS HERE. Every
+ * other addressing signal below is this session's own account of its own
+ * history. `deviceId` and `connNonce` are the server's account of whose
+ * credential this is. LiveKit identities are `user:device`, and the move
+ * token is minted for exactly one of them (`move_user_to_voice_channel` picks
+ * the moved connection out of the old room's participant list and derives the
+ * device from that identity). A session whose device is not that device
+ * cannot redeem the token without racing the session that can — and LiveKit
+ * resolves that race by evicting one of them on duplicate identity, quite
+ * possibly the one the user is sitting in front of.
+ *
+ * 🔴 When the gate is inactive, step 1 gates EVERY step below, not merely the
+ * marker ones. Because identities are device-qualified, two sessions of one
+ * user CAN be in the same channel at once whenever `forceDisconnect` is false,
+ * so two sessions can satisfy step 3 simultaneously. Gating everything is
+ * strictly safer and far easier to reason about than arguing about which step
+ * is currently reachable twice.
+ *
+ * 🔴 WHEN THE GATE IS ACTIVE, THE NONCE REPLACES THE DEVICE TEST AT EVERY
+ * STEP; it is not added on top of it. A nonce names one connection, while a
+ * device id names a device, and a device can hold more than one connection
+ * (tabs of one browser share the E2EE device). The case that decides it is a
+ * BARE sibling of a device-qualified mover: the event names device D1, and
+ * the bare seat has no device. Under step 1 it would be `other-device` and
+ * SILENT, but the server is about to evict it as a sibling of the moved
+ * connection. If its drop then fails open in `shouldAutoRejoin`, it dials
+ * `from` back with `forceDisconnect` and kicks the seat that was just moved.
+ * So step 1 only runs when the gate is inactive for this session's shape.
+ * When the gate is active, equal nonces address the session whatever the
+ * devices say, and unequal nonces are `moved-elsewhere`, which is loud so
+ * that `state.tsx` disarms the rejoin loop.
+ *
+ * 🔴 The gate needs BOTH sides (the event and this session's nonce for its
+ * shape), and `""` counts as absent. A one-sided nonce means the SFU, the
+ * server or this client did not carry the attribute. Comparing a value to an
+ * absence would read that as a mismatch and turn a real target loud, so
+ * a one-sided nonce falls back to the device ladder, exactly as it was.
+ *
+ * 🔴 Unequal nonces are `moved-elsewhere` at steps 3, 4/5 AND 6. At step 3 the
+ * session is a live sibling in `from`. At steps 4/5 it holds a fresh marker
+ * for a DIFFERENT connection than the moved one, which is the handoff seat step
+ * 5 exists to refuse; it is now positively excluded rather than merely
+ * unverifiable. At step 6 a `stale-notice` would say the move "reached this
+ * device too late to follow", and that is false: the move was never this
+ * connection's. The gate is only ever active in one of those shapes, so the
+ * unequal half of all three is one test, placed after step 2 and ahead of
+ * the addressed arms.
  *
  * 🔴 STEP 2 IS SECOND ON PURPOSE, AND IT OUTRANKS THE LOUD ARMS. An earlier
  * cut of this ladder let step 6 beat it and the question was left open; this
@@ -412,6 +522,9 @@ export const MOVE_NOTICE_WINDOW_MS = 60_000;
  * `AlreadyPresent` for `from === to` and emits no event at all — so this is
  * defensive ordering for a shape that only reaches us if the backend changes,
  * and defensive code should fail quiet and true rather than loud and false.
+ * It outranks `moved-elsewhere` for the same reason. That copy says another
+ * connection was moved and this one is being removed, and when nothing moved,
+ * nothing is being removed either.
  *
  * 🔴 ADDRESSING IS NOT "AM I IN `from` RIGHT NOW". It is "am I the session
  * that WAS in `from`", because the event can arrive after this session has
@@ -473,13 +586,19 @@ export const MOVE_NOTICE_WINDOW_MS = 60_000;
  * Say the trade plainly, because it is a real one: web, the Electron/Linux
  * shell and unenrolled users get a MANUAL Rejoin exactly where a native E2EE
  * seat gets an AUTOMATIC move. That asymmetry is accepted here because the
- * failure it replaces is unattended audio in a room nobody is in, and it is
- * not the end state. The permanent fix is an addressing label that is not the
- * E2EE device id — a per-connection nonce minted at join and recorded
- * alongside `voice_identity:{channel}`, so every seat can prove which
- * connection a token was minted for whether or not it has an E2EE device. Once
- * that exists, `deviceKnown` is true everywhere and step 5 becomes
- * unreachable.
+ * failure it replaces is unattended audio in a room nobody is in.
+ *
+ * The addressing label that is not the E2EE device id now exists: the
+ * per-connection nonce. `create_token` mints one into every connection's
+ * token as the `CONN_NONCE_ATTRIBUTE` attribute. There is no server-side
+ * record of it; at move time the server reads the SOURCE connection's
+ * attribute off `list_participants` for `from`, before any write, and carries
+ * it on the event. A bare seat whose marker snapshotted a nonce is judged by
+ * the nonce gate: it moves on a match and is `moved-elsewhere` on a mismatch,
+ * and never reaches step 5. Step 5 is left for a gate that is inactive, which
+ * happens when the SFU carries no attribute, a server predates the nonce, or
+ * this session read none. There the trade above still holds, and on those
+ * seats it is still the ordinary path, not a rare one.
  *
  * 🔴 STEP 6 IS ONE ARM FOR TWO CAUSES, and it exists because both of them were
  * silent. Past `MOVE_VERIFIED_WINDOW_MS` the device distinction stops buying
@@ -501,11 +620,14 @@ export const MOVE_NOTICE_WINDOW_MS = 60_000;
  * Splitting them would mean telling one of them a different story about a
  * difference that no longer has any consequence. One arm, and the copy says
  * what is true of both: the notice arrived too late to follow automatically.
+ * The one exception is a session the nonce gate positively EXCLUDES. Its
+ * nonces differ, so the move was never its to follow, late or not, and it is
+ * `moved-elsewhere` rather than `stale-notice` (see the nonce note above).
  *
  * 🔴 The idle-device property survives all of this untouched: a phone in a
  * pocket was never in `from`, so its `lastInvoluntaryChannelId` is
- * `undefined`, no step from 3 to 6 is true, and it still ignores — silently,
- * as it must.
+ * `undefined`, no step from 3 to 6 is true, the nonce gate has no shape to
+ * apply to, and it still ignores — silently, as it must.
  *
  * 🔴 Steps 1, 2 and 7 MUST come before the feasibility tests. The addressing
  * question ("is this event even about me?") is answered before the feasibility
@@ -513,11 +635,11 @@ export const MOVE_NOTICE_WINDOW_MS = 60_000;
  * either, so under the other order it would answer `fail-loud` and pop an
  * error toast about a call it is not in — a user being moved would get one
  * real move and N spurious errors, one per signed-in device. `ignore` is
- * silent by design. Steps 5 and 6 sit on the addressing side of that line on
- * purpose: they outrank `unknown-channel` and `no-url` because a session that
- * cannot prove it was the target, or that is past the point of acting, must
- * not be told WHY it could not carry out a move it was never going to carry
- * out.
+ * silent by design. Steps 5 and 6 and `moved-elsewhere` sit on the addressing
+ * side of that line on purpose: they outrank `unknown-channel` and `no-url`
+ * because a session that cannot prove it was the target, that is past the
+ * point of acting, or that was positively not the target must not be told WHY
+ * it could not carry out a move it was never going to carry out.
  *
  * `already-there` is an ignore rather than a no-op move because redeeming a
  * token for the room we are already in is a reconnect: it tears down a healthy
@@ -542,18 +664,8 @@ export function moveDecision(world: MoveWorld): MoveDecision {
   const deviceKnown = world.deviceId !== undefined;
   const deviceMatches = deviceKnown && world.deviceId === world.sessionDeviceId;
 
-  // Step 1, ahead of every local test: the token names a device, and it is
-  // not ours. Nothing else about this session's history can override that.
-  if (deviceKnown && !deviceMatches)
-    return { action: "ignore", reason: "other-device" };
-
-  // Step 2: nothing was moved, so nothing — loud or quiet — may claim it was.
-  // See the 🔴 note above for why this outranks the loud arms.
-  if (world.from === world.to)
-    return { action: "ignore", reason: "already-there" };
-
-  // Step 3: we are in `from` right now. On a bare identity this is EXACT,
-  // because two sessions of one user cannot hold the same bare LiveKit
+  // Step 3's shape: we are in `from` right now. On a bare identity this is
+  // EXACT, because two sessions of one user cannot hold the same bare LiveKit
   // identity in the same room at once.
   const connectedToSource =
     world.callState === "CONNECTED" && world.currentChannelId === world.from;
@@ -582,9 +694,51 @@ export function moveDecision(world: MoveWorld): MoveDecision {
     markerAgeMs !== undefined &&
     markerAgeMs < MOVE_VERIFIED_WINDOW_MS;
 
+  // Which of this session's nonces the event's is compared against. The
+  // live connection's is used for the CONNECTED-to-`from` shape, and the
+  // dropped connection's, snapshotted with the marker, for the marker shapes.
+  // The two shapes cannot both hold (the marker terms require not CONNECTED),
+  // so at most one applies. Any other shape has none, so the gate stays
+  // inactive and that session keeps exactly its old answer.
+  const sessionSideNonce = connectedToSource
+    ? world.sessionConnNonce
+    : markerNamesSource
+      ? world.lastInvoluntaryConnNonce
+      : undefined;
+  // G1: active only when BOTH sides carry one, with `""` read as absent. A
+  // one-sided nonce means one side never saw the attribute, and comparing a
+  // value to an absence would call a real target "elsewhere".
+  const nonceGate = !!world.connNonce && !!sessionSideNonce;
+  const nonceMatches = nonceGate && world.connNonce === sessionSideNonce;
+
+  // Step 1, ahead of every local test: the token names a device, and it is
+  // not ours. Nothing else about this session's history can override that,
+  // EXCEPT the nonce, which names the connection rather than the device and so
+  // REPLACES this test whenever the gate is active (see the 🔴 note above).
+  // Run ahead of it, this test would silence a bare sibling of a
+  // device-qualified mover, and that sibling's rejoin kicks the moved seat.
+  if (!nonceGate && deviceKnown && !deviceMatches)
+    return { action: "ignore", reason: "other-device" };
+
+  // Step 2: nothing was moved, so nothing — loud or quiet — may claim it was.
+  // See the 🔴 note above for why this outranks the loud arms, the nonce's
+  // included.
+  if (world.from === world.to)
+    return { action: "ignore", reason: "already-there" };
+
+  // The unequal half of steps 3, 4/5 and 6. The gate is only active in one of
+  // those shapes, so this is the answer for all of them. The server moved a
+  // different connection of this user and is evicting this one, so it must not
+  // act, and it must not stay quiet while its rejoin loop is still armed.
+  if (nonceGate && !nonceMatches)
+    return { action: "fail-loud", reason: "moved-elsewhere" };
+
   // Steps 3 and 4 — the two addressed shapes, and the only ones that may act.
-  // Step 4 accepts the claim only with the proof beside it.
-  if (connectedToSource || (markerIsFresh && deviceMatches)) {
+  // Step 4 accepts the claim only with the proof beside it: the nonce when the
+  // gate is active (and unequal already returned above), the device when it
+  // is not.
+  const labelMatches = nonceGate ? nonceMatches : deviceMatches;
+  if (connectedToSource || (markerIsFresh && labelMatches)) {
     if (!world.destinationKnown)
       return { action: "fail-loud", reason: "unknown-channel" };
     if (!world.url || world.url.trim().length === 0)
@@ -602,13 +756,16 @@ export function moveDecision(world: MoveWorld): MoveDecision {
   // unattended seat holding a handoff's marker would otherwise publish a
   // microphone into an empty room — and say so out loud, so the session that
   // really was moved gets a Rejoin instead of silence. See the 🔴 note above
-  // for the trade this encodes and the per-connection nonce that retires it.
+  // for the trade this encodes and the per-connection nonce that retires it
+  // wherever both sides carry one.
   //
-  // `!deviceKnown` is the whole remaining case: step 1 already returned for a
-  // named device that is not ours, and a named device that IS ours took step 4
-  // above, so a fresh marker reaching this line can only be an unverifiable
-  // seat.
-  if (markerIsFresh && !deviceKnown)
+  // With the gate inactive, `!deviceKnown` is the whole remaining case: step 1
+  // already returned for a named device that is not ours, and a named device
+  // that IS ours took step 4 above, so a fresh marker reaching this line can
+  // only be an unverifiable seat. With the gate active a fresh marker never
+  // gets here (equal took step 4, unequal returned `moved-elsewhere`), and
+  // `!nonceGate` says so rather than leaving it to the order of the arms.
+  if (markerIsFresh && !nonceGate && !deviceKnown)
     return { action: "fail-loud", reason: "unverified-session" };
 
   // Step 6. Inside the notice window, past the verified one: too late to act,

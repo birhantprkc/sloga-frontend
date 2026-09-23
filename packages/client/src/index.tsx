@@ -242,7 +242,7 @@ function MountContext(props: { children?: JSX.Element }) {
         <I18nProvider>
           <ClientContext state={state}>
             <SoundContext>
-              <VoiceContext>
+              <VoiceContext snackbar={snackbarController}>
                 <QueryClientProvider client={client}>
                   <SnackbarProvider controller={snackbarController}>
                     {props.children}
