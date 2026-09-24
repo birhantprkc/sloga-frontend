@@ -23,6 +23,12 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //   menu was not checked.
   // - The heart line is deliberate: the row sends the picker's exact heart, so
   //   a quick heart adds to an existing heart instead of starting a twin.
+  // - The Singapore node (sg1) went live on the server side 2026-09-24, before
+  //   this release; only the "Asia (Singapore)" dropdown label ships here. No
+  //   real call had run on it when this was written, and no latency was
+  //   measured from Asia, so no millisecond figures and no "verified" wording.
+  //   Only the call's FIRST joiner picks the server, so "Sloga picks for you"
+  //   stays conditional ("calls you start").
   {
     id: "sloga-2026-09-23",
     title: "Patch Notes",
@@ -34,6 +40,10 @@ export const CHANGELOGS: ChangelogResponse[] = [
 - **React without opening the emoji picker.** Right-click a message, or open its **⋯** menu, and 👍 👎 ❤ 🙂 🙁 sit across the top. One click adds the reaction; a highlighted one is already yours, and clicking it again takes it back off.
 - **A quick heart joins the hearts already there.** It is the same heart the emoji picker sends, so it adds to the existing count rather than starting a second one that looks identical.
 - **You only see the ones you can use.** The row is hidden where you do not have permission to react, and on a message that only accepts certain reactions, only those appear.
+
+### 🌏 Voice
+- **Sloga now has a voice server in Asia, in Singapore.** If you are in the Philippines, Indonesia, Malaysia, Thailand, Vietnam or nearby, calls you start no longer have to cross the Pacific to reach the US. Sloga measures which server is fastest for you and uses it, so there is nothing to set.
+- **Server owners can pin calls to it.** **Server Settings → Overview → Voice region** now lists **Asia (Singapore)** alongside US East and South America (São Paulo).
 `,
   },
   // ==========================================================================
