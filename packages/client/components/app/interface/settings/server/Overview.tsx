@@ -96,6 +96,7 @@ export default function ServerOverview(props: ServerSettingsProps) {
   const voiceRegionLabels: Record<string, string> = {
     worldwide: t`US East`,
     brazil: t`South America (São Paulo)`,
+    singapore: t`Asia (Singapore)`,
   };
   const voiceRegions = () =>
     advertisedVoiceNodes(client()).map((node) => ({

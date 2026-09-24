@@ -971,6 +971,10 @@ msgstr "Arrangement"
 msgid "Arrow"
 msgstr "Arrow"
 
+#: components/app/interface/settings/server/Overview.tsx
+msgid "Asia (Singapore)"
+msgstr "Asia (Singapore)"
+
 #: components/ui/components/features/voice/callCard/ParticipantTile.tsx
 msgid "Ask for a turn"
 msgstr "Ask for a turn"
