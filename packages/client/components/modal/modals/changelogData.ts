@@ -30,6 +30,17 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //   millisecond figures.
   //   Only the call's FIRST joiner picks the server, so "Sloga picks for you"
   //   stays conditional ("calls you start").
+  // - The own-message fix has two halves. The server half went live
+  //   2026-09-24 for EVERY app version: sending marks the channel read for
+  //   its author. Checked in the database on one real send plus the organic
+  //   traffic after it, never by watching a second device, so the bullet
+  //   says what happens to the channel and makes no claim about how fast.
+  //   The client half (own messages never add to a count) ships here.
+  // - 🔴 Keep the scheduled-message exception. A scheduled message only marks
+  //   the channel read if the author had already read everything in it, so
+  //   dropping that sentence would promise something false.
+  // - Self-mentions: the author is filtered out of mention and push fan-out,
+  //   including @everyone and role mentions, so "does not notify you" holds.
   {
     id: "sloga-2026-09-23",
     title: "Patch Notes",
@@ -45,6 +56,10 @@ export const CHANGELOGS: ChangelogResponse[] = [
 ### 🌏 Voice
 - **Sloga now has a voice server in Asia, in Singapore.** If you are in the Philippines, Indonesia, Malaysia, Thailand, Vietnam or nearby, calls you start no longer have to cross the Pacific to reach the US. Sloga measures which server is fastest for you and uses it, so there is nothing to set.
 - **Server owners can pin calls to it.** **Server Settings → Overview → Voice region** now lists **Asia (Singapore)** alongside US East and South America (São Paulo).
+
+### 🔔 Fixes
+- **Your own message no longer shows up as a new notification.** If you were the last person to post in a channel, it could come back marked unread, with a +1 on the badge, on your other devices and every time you reopened Sloga. Sending a message now marks that channel read for you everywhere. The one exception is a scheduled message: if there was something you had not read yet when it went out, the channel stays unread so you do not miss it.
+- **Mentioning yourself no longer notifies you.** That includes **@everyone** and a role you have.
 `,
   },
   // ==========================================================================
