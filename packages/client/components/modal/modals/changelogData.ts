@@ -41,6 +41,28 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //   dropping that sentence would promise something false.
   // - Self-mentions: the author is filtered out of mention and push fan-out,
   //   including @everyone and role mentions, so "does not notify you" holds.
+  // - Scheduled messages: server-side only. It went live 2026-09-24 for EVERY
+  //   app version (crond now runs the task workers, backend `cedfa612`).
+  //   Before that, a scheduled message never marked the channel unread, never
+  //   recorded mentions, and never sent a push. The prod crond log shows the
+  //   channel-unread update firing for real scheduled deliveries. The mention
+  //   and push path is covered only by an ignored integration test and has
+  //   never been watched on a scheduled message in prod. So the bullet says
+  //   "the same as a message you send yourself" and lists nothing it cannot
+  //   back. 🔴 Do not add link previews or a DM reopening: neither was checked.
+  // - Worker fix: server-side only, live 2026-09-24 on delta, crond, pushd and
+  //   bonfire (backend `65ddc651`, deployed from `344701ad`). NEITHER trigger
+  //   has been seen in prod. The fix is covered by tests: a deleted-channel
+  //   regression test on both database drivers, a supervisor restart test,
+  //   and an ignored end-to-end worker test against a local broker. So the
+  //   bullet says what COULD happen, never that anyone lost notifications or
+  //   how often.
+  //   🔴 "Restarts itself" means after a 1 to 60 s backoff. Never "instantly".
+  //   🔴 Keep the extra-notification sentence. When the online check fails,
+  //   everyone is now treated as offline, so people who have Sloga open can
+  //   get a push. The same fallback can also show people as offline in a
+  //   connection made during that outage. The copy leaves that out on
+  //   purpose, but must never claim that presence is unaffected.
   {
     id: "sloga-2026-09-23",
     title: "Patch Notes",
@@ -60,6 +82,8 @@ export const CHANGELOGS: ChangelogResponse[] = [
 ### 🔔 Fixes
 - **Your own message no longer shows up as a new notification.** If you were the last person to post in a channel, it could come back marked unread, with a +1 on the badge, on your other devices and every time you reopened Sloga. Sending a message now marks that channel read for you everywhere. The one exception is a scheduled message: if there was something you had not read yet when it went out, the channel stays unread so you do not miss it.
 - **Mentioning yourself no longer notifies you.** That includes **@everyone** and a role you have.
+- **Scheduled messages now arrive like normal ones.** A message you scheduled used to go out without a push notification, without counting as a mention for anyone it @mentioned, and without marking the channel unread for people who were not online. It now goes out the same as a message you send yourself.
+- **Notifications no longer quietly stop after a problem on our servers.** Two rare problems could stop the part of Sloga that delivers mentions, unread badges and push notifications. One was an **@everyone** or role mention in a channel that was deleted a few seconds later. The other was a brief outage of the service that tracks who is online. Each could lose a batch of notifications, and if it happened enough times, delivery stopped until the server restarted. Sloga now handles both, and if that part of Sloga stops for any other reason, it restarts itself. If the online check has an outage now, the worst case is a push notification on a device where you already have Sloga open.
 `,
   },
   // ==========================================================================
