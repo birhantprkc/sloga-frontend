@@ -24,9 +24,10 @@ export const CHANGELOGS: ChangelogResponse[] = [
   // - The heart line is deliberate: the row sends the picker's exact heart, so
   //   a quick heart adds to an existing heart instead of starting a twin.
   // - The Singapore node (sg1) went live on the server side 2026-09-24, before
-  //   this release; only the "Asia (Singapore)" dropdown label ships here. No
-  //   real call had run on it when this was written, and no latency was
-  //   measured from Asia, so no millisecond figures and no "verified" wording.
+  //   this release; only the "Asia (Singapore)" dropdown label ships here. A
+  //   real call passed on it the same day (region pin, webhooks, cleanup),
+  //   but from New Jersey: no latency was measured from Asia, so still no
+  //   millisecond figures.
   //   Only the call's FIRST joiner picks the server, so "Sloga picks for you"
   //   stays conditional ("calls you start").
   {
