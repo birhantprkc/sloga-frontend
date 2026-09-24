@@ -1,18 +1,18 @@
-import { BiSolidShield } from "solid-icons/bi";
 import { Show } from "solid-js";
 
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import { User, UserBadges } from "stoat.js";
 import { styled } from "styled-system/jsx";
 
+import badgeActiveSupporter from "../../../../../scripts/assets_fallback/badges/active_supporter.svg";
 import badgeJoke1 from "../../../../../scripts/assets_fallback/badges/amog.svg";
 import badgeJoke2 from "../../../../../scripts/assets_fallback/badges/amorbus.svg";
 import badgeDeveloper from "../../../../../scripts/assets_fallback/badges/developer.svg";
+import badgeDisclosure from "../../../../../scripts/assets_fallback/badges/disclosure.svg";
 import badgeEarlyAdopter from "../../../../../scripts/assets_fallback/badges/early_adopter.svg";
 import badgeFounder from "../../../../../scripts/assets_fallback/badges/founder.svg";
 import badgeModeration from "../../../../../scripts/assets_fallback/badges/moderation.svg";
 import badgePaw from "../../../../../scripts/assets_fallback/badges/paw.svg";
-import badgeRaccoon from "../../../../../scripts/assets_fallback/badges/raccoon.svg";
 import badgeSupporter from "../../../../../scripts/assets_fallback/badges/supporter.svg";
 import badgeTranslator from "../../../../../scripts/assets_fallback/badges/translator.svg";
 import { Text } from "../../design";
@@ -63,6 +63,17 @@ export function ProfileBadges(props: { user: User }) {
               src={badgeSupporter}
             />
           </Show>
+          <Show when={props.user.badges & UserBadges.ActiveSupporter}>
+            <img
+              use:floating={{
+                tooltip: {
+                  placement: "top",
+                  content: t`Active Sloga supporter`,
+                },
+              }}
+              src={badgeActiveSupporter}
+            />
+          </Show>
           <Show when={props.user.badges & UserBadges.Translator}>
             <img
               use:floating={{
@@ -98,16 +109,15 @@ export function ProfileBadges(props: { user: User }) {
             </span>
           </Show>
           <Show when={props.user.badges & UserBadges.ResponsibleDisclosure}>
-            <span
+            <img
               use:floating={{
                 tooltip: {
                   placement: "top",
                   content: t`Responsibly disclosed security issues`,
                 },
               }}
-            >
-              <BiSolidShield />
-            </span>
+              src={badgeDisclosure}
+            />
           </Show>
           <Show
             when={props.user.badges & UserBadges.ReservedRelevantJokeBadge1}
@@ -123,7 +133,7 @@ export function ProfileBadges(props: { user: User }) {
             />
           </Show>
           <Show
-            when={props.user.badges & UserBadges.ReservedRelevantJokeBadge1}
+            when={props.user.badges & UserBadges.ReservedRelevantJokeBadge2}
           >
             <img
               use:floating={{
@@ -144,17 +154,6 @@ export function ProfileBadges(props: { user: User }) {
                 },
               }}
               src={badgePaw}
-            />
-          </Show>
-          <Show when={props.user.id === "01EX2NCWQ0CHS3QJF0FEQS1GR4"}>
-            <img
-              use:floating={{
-                tooltip: {
-                  placement: "top",
-                  content: "🦝",
-                },
-              }}
-              src={badgeRaccoon}
             />
           </Show>
         </BadgeRow>
