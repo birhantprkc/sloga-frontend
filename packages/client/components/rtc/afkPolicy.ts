@@ -100,7 +100,7 @@ export function publishToggleRefusal(input: {
  * What the join path does about AFK, replacing the four name-keyed lines that
  * used to sit inline in the `room "connected"` handler.
  *
- * `wantMic` keeps its pre-AFK meaning (honour the persisted pre-call state: a
+ * `wantMic` keeps its pre-AFK meaning (honor the persisted pre-call state: a
  * deafened or explicitly muted user never joins with a hot microphone) and
  * adds the AFK term. `attachMicPipeline` is separate because the RNNoise /
  * shaper / gain processor chain is pointless work on a track that will never

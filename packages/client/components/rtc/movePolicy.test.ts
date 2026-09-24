@@ -54,7 +54,7 @@
 // `MOVE_VERIFIED_WINDOW_MS` a marker can still buy a move; between there and
 // `MOVE_NOTICE_WINDOW_MS` it buys only a `stale-notice` toast, because the
 // token is past relying on but the session's own rejoin loop is still
-// dialling the OLD channel back and would reverse the moderator in silence;
+// dialing the OLD channel back and would reverse the moderator in silence;
 // past the outer
 // bound the marker means nothing and the session goes quiet like any other
 // bystander.
@@ -263,12 +263,14 @@ test("🔴 step 2 outranks BOTH loud arms, and that is a ruling, not an accident
   // got a card for a `from === to` event.
   //
   // The ruling: when `from === to` NOTHING WAS MOVED, so every loud arm's copy
-  // ("a moderator moved you to another voice channel…") is a plain false
-  // statement made to a session sitting exactly where it already was. What is
-  // given up is a Rejoin button pointing at the channel this session was
-  // dropped from, which is marginal; honesty about what happened is not. It
-  // cannot occur in practice either — `member_edit` answers `AlreadyPresent`
-  // for `from === to` and emits no event — so this is defensive ordering, and
+  // (you were moved to another voice channel) is a plain false statement made
+  // to a session sitting exactly where it already was. What is given up is a
+  // Rejoin button pointing at the channel this session was dropped from,
+  // which is marginal; honesty about what happened is not. It cannot occur in
+  // practice either — the shared backend emitter
+  // (`move_user_to_voice_channel_expecting`, behind both the moderator route
+  // and the AFK sweep) answers `AlreadyPresent` for `from === to` and emits
+  // no event — so this is defensive ordering, and
   // defensive code should fail quiet and true over loud and false.
   const alreadyThere = { from: FROM, to: FROM };
   // Against `unverified-session`: a bare seat with a fresh marker.
@@ -379,7 +381,7 @@ test("step 4 — a dropped session that MATCHES the token's device is addressed"
   // call site. The race is no longer guaranteed — but it is not gone. The two
   // legs leave delta at nearly the same instant by different routes (Redis ->
   // bonfire -> socket for the event, a LiveKit RPC and a `Leave` down our
-  // signalling socket for the eviction), so the `Leave` can still win on
+  // signaling socket for the eviction), so the `Leave` can still win on
   // jitter. When it does, `PARTICIPANT_REMOVED` is in
   // `NO_REJOIN_DISCONNECT_REASONS` and puts us in DISCONNECTED before the
   // move lands, and a gate that demanded CONNECTED would ignore the REAL
@@ -404,8 +406,8 @@ test("🔴 step 5 — a dropped session that cannot show its device fails LOUD",
   // device and neither does the session: the marker's claim ("the SFU just
   // removed me from `from`") can be neither confirmed nor denied here.
   //
-  // It must not be silently honoured — an idle seat that was merely
-  // force-disconnected by a handoff holds exactly this marker, and honouring
+  // It must not be silently honored — an idle seat that was merely
+  // force-disconnected by a handoff holds exactly this marker, and honoring
   // it lets that seat redeem the token and publish a microphone into a room
   // nobody is sitting at. It must not be silently dropped either — the seat
   // that really was moved would then land in no call at all, which is the
@@ -423,8 +425,8 @@ test("🔴 step 5 — a dropped session that cannot show its device fails LOUD",
     },
   );
   // The fail-open rejoin shape reaches it too: `shouldAutoRejoin` is a
-  // deny-list, so an absent or unrecognised disconnect reason leaves us
-  // RECONNECTING and dialling the OLD channel back.
+  // deny-list, so an absent or unrecognized disconnect reason leaves us
+  // RECONNECTING and dialing the OLD channel back.
   assert.deepEqual(
     decide({
       callState: "RECONNECTING",
@@ -475,7 +477,7 @@ test("🔴 step 6 — a marker past the verified window is a stale-notice, on BO
   //
   // Both are wrong for the same reason: their drop fails OPEN in
   // `shouldAutoRejoin` whenever the SDK reports no reason, so they are already
-  // dialling `from` back on the 1 s / 2 s / 4 s ladder. Silence hands the user
+  // dialing `from` back on the 1 s / 2 s / 4 s ladder. Silence hands the user
   // the old channel and tells nobody a moderator's decision was undone.
   //
   // Past the verified window the device distinction buys nothing — no move is
@@ -502,7 +504,7 @@ test("🔴 step 6 — a marker past the verified window is a stale-notice, on BO
     }),
     { action: "fail-loud", reason: "stale-notice" },
   );
-  // And the fail-open RECONNECTING shape, which is the one actually dialling
+  // And the fail-open RECONNECTING shape, which is the one actually dialing
   // the old channel back while this is decided.
   assert.deepEqual(
     decide({
@@ -742,8 +744,8 @@ test("🔴 the NOTICE window's boundary goes silent, on both device populations"
 
 test("🔴 a verified session rejoining the OLD channel after the drop still MOVES", () => {
   // The fail-open half. `shouldAutoRejoin` is a deny-list, so when the SDK
-  // reports the removal with an absent or unrecognised reason we go
-  // RECONNECTING and start dialling `from` back. Ignoring the move here
+  // reports the removal with an absent or unrecognized reason we go
+  // RECONNECTING and start dialing `from` back. Ignoring the move here
   // would let the rejoin loop silently undo the moderator's decision.
   assert.deepEqual(
     decide({
@@ -795,7 +797,7 @@ test("🔴 a session CONNECTED elsewhere is not addressed by a stale marker", ()
     );
 });
 
-test("an unrecognised call state is not treated as connected", () => {
+test("an unrecognized call state is not treated as connected", () => {
   // Step 3 is `=== "CONNECTED"`, not a deny-list: a state string this module
   // has never heard of must not fall through into a join on its own.
   assert.deepEqual(
@@ -991,7 +993,7 @@ test("🔴 P-1 — a bare sibling holding a FRESH marker is moved-elsewhere, not
   // the eviction or by an unrelated handoff, and holds a fresh marker for
   // `from` recorded against its OWN connection's nonce. Silence here is the
   // same kick-back as above, because the drop may be RECONNECTING and
-  // dialling `from`.
+  // dialing `from`.
   for (const callState of ["DISCONNECTED", "RECONNECTING"])
     assert.deepEqual(
       decide({
@@ -2060,7 +2062,7 @@ test("🔴 the verified window, the budget and the skew allowance fit inside the
   //
   //   - The window is counted from `#lastInvoluntaryLeftAt`, the instant the
   //     SFU's `Leave` landed on THIS client. That is strictly later than the
-  //     mint. `move_user_to_voice_channel`
+  //     mint. `move_user_to_voice_channel_expecting`
   //     (`crates/core/database/src/voice/mod.rs`) mints the token, THEN
   //     releases any remote-control grant, THEN publishes the private event,
   //     and only THEN evicts each listed connection through

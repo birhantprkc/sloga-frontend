@@ -801,8 +801,11 @@ class Voice {
    * See `#noteIdleActivity` for why a tick is ever run early.
    */
   #idleKick: (() => void) | undefined;
-  /** Removes this connection's `ActiveSpeakersChanged` listener. */
-  #idleUnlistenSpeakers: (() => void) | undefined;
+  /**
+   * Removes every Room listener `#startIdleWatch` added for this connection
+   * (`ActiveSpeakersChanged`, `Reconnecting`, `Reconnected`).
+   */
+  #idleUnlistenRoom: (() => void) | undefined;
   /**
    * The last moment this user was seen doing something. Written by the
    * discrete activity events (the local speaking edge, a PTT down, a keybind,
@@ -905,7 +908,7 @@ class Voice {
    * 🔴 NOT an answer to "is THIS attempt the rejoin's". `connect()` used to
    * read it that way when deciding whether to retire the involuntary-drop
    * marker, and a join the USER made while the loop already had a connect in
-   * flight then kept a marker for a channel it was not dialling. That
+   * flight then kept a marker for a channel it was not dialing. That
    * decision is per attempt now — see `opts.rejoinAttempt` on `connect()`.
    */
   #rejoinConnectInFlight = false;
@@ -942,7 +945,7 @@ class Voice {
    * two inputs `moveDecision`'s clause (b) addresses a move by.
    *
    * Why they have to exist even though the backend now publishes the move
-   * FIRST. `move_user_to_voice_channel`
+   * FIRST. `move_user_to_voice_channel_expecting`
    * (`crates/core/database/src/voice/mod.rs`) emits
    * `EventV1::UserMoveVoiceChannel` and only THEN evicts every connection the
    * SFU lists for the user in `from` via
@@ -2835,7 +2838,7 @@ class Voice {
     // a join is itself the proof that the drop is no longer the last thing that
     // happened to this session.
     //
-    // NOT for the auto-rejoin loop's own attempt. That attempt is dialling the
+    // NOT for the auto-rejoin loop's own attempt. That attempt is dialing the
     // channel we were just dropped FROM, on nobody's instruction, and losing
     // the marker under it hands the race back to the bug `#handleVoiceMove`
     // cancels the loop for: the move arrives mid-rejoin, clause (a) is false
@@ -3442,7 +3445,7 @@ class Voice {
       // own attempt (see there), so for a rejoin this is the only clear there
       // is, and it is the one that retires the marker once the session is
       // demonstrably back in a call. For every other join this clear is
-      // defence in depth: `moveDecision`'s clause (b) is already gated on the
+      // defense in depth: `moveDecision`'s clause (b) is already gated on the
       // session not being `CONNECTED`, so no rule hangs on it — but a marker
       // that outlives its meaning is a loaded footgun for the next reader of
       // those two fields, and retiring it at the one moment it is provably
@@ -3548,7 +3551,7 @@ class Voice {
       // fresh read rather than a captured const.
       const { wantMic, attachMicPipeline, forceCameraOff } = afkJoinPlan({
         isAfkChannel: this.isAfkChannel,
-        // Honour the persisted pre-call state (the sidebar user bar makes
+        // Honor the persisted pre-call state (the sidebar user bar makes
         // muting/deafening before a call a first-class action): a deafened or
         // explicitly muted user must never join with a hot microphone, even
         // in open-mic mode. Only reconcile micOn against the actual track
@@ -3619,8 +3622,8 @@ class Voice {
       // involuntary. `PARTICIPANT_REMOVED` — what a moderator's move looks
       // like on the wire — is denied by `NO_REJOIN_DISCONNECT_REASONS` and
       // lands in the `DISCONNECTED` arm; a removal the SDK reports with an
-      // absent or unrecognised reason fails OPEN and lands in the
-      // `RECONNECTING` arm instead, which starts dialling the OLD channel
+      // absent or unrecognized reason fails OPEN and lands in the
+      // `RECONNECTING` arm instead, which starts dialing the OLD channel
       // back. That second arm is the one where losing the marker silently
       // undoes the moderator, so recording per-arm would fix the visible half
       // of the bug and leave the worse half in place.
@@ -5138,7 +5141,7 @@ class Voice {
     //
     // `disconnect()` alone does not close it. It only bumps `#rejoinSeq` when
     // `#rejoinConnectInFlight` is false, so a rejoin whose own `connect()` is
-    // already in flight is NOT cancelled by it — whichever invocation bumps
+    // already in flight is NOT canceled by it — whichever invocation bumps
     // `#connectGen` last wins, and by the time that settles the move token's
     // ten seconds are gone. So cancel the loop by hand, resolve any pending
     // backoff wait, and strip the old room's listeners outright (the same
@@ -7167,8 +7170,39 @@ class Voice {
         this.#noteIdleActivity();
     };
     room.on(RoomEvent.ActiveSpeakersChanged, onSpeakers);
-    this.#idleUnlistenSpeakers = () => {
+    // An SDK reconnect restarts the idle clock (S6-R1, FE-FU-1). A FULL
+    // reconnect (`Reconnecting` … `Reconnected`) joins the SFU as a new
+    // participant, so the server's `joined_at` moves forward, and the server
+    // now refuses any claim whose `idle_for` exceeds `now - joined_at` by more
+    // than its slack (`AFK_CLAIM_JOIN_SLACK_MS`, `voice/afk_idle.rs`). A
+    // reconnect that completes between two ticks is never seen by `#idleTick`
+    // as "not connected", so without this the old clock would outlive the new
+    // `joined_at` and every claim would be refused: an idle user would never
+    // be moved until they next did something.
+    //
+    // `Reconnected` is the load-bearing one: it fires after the new
+    // participant has joined, so the restarted clock is never older than the
+    // new `joined_at`. `Reconnecting` marks the start of the same outage.
+    // `SignalReconnecting` is deliberately NOT heard: it is a signal-only
+    // resume that keeps the same participant and `joined_at`, and when it
+    // succeeds the SDK emits `Reconnected` anyway, and when it escalates to a
+    // full reconnect the SDK emits `Reconnecting`.
+    //
+    // Safe direction: a restart can only delay a move, never hasten one. A
+    // resume that did NOT change `joined_at` still fires `Reconnected` and so
+    // delays the move by up to one timeout. A standing claim is withdrawn by
+    // the next ordinary tick (`idleStep`: posted and under the threshold ->
+    // `clear-idle`), so this stamps the clock and nothing else. It does not go
+    // through `#noteIdleActivity`, which would also kick a tick at once.
+    const onReconnect = () => {
+      this.#idleLastActivityAt = performance.now();
+    };
+    room.on(RoomEvent.Reconnecting, onReconnect);
+    room.on(RoomEvent.Reconnected, onReconnect);
+    this.#idleUnlistenRoom = () => {
       room.off(RoomEvent.ActiveSpeakersChanged, onSpeakers);
+      room.off(RoomEvent.Reconnecting, onReconnect);
+      room.off(RoomEvent.Reconnected, onReconnect);
     };
     const tick = () => this.#idleTick(room, channel, gen);
     this.#idleKick = tick;
@@ -7182,8 +7216,8 @@ class Voice {
   #stopIdleWatch(): void {
     if (this.#idleTimer !== undefined) clearInterval(this.#idleTimer);
     this.#idleTimer = undefined;
-    this.#idleUnlistenSpeakers?.();
-    this.#idleUnlistenSpeakers = undefined;
+    this.#idleUnlistenRoom?.();
+    this.#idleUnlistenRoom = undefined;
     this.#idleKick = undefined;
     this.#idleLastTickAt = undefined;
     this.#idlePosted = false;

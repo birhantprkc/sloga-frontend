@@ -118,7 +118,7 @@ test("🔴 clearing travels in the remove array, never as a null field", () => {
 });
 
 test("clearing carries no afk_channel_id key at all, not even undefined", () => {
-  // A key present with `undefined` survives a spread and can be serialised as
+  // A key present with `undefined` survives a spread and can be serialized as
   // null by some paths; the clear arm must be structurally free of it.
   const payload = afkDesignationEdit({
     designate: false,
@@ -276,7 +276,7 @@ test("channel settings call the shared designation and timeout mappers", () => {
 /**
  * Crude comment stripper. The null-pointer scan below has to read code, not
  * prose: both surfaces carry a comment explaining why `afk_channel_id: null`
- * is forbidden, and a scan that cannot tell the warning from the offence fires
+ * is forbidden, and a scan that cannot tell the warning from the offense fires
  * on its own documentation. The JSX marker scan deliberately does NOT use this
  * — its marker lives inside a `{/* … *\/}` comment.
  */
@@ -335,7 +335,7 @@ test("the sidebar icon reads the designation, not the channel name", () => {
   // The shipped bug: `name?.toLowerCase() === "afk"`. Renaming any channel to
   // "afk" granted the icon; renaming the real one took it away.
   // Comments stripped: the replacement carries a doc comment quoting the old
-  // expression, and a scan that cannot tell the warning from the offence fires
+  // expression, and a scan that cannot tell the warning from the offense fires
   // on its own documentation.
   assert.equal(
     /name\?\.toLowerCase\(\)\s*===\s*"afk"/.test(stripComments(SERVER_SIDEBAR)),

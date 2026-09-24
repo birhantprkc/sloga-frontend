@@ -735,6 +735,37 @@ const PTT_DOWN = (() => {
   return open ? balancedGroup(STATE_CODE, open.index + open[0].length - 1) : "";
 })();
 
+/**
+ * The body of the `this.#idleUnlistenRoom = () => { … }` closure in
+ * `#startIdleWatch`, or `""`: the one place its Room listeners are removed.
+ */
+const IDLE_UNLISTEN_ROOM = (() => {
+  const open = /this\.#idleUnlistenRoom = \(\) => \{/.exec(START_IDLE_WATCH);
+  return open
+    ? balancedGroup(START_IDLE_WATCH, open.index + open[0].length - 1)
+    : "";
+})();
+
+const STOP_IDLE_WATCH = member("#stopIdleWatch").body;
+
+/** The handler `#startIdleWatch` registers for `event`, or `undefined`. */
+function idleRoomHandler(event: string): string | undefined {
+  const on = new RegExp(`room\\.on\\(RoomEvent\\.${event}, (\\w+)\\);`).exec(
+    START_IDLE_WATCH,
+  );
+  return on?.[1];
+}
+
+/** The body of `const name = () => { … }` inside `#startIdleWatch`, or `""`. */
+function idleLocalArrowBody(name: string): string {
+  const open = new RegExp(`const ${name} = \\(\\) => \\{`).exec(
+    START_IDLE_WATCH,
+  );
+  return open
+    ? balancedGroup(START_IDLE_WATCH, open.index + open[0].length - 1)
+    : "";
+}
+
 test("🔴 B1: input in the VISIBLE window is activity — four events, capture, passive", () => {
   // `=== "visible"` flipped, an event dropped, or `capture: false` (a handler
   // that stops propagation then hides the input): each one moves a member who
@@ -787,12 +818,88 @@ test("🔴 B1: the local speaking edge is heard, and the listener is removed", (
         if (speakers.some((p) => p.identity === room.localParticipant.identity))
           this.#noteIdleActivity();
       };
-      room.on(RoomEvent.ActiveSpeakersChanged, onSpeakers);
-      this.#idleUnlistenSpeakers = () => {
-        room.off(RoomEvent.ActiveSpeakersChanged, onSpeakers);
-      };`,
+      room.on(RoomEvent.ActiveSpeakersChanged, onSpeakers);`,
     ),
-    "#startIdleWatch does not register (and unregister) the ActiveSpeakersChanged listener",
+    "#startIdleWatch does not register the ActiveSpeakersChanged listener",
+  );
+  // The removal lives in the one unlisten closure, pinned (with the rest of
+  // that closure) by the reconnect test below.
+  assert.ok(
+    IDLE_UNLISTEN_ROOM.includes(
+      "room.off(RoomEvent.ActiveSpeakersChanged, onSpeakers);",
+    ),
+    "#startIdleWatch's unlisten closure does not remove the ActiveSpeakersChanged listener",
+  );
+});
+
+// --- FE-FU-1 (S6-R1): an SDK reconnect restarts the idle clock -------------
+//
+// The server refuses a claim whose `idle_for` exceeds `now - joined_at` by
+// more than its slack (`AFK_CLAIM_JOIN_SLACK_MS`, backend
+// `voice/afk_idle.rs`), and a FULL SDK reconnect is a new SFU participant
+// with a new `joined_at`. A reconnect that completes between two ticks is
+// never seen by `#idleTick`, so the clock must be restarted by the Room's own
+// reconnect events or every later claim is refused and the idle user is never
+// moved. The scan helpers are declared with the others, above the B1 tests.
+
+for (const event of ["Reconnecting", "Reconnected"]) {
+  test(`🔴 FE-FU-1: RoomEvent.${event} restarts the idle clock, and only that`, () => {
+    const handler = idleRoomHandler(event);
+    assert.ok(
+      handler,
+      `#startIdleWatch does not register a RoomEvent.${event} listener — a reconnect between ticks leaves the clock older than the new joined_at`,
+    );
+    const body = idleLocalArrowBody(handler);
+    assert.ok(
+      body.length > 0,
+      `the RoomEvent.${event} handler \`${handler}\` is not a \`const ${handler} = () => { … }\` inside #startIdleWatch`,
+    );
+    // No immediate tick: a standing claim is withdrawn by the next ordinary
+    // tick (`idleStep`: posted and under the threshold -> clear-idle).
+    for (const banned of ["#noteIdleActivity", "#idleKick"]) {
+      assert.ok(
+        !body.includes(banned),
+        `the RoomEvent.${event} handler calls ${banned} — it must only restart the clock`,
+      );
+    }
+    assert.ok(
+      /^\{\s*this\.#idleLastActivityAt = performance\.now\(\);\s*\}$/.test(
+        body,
+      ),
+      `the RoomEvent.${event} handler must be exactly \`this.#idleLastActivityAt = performance.now();\`, saw ${JSON.stringify(body)}`,
+    );
+    // The removal sits in the same closure as ActiveSpeakersChanged's, so
+    // #stopIdleWatch removes it with the rest.
+    assert.ok(
+      IDLE_UNLISTEN_ROOM.includes(`room.off(RoomEvent.${event}, ${handler});`),
+      `#startIdleWatch's unlisten closure does not remove the RoomEvent.${event} listener — it leaks across connections`,
+    );
+  });
+}
+
+test("🔴 FE-FU-1: every Room listener the idle watch adds is removed by #stopIdleWatch", () => {
+  assert.ok(
+    IDLE_UNLISTEN_ROOM.length > 0,
+    "no `this.#idleUnlistenRoom = () => { … }` closure in #startIdleWatch",
+  );
+  assert.ok(
+    hasTokens(
+      STOP_IDLE_WATCH,
+      "this.#idleUnlistenRoom?.(); this.#idleUnlistenRoom = undefined;",
+    ),
+    "#stopIdleWatch does not run (and drop) the idle watch's unlisten closure",
+  );
+  const ons = [...START_IDLE_WATCH.matchAll(/room\.on\(([^;]*)\);/g)].map(
+    (match) => squash(match[1]),
+  );
+  const offs = [...IDLE_UNLISTEN_ROOM.matchAll(/room\.off\(([^;]*)\);/g)].map(
+    (match) => squash(match[1]),
+  );
+  assert.ok(ons.length >= 3, `expected at least 3 room.on( calls, saw ${ons}`);
+  assert.deepEqual(
+    [...offs].sort(),
+    [...ons].sort(),
+    "the listeners #startIdleWatch adds and the ones its unlisten closure removes differ",
   );
 });
 

@@ -1,22 +1,32 @@
 /**
- * AFK channel — the PURE decision core for the client half of a moderator
- * MOVE (`UserMoveVoiceChannel`), extracted so `node --test` can load it. Like
- * its neighbours this module stays dependency-free: no Solid, no stoat.js, no
- * lingui, no livekit. `state.tsx` resolves the world (call state, current
- * channel, the channel this session was last involuntarily dropped from, the
- * device the token was minted for, this session's own device, the connection
- * nonce the event names and the four this session holds (its live one, its
- * drop marker's, the one it is dialing, and the one its rejoin replaced) with
- * the replaced drop's time, whether the destination is known, the node's URL)
- * and hands the plain values in; every
+ * AFK channel — the PURE decision core for the client half of a server-side
+ * MOVE (`UserMoveVoiceChannel`), extracted so `node --test` can load it. The
+ * move is ordered either by a moderator or by the AFK idle sweep; see the
+ * sender list below. Like its neighbors this module stays dependency-free:
+ * no Solid, no stoat.js, no lingui, no livekit. `state.tsx` resolves the
+ * world (call state, current channel, the channel this session was last
+ * involuntarily dropped from, the device the token was minted for, this
+ * session's own device, the connection nonce the event names and the four
+ * this session holds (its live one, its drop marker's, the one it is dialing,
+ * and the one its rejoin replaced) with the replaced drop's time, whether the
+ * destination is known, the node's URL) and hands the plain values in; every
  * rule below is called by production and never re-typed there.
  *
  * 🔴 Why a gate exists at all. The backend emits `UserMoveVoiceChannel`
- * PRIVATELY to the moved user (`member_edit.rs`, `.private(target_user.id)`),
- * and `EventV1::private` reaches EVERY SESSION of that user — including
- * devices that are not on the call. The note is written down in-tree at
- * `crates/core/database/src/events/client.rs` (on the sibling
- * `RemoteControlOffered` variant, which had to learn the same lesson).
+ * PRIVATELY to the moved user (`.private(target.id.clone())`) from ONE place,
+ * `move_user_to_voice_channel_expecting` in
+ * `crates/core/database/src/voice/mod.rs`. Two callers reach it, both
+ * directly and both naming the source channel they decided about
+ * (`Some(&source)`): the moderator route
+ * (`crates/delta/src/routes/servers/member_edit.rs`) and the AFK idle sweep
+ * (`crates/daemons/crond/src/tasks/afk_sweep.rs`), which has no acting user.
+ * The event does not say which of the two sent it. (The four-argument
+ * `move_user_to_voice_channel` wrapper has no production caller.)
+ * `EventV1::private` reaches EVERY
+ * SESSION of that user — including devices that are not on the call. The
+ * note is written down in-tree at `crates/core/database/src/events/client.rs`
+ * (on the sibling `RemoteControlOffered` variant, which had to learn the same
+ * lesson).
  *
  * So a handler that simply acts on the event yanks an idle second device — a
  * phone in a pocket, a spare browser tab — into a call it was never in, and
@@ -118,7 +128,7 @@ export type MoveFailReason =
    * notice arrived too late to act on, whether or not the device can be
    * shown. The move is not redeemed — by then the token cannot be relied on to
    * outlive the connect — but it is not swallowed either, because this
-   * session's rejoin loop may be dialling the OLD channel back and would
+   * session's rejoin loop may be dialing the OLD channel back and would
    * otherwise reverse the moderator in silence.
    */
   | "stale-notice"
@@ -155,7 +165,10 @@ export interface MoveWorld {
   callState: string;
   /** The channel this session is in, or `undefined` when it is in none. */
   currentChannelId: string | undefined;
-  /** The event's `from`: the channel the moderator moved the user out of. */
+  /**
+   * The event's `from`: the channel the user was moved out of, whether by a
+   * moderator or by the AFK idle sweep.
+   */
   from: string;
   /** The event's `to`: the destination channel. */
   to: string;
@@ -285,7 +298,8 @@ export const MOVE_PRECONNECT_BUDGET_MS = 3000;
  * `room.connect()`. Neither endpoint is the one the SFU judges the token by,
  * and the error is in the unsafe direction at BOTH ends:
  *
- *   mint -> Leave, before our clock starts. `move_user_to_voice_channel`
+ *   mint -> Leave, before our clock starts.
+ *     `move_user_to_voice_channel_expecting`
  *     (`crates/core/database/src/voice/mod.rs`) lists the source room and
  *     writes its markers, then mints the token, then calls
  *     `release_remote_control_for_user` — at minimum a Redis probe for the
@@ -511,9 +525,10 @@ export const MOVE_NOTICE_WINDOW_MS = 60_000;
  * other addressing signal below is this session's own account of its own
  * history. `deviceId` and `connNonce` are the server's account of whose
  * credential this is. LiveKit identities are `user:device`, and the move
- * token is minted for exactly one of them (`move_user_to_voice_channel` picks
- * the moved connection out of the old room's participant list and derives the
- * device from that identity). A session whose device is not that device
+ * token is minted for exactly one of them
+ * (`move_user_to_voice_channel_expecting` picks the moved connection out of
+ * the old room's participant list and derives the device from that
+ * identity). A session whose device is not that device
  * cannot redeem the token without racing the session that can — and LiveKit
  * resolves that race by evicting one of them on duplicate identity, quite
  * possibly the one the user is sitting in front of.
@@ -591,12 +606,14 @@ export const MOVE_NOTICE_WINDOW_MS = 60_000;
  * 🔴 STEP 2 IS SECOND ON PURPOSE, AND IT OUTRANKS THE LOUD ARMS. An earlier
  * cut of this ladder let step 6 beat it and the question was left open; this
  * is the answer. When `from === to` NOTHING WAS MOVED, so every loud arm below
- * would open with "a moderator moved you to another voice channel" — a plain
+ * would tell the user they were moved to another voice channel — a plain
  * false statement, on a session that is exactly where it already was. The
  * affordance being given up is a Rejoin button pointing at the channel this
  * session was just dropped from, which is marginal at best; honesty about what
- * happened is not. It also cannot occur in practice — `member_edit` answers
- * `AlreadyPresent` for `from === to` and emits no event at all — so this is
+ * happened is not. It also cannot occur in practice — the shared backend
+ * emitter (`move_user_to_voice_channel_expecting`, used by the moderator route
+ * and the AFK sweep alike) answers `AlreadyPresent` for `from === to` and
+ * emits no event at all — so this is
  * defensive ordering for a shape that only reaches us if the backend changes,
  * and defensive code should fail quiet and true rather than loud and false.
  * It outranks `moved-elsewhere` for the same reason. That copy says another
@@ -615,13 +632,13 @@ export const MOVE_NOTICE_WINDOW_MS = 60_000;
  * The inversion is no longer guaranteed, but it is not gone. The two legs
  * leave delta at nearly the same instant by different routes: the event via a
  * Redis publish, bonfire and then our socket, the eviction via a LiveKit RPC
- * and a `Leave` straight down our signalling socket. When the `Leave` wins,
+ * and a `Leave` straight down our signaling socket. When the `Leave` wins,
  * `PARTICIPANT_REMOVED` is in `NO_REJOIN_DISCONNECT_REASONS`
  * (`voiceRejoinPolicy.ts`) and lands us in `DISCONNECTED`; a gate that asked
  * for `CONNECTED` would then answer `ignore` to the real target, silently,
  * and the member would end up in no call at all. When the SDK reports the
- * removal with an absent or unrecognised reason instead, `shouldAutoRejoin`
- * fails OPEN, the session goes `RECONNECTING` and starts dialling the OLD
+ * removal with an absent or unrecognized reason instead, `shouldAutoRejoin`
+ * fails OPEN, the session goes `RECONNECTING` and starts dialing the OLD
  * channel back; ignoring the move there silently undoes the moderator.
  *
  * 🔴 The marker terms are deliberately gated on `callState !== "CONNECTED"`.
@@ -686,7 +703,7 @@ export const MOVE_NOTICE_WINDOW_MS = 60_000;
  *   - The VERIFIED-but-late session. It can prove the token names it, it was
  *     dropped out of `from`, and the notice simply took too long. Silence is
  *     the one answer it must not get: its drop fails OPEN in `shouldAutoRejoin`
- *     whenever the SDK reports no reason, so it is already dialling `from` back
+ *     whenever the SDK reports no reason, so it is already dialing `from` back
  *     on the 1 s / 2 s / 4 s ladder. Ignoring the move there hands the user
  *     their old channel and tells nobody a moderator's decision was undone.
  *   - The UNVERIFIED-and-late session. Identical rejoin loop, identical
@@ -877,7 +894,7 @@ export function moveDecision(world: MoveWorld): MoveDecision {
 
   // Step 6. Inside the notice window, past the verified one: too late to act,
   // on EITHER population — the verified session whose token is past relying
-  // on, and the unverifiable one alike. Both are, or recently were, dialling
+  // on, and the unverifiable one alike. Both are, or recently were, dialing
   // the old channel back, so silence here reverses the moderator with nobody
   // told.
   if (markerNamesSource) return { action: "fail-loud", reason: "stale-notice" };

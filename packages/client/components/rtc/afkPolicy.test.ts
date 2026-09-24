@@ -174,7 +174,7 @@ test("the join plan keeps the microphone down in the AFK channel", () => {
   }
 });
 
-test("outside the AFK channel the join plan is the pre-AFK behaviour", () => {
+test("outside the AFK channel the join plan is the pre-AFK behavior", () => {
   assert.deepEqual(
     afkJoinPlan({ isAfkChannel: false, deafened: false, micOn: true }),
     { wantMic: true, attachMicPipeline: true, forceCameraOff: false },
@@ -244,7 +244,7 @@ const STATE = readFileSync(new URL("./state.tsx", import.meta.url), "utf8");
  * below has to read code, not prose: the block itself quotes both the old
  * name-keyed expression and the exact property value it pins, and `state.tsx`
  * is free to quote them back when it explains why they went. A scan that
- * cannot tell the warning from the offence fires on its own documentation.
+ * cannot tell the warning from the offense fires on its own documentation.
  *
  * It cuts deep — `state.tsx` is around 62% comment by character, so most of
  * the file goes. That is why the count below is pinned rather than just
@@ -276,7 +276,7 @@ test("state.tsx calls the extracted rules instead of restating them", () => {
 
 test("the name-keyed AFK check is gone from state.tsx", () => {
   // The shipped implementation was `channel.name?.toLowerCase() === "afk"`.
-  // Renaming any channel granted the behaviour; renaming the real one removed
+  // Renaming any channel granted the behavior; renaming the real one removed
   // it. If this string ever comes back, the server designation is being
   // second-guessed by a string compare.
   // Comments stripped: the replacement is entitled to quote the expression it
