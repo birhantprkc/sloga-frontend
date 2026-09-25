@@ -77,6 +77,31 @@ import {
 import { SidebarBase } from "./common";
 import { exitReorderMode, reorderMode } from "./reorderMode";
 
+/**
+ * Whether one of the channel's gates (age, password, spoiler) still stands.
+ *
+ * The gates wrap the channel pane, but this sidebar draws things from the
+ * channel outside it: the member list, a voice channel's live roster, and a
+ * double-click that joins the call. Each asks here first, so passing the gate
+ * is the only way to reach any of them.
+ */
+function isGatedFor(
+  state: ReturnType<typeof useState>,
+  channel: Channel,
+): boolean {
+  const source = gateSource(channel);
+  return isChannelGated(
+    {
+      id: source.id,
+      mature: !!source.mature,
+      isSpoiler: !!source.isSpoiler,
+      hasPassword: !!parseChannelPassword(source.description).passwordHash,
+    },
+    (key) => state.layout.getSectionState(key, false),
+    LAYOUT_SECTIONS.MATURE,
+  );
+}
+
 interface Props {
   /**
    * Server to display sidebar for
@@ -225,18 +250,7 @@ export const ServerSidebar = (props: Props) => {
       !!selectedChannel()?.isThread) &&
     !sides().membersOwnColumn &&
     state.layout.getSectionState(LAYOUT_SECTIONS.MEMBER_SIDEBAR, true) &&
-    !isChannelGated(
-      {
-        id: gateSource(selectedChannel()!).id,
-        mature: !!gateSource(selectedChannel()!).mature,
-        isSpoiler: !!gateSource(selectedChannel()!).isSpoiler,
-        hasPassword: !!parseChannelPassword(
-          gateSource(selectedChannel()!).description,
-        ).passwordHash,
-      },
-      (key) => state.layout.getSectionState(key, false),
-      LAYOUT_SECTIONS.MATURE,
-    );
+    !isGatedFor(state, selectedChannel()!);
 
   // Last scroll position the user actually chose.
   //
@@ -1856,6 +1870,10 @@ function Entry(
     // succession are exactly what a failed drag looks like.
     if (props.reordering) return;
 
+    // Nor may it join past a gate. The first click of the pair has already
+    // opened the channel, so the gate is on screen; joining is for after it.
+    if (isGatedFor(state, props.channel)) return;
+
     const join = shouldJoinOnDoubleClick({
       isVoiceChannel: props.channel.isVoice,
       settingEnabled: state.voice.joinVoiceOnDoubleClick,
@@ -2025,7 +2043,11 @@ function Entry(
         </OverflowingText>
       </MenuButton>
 
-      <VoiceChannelPreview channel={props.channel} />
+      {/* Who is in the call is the channel's content too: hidden behind its
+          gate, unless this device is already in that call. */}
+      <Show when={inCall() || !isGatedFor(state, props.channel)}>
+        <VoiceChannelPreview channel={props.channel} />
+      </Show>
 
       <For each={joinedThreads()}>
         {(thread) => {
