@@ -778,7 +778,18 @@ export default class ClientController {
 
   logout() {
     this.state.settings.resetNotificationsState();
-    killServiceWorkerSubscription(this.getCurrentClient(), true);
+    // Tell the server to drop this session's push subscription, not only the
+    // device. It used to skip that on sign-out (`loggingOut = true`), on the
+    // assumption that the session was deleted with it; but sign-out never
+    // deletes the session, so the server kept the subscription and a phone
+    // went on receiving notifications after "Sign out".
+    //
+    // 🔴 Do NOT "fix" that by revoking the session here. Deleting a session
+    // also deletes the E2EE device bound to it (sessions/model.rs ->
+    // revoke_devices_for_session), and the E2EE layer relies on a local
+    // sign-out keeping that device so the next sign-in re-attaches it.
+    // Revoking on sign-out needs an E2EE design decision first.
+    killServiceWorkerSubscription(this.getCurrentClient(), false);
     this.state.auth.removeSession();
     this.lifecycle.transition({
       type: TransitionType.Logout,
