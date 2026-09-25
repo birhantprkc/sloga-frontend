@@ -103,6 +103,7 @@ class Lifecycle {
     this.#controller = controller;
 
     this.onState = this.onState.bind(this);
+    this.onEvent = this.onEvent.bind(this);
     this.onReady = this.onReady.bind(this);
     this.onPolicyChanges = this.onPolicyChanges.bind(this);
 
@@ -151,6 +152,7 @@ class Lifecycle {
       // Remove listeners before teardown so stale async events from the old
       // client don't fire transitions on the new one.
       this.client.events.off("state", this.onState);
+      this.client.events.off("event", this.onEvent);
       this.client.off("ready", this.onReady);
       this.client.off("policyChanges", this.onPolicyChanges);
       this.client.on("error", () => {}); // suppress stale unhandled errors
@@ -204,6 +206,7 @@ class Lifecycle {
     }
 
     this.client.events.on("state", this.onState);
+    this.client.events.on("event", this.onEvent);
     this.client.on("ready", this.onReady);
     this.client.on("policyChanges", this.onPolicyChanges);
   }
@@ -411,6 +414,11 @@ class Lifecycle {
           case TransitionType.TemporaryFailure:
             this.#enter(State.Disconnected);
             break;
+          // A server `Logout` event (see onEvent) arrives while connected.
+          case TransitionType.PermanentFailure:
+            this.#permanentError = transition.error;
+            this.#enter(State.Error);
+            break;
           case TransitionType.Logout:
             this.#enter(State.Dispose);
             break;
@@ -474,6 +482,22 @@ class Lifecycle {
     }
   }
 
+  /**
+   * Bonfire sends `Logout` down a live connection when that connection's
+   * session is deleted: revoked from another device, "log out everywhere",
+   * or a bot's token reset. Nothing used to handle it, so the revocation only
+   * surfaced after the socket closed and the first reconnect was refused, and
+   * a call kept running until then. Treat it as the InvalidSession it is.
+   */
+  private onEvent(event: { type: string }) {
+    if (event.type === "Logout") {
+      this.transition({
+        type: TransitionType.PermanentFailure,
+        error: "InvalidSession",
+      });
+    }
+  }
+
   private onReady() {
     this.transition({
       type: TransitionType.SocketConnected,
@@ -493,6 +517,10 @@ class Lifecycle {
   private onState(state: ConnectionState) {
     switch (state) {
       case ConnectionState.Disconnected:
+        // A server Logout event already moved us to Error, and the socket
+        // closing behind it is expected, not a failure to report.
+        if (this.state() === State.Error) break;
+
         if (this.client.events.lastError) {
           if (this.client.events.lastError.type === "revolt") {
             // if (this.client.events.lastError.data.type == 'InvalidSession') {
