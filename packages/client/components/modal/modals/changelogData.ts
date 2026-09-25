@@ -82,6 +82,12 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //     server channels (code-verified, never a live leg), and it governs who
   //     may HAND OVER their own screen, never who may take one. Owners and
   //     staff always have it. The copy says only that the setting exists.
+  //   - 🔴 The "signing out stops push" bullet must NOT say signing out ends
+  //     the session on the server: it deliberately does not (deleting a
+  //     session deletes its E2EE device). It only drops the subscription.
+  //   - The soundboard bullet is server-side (migration revision 70, runs
+  //     when delta starts with it). 🔴 True only once that delta deploy has
+  //     happened; covers servers created before 2026-07-15 only.
   //   - 🔴 The sign-out bullet says the device LEAVES the call when the
   //     server ends its session. It must not say "instantly": it happens
   //     when the server's logout message arrives or, failing that, at the
@@ -112,10 +118,14 @@ export const CHANGELOGS: ChangelogResponse[] = [
 - **The disappearing-messages timer is no longer offered in encrypted chats.** It never deleted encrypted messages, so it showed a timer that did nothing there.
 - **Forum posts no longer show an empty Permissions page in their settings.** A post follows its forum's permissions, so there is nothing to set on the post itself.
 - **Permission lists keep their section titles.** On some channel types a section's title went missing and its settings ran on under the section before.
+- **Signing out now stops push notifications to that device.** A phone you signed out of could keep receiving notifications for the account.
+- **The soundboard works on older servers.** On servers created before the soundboard arrived in July, members got an error when they tried to play a sound.
+- **The Windows app no longer shows a push notification switch that could not work.** Notifications while Sloga is open are unchanged.
 
 ### 🛡️ Safety and privacy
 - **A channel's member list now stays behind its age, password or spoiler screen.** Until you get past that screen, the member list beside the channel list stays hidden too. Before, a mature channel showed who was in it right next to the "are you 18?" prompt.
 - **Forum posts and threads now sit behind their channel's screen.** A post in a mature, password-protected or spoiler forum used to open straight away, with no screen at all. Getting past the forum's screen once covers its posts.
+- **Voice channels too.** Who is in a gated voice channel's call stays hidden in the channel list until you get past its screen, and double-clicking the channel opens the screen instead of joining.
 - **Moderators can no longer mute, deafen or rename the server owner.** An owner with no roles counted as the lowest rank, so anyone allowed to mute members could mute them too.
 - **Forum posts now respect Read Message History.** A role denied it can still see which posts exist, but no longer reads their opening messages or replies.
 - **Server owners can choose who may hand over control of their screen.** **Remote Control** now appears under **Voice** in a server's and channel's permissions. It covers handing over your own shared screen; nobody can take control of someone else's.
