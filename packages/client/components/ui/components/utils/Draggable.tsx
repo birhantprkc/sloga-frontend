@@ -29,7 +29,8 @@ interface Props<T> {
    * role row would arm at `LONG_PRESS_MS`, claim the application-wide gesture
    * and finish by writing a new role ranking to the server. A rank write is a
    * permissions change, and it must not be reachable from a hold on a list the
-   * user meant to scroll. A caller that wants hold-anywhere says so here.
+   * user meant to scroll. A caller that wants hold-anywhere says so here, as
+   * `ServerRoleOverview` now does on phones.
    *
    * Must be **constant for the whole life of the component**: pass something
    * assigned once, such as `useDevice().isMobile`. It is captured with
@@ -607,7 +608,8 @@ export function Draggable<T>(props: Props<T>) {
     // `setRoleOrdering` — a server-side permissions write reached by holding a
     // list the user meant to scroll, with the library's non-passive
     // `touchmove` eating that scroll on the way. Hold-anywhere is a feature a
-    // caller asks for by name.
+    // caller asks for by name. (`ServerRoleOverview` now does, on phones, and
+    // drops a drag that ends in the order it started before it is saved.)
     //
     // Read the captured constant, never `props.longPress`: this gate runs a
     // single time while the effect above re-runs, and a live read here would
