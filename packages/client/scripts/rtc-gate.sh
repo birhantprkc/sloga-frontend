@@ -99,17 +99,18 @@ EXPECTED=(
   "components/rtc/mlsCallModePolicy.test.ts 117 0"
   "components/rtc/mlsCallSession.escape.test.ts 17 0"
   "components/rtc/mlsCallSession.falsered.test.ts 11 0"
-  "components/rtc/mlsCallSession.fleet.test.ts 5 0"
+  "components/rtc/mlsCallSession.fleet.test.ts 31 0"
   "components/rtc/mlsCallSession.groupscope.test.ts 19 0"
   "components/rtc/mlsCallSession.heal.test.ts 7 0"
   "components/rtc/mlsCallSession.joinrace.test.ts 37 0"
   "components/rtc/mlsCallSession.resecure.test.ts 23 0"
+  "components/rtc/mlsCallSession.serveguard.test.ts 3 0"
   "components/rtc/mlsCallSession.timeline.test.ts 4 0"
   "components/rtc/mlsDrainPolicy.test.ts 14 0"
   "components/rtc/mlsJoinRequestPolicy.test.ts 4 0"
   "components/rtc/mlsJoinTimeline.test.ts 9 0"
   "components/rtc/mlsNegotiatingFailsafe.test.ts 13 0"
-  "components/rtc/mlsRejoinPolicy.test.ts 18 0"
+  "components/rtc/mlsRejoinPolicy.test.ts 22 0"
   "components/rtc/mlsSessionSetupPolicy.test.ts 19 0"
   "components/rtc/rosterReconcile.test.ts 27 0"
   "components/rtc/localPublicationEncryption.test.ts 10 0"
@@ -284,6 +285,11 @@ FILES=(components/rtc/mlsCallSession.ts components/rtc/mlsCallModePolicy.ts
   components/rtc/mlsCallSession.timeline.test.ts
   components/rtc/mlsCallSession.fleet.test.ts
   components/rtc/mlsCallSession.groupscope.test.ts
+  components/rtc/mlsCallSession.serveguard.test.ts
+  # Enrolled because both are clean: `prettier --check` and eslint each exit
+  # 0 on them, with no warnings (measured when the rejoin-resume plan's wave
+  # 1.5 added `serveTargetStillStale` and its cases).
+  components/rtc/mlsRejoinPolicy.ts components/rtc/mlsRejoinPolicy.test.ts
   components/client/mlsInboundBuffer.ts
   components/client/mlsInboundBuffer.test.ts
   # Enrolled because it is clean: `prettier --check` passes on it (and passed

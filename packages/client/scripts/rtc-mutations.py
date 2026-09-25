@@ -393,6 +393,7 @@ CHIP = "chipInputs.ts"
 #: constants use.
 HOLD = "pauseClauseHold.ts"
 TIMELINE = "mlsJoinTimeline.ts"
+REJOIN_POLICY = "mlsRejoinPolicy.ts"
 #: 🔴 NOT under `components/rtc`. `apply` and the restore in `main` both
 #: address `RTC / mutation.file`, so a `components/client` module is named
 #: relative to `RTC`, and the restore writes back to that same path.
@@ -416,6 +417,8 @@ TIMELINE_SPEC = "components/rtc/mlsJoinTimeline.test.ts"
 SESSION_TIMELINE_SPEC = "components/rtc/mlsCallSession.timeline.test.ts"
 FLEET_SPEC = "components/rtc/mlsCallSession.fleet.test.ts"
 GROUPSCOPE_SPEC = "components/rtc/mlsCallSession.groupscope.test.ts"
+SERVEGUARD_SPEC = "components/rtc/mlsCallSession.serveguard.test.ts"
+REJOIN_POLICY_SPEC = "components/rtc/mlsRejoinPolicy.test.ts"
 INBOUND_BUFFER_SPEC = "components/client/mlsInboundBuffer.test.ts"
 ALL_SPECS = [POLICY_SPEC, HEAL_SPEC, JOINRACE_SPEC]
 
@@ -450,11 +453,12 @@ class Mutation:
     #:
     #: 🔴 For a defect that only exists as a CONJUNCTION. The stagger entry
     #: below re-introduces a timing (a short Welcome wait) together with the
-    #: missing re-check that made that timing harmless; each half alone leaves
-    #: its spec green, so two separate entries would both be "uncaught" and
-    #: prove nothing about the defect. Every edit is applied in memory and the
-    #: file written once, so a stale anchor in any of them refuses before the
-    #: tree is touched.
+    #: guards that made that timing harmless. When it was written (wave 1)
+    #: each half alone left its spec green, so two separate entries would both
+    #: have been "uncaught" and proved nothing about the defect; wave 1.5 added
+    #: a guard and the entry a third edit (see its comment). Every edit is
+    #: applied in memory and the file written once, so a stale anchor in any of
+    #: them refuses before the tree is touched.
     also: list[tuple[str, str]] = field(default_factory=list)
 
 
@@ -3287,19 +3291,33 @@ MUTATIONS += [
 MUTATIONS += [
     # ---- the fleet --------------------------------------------------------
     #
-    # 🔴 No single-edit entry removes ONLY the fire-time §4.8 re-check yet. Its
-    # killer would be a fleet case whose serving member sits at leaf >= 6, so
-    # its stagger fires after the re-seated member's Add at REAL constants —
-    # and that case is RED on the live tree with no mutant at all (fleet F4
-    # finding, 2026-09-25), so it did not land and nothing here could tell the
-    # mutant from the tree. Pending the operator's decision on that defect, the
-    # re-check is guarded only by the conjunction below.
+    # The fire-time §4.8 re-check alone now has its own single-edit entry,
+    # `fire-time-recheck-removed` (wave 1.5, below), killed by the fleet case
+    # that replays a stale rejoin intent after the re-add. What held it back in
+    # wave 1 — a serve at leaf >= 6 kicking the re-seated member at REAL
+    # constants (fleet F4 finding, 2026-09-25) — was a live defect, and wave
+    # 1.5's epoch-keyed `#removedAtEpoch` guard is its fix.
+    #
+    # 🔴 That guard closes the whole class this entry models, so the entry
+    # carries a THIRD edit that bypasses it (W15P-M3); without it this would no
+    # longer be the defect. Measured 2026-09-25 under the ORIGINAL two-edit
+    # form (the short retry and the fire-time block gone, the guard intact):
+    # every no-kick assertion in the fleet spec holds, the stagger proof
+    # included — the guard alone refuses the serve, which is the parked-wave
+    # class closed. The fleet spec still goes red, but only on three timeline
+    # PRECONDITIONS the 1 500 ms retry moves, none of them a kick: "leaf 6
+    # watching PEER leave and rejoin…" (`not between the two`), "a second
+    # rejoin intent while a member's own Remove is in flight…" (`PEER's re-add
+    # had not landed`) and "a stale rejoin intent sent AFTER the re-add…"
+    # (`every member refused at schedule time`). So the two-edit form gets no
+    # entry: it is not green, and its red is not the defect.
     Mutation(
         id="rejoin-stagger-refire",
-        what="a higher leaf's staggered rejoin serve fires after the live member was re-seated and stages a Remove of it — the Welcome wait short enough for the re-add to land inside the stagger, and the fire-time §4.8 re-check gone",
+        what="a higher leaf's staggered rejoin serve fires after the live member was re-seated and stages a Remove of it — the Welcome wait short enough for the re-add to land inside the stagger, the fire-time §4.8 re-check gone, and the removed-at-epoch guard bypassed",
         file=SESSION,
-        # BOTH halves, in one entry: measured, each alone leaves the fleet
-        # spec green (see `also` on the dataclass).
+        # ALL THREE edits, in one entry (see `also` on the dataclass). The
+        # third bypasses the removed-at-epoch guard at its one decision point,
+        # which serves both its early exit and its check under the lock.
         search="""const JOINER_RETRY_MS = 10_000;""",
         replace="""const JOINER_RETRY_MS = 1_500;""",
         also=[
@@ -3318,6 +3336,10 @@ MUTATIONS += [
     }
 """,
                 "",
+            ),
+            (
+                """    if (serveTargetStillStale({ scheduledAtEpoch, removedAtEpoch })) {""",
+                """    if (true) {""",
             ),
         ],
         specs=[FLEET_SPEC],
@@ -3387,6 +3409,239 @@ MUTATIONS += [
         replace="",
         specs=[INBOUND_BUFFER_SPEC],
         must_red=[INBOUND_BUFFER_SPEC],
+    ),
+]
+
+
+# --- Rejoin resume, wave 1.5: the stagger kick -------------------------------
+#
+# In a call of seven or more, the member at leaf >= 6 fires its staggered
+# rejoin serve after the rejoiner's re-add, and the fire-time §4.8 check reads
+# add observations a non-admitting member only records on its periodic
+# reconcile — so it removed the live, re-seated member. The fix is a monotonic
+# epoch-keyed fact: `#removedAtEpoch` (the highest epoch at which a commit of
+# the live group removed each identity), written from every inbound commit and
+# from this member's own won Removes, cleared only with every scheduled serve,
+# and read UNDER the lock by `serveTargetStillStale` immediately before the
+# serve stages its Remove. Each entry below breaks one leg of that argument
+# and is `must_red` on the spec that owns the case proving the leg; which
+# fleet case kills which entry is recorded on the entry.
+
+MUTATIONS += [
+    # ---- the fact's writers -------------------------------------------------
+    Mutation(
+        id="removed-at-epoch-not-recorded",
+        what="inbound commits no longer record the identities they removed, so a member that did not win the Remove has no fact to refuse a late serve with, and leaf >= 6 kicks the re-seated member again",
+        file=SESSION,
+        # Killed by the phase sweep (14 of its phases), the eight-member case,
+        # the leave-and-return case and the lock-race case.
+        search="""    if (outcome.group_id === this.#groupId) {
+      this.#noteRemovedAtEpoch(outcome.removed, outcome.epoch);
+    }
+""",
+        replace="",
+        specs=[FLEET_SPEC],
+        must_red=[FLEET_SPEC],
+    ),
+    Mutation(
+        id="own-won-remove-not-recorded",
+        what="a member's OWN won Remove is not recorded (it never comes back inbound), so a second serve it armed while that Remove was in flight, anchored before it, removes the re-seated member",
+        file=SESSION,
+        # Killed by the case with a second rejoin intent while the member's
+        # own Remove is in flight.
+        search="""          if (kind === "remove" && groupId === this.#groupId) {
+            this.#noteRemovedAtEpoch(commit.removed, commit.epoch);
+          }
+""",
+        replace="",
+        specs=[FLEET_SPEC],
+        must_red=[FLEET_SPEC],
+    ),
+    Mutation(
+        id="removed-at-epoch-deleted-on-leave",
+        what="a participant leaving the SFU deletes its removed-at-epoch fact, so a rejoiner seen leaving and returning between its Remove and its re-add is served again by a late stagger",
+        file=SESSION,
+        # Killed by the case where leaf 6 watches PEER leave and rejoin the
+        # SFU between its Remove and its re-add.
+        search="""    this.#rejoinServed.delete(identity); // nor a pending re-Add
+""",
+        replace="""    this.#rejoinServed.delete(identity); // nor a pending re-Add
+    this.#removedAtEpoch.delete(identity);
+""",
+        specs=[FLEET_SPEC],
+        must_red=[FLEET_SPEC],
+    ),
+    # ---- the check ----------------------------------------------------------
+    Mutation(
+        id="serve-stale-check-bypassed",
+        what="`serveTargetStillStale` always answers stale, so every late serve removes whatever leaf it finds — the fresh re-add included",
+        file=REJOIN_POLICY,
+        search="""  return i.removedAtEpoch === null || i.removedAtEpoch <= i.scheduledAtEpoch;""",
+        replace="""  return true;""",
+        # Both, each on its own: the policy spec pins the rule, and the fleet
+        # (phase sweep, eight-member, leave-and-return, own-Remove-in-flight
+        # and lock-race cases) proves the session's decision rests on it.
+        specs=[REJOIN_POLICY_SPEC, FLEET_SPEC],
+        must_red=[REJOIN_POLICY_SPEC, FLEET_SPEC],
+    ),
+    Mutation(
+        id="stale-check-outside-lock",
+        what="only the early exit before the roster read checks the fact, not the check inside the Remove's build step under the lock — a serve whose drain applies the Remove AND the re-add while it waits for the lock removes the fresh leaf",
+        file=SESSION,
+        # The in-`build` copy alone (8-space indent, trailing ` {`); the
+        # early exit (` return;`) is kept. Killed by the lock-race case.
+        search="""        if (this.#serveTargetFresh(request, scheduledAtEpoch)) {
+          throw Object.assign(new Error("mls_serve_target_fresh"), {
+            type: "mls_serve_target_fresh",
+          });
+        }
+""",
+        replace="",
+        specs=[FLEET_SPEC],
+        must_red=[FLEET_SPEC],
+    ),
+    # ---- the old §4.8 belt --------------------------------------------------
+    Mutation(
+        id="fire-time-recheck-removed",
+        what="the fire-time §4.8 re-check is gone, so a stale rejoin re-broadcast arriving AFTER the re-add — anchored after the Remove, which the removed-at-epoch guard therefore cannot refuse — is served by every member that observed the re-add only while its stagger ran, and the re-seated member is removed",
+        file=SESSION,
+        # The single edit wave 1 could not give a killer to. Killed by the
+        # case that replays a stale rejoin intent after the re-add.
+        search="""    // §4.8 re-check at FIRE time (the stagger can outlast the schedule-time
+    // check): a re-add that landed during our delay makes this serve stale.
+    if (
+      rejoinServeAction({
+        addedAtMs:
+          this.#recentAdds.get(`${request.user_id}:${request.device_id}`) ??
+          null,
+        nowMs: Date.now(),
+      }) === "refuse_recent_add"
+    ) {
+      return;
+    }
+""",
+        replace="",
+        specs=[FLEET_SPEC],
+        must_red=[FLEET_SPEC],
+    ),
+]
+
+
+# --- Rejoin resume, wave 1.5 fix pass: the serve's other legs ----------------
+#
+# The guard's anchor, and what a serve does once it holds the lock. A serve
+# that has fired gets past every check made outside the lock and then waits
+# for it; three checks run in the Remove's `build`, immediately before
+# `callRemove`, and each refuses a case the other two cannot see
+# (`mlsCallSession.serveguard.test.ts` holds one case per check). Only a serve
+# that passes all three notes a served rejoin and warns that it is removing.
+
+MUTATIONS += [
+    # ---- the anchor ---------------------------------------------------------
+    Mutation(
+        id="serve-anchor-zero",
+        what="a serve is anchored at epoch 0 instead of the epoch that showed the stale leaf, so once a device has been removed ONCE every later serve for it reads that old Remove as newer, is refused, and the device's next wipe-rejoin is never served — locked out of the call's encryption",
+        file=SESSION,
+        # The other direction of the removed-at-epoch guard: the wave-1.5
+        # entries above that break it make it refuse too little, this one
+        # too much. Killed by the no-lockout case (a second wipe-rejoin after
+        # a settled first).
+        search="""      scheduledAtEpoch = state.epoch;
+""",
+        replace="""      scheduledAtEpoch = 0;
+""",
+        specs=[FLEET_SPEC],
+        must_red=[FLEET_SPEC],
+    ),
+    # ---- the checks under the lock ------------------------------------------
+    Mutation(
+        id="serve-generation-check-removed",
+        what="a serve waiting on the lock across a re-entry into the SAME group id is not refused on the establish generation: the reset cleared the removed-at-epoch facts, so the re-entry's leaf for the target reads as stale and is removed",
+        file=SESSION,
+        # The in-`build` generation refusal alone, anchored on its log line
+        # (the group check below throws the same error). Killed by the
+        # serve-guard re-entry case.
+        search="""        if (scheduledGeneration !== this.#establishGeneration) {
+          console.info("[mls] serve was scheduled for an earlier establish", {
+            target: `${request.user_id}:${request.device_id}`,
+            scheduledGeneration,
+            liveGeneration: this.#establishGeneration,
+          });
+          throw Object.assign(new Error("mls_serve_target_fresh"), {
+            type: "mls_serve_target_fresh",
+          });
+        }
+""",
+        replace="",
+        specs=[SERVEGUARD_SPEC],
+        must_red=[SERVEGUARD_SPEC],
+    ),
+    Mutation(
+        id="serve-group-check-removed",
+        what="a serve that builds between a reset and the next establish (`#groupId` moved, the generation not yet bumped) is not refused on the group, and goes on to stage a Remove against whatever group is live",
+        file=SESSION,
+        # The in-`build` group refusal alone, anchored on its log line; the
+        # early exit's `request.group_id !== this.#groupId` outside the lock
+        # is kept. Killed by the serve-guard reset-gap case.
+        search="""        if (request.group_id !== this.#groupId) {
+          console.info("[mls] serve was scheduled for another group", {
+            target: `${request.user_id}:${request.device_id}`,
+            group: request.group_id,
+            liveGroup: this.#groupId,
+          });
+          throw Object.assign(new Error("mls_serve_target_fresh"), {
+            type: "mls_serve_target_fresh",
+          });
+        }
+""",
+        replace="",
+        specs=[SERVEGUARD_SPEC],
+        must_red=[SERVEGUARD_SPEC],
+    ),
+    # ---- what only a staging serve does -------------------------------------
+    Mutation(
+        id="serve-note-outside-lock",
+        what="a serve notes the served rejoin and warns that it is removing BEFORE it takes the lock, so one the check under the lock then refuses has already extended the target's admit-grace and logged a removal it never staged",
+        file=SESSION,
+        # Two edits: the note and the warning leave the `build` closure and
+        # go back ahead of `#stageAndSubmit`, where they sat before the fix.
+        # Killed by the serve-guard epoch case (the probe sees the note) and
+        # by the fleet's lock-race case (the warning at fire time).
+        search="""        // From here the device is CONNECTED and about to be MLS-absent until
+        // its next intent lands an Add: keep it pending across that gap (the
+        // other members learn the same thing from the roster diff in
+        // `#reconcileOnce`). Only a serve that goes on to stage notes it: a
+        // refused one removes nothing, so it must extend no admit-grace.
+        this.#noteRejoinServed(
+          `${request.user_id}:${request.device_id}`,
+          Date.now(),
+        );
+        console.warn(
+          `[mls] removing stale leaf for rejoin: ${request.user_id}:${request.device_id}`,
+        );
+""",
+        replace="",
+        also=[
+            (
+                """    this.#stagingFor = `${request.user_id}:${request.device_id}`;
+    try {
+      await this.#stageAndSubmit(async () => {
+""",
+                """    this.#noteRejoinServed(
+      `${request.user_id}:${request.device_id}`,
+      Date.now(),
+    );
+    console.warn(
+      `[mls] removing stale leaf for rejoin: ${request.user_id}:${request.device_id}`,
+    );
+    this.#stagingFor = `${request.user_id}:${request.device_id}`;
+    try {
+      await this.#stageAndSubmit(async () => {
+""",
+            ),
+        ],
+        specs=[SERVEGUARD_SPEC, FLEET_SPEC],
+        must_red=[SERVEGUARD_SPEC, FLEET_SPEC],
     ),
 ]
 

@@ -135,6 +135,7 @@ import {
   admitInProgressVerdict,
   rejoinReintentWindowMs,
   rejoinServeAction,
+  serveTargetStillStale,
   startupWipeTargets,
   welcomeVerdict,
 } from "./mlsRejoinPolicy";
@@ -1201,6 +1202,25 @@ export class MlsCallSession {
    * add is a stale re-broadcast/replay and must not remove the fresh leaf.
    */
   #recentAdds = new Map<string, number>();
+  /**
+   * The HIGHEST epoch at which a commit of the live group removed each
+   * identity (`user:device`): every inbound commit (`#onEpochAdvanced`) and
+   * every Remove of our own that won (`#stageAndSubmit`). Read by the rejoin
+   * serve at fire time: a target removed at an epoch after the serve was
+   * scheduled and present again was re-added, so its leaf is fresh.
+   * `#recentAdds` cannot say that on a member that did not admit it — the
+   * roster diff that stamps it runs every `RECONCILE_INTERVAL_MS`, and a
+   * serve at leaf 6 or above fires inside that blind window.
+   *
+   * Max-merge only, and cleared ONLY in `#resetGroupBuffers` together with
+   * every scheduled serve. A serve that has already FIRED is not cleared
+   * there and can outlive the reset; the in-lock checks in
+   * `#removeStaleLeaf` refuse it, by establish generation (any re-entry,
+   * the same group id included) and by group id (a group change). Never
+   * deleted by a leave, an admit, a reconcile or any roster diff: the guard
+   * is sound only because the fact is monotonic.
+   */
+  #removedAtEpoch = new Map<string, number>();
   /** The previous reconcile's MLS roster (diffed to observe inbound Adds). */
   #lastRosterIdentities = new Set<string>();
 
@@ -2688,7 +2708,15 @@ export class MlsCallSession {
     // Stale leaf still present? Another member's Remove may already have
     // won (idempotence — the roster check discriminates perfectly). Also
     // derive our leaf index for the same liveness stagger admits use.
+    // The epoch that showed the stale leaf present anchors the serve: a
+    // Remove of it at any LATER epoch means the leaf found at fire time is
+    // a re-added, fresh one (`#removeStaleLeaf`). The establish generation
+    // anchors it too, read here, in the same turn as the live-group check
+    // above: a re-establish, even into the same group id, clears the facts
+    // that epoch is compared against, so a serve outliving one must refuse.
     let leaf: number;
+    let scheduledAtEpoch: number;
+    const scheduledGeneration = this.#establishGeneration;
     try {
       const state = await this.#deps.bridge.callState(this.#groupId);
       if (
@@ -2700,6 +2728,7 @@ export class MlsCallSession {
         this.#retireRejoinServe(key);
         return; // already served
       }
+      scheduledAtEpoch = state.epoch;
       leaf = state.members.findIndex(
         (m) =>
           m.user_id === this.#deps.userId &&
@@ -2723,7 +2752,11 @@ export class MlsCallSession {
       this.#scheduledAdmits.delete(key);
       this.#timers.delete(timer);
       this.#admitTimelineFor(request)?.stamp("staggerFired");
-      void this.#removeStaleLeaf(request);
+      void this.#removeStaleLeaf(
+        request,
+        scheduledAtEpoch,
+        scheduledGeneration,
+      );
     }, leafStaggerDelayMs(leaf));
     this.#scheduledAdmits.set(key, timer);
     this.#timers.add(timer);
@@ -2768,7 +2801,11 @@ export class MlsCallSession {
     this.#admitTimelines.delete(key);
   }
 
-  async #removeStaleLeaf(request: MlsJoinRequest): Promise<void> {
+  async #removeStaleLeaf(
+    request: MlsJoinRequest,
+    scheduledAtEpoch: number,
+    scheduledGeneration: number,
+  ): Promise<void> {
     // Belt for the ledger: this serve is being acted on, nothing may re-drive it.
     this.#pendingAdmits.delete(
       `rejoin:${request.user_id}:${request.device_id}`,
@@ -2792,6 +2829,8 @@ export class MlsCallSession {
     ) {
       return;
     }
+    // Early exit only: the check that decides runs under the lock, below.
+    if (this.#serveTargetFresh(request, scheduledAtEpoch)) return;
     // Re-check under FRESH state at fire time: the lowest leaf usually wins
     // during our stagger delay, making this a clean no-op.
     try {
@@ -2807,30 +2846,94 @@ export class MlsCallSession {
     } catch {
       return;
     }
-    // From here the device is CONNECTED and about to be MLS-absent until its
-    // next intent lands an Add: keep it pending across that gap (the other
-    // members learn the same thing from the roster diff in `#reconcileOnce`).
-    this.#noteRejoinServed(
-      `${request.user_id}:${request.device_id}`,
-      Date.now(),
-    );
-    console.warn(
-      `[mls] removing stale leaf for rejoin: ${request.user_id}:${request.device_id}`,
-    );
     this.#stagingFor = `${request.user_id}:${request.device_id}`;
     try {
-      await this.#stageAndSubmit(
-        () =>
-          this.#deps.bridge.callRemove(
-            this.#groupId!,
-            request.user_id,
-            request.device_id,
-          ),
-        "remove",
-      );
+      await this.#stageAndSubmit(async () => {
+        // The serve must still be for the live establish. A reset clears
+        // only SCHEDULED serves (and `#removedAtEpoch` with them); one that
+        // has already fired can be waiting here across it, and `callRemove`
+        // acts on whatever group is live now. Every re-entry runs a new
+        // `#establish`, which bumps the generation before it adopts a group,
+        // so this refuses a re-entry into the SAME group id too, where the
+        // cleared facts would read the old leaf's replacement as stale.
+        if (scheduledGeneration !== this.#establishGeneration) {
+          console.info("[mls] serve was scheduled for an earlier establish", {
+            target: `${request.user_id}:${request.device_id}`,
+            scheduledGeneration,
+            liveGeneration: this.#establishGeneration,
+          });
+          throw Object.assign(new Error("mls_serve_target_fresh"), {
+            type: "mls_serve_target_fresh",
+          });
+        }
+        // The group itself changed under the serve. Between a reset and the
+        // next establish's bump (a leave-clean still running, or no
+        // establish at all past the re-establish cap) the generation has not
+        // moved but `#groupId` has: only this check refuses there.
+        if (request.group_id !== this.#groupId) {
+          console.info("[mls] serve was scheduled for another group", {
+            target: `${request.user_id}:${request.device_id}`,
+            group: request.group_id,
+            liveGroup: this.#groupId,
+          });
+          throw Object.assign(new Error("mls_serve_target_fresh"), {
+            type: "mls_serve_target_fresh",
+          });
+        }
+        // The check that decides, UNDER the lock, immediately before the
+        // stage. Outside it the pump can apply the target's Remove AND its
+        // re-Add while we wait, and native `callRemove` resolves the target
+        // by identity, so it would remove the fresh leaf. Under the lock no
+        // commit applies concurrently: a present target was either never
+        // removed (stale, serve it) or re-added after a Remove that was
+        // applied, and recorded, first.
+        if (this.#serveTargetFresh(request, scheduledAtEpoch)) {
+          throw Object.assign(new Error("mls_serve_target_fresh"), {
+            type: "mls_serve_target_fresh",
+          });
+        }
+        // From here the device is CONNECTED and about to be MLS-absent until
+        // its next intent lands an Add: keep it pending across that gap (the
+        // other members learn the same thing from the roster diff in
+        // `#reconcileOnce`). Only a serve that goes on to stage notes it: a
+        // refused one removes nothing, so it must extend no admit-grace.
+        this.#noteRejoinServed(
+          `${request.user_id}:${request.device_id}`,
+          Date.now(),
+        );
+        console.warn(
+          `[mls] removing stale leaf for rejoin: ${request.user_id}:${request.device_id}`,
+        );
+        return this.#deps.bridge.callRemove(
+          this.#groupId!,
+          request.user_id,
+          request.device_id,
+        );
+      }, "remove");
     } finally {
       this.#stagingFor = null;
     }
+  }
+
+  /**
+   * Whether a rejoin serve anchored at `scheduledAtEpoch` must refuse: its
+   * target was removed at a later epoch, so a leaf present now is a re-added
+   * one. Logs the refusal.
+   */
+  #serveTargetFresh(
+    request: MlsJoinRequest,
+    scheduledAtEpoch: number,
+  ): boolean {
+    const target = `${request.user_id}:${request.device_id}`;
+    const removedAtEpoch = this.#removedAtEpoch.get(target) ?? null;
+    if (serveTargetStillStale({ scheduledAtEpoch, removedAtEpoch })) {
+      return false;
+    }
+    console.info(
+      "[mls] serve target was removed after scheduling; the present leaf is fresh",
+      { target, scheduledAtEpoch, removedAtEpoch },
+    );
+    return true;
   }
 
   async #tryAdmit(request: MlsJoinRequest): Promise<void> {
@@ -2992,10 +3095,14 @@ export class MlsCallSession {
         // makes this race LIKELY for rejoin serves, AUD-MED-1) reports as
         // native `mls_group_not_found`: a benign no-op, never a session
         // failure. Same for the group itself being gone (we left). Covers
-        // #serveRejoin AND the pre-existing #removeMember ghost path.
+        // #serveRejoin AND the pre-existing #removeMember ghost path. A serve
+        // whose target turned out fresh (`#removeStaleLeaf`) refuses the same
+        // way: nothing was staged, and nothing is wrong with the session.
+        const buildError = (error as { type?: string } | null)?.type;
         if (
           kind === "remove" &&
-          (error as { type?: string } | null)?.type === "mls_group_not_found"
+          (buildError === "mls_group_not_found" ||
+            buildError === "mls_serve_target_fresh")
         ) {
           return;
         }
@@ -3085,6 +3192,14 @@ export class MlsCallSession {
         case "won":
           await this.#deps.bridge.callCommitWon(groupId, commit.epoch);
           this.#staged = null;
+          // Our own won Remove never comes back inbound (`commit_won` returns
+          // `removed: []`), so record it from the staged commit, at the new
+          // epoch. A serve re-scheduled while it was in flight is anchored
+          // before it and must see it (the `rejoin:` dedup key is gone by
+          // then). A group swapped under the await gets nothing.
+          if (kind === "remove" && groupId === this.#groupId) {
+            this.#noteRemovedAtEpoch(commit.removed, commit.epoch);
+          }
           // R-1 own-commit propagation (§7.3): submit → Won round-trip.
           this.#metrics.recordCommitPropagation(
             performance.now() - submitStart,
@@ -3748,6 +3863,11 @@ export class MlsCallSession {
     this.#scheduledAdmits.clear();
     this.#pendingAdmits.clear(); // requests are group-scoped
     this.#recentAdds.clear(); // add observations are group-scoped (§4.8)
+    // Remove observations too, and only here: the scheduled serves they
+    // guard were just cleared with `#scheduledAdmits`. A serve that already
+    // fired can outlive them; its in-lock checks refuse it after any
+    // re-entry, same group id or not (`#removeStaleLeaf`).
+    this.#removedAtEpoch.clear();
     this.#healAdds.clear();
     this.#rejoinServed.clear(); // so are served-rejoin observations
     this.#lastRosterIdentities.clear();
@@ -3823,6 +3943,12 @@ export class MlsCallSession {
       this.#toActive();
       if (verdict.resolveWait) this.#welcomeWait?.resolve(true);
     }
+    // Every applied commit of OUR group reaches here: live pushes, the 409
+    // rebase body and gap-refetch synthetics alike. The check keeps another
+    // group's Removes out (Welcomes are exempt from the `#consume` scoping).
+    if (outcome.group_id === this.#groupId) {
+      this.#noteRemovedAtEpoch(outcome.removed, outcome.epoch);
+    }
     // Record the inbound rotation kind for the rotation classifier, keyed by
     // epoch (Remove-driven iff the outcome carried removed devices —
     // trustworthy on the inbound path). Set synchronously here, BEFORE the
@@ -3847,6 +3973,20 @@ export class MlsCallSession {
       outcome.kind !== "welcome_joined"
     ) {
       void this.#announceDowngrade();
+    }
+  }
+
+  /** Max-merge `removed` at `epoch` into `#removedAtEpoch` (never lowers). */
+  #noteRemovedAtEpoch(
+    removed: MlsProcessOutcome["removed"],
+    epoch: number,
+  ): void {
+    for (const device of removed ?? []) {
+      const key = `${device.user_id}:${device.device_id}`;
+      const known = this.#removedAtEpoch.get(key);
+      if (known === undefined || epoch > known) {
+        this.#removedAtEpoch.set(key, epoch);
+      }
     }
   }
 
