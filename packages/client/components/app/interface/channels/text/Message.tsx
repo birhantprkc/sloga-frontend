@@ -36,9 +36,10 @@ import {
   SystemMessage,
   SystemMessageIcon,
   Tooltip,
-  Username,
   isSlogaStaff,
+  typography,
 } from "@revolt/ui";
+import { DisplayName } from "@revolt/ui/components/features/DisplayName";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
 import { MessageContextMenu } from "../../../menus/MessageContextMenu";
@@ -210,20 +211,24 @@ export function Message(props: Props) {
         onHover={setIsHovering}
         username={
           <div use:floating={floatingUserMenusFromMessage(props.message)}>
-            <Username
-              username={
-                props.message.masquerade?.name ??
-                props.message.member?.nickname ??
-                props.message.author?.displayName ??
-                props.message.author?.username ??
-                props.message.username
-              }
-              colour={props.message.roleColour!}
-              brand={
-                !props.message.masquerade?.name &&
-                isSlogaStaff(props.message.author)
-              }
-            />
+            <span class={typography({ class: "label", size: "large" })}>
+              <DisplayName
+                user={props.message.author}
+                member={props.message.member}
+                name={
+                  props.message.masquerade?.name ??
+                  props.message.member?.nickname ??
+                  props.message.author?.displayName ??
+                  props.message.author?.username ??
+                  props.message.username ??
+                  ""
+                }
+                masquerade={!!props.message.masquerade}
+                colour={props.message.roleColour}
+                brand={isSlogaStaff(props.message.author)}
+                animate={!props.isLink}
+              />
+            </span>
           </div>
         }
         avatar={

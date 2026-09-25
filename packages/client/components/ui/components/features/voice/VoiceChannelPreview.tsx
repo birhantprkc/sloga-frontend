@@ -14,12 +14,15 @@ import { cva } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 
 import { UserContextMenu } from "@revolt/app";
+import { useClient } from "@revolt/client";
 import { CONFIGURATION } from "@revolt/common";
 import { useUser } from "@revolt/markdown/users";
 import { InRoom } from "@revolt/rtc";
 
 import { Avatar, Ripple, livePill, typography } from "../../design";
 import { Row } from "../../layout";
+import { DisplayName } from "../DisplayName";
+import { isSlogaStaff } from "../legacy/Username";
 
 import { dropLegPlaceholders, participantUserId } from "./participantIdentity";
 
@@ -188,7 +191,20 @@ function CommonUser(props: {
     "watching",
   ]);
 
+  const client = useClient();
   const user = useUser(() => participantUserId(rest.userId));
+
+  /**
+   * This participant as a member of the channel's server (not the route's),
+   * the source of their role color. Absent for DM and group calls.
+   */
+  const member = () =>
+    rest.serverId
+      ? client().serverMembers.getByKey({
+          server: rest.serverId,
+          user: participantUserId(rest.userId),
+        })
+      : undefined;
 
   return (
     <div
@@ -210,7 +226,18 @@ function CommonUser(props: {
       <Ripple />
       <Avatar size={24} src={user().avatar} fallback={user().username} />{" "}
       <NameRow>
-        <PreviewUsername>{user().username}</PreviewUsername>
+        <PreviewUsername>
+          <DisplayName
+            user={user().user}
+            member={member()}
+            name={
+              member()?.displayName ??
+              user().user?.displayName ??
+              user().username
+            }
+            brand={isSlogaStaff(user().user)}
+          />
+        </PreviewUsername>
         <Show when={rest.sharingScreen}>
           {/* No thumbnail: call media is end-to-end encrypted, so nobody
               outside the call holds a key to the frames and the server never

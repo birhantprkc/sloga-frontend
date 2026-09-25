@@ -4,7 +4,7 @@
 import "./polyfills";
 import "./sentry";
 
-import { JSX, onMount } from "solid-js";
+import { JSX, onMount, untrack } from "solid-js";
 import { render } from "solid-js/web";
 
 import { useLingui } from "@lingui-solid/solid/macro";
@@ -25,11 +25,18 @@ import FlowOAuthCallback from "@revolt/auth/src/flows/FlowOAuthCallback";
 import FlowResend from "@revolt/auth/src/flows/FlowResend";
 import FlowReset from "@revolt/auth/src/flows/FlowReset";
 import FlowVerify from "@revolt/auth/src/flows/FlowVerify";
-import { ClientContext, SoundContext, useClient } from "@revolt/client";
+import {
+  ClientContext,
+  SoundContext,
+  useClient,
+  useClientLifecycle,
+} from "@revolt/client";
 import { AndroidBackWorker } from "@revolt/client/AndroidBackWorker";
+import { State } from "@revolt/client/Controller";
 import { IS_OVERLAY_WINDOW } from "@revolt/client/popout";
 import { completeStreamLink } from "@revolt/client/streamConnections";
 import { DeviceContext } from "@revolt/common";
+import { normalizeReferralCode } from "@revolt/common/lib/referralCode";
 import { I18nProvider } from "@revolt/i18n";
 import { KeybindContext } from "@revolt/keybinds";
 import { ModalContext, ModalRenderer, useModals } from "@revolt/modal";
@@ -203,6 +210,41 @@ function BotRedirect() {
   return <PWARedirect />;
 }
 
+/**
+ * Landing route for referral links (/r/:code): remember the code for the
+ * signup form and send the visitor to account creation. Signed-in users go
+ * straight to the app and nothing is stored.
+ *
+ * No need to wait for the lifecycle: the state store hydrates before the
+ * router mounts, and a cached session moves the lifecycle to Connecting while
+ * the client controller is being built, so a signed-in user never reads as
+ * signed out here.
+ */
+function ReferralRedirect() {
+  const params = useParams();
+  const state = useState();
+  const { isLoggedIn, lifecycle } = useClientLifecycle();
+
+  // Decided once: this route only ever redirects
+  const href = untrack(() => {
+    if (isLoggedIn()) return "/app";
+
+    // Only a well-formed code is stored; a link that can't be a code leaves
+    // any code kept from an earlier link in place
+    const code = normalizeReferralCode(params.code ?? "");
+    if (code !== undefined) state.layout.setReferralCode(code);
+
+    // Mid sign-in or at the username step, the login flow owns the page and
+    // shows the pre-filled field; the signup form would start over
+    const current = lifecycle.state();
+    return current === State.LoggingIn || current === State.Onboarding
+      ? "/login/auth"
+      : "/login/create";
+  });
+
+  return <Navigate href={href} />;
+}
+
 function MountContext(props: { children?: JSX.Element }) {
   // The in-game voice overlay window gets NO provider stack at all. It is a
   // passive renderer of BroadcastChannel snapshots — no client is ever
@@ -308,6 +350,9 @@ render(
               gets a blank page and in-app SPA navigation here can never
               mount a listener nobody is publishing to. */}
           <Route path="/voice-overlay" component={VoiceOverlayWindow} />
+          {/* Outside Interface too, so a signed-out visit never has its path
+              kept as the post-login destination */}
+          <Route path="/r/:code" component={ReferralRedirect} />
           <Route path="/" component={Interface as never}>
             <Route path="/pwa" component={PWARedirect} />
             <Route path="/dev" component={DevelopmentPage} />

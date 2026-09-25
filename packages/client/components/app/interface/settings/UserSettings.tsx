@@ -52,10 +52,12 @@ import Native from "./user/Native";
 import Notifications from "./user/notifications/Notifications";
 import { PrivacySettings } from "./user/Privacy";
 import { EditProfile } from "./user/profile";
+import { Referrals } from "./user/Referrals";
 import { RemoteControlSettings } from "./user/RemoteControl";
 import { Sessions } from "./user/Sessions";
 import { StreamerModeSettings } from "./user/StreamerMode";
 import { EditSubscription } from "./user/subscriptions";
+import { Supporter } from "./user/Supporter";
 import { OverlaySettingsPage } from "./user/voice/OverlaySettings";
 import { VideoSettings } from "./user/voice/VideoSettings";
 import { VoiceSettings } from "./user/voice/VoiceSettings";
@@ -100,6 +102,10 @@ const Config: SettingsConfiguration<{ server: Server }> = {
         return <AdvancedSettings />;
       case "profile":
         return <EditProfile />;
+      case "referrals":
+        return <Referrals />;
+      case "supporter":
+        return allowsDonationLinks() ? <Supporter /> : null;
       case "sessions":
         return <Sessions />;
       case "security":
@@ -221,6 +227,21 @@ const Config: SettingsConfiguration<{ server: Server }> = {
               id: "profile",
               icon: <MdAccountCircle {...iconSize(20)} />,
               title: <Trans>Profile</Trans>,
+            },
+            {
+              id: "referrals",
+              icon: <Symbol size={20}>group_add</Symbol>,
+              title: <Trans>Referrals</Trans>,
+            },
+            {
+              id: "supporter",
+              icon: <Symbol size={20}>volunteer_activism</Symbol>,
+              title: <Trans>Supporter</Trans>,
+              // A getter: on Android the distribution channel resolves after
+              // this list is built, and the sidebar's <Show> has to see it.
+              get hidden() {
+                return !allowsDonationLinks();
+              },
             },
             {
               id: "sessions",
@@ -410,16 +431,19 @@ const Config: SettingsConfiguration<{ server: Server }> = {
             {
               id: "donate",
               // Google Play treats linking out to donations as a payments-policy
-              // grey area and Sloga is not a registered nonprofit, so this is
-              // hidden in Play builds only — web, desktop and the sloga.gg APK
-              // all still show it.
-              hidden: !allowsDonationLinks(),
-              // Brand orange, matching the Home screen donate button and the
+              // gray area and Sloga is not a registered nonprofit, and the App
+              // Store only allows in-app purchase, so this is hidden in Play and
+              // App Store builds — web, desktop and the sloga.gg APK all still
+              // show it. A getter, since the Android channel resolves late.
+              get hidden() {
+                return !allowsDonationLinks();
+              },
+              // Brand orange, matching the Home screen Ko-fi button and the
               // sloga.gg header — this entry is meant to stand out.
               icon: <MdCoffee {...iconSize(20)} fill="#FF8A00" />,
               title: (
                 <ColouredText colour="#FF8A00">
-                  <Trans>Donate to Sloga</Trans>
+                  <Trans>Support Sloga</Trans>
                 </ColouredText>
               ),
               href: "https://ko-fi.com/slogatech",

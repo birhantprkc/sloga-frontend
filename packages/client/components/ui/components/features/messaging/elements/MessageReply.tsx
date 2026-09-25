@@ -11,7 +11,8 @@ import { renderSimpleMarkdown } from "@revolt/markdown";
 import { Avatar, typography } from "@revolt/ui/components/design";
 import { NonBreakingText } from "@revolt/ui/components/utils";
 
-import { Username, isSlogaStaff } from "../../legacy";
+import { DisplayName } from "../../DisplayName";
+import { isSlogaStaff } from "../../legacy/Username";
 
 interface Props {
   /**
@@ -127,14 +128,16 @@ export function MessageReply(props: Props) {
           >
             <Avatar src={props.message!.avatarURL} size={14} />
             <NonBreakingText>
-              <Username
-                colour={props.message!.roleColour!}
-                username={(props.mention ? "@" : "") + props.message!.username}
-                brand={
-                  !props.message!.masquerade?.name &&
-                  isSlogaStaff(props.message!.author)
-                }
-              />
+              <span class={typography({ class: "label", size: "large" })}>
+                <DisplayName
+                  user={props.message!.author}
+                  member={props.message!.member}
+                  name={(props.mention ? "@" : "") + props.message!.username}
+                  masquerade={!!props.message!.masquerade}
+                  colour={props.message!.roleColour}
+                  brand={isSlogaStaff(props.message!.author)}
+                />
+              </span>
             </NonBreakingText>
           </div>
           <Link href={props.message!.path}>

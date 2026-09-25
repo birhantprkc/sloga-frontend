@@ -21,9 +21,11 @@ import {
   Tooltip,
   UserStatus,
   iconSize,
+  isSlogaStaff,
   typography,
   unreadTone,
 } from "@revolt/ui";
+import { DisplayName } from "@revolt/ui/components/features/DisplayName";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
 import MdClose from "@material-design-icons/svg/outlined/close.svg?component-solid";
@@ -408,7 +410,11 @@ function Entry(
           </Match>
           <Match when={local.channel.type === "DirectMessage"}>
             <OverflowingText>
-              {local.channel?.recipient?.displayName}
+              <DisplayName
+                user={local.channel.recipient}
+                name={local.channel.recipient?.displayName ?? ""}
+                brand={isSlogaStaff(local.channel.recipient)}
+              />
             </OverflowingText>
             <Show when={status()}>
               <Tooltip

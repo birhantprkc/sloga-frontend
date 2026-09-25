@@ -9,7 +9,8 @@ import { visit } from "unist-util-visit";
 import { UserContextMenu } from "@revolt/app";
 import { useClient } from "@revolt/client";
 import { useSmartParams } from "@revolt/routing";
-import { Avatar, ColouredText, iconSize } from "@revolt/ui";
+import { Avatar, ColouredText, iconSize, isSlogaStaff } from "@revolt/ui";
+import { DisplayName } from "@revolt/ui/components/features/DisplayName";
 
 import MdAt from "@material-design-icons/svg/filled/alternate_email.svg?component-solid";
 
@@ -76,7 +77,12 @@ export function UserMention(props: { userId: string; disabled?: boolean }) {
           }
         >
           <Avatar size={16} src={user().avatar} fallback={user().username} />
-          <ColouredText colour={user().colour!}>{user().username}</ColouredText>
+          <DisplayName
+            user={user().user}
+            member={user().member}
+            name={user().username}
+            brand={isSlogaStaff(user().user)}
+          />
         </div>
       </Match>
     </Switch>

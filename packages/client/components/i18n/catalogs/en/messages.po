@@ -620,6 +620,12 @@ msgstr "Able to speak in voice call"
 msgid "About"
 msgstr "About"
 
+#: components/app/interface/settings/UserSettings.tsx
+#: components/app/interface/settings/user/Referrals.tsx
+#: src/interface/Home.tsx
+msgid "Support Sloga"
+msgstr "Support Sloga"
+
 #: src/interface/ServerEvents.tsx
 #: components/ui/components/features/voice/IncomingCallOverlay.tsx
 #: components/ui/components/features/voice/callCard/RemoteControlOverlays.tsx
@@ -654,6 +660,10 @@ msgstr "Active"
 #: components/ui/components/features/profiles/ProfileBadges.tsx
 msgid "Active Sloga supporter"
 msgstr "Active Sloga supporter"
+
+#: components/ui/components/features/profiles/ProfileBadges.tsx
+msgid "Sloga Patron"
+msgstr "Sloga Patron"
 
 #: components/ui/components/features/profiles/ProfileStatus.tsx
 msgid "Activity"
@@ -1905,6 +1915,91 @@ msgstr "Copied"
 msgid "Copied!"
 msgstr "Copied!"
 
+#: components/app/interface/settings/user/Supporter.tsx
+msgid "Your support is now linked to your account. Thank you!"
+msgstr "Your support is now linked to your account. Thank you!"
+
+#: components/app/interface/settings/user/Supporter.tsx
+msgid "We'll review this claim."
+msgstr "We'll review this claim."
+
+#: components/app/interface/settings/user/Supporter.tsx
+msgid "We haven't received that transaction yet. Try again in a few minutes."
+msgstr "We haven't received that transaction yet. Try again in a few minutes."
+
+#: components/app/interface/settings/user/Supporter.tsx
+msgid "Support Sloga on Ko-fi to unlock supporter perks. Perks are cosmetic: they change how your name and profile look, and nothing else."
+msgstr "Support Sloga on Ko-fi to unlock supporter perks. Perks are cosmetic: they change how your name and profile look, and nothing else."
+
+#: components/app/interface/settings/user/Supporter.tsx
+msgid "Lifetime support"
+msgstr "Lifetime support"
+
+#: components/app/interface/settings/user/Supporter.tsx
+msgid "A monthly Ko-fi membership adds a badge and name color while it's active."
+msgstr "A monthly Ko-fi membership adds a badge and name color while it's active."
+
+#: components/app/interface/settings/user/Supporter.tsx
+msgid "Monthly supporter"
+msgstr "Monthly supporter"
+
+#: components/app/interface/settings/user/Supporter.tsx
+msgid "You've unlocked every supporter perk. Thank you!"
+msgstr "You've unlocked every supporter perk. Thank you!"
+
+#: components/app/interface/settings/user/Supporter.tsx
+msgid "Next perk"
+msgstr "Next perk"
+
+#: components/app/interface/settings/user/Supporter.tsx
+msgid "Supporter perks"
+msgstr "Supporter perks"
+
+#: components/app/interface/settings/user/Supporter.tsx
+msgid "Link your support"
+msgstr "Link your support"
+
+#: components/app/interface/settings/user/Supporter.tsx
+msgid "Get your code, then paste it into the message when you support Sloga on Ko-fi. The payment is added to your account automatically."
+msgstr "Get your code, then paste it into the message when you support Sloga on Ko-fi. The payment is added to your account automatically."
+
+#: components/app/interface/settings/user/Supporter.tsx
+#: components/app/interface/settings/user/Supporter.tsx
+msgid "Paste this code into your Ko-fi message"
+msgstr "Paste this code into your Ko-fi message"
+
+#: components/app/interface/settings/user/Supporter.tsx
+msgid "Get my code"
+msgstr "Get my code"
+
+#: components/app/interface/settings/user/Supporter.tsx
+msgid "Supporter code"
+msgstr "Supporter code"
+
+#: components/app/interface/settings/user/Supporter.tsx
+msgid "Support Sloga on Ko-fi"
+msgstr "Support Sloga on Ko-fi"
+
+#: components/app/interface/settings/user/Supporter.tsx
+msgid "Supported without a code?"
+msgstr "Supported without a code?"
+
+#: components/app/interface/settings/user/Supporter.tsx
+msgid "Enter the transaction ID from your Ko-fi receipt. If the payment came from your account's email address it's added right away; otherwise we'll review it."
+msgstr "Enter the transaction ID from your Ko-fi receipt. If the payment came from your account's email address it's added right away; otherwise we'll review it."
+
+#: components/app/interface/settings/user/Supporter.tsx
+msgid "Ko-fi transaction ID"
+msgstr "Ko-fi transaction ID"
+
+#: components/app/interface/settings/user/Supporter.tsx
+msgid "Claim"
+msgstr "Claim"
+
+#: components/app/interface/settings/user/Supporter.tsx
+msgid "Show supporter badges on my profile"
+msgstr "Show supporter badges on my profile"
+
 #: components/ui/components/features/voice/callCard/VoiceTranscriptPanel.tsx
 msgid "Copy"
 msgstr "Copy"
@@ -2348,6 +2443,18 @@ msgstr "Deep"
 msgid "Default"
 msgstr "Default"
 
+#: components/app/interface/settings/user/profile/NameStyleEditor.tsx
+msgid "This color can't be used for a name."
+msgstr "This color can't be used for a name."
+
+#: components/app/interface/settings/user/profile/NameStyleEditor.tsx
+msgid "Font"
+msgstr "Font"
+
+#: components/app/interface/settings/user/profile/NameStyleEditor.tsx
+msgid "Effect"
+msgstr "Effect"
+
 #: components/app/interface/settings/channel/ForumSettings.tsx
 msgid "Default auto-archive for new posts"
 msgstr "Default auto-archive for new posts"
@@ -2714,6 +2821,10 @@ msgstr "Edit forum-specific role and default permissions"
 msgid "Edit Global Profile"
 msgstr "Edit Global Profile"
 
+#: components/app/interface/settings/user/profile/EditProfile.tsx
+msgid "Name style"
+msgstr "Name style"
+
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Edit group name and description"
 msgstr "Edit group name and description"
@@ -2977,6 +3088,14 @@ msgstr "Enter your current password..."
 #: components/auth/src/flows/Form.tsx
 msgid "Enter your invite code."
 msgstr "Enter your invite code."
+
+#: components/auth/src/flows/Form.tsx
+msgid "Referral code (optional)"
+msgstr "Referral code (optional)"
+
+#: components/auth/src/flows/Form.tsx
+msgid "e.g. SLOGA-KX7P"
+msgstr "e.g. SLOGA-KX7P"
 
 #: components/auth/src/flows/Form.tsx
 msgid "Enter your preferred username."
@@ -3564,6 +3683,45 @@ msgstr "How far a quiet voice may be raised. Loud voices are always tamed, at an
 msgid "How it works"
 msgstr "How it works"
 
+#: components/app/interface/settings/user/Referrals.tsx
+msgid "A friend who signs up with your code or link, or through one of your server invites, shows up as pending. The referral counts once they have been active on Sloga for a week. Pending referrals expire after 60 days."
+msgstr "A friend who signs up with your code or link, or through one of your server invites, shows up as pending. The referral counts once they have been active on Sloga for a week. Pending referrals expire after 60 days."
+
+#: components/app/interface/settings/user/Referrals.tsx
+msgid "Supporters can unlock name styles too."
+msgstr "Supporters can unlock name styles too."
+
+#: components/app/interface/settings/user/Referrals.tsx
+msgid "Recruiter badge"
+msgstr "Recruiter badge"
+
+#: components/app/interface/settings/user/Referrals.tsx
+#: components/app/interface/settings/user/Supporter.tsx
+msgid "Name color"
+msgstr "Name color"
+
+#: components/app/interface/settings/user/Referrals.tsx
+msgid "Elite recruiter badge"
+msgstr "Elite recruiter badge"
+
+#: components/app/interface/settings/user/Referrals.tsx
+#: components/app/interface/settings/user/Supporter.tsx
+msgid "Name font"
+msgstr "Name font"
+
+#: components/app/interface/settings/user/Referrals.tsx
+#: components/app/interface/settings/user/Supporter.tsx
+msgid "Animated name effect"
+msgstr "Animated name effect"
+
+#: components/app/interface/settings/user/Referrals.tsx
+msgid "10 GB uploads, large files kept 7 days"
+msgstr "10 GB uploads, large files kept 7 days"
+
+#: components/app/interface/settings/user/Referrals.tsx
+msgid "Your own custom badge"
+msgstr "Your own custom badge"
+
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
 msgid "Hug the channel list"
 msgstr "Hug the channel list"
@@ -3860,6 +4018,10 @@ msgstr "Join channel"
 #: src/interface/Home.tsx
 msgid "Join the Sloga Lounge"
 msgstr "Join the Sloga Lounge"
+
+#: src/interface/Home.tsx
+msgid "Support the project - thank you!"
+msgstr "Support the project - thank you!"
 
 #: src/interface/channels/ChannelHeader.tsx
 #: components/ui/components/features/voice/callCard/VoiceCallCardPreview.tsx
@@ -5035,6 +5197,18 @@ msgstr "Once it's deleted, there's no going back."
 msgid "One of the first 1000 users!"
 msgstr "One of the first 1000 users!"
 
+#: components/ui/components/features/profiles/ProfileBadges.tsx
+msgid "Joined Sloga through a friend"
+msgstr "Joined Sloga through a friend"
+
+#: components/ui/components/features/profiles/ProfileBadges.tsx
+msgid "Invited a friend to Sloga"
+msgstr "Invited a friend to Sloga"
+
+#: components/ui/components/features/profiles/ProfileBadges.tsx
+msgid "Invited 5 friends to Sloga"
+msgstr "Invited 5 friends to Sloga"
+
 #: components/modal/modals/SoftResExport.tsx
 msgid "One row per reserved item (ItemId, Name, Class, Note, Plus) — for spreadsheets or any addon that accepts CSV."
 msgstr "One row per reserved item (ItemId, Name, Class, Note, Plus) — for spreadsheets or any addon that accepts CSV."
@@ -5243,6 +5417,27 @@ msgstr "Pen"
 msgid "Pending"
 msgstr "Pending"
 
+#: components/app/interface/settings/user/Referrals.tsx
+msgid "Expired"
+msgstr "Expired"
+
+#: components/app/interface/settings/user/Referrals.tsx
+msgid "Rewards"
+msgstr "Rewards"
+
+#: components/app/interface/settings/user/Referrals.tsx
+#: components/app/interface/settings/user/Supporter.tsx
+msgid "Unlocked"
+msgstr "Unlocked"
+
+#: components/app/interface/settings/user/Referrals.tsx
+msgid "{remaining} to go"
+msgstr "{remaining} to go"
+
+#: components/app/interface/settings/user/Referrals.tsx
+msgid "We'll contact you to design your badge."
+msgstr "We'll contact you to design your badge."
+
 #: components/ui/components/features/voice/callCard/ParticipantTile.tsx
 msgid "People can draw on your screen"
 msgstr "People can draw on your screen"
@@ -5271,6 +5466,21 @@ msgstr "Pick a time between 30 seconds and 30 days from now."
 #: components/auth/src/flows/FlowLogin.tsx
 msgid "Pick a username that you want people to be able to find you by. This can be changed later in your user settings."
 msgstr "Pick a username that you want people to be able to find you by. This can be changed later in your user settings."
+
+#: components/auth/src/flows/FlowLogin.tsx
+#: components/auth/src/flows/FlowOAuthCallback.tsx
+msgid "That doesn't look like a referral code"
+msgstr "That doesn't look like a referral code"
+
+#: components/auth/src/flows/FlowLogin.tsx
+#: components/auth/src/flows/FlowOAuthCallback.tsx
+msgid "Code not found — clear it to continue"
+msgstr "Code not found — clear it to continue"
+
+#: components/auth/src/flows/FlowLogin.tsx
+#: components/auth/src/flows/FlowOAuthCallback.tsx
+msgid "Couldn't check the code"
+msgstr "Couldn't check the code"
 
 #: components/modal/modals/SoftResReserve.tsx
 msgid "Pick items from the list below."
@@ -5317,6 +5527,50 @@ msgstr "Playback speed"
 #: components/app/interface/settings/user/profile/GameLinksEditor.tsx
 msgid "Player ID or handle"
 msgstr "Player ID or handle"
+
+#: components/app/interface/settings/user/profile/NameStyleEditor.tsx
+msgid "Unlock by inviting friends, or by supporting Sloga"
+msgstr "Unlock by inviting friends, or by supporting Sloga"
+
+#: components/app/interface/settings/user/profile/NameStyleEditor.tsx
+msgid "Unlock by inviting friends"
+msgstr "Unlock by inviting friends"
+
+#: components/app/interface/settings/user/profile/NameStyleEditor.tsx
+msgid "Serif"
+msgstr "Serif"
+
+#: components/app/interface/settings/user/profile/NameStyleEditor.tsx
+msgid "Mono"
+msgstr "Mono"
+
+#: components/app/interface/settings/user/profile/NameStyleEditor.tsx
+msgid "Rounded"
+msgstr "Rounded"
+
+#: components/app/interface/settings/user/profile/NameStyleEditor.tsx
+msgid "Script"
+msgstr "Script"
+
+#: components/app/interface/settings/user/profile/NameStyleEditor.tsx
+msgid "Pixel"
+msgstr "Pixel"
+
+#: components/app/interface/settings/user/profile/NameStyleEditor.tsx
+msgid "Shimmer"
+msgstr "Shimmer"
+
+#: components/app/interface/settings/user/profile/NameStyleEditor.tsx
+msgid "Glow"
+msgstr "Glow"
+
+#: components/app/interface/settings/user/profile/NameStyleEditor.tsx
+msgid "Rainbow"
+msgstr "Rainbow"
+
+#: components/app/interface/settings/user/profile/NameStyleEditor.tsx
+msgid "Color"
+msgstr "Color"
 
 #. placeholder {0}: playing.name
 #. placeholder {0}: activity.name
@@ -5451,6 +5705,14 @@ msgstr "Private Channel"
 #: components/app/interface/settings/UserSettings.tsx
 msgid "Profile"
 msgstr "Profile"
+
+#: components/app/interface/settings/UserSettings.tsx
+msgid "Referrals"
+msgstr "Referrals"
+
+#: components/app/interface/settings/UserSettings.tsx
+msgid "Supporter"
+msgstr "Supporter"
 
 #: components/app/interface/settings/user/profile/UserProfileEditor.tsx
 msgid "Profile Bio"
@@ -6567,6 +6829,10 @@ msgstr "Share Computer Sound"
 msgid "Share Game Activity"
 msgstr "Share Game Activity"
 
+#: components/app/interface/settings/user/Referrals.tsx
+msgid "Invite friends to Sloga with your referral code or link. Each friend who sticks around brings you closer to the next reward."
+msgstr "Invite friends to Sloga with your referral code or link. Each friend who sticks around brings you closer to the next reward."
+
 #: components/ui/components/features/voice/callCard/VoiceCallCardActions.tsx
 msgid "Share screen"
 msgstr "Share screen"
@@ -6651,9 +6917,33 @@ msgstr "Show send message button"
 msgid "Show the banner above the app while Streamer Mode is active. You can also hide it from the banner itself."
 msgstr "Show the banner above the app while Streamer Mode is active. You can also hide it from the banner itself."
 
+#: components/app/interface/settings/user/Supporter.tsx
+msgid "Supporter badge"
+msgstr "Supporter badge"
+
+#: components/app/interface/settings/user/Supporter.tsx
+msgid "Patron badge"
+msgstr "Patron badge"
+
+#: components/app/interface/settings/user/Supporter.tsx
+msgid "Active until {until}"
+msgstr "Active until {until}"
+
+#: components/app/interface/settings/user/Supporter.tsx
+msgid "Expires {expires}"
+msgstr "Expires {expires}"
+
+#: components/app/interface/settings/user/Supporter.tsx
+msgid "{remaining} more to unlock {reward}"
+msgstr "{remaining} more to unlock {reward}"
+
 #: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
 msgid "Show usernames"
 msgstr "Show usernames"
+
+#: components/app/interface/settings/user/appearance/AppearanceMenu.tsx
+msgid "Show animated name effects"
+msgstr "Show animated name effects"
 
 #: components/app/interface/settings/user/voice/OverlaySettings.tsx
 msgid "Show who is talking on top of your game during a call. Works in borderless-windowed games; exclusive fullscreen cannot be drawn over."
@@ -7390,6 +7680,18 @@ msgid "This account has been suspended. Contact a moderator if you believe this 
 msgstr "This account has been suspended. Contact a moderator if you believe this is a mistake."
 
 #: components/i18n/errors.ts
+msgid "You haven't unlocked this style yet."
+msgstr "You haven't unlocked this style yet."
+
+#: components/i18n/errors.ts
+msgid "That referral code wasn't found. Clear it to continue without one."
+msgstr "That referral code wasn't found. Clear it to continue without one."
+
+#: components/i18n/errors.ts
+msgid "This donation can't be claimed. It has already been claimed, was refunded, or is waiting for review."
+msgstr "This donation can't be claimed. It has already been claimed, was refunded, or is waiting for review."
+
+#: components/i18n/errors.ts
 msgid "This account is not activated! Please check your account's inbox and try again."
 msgstr "This account is not activated! Please check your account's inbox and try again."
 
@@ -7775,6 +8077,55 @@ msgstr "Trust this server's certificate"
 #: components/modal/modals/ImportDiscord.tsx
 msgid "Try again"
 msgstr "Try again"
+
+#: components/app/interface/settings/user/Referrals.tsx
+msgid "Could not copy to the clipboard."
+msgstr "Could not copy to the clipboard."
+
+#: components/app/interface/settings/user/Referrals.tsx
+msgid "Join me on Sloga"
+msgstr "Join me on Sloga"
+
+#: components/app/interface/settings/user/Referrals.tsx
+#: components/app/interface/settings/user/Referrals.tsx
+msgid "Referral link copied to clipboard"
+msgstr "Referral link copied to clipboard"
+
+#: components/app/interface/settings/user/Referrals.tsx
+msgid "You've unlocked every reward. Thank you for spreading the word!"
+msgstr "You've unlocked every reward. Thank you for spreading the word!"
+
+#: components/app/interface/settings/user/Referrals.tsx
+msgid "Next reward: {current} of {next}"
+msgstr "Next reward: {current} of {next}"
+
+#: components/app/interface/settings/user/Referrals.tsx
+msgid "Next reward: {reward} ({current} of {next})"
+msgstr "Next reward: {reward} ({current} of {next})"
+
+#: components/app/interface/settings/user/Referrals.tsx
+msgid "Your referral code"
+msgstr "Your referral code"
+
+#: components/app/interface/settings/user/Referrals.tsx
+msgid "Referral code copied to clipboard"
+msgstr "Referral code copied to clipboard"
+
+#: components/app/interface/settings/user/Referrals.tsx
+msgid "Your referral link"
+msgstr "Your referral link"
+
+#: components/app/interface/settings/user/Referrals.tsx
+msgid "Share your referral link"
+msgstr "Share your referral link"
+
+#: components/app/interface/settings/user/Referrals.tsx
+msgid "Your referrals"
+msgstr "Your referrals"
+
+#: components/app/interface/settings/user/Referrals.tsx
+msgid "Qualified"
+msgstr "Qualified"
 
 #: components/app/interface/settings/user/Keybinds.tsx
 msgid "Turn camera on and off"

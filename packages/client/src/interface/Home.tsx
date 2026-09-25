@@ -429,9 +429,10 @@ export function HomePage() {
                 </CategoryButton>
               </Match>
             </Switch>
-            {/* Hidden in Play builds: linking out to donations is a Google
-                Play payments-policy grey area and Sloga is not a registered
-                nonprofit. Web, desktop and the sloga.gg APK still show it. */}
+            {/* Hidden in Play and App Store builds: both stores restrict
+                linking out to payments outside their own billing, and Sloga
+                is not a registered nonprofit. Web, desktop and the sloga.gg
+                APK still show it. */}
             <Show when={allowsDonationLinks()}>
               <div
                 style={{
@@ -442,12 +443,10 @@ export function HomePage() {
                 <CategoryButton
                   variant="filled"
                   onClick={() => window.open("https://ko-fi.com/slogatech")}
-                  description={
-                    <Trans>Support the project by donating - thank you!</Trans>
-                  }
+                  description={<Trans>Support the project - thank you!</Trans>}
                   icon={<MdPayments />}
                 >
-                  <Trans>Donate to Sloga</Trans>
+                  <Trans>Support Sloga</Trans>
                 </CategoryButton>
               </div>
             </Show>

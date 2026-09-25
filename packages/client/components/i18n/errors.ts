@@ -64,6 +64,13 @@ export function useError() {
       // name a variant it has never been told about.
       if (errType === "AccountDisabled")
         return t`This account has been suspended. Contact a moderator if you believe this is a mistake.`;
+      // Referral and supporter perks (same lag pattern).
+      if (errType === "PerkRequired")
+        return t`You haven't unlocked this style yet.`;
+      if (errType === "InvalidReferralCode")
+        return t`That referral code wasn't found. Clear it to continue without one.`;
+      if (errType === "InvalidClaim")
+        return t`This donation can't be claimed. It has already been claimed, was refunded, or is waiting for review.`;
 
       switch (err.type) {
         case "AlreadyFriends":

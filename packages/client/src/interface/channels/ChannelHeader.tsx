@@ -15,12 +15,14 @@ import { LAYOUT_SECTIONS } from "@revolt/state/stores/Layout";
 import {
   Button,
   IconButton,
+  isSlogaStaff,
   NonBreakingText,
   OverflowingText,
   Spacer,
   typography,
   UserStatus,
 } from "@revolt/ui";
+import { DisplayName } from "@revolt/ui/components/features/DisplayName";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
 import { parseChannelPassword } from "../../lib/channelPassword";
@@ -145,7 +147,11 @@ export function ChannelHeader(props: Props) {
             <Symbol>alternate_email</Symbol>
           </HeaderIcon>
           <OverflowingText>
-            <TextWithEmoji content={props.channel.recipient?.username} />
+            <DisplayName
+              user={props.channel.recipient}
+              name={props.channel.recipient?.username ?? ""}
+              brand={isSlogaStaff(props.channel.recipient)}
+            />
           </OverflowingText>
           <UserStatus status={props.channel.recipient?.presence} size="8px" />
         </Match>

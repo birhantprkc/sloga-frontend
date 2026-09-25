@@ -23,8 +23,9 @@ import {
 } from "@revolt/common";
 import { useModals } from "@revolt/modal";
 import { useVoice } from "@revolt/rtc";
-import { Avatar, UserStatus } from "@revolt/ui";
+import { Avatar, UserStatus, isSlogaStaff } from "@revolt/ui";
 import { IconButton } from "@revolt/ui/components/design";
+import { DisplayName } from "@revolt/ui/components/features/DisplayName";
 import { DeviceSection } from "@revolt/ui/components/features/voice/callCard/VoiceDeviceSelector";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
@@ -73,7 +74,13 @@ export function UserFooter(props: { stacked?: boolean }) {
         />
         <Show when={!props.stacked && user()}>
           <Names>
-            <DisplayName>{user()?.displayName}</DisplayName>
+            <NameText>
+              <DisplayName
+                user={user()}
+                name={user()?.displayName ?? ""}
+                brand={isSlogaStaff(user())}
+              />
+            </NameText>
             <Username>
               {user()?.username}#{user()?.discriminator}
             </Username>
@@ -373,7 +380,7 @@ const Names = styled("div", {
   },
 });
 
-const DisplayName = styled("span", {
+const NameText = styled("span", {
   base: {
     fontSize: "0.85rem",
     fontWeight: 600,

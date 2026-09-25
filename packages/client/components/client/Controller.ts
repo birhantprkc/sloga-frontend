@@ -245,6 +245,13 @@ class Lifecycle {
         this.#controller.state.auth.markValid();
         this.#setLoadedOnce(true);
         this.#connectionFailures = 0;
+
+        // A referral code only applies when creating an account, so once
+        // signed in a stored one is spent. Checked first so reconnects don't
+        // queue a disk write each time.
+        if (this.#controller.state.layout.referralCode !== undefined) {
+          this.#controller.state.layout.setReferralCode(undefined);
+        }
         break;
       case State.Dispose:
         this.dispose();
@@ -766,10 +773,18 @@ export default class ClientController {
     });
   }
 
-  async selectUsername(username: string) {
-    await this.lifecycle.client.api.post("/onboard/complete", {
-      username,
-    });
+  async selectUsername(
+    username: string,
+    extras?: { referral_code?: string; invite_code?: string },
+  ) {
+    // The server rejects an empty code, so a blank one is left out
+    const data: API.DataOnboard & NonNullable<typeof extras> = { username };
+    if (extras?.referral_code) data.referral_code = extras.referral_code;
+    if (extras?.invite_code) data.invite_code = extras.invite_code;
+
+    await this.lifecycle.client.api.post("/onboard/complete", data);
+
+    this.state.layout.setReferralCode(undefined);
 
     this.lifecycle.transition({
       type: TransitionType.UserCreated,

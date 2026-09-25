@@ -20,15 +20,16 @@ import { userInformation } from "@revolt/markdown/users";
 import {
   Avatar,
   Deferred,
+  isSlogaStaff,
   livePill,
   MenuButton,
   OverflowingText,
   Row,
   Tooltip,
   typography,
-  Username,
   UserStatus,
 } from "@revolt/ui";
+import { DisplayName } from "@revolt/ui/components/features/DisplayName";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
 interface Props {
@@ -523,7 +524,14 @@ function Member(props: {
       >
         <NameStatusStack>
           <OverflowingText>
-            <Username username={user().username} colour={user().colour!} />
+            <span class={typography({ class: "label", size: "large" })}>
+              <DisplayName
+                user={user().user}
+                member={props.member}
+                name={user().username}
+                brand={isSlogaStaff(user().user)}
+              />
+            </span>
             <Show when={liveConnection()}>
               <span class={livePill()}>
                 <Trans>LIVE</Trans>
