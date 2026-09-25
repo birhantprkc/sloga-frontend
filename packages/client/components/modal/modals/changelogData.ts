@@ -151,6 +151,13 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //     that was not deployed when this was written (bonfire's WebSocket
   //     library for CVE-2023-43669; pushd re-checking push endpoints and
   //     timing out a send). Nobody would see a difference either way.
+  //   - 🔴 Deleted account's name (stoat.js `45070b6`, frontend `fb36822a`):
+  //     UserUpdate never handled `clear: ["DisplayName"]`, so the old display
+  //     name outranked the new "Deleted User" username until a reload. The
+  //     ONLY sender of that clear is account/bot deletion (`mark_deleted`).
+  //     Sloga's own profile editor sends `display_name: ""`, which the server
+  //     rejects (2-32 chars), so never say "removing your display name".
+  //     Covered by tsc only; never watched on a second client.
   {
     id: "sloga-2026-09-23",
     title: "Patch Notes",
@@ -185,6 +192,7 @@ export const CHANGELOGS: ChangelogResponse[] = [
 - **The Windows app no longer shows a push notification switch that could not work.** Notifications while Sloga is open are unchanged.
 - **Sloga Helper is back online.** Its commands (**/remind**, **/giveaway**, **/coinflip** and **/8ball**) had stopped answering since late August.
 - **Profile badges now show their icons.** Every badge on a profile was drawn as the same blank white square. Each one now has its own icon.
+- **A deleted account no longer keeps its old name on screen.** When an account or a bot was deleted, anyone who already had Sloga open kept seeing its old display name until they reloaded. The name now changes without a reload, the same as its profile picture.
 
 ### 🛡️ Safety and privacy
 - **A channel's member list now stays behind its age, password or spoiler screen.** Until you get past that screen, the member list beside the channel list stays hidden too. Before, a mature channel showed who was in it right next to the "are you 18?" prompt.
