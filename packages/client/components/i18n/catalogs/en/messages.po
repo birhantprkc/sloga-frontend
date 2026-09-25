@@ -5565,10 +5565,6 @@ msgstr "Read past posts and their replies. Without it, older posts show only the
 msgid "Read past messages sent in channels"
 msgstr "Read past messages sent in channels"
 
-#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
-msgid "Read past replies inside a post"
-msgstr "Read past replies inside a post"
-
 #: components/ui/components/features/voice/callCard/RemoteControlOverlays.tsx
 msgid "Read this aloud. If it does not match the code on their screen, stop — someone may be intercepting the connection."
 msgstr "Read this aloud. If it does not match the code on their screen, stop — someone may be intercepting the connection."

@@ -5566,10 +5566,6 @@ msgstr "Ler mensagens anteriores enviadas no canal"
 msgid "Read past messages sent in channels"
 msgstr "Ler mensagens anteriores enviadas em canais"
 
-#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
-msgid "Read past replies inside a post"
-msgstr ""
-
 #: components/ui/components/features/voice/callCard/RemoteControlOverlays.tsx
 msgid "Read this aloud. If it does not match the code on their screen, stop — someone may be intercepting the connection."
 msgstr "Leia isso em voz alta. Se não corresponder ao código na tela, pare – alguém pode estar interceptando a conexão."
