@@ -651,6 +651,10 @@ msgstr "Acknowledge"
 msgid "Active"
 msgstr "Active"
 
+#: components/ui/components/features/profiles/ProfileBadges.tsx
+msgid "Active Sloga supporter"
+msgstr "Active Sloga supporter"
+
 #: components/ui/components/features/profiles/ProfileStatus.tsx
 msgid "Activity"
 msgstr "Activity"

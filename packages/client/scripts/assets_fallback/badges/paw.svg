@@ -1,1 +1,10 @@
-<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="64.00001046823172" xmlns="http://www.w3.org/2000/svg" id="screenshot" version="1.1" viewBox="-0.000008942940667111543 -0.0000033745862566547657 64.00001046823172 64.00000545874563" height="64.00000545874563" style="-webkit-print-color-adjust: exact;"><g id="shape-d9b11490-3403-11ec-bc16-7b519797d558"><rect rx="0" ry="0" x="0" y="0" transform="matrix(1.0000000000000007,-8.726646259971662e-8,-1.5707963280665485e-7,1.0000000000000124,0.000005026548230091521,0.0000027925264056705146)" width="64" height="64" style="fill: rgb(255, 255, 255); fill-opacity: 1;"/></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <circle cx="32" cy="32" r="30" fill="#E3CF1B"/>
+  <g fill="#3A3000">
+    <path d="M32 31c6.5 0 12.5 7.5 12.5 13 0 4.5-4 6-7 6-2.5 0-3.5-1.3-5.5-1.3S29 50 26.5 50c-3 0-7-1.5-7-6 0-5.5 6-13 12.5-13Z"/>
+    <ellipse cx="18.5" cy="29" rx="4.6" ry="5.8" transform="rotate(-25 18.5 29)"/>
+    <ellipse cx="26.5" cy="19.5" rx="4.6" ry="6.2" transform="rotate(-8 26.5 19.5)"/>
+    <ellipse cx="37.5" cy="19.5" rx="4.6" ry="6.2" transform="rotate(8 37.5 19.5)"/>
+    <ellipse cx="45.5" cy="29" rx="4.6" ry="5.8" transform="rotate(25 45.5 29)"/>
+  </g>
+</svg>
