@@ -67,9 +67,9 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //   covered by unit/route tests with negative controls and nothing else.
   //   - Server-side and live for EVERY app version: owner rank (delta
   //     `99b84f74`, deployed 09-25), password reset for unverified accounts
-  //     (`bd12181f`, same deploy), http->https (Caddy, 09-24). 🔴 The forum
-  //     ReadMessageHistory bullet is only true once that delta deploy has
-  //     happened; if it has not by the sweep, take the bullet out.
+  //     (`bd12181f`, same deploy), http->https (Caddy, 09-24). The forum
+  //     ReadMessageHistory bullet is server-side too: live 2026-09-25 05:28Z
+  //     in delta `938b7508` (with the soundboard migration below).
   //   - Client-side, ships here: the call leaving on a revoked session, the
   //     disappearing timer hidden under E2EE, the member list behind the
   //     gates, the forum-post Permissions entry, permission headings and the
@@ -93,8 +93,9 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //     and synced its commands. No command was run by hand afterwards, so
   //     the bullet says "back online", not that each command was tested.
   //   - The soundboard bullet is server-side (migration revision 70, runs
-  //     when delta starts with it). 🔴 True only once that delta deploy has
-  //     happened; covers servers created before 2026-07-15 only.
+  //     when delta starts with it). Live 2026-09-25 05:28Z in delta
+  //     `938b7508`; prod migrations are at revision 71. Covers servers
+  //     created before 2026-07-15 only.
   //   - 🔴 The sign-out bullet says the device LEAVES the call when the
   //     server ends its session. It must not say "instantly": it happens
   //     when the server's logout message arrives or, failing that, at the
@@ -115,6 +116,22 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //     simulated touches (the two stuck cases fail on the old code), never
   //     on a phone. The edge back-swipe and the notification shade are the
   //     documented ways Android cancels a touch; do not add other triggers.
+  //   - Profile badges (`a87b2c95`, merged as `badafac2`): every badge SVG
+  //     was the same blank white square. Seen only in a headless preview
+  //     render, never in the running app. The joke-badge flag mix-up and
+  //     the dropped raccoon badge are left out on purpose; nobody on Sloga
+  //     could have had either.
+  //   - 🔴 Android backups (`4a8bdcc0`, audit L5): the push SharedPreferences
+  //     held the API URL and a live session token, and the backup rules let
+  //     Google cloud backup and device transfer carry it. Only backups made
+  //     AFTER this update leave it out; one already stored keeps its copy
+  //     until the phone replaces it. So the bullet says "backups made from
+  //     now on", never that old backups are clean. Signing out does NOT end
+  //     the session on the server (see above), so do not suggest it as the
+  //     remedy; removing the session in Settings → Sessions does.
+  //   - Deliberately left out: the web push re-subscribe on a VAPID key
+  //     change (`c826eb0e`). Nothing visible happens until the server key
+  //     rotates, and that rollout (R3+) has not happened.
   {
     id: "sloga-2026-09-23",
     title: "Patch Notes",
@@ -148,6 +165,7 @@ export const CHANGELOGS: ChangelogResponse[] = [
 - **The soundboard works on older servers.** On servers created before the soundboard arrived in July, members got an error when they tried to play a sound.
 - **The Windows app no longer shows a push notification switch that could not work.** Notifications while Sloga is open are unchanged.
 - **Sloga Helper is back online.** Its commands (**/remind**, **/giveaway**, **/coinflip** and **/8ball**) had stopped answering since late August.
+- **Profile badges now show their icons.** Every badge on a profile was drawn as the same blank white square. Each one now has its own icon.
 
 ### 🛡️ Safety and privacy
 - **A channel's member list now stays behind its age, password or spoiler screen.** Until you get past that screen, the member list beside the channel list stays hidden too. Before, a mature channel showed who was in it right next to the "are you 18?" prompt.
@@ -156,6 +174,7 @@ export const CHANGELOGS: ChangelogResponse[] = [
 - **Moderators can no longer mute, deafen or rename the server owner.** An owner with no roles counted as the lowest rank, so anyone allowed to mute members could mute them too.
 - **Forum posts now respect Read Message History.** A role denied it can still see which posts exist and their titles, but can no longer open older posts or read their earlier replies.
 - **Server owners can choose who may hand over control of their screen.** **Remote Control** now appears under **Voice** in a server's and channel's permissions. It covers handing over your own shared screen; nobody can take control of someone else's.
+- **Android backups no longer include your sign-in.** The Android app keeps a copy of it so push notifications can renew themselves, and Google backup and moving to a new phone carried that copy along. Backups made from now on leave it out.
 - **sloga.gg and app.sloga.gg now always use a secure connection.** Typing an \`http://\` address sends you to the \`https://\` one.
 `,
   },
