@@ -19,6 +19,20 @@ export function spoilerGateKey(channelId: string): string {
   return `${channelId}-spoiler`;
 }
 
+/**
+ * The channel whose gates apply. A thread (a forum post included) carries no
+ * mature, spoiler or password flags of its own, so it answers to its parent's:
+ * gating a thread on its own flags left every post under a mature or
+ * password-protected forum open, page and member list alike. Unlocking the
+ * parent therefore unlocks its threads too, which is the point. A thread whose
+ * parent is not loaded falls back to itself, the behavior it always had.
+ */
+export function gateSource<T extends { isThread: boolean; parent?: T }>(
+  channel: T,
+): T {
+  return channel.isThread && channel.parent ? channel.parent : channel;
+}
+
 export interface GatedChannel {
   id: string;
   mature: boolean;

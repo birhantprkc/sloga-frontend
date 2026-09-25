@@ -16,6 +16,7 @@ import { parseChannelPassword } from "../../lib/channelPassword";
 import { AgeGate } from "./AgeGate";
 import { PasswordGate } from "./PasswordGate";
 import { SpoilerGate } from "./SpoilerGate";
+import { gateSource } from "./channelGates";
 import { ForumChannel } from "./forum/ForumChannel";
 import { TextChannel } from "./text/TextChannel";
 
@@ -78,21 +79,23 @@ export const ChannelPage: Component = () => {
           <Navigate href={"../.."} />
         </Match>
         <Match when={TEXT_CHANNEL_TYPES.includes(channel()!.type)}>
+          {/* A thread answers to its parent's gates (see gateSource). */}
           <AgeGate
-            enabled={channel()!.mature}
+            enabled={gateSource(channel()!).mature}
             contentName={"#" + channel()!.name}
           >
             <PasswordGate
               passwordHash={
-                parseChannelPassword(channel()!.description).passwordHash
+                parseChannelPassword(gateSource(channel()!).description)
+                  .passwordHash
               }
-              channelId={channel()!.id}
-              channelName={channel()!.name!}
+              channelId={gateSource(channel()!).id}
+              channelName={gateSource(channel()!).name!}
             >
               <SpoilerGate
-                enabled={channel()!.isSpoiler}
-                channelId={channel()!.id}
-                channelName={"#" + channel()!.name}
+                enabled={gateSource(channel()!).isSpoiler}
+                channelId={gateSource(channel()!).id}
+                channelName={"#" + gateSource(channel()!).name}
               >
                 <TextChannel channel={channel()!} />
               </SpoilerGate>

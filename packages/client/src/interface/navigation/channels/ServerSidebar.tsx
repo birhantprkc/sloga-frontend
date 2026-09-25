@@ -60,7 +60,7 @@ import MdChevronRight from "@material-design-icons/svg/filled/chevron_right.svg?
 import MdLibraryAdd from "@material-design-icons/svg/outlined/library_add.svg?component-solid";
 import MdSettings from "@material-symbols/svg-400/outlined/settings-fill.svg?component-solid";
 
-import { isChannelGated } from "../../channels/channelGates";
+import { gateSource, isChannelGated } from "../../channels/channelGates";
 import { ServerMemberSidebar } from "../../channels/text/MemberSidebar";
 
 import { parseChannelPassword } from "../../../lib/channelPassword";
@@ -227,11 +227,12 @@ export const ServerSidebar = (props: Props) => {
     state.layout.getSectionState(LAYOUT_SECTIONS.MEMBER_SIDEBAR, true) &&
     !isChannelGated(
       {
-        id: selectedChannel()!.id,
-        mature: !!selectedChannel()!.mature,
-        isSpoiler: !!selectedChannel()!.isSpoiler,
-        hasPassword: !!parseChannelPassword(selectedChannel()!.description)
-          .passwordHash,
+        id: gateSource(selectedChannel()!).id,
+        mature: !!gateSource(selectedChannel()!).mature,
+        isSpoiler: !!gateSource(selectedChannel()!).isSpoiler,
+        hasPassword: !!parseChannelPassword(
+          gateSource(selectedChannel()!).description,
+        ).passwordHash,
       },
       (key) => state.layout.getSectionState(key, false),
       LAYOUT_SECTIONS.MATURE,

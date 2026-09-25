@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  gateSource,
   isChannelGated,
   passwordGateKey,
   spoilerGateKey,
@@ -70,6 +71,20 @@ test("every gate on a channel has to be passed", () => {
       MATURE,
     ),
     false,
+  );
+});
+
+test("a thread answers to its parent's gates", () => {
+  type C = { id: string; isThread: boolean; parent?: C };
+  const forum: C = { id: "forum", isThread: false };
+  const post: C = { id: "post", isThread: true, parent: forum };
+  assert.equal(gateSource(post), forum);
+  assert.equal(gateSource(forum), forum, "a non-thread is its own source");
+  const orphan: C = { id: "orphan", isThread: true };
+  assert.equal(
+    gateSource(orphan),
+    orphan,
+    "a thread whose parent is not loaded falls back to itself",
   );
 });
 
