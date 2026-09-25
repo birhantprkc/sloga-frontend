@@ -193,9 +193,9 @@ export function NameStyleEditor(props: { user: User }) {
     setError(undefined);
 
     try {
-      // The server replaces the style whole (an empty one clears it). The
-      // client only ever sees the perk-filtered style, so saving while a perk
-      // has lapsed drops the part it covered for good.
+      // The server merges this into the stored style: parts the user has the
+      // perk for are set or cleared, and a part whose perk has lapsed keeps
+      // its stored value. So Reset only clears the parts the user still has.
       await props.user.edit({
         name_style: permitted(),
       } satisfies DataEditUserExt);
