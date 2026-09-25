@@ -29,6 +29,11 @@ export interface TypeLayout {
   nextPath?: string;
 
   /**
+   * Referral code from a /r/:code link, pre-filled at onboarding
+   */
+  referralCode?: string;
+
+  /**
    * The current section of the program we are in
    *
    * This can currently either be:
@@ -65,6 +70,11 @@ export interface TypeLayout {
 export const CALL_CARD_MIN = 20;
 export const CALL_CARD_MAX = 80;
 export const CALL_CARD_DEFAULT = 40;
+
+/**
+ * Longest referral code input kept; the server rejects anything longer
+ */
+const REFERRAL_CODE_MAX_LENGTH = 32;
 
 /**
  * Handles layout and navigation of the app.
@@ -107,6 +117,13 @@ export class Layout extends AbstractStore<"layout", TypeLayout> {
 
     if (typeof input.nextPath === "string") {
       layout.nextPath = input.nextPath;
+    }
+
+    if (
+      typeof input.referralCode === "string" &&
+      input.referralCode.length <= REFERRAL_CODE_MAX_LENGTH
+    ) {
+      layout.referralCode = input.referralCode;
     }
 
     if (typeof input.activeInterface === "string") {
@@ -193,6 +210,26 @@ export class Layout extends AbstractStore<"layout", TypeLayout> {
    */
   setNextPath(pathname: string) {
     this.set("nextPath", pathname);
+  }
+
+  /**
+   * Get the stored referral code
+   */
+  get referralCode(): string | undefined {
+    return this.get().referralCode;
+  }
+
+  /**
+   * Set or clear the stored referral code
+   * @param code Code as given, or undefined to clear it
+   */
+  setReferralCode(code: string | undefined) {
+    this.set(
+      "referralCode",
+      code !== undefined && code.length <= REFERRAL_CODE_MAX_LENGTH
+        ? code
+        : undefined,
+    );
   }
 
   /**

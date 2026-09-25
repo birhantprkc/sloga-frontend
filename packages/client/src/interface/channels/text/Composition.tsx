@@ -21,6 +21,7 @@ import { styled } from "styled-system/jsx";
 import { SOFTRES_CREATION_ENABLED } from "@revolt/app";
 import { E2EESendError, useClient, useE2EE, useSound } from "@revolt/client";
 import { CONFIGURATION, debounce, useDevice } from "@revolt/common";
+import { pickUploadLimit } from "@revolt/common/lib/uploadLimit";
 import { Keybind, KeybindAction, createKeybind } from "@revolt/keybinds";
 import { unicodeEmojiPackPrefix } from "@revolt/markdown/emoji/UnicodeEmoji";
 import { useModals } from "@revolt/modal";
@@ -872,10 +873,12 @@ export function MessageComposition(props: Props) {
    * to an encrypted send, so they get the small cap too — only a
    * definitively-plaintext conversation may admit large files.
    *
-   * Plaintext conversations clamp to the server limit alone (5 GB today):
-   * files above CHUNKED_UPLOAD_THRESHOLD take the chunked path, whose
-   * sub-100 MB parts clear the CDN wall that used to cap everything at
-   * MAX_UPLOAD_REQUEST_SIZE.
+   * Plaintext conversations clamp to the server limit that applies to this
+   * account (the upload perk, the new-account tier, or the default): files
+   * above CHUNKED_UPLOAD_THRESHOLD take the chunked path, whose sub-100 MB
+   * parts clear the CDN wall that used to cap everything at
+   * MAX_UPLOAD_REQUEST_SIZE. The server enforces the same tiers, so a stale
+   * perk here only changes what the picker admits.
    *
    * Every path that puts bytes into the draft must consult this — not just
    * the picker. The image editor re-encodes what it exports, so an edit can
@@ -884,8 +887,11 @@ export function MessageComposition(props: Props) {
    */
   function attachmentSizeLimit() {
     const serverLimit = client().configured()
-      ? (client().configuration?.features.limits.default.file_upload_size_limits
-          .attachments ?? CONFIGURATION.MAX_FILE_SIZE)
+      ? (pickUploadLimit(
+          client().configuration,
+          client().user,
+          "attachments",
+        ) ?? CONFIGURATION.MAX_FILE_SIZE)
       : CONFIGURATION.MAX_FILE_SIZE;
 
     const maybeEncrypted =

@@ -180,6 +180,11 @@ interface SettingsDefinition {
   "appearance:layout_members_side": MembersSide;
 
   /**
+   * Play animated name effects; off shows the still version
+   */
+  "appearance:name_effects": boolean;
+
+  /**
    * Indicate new users to Stoat
    * TODO: implement
    */
@@ -327,6 +332,7 @@ const EXPECTED_TYPES: { [K in keyof SettingsDefinition]: ValueType<K> } = {
   "appearance:ultrawide_layout": "boolean",
   "appearance:layout_nav_side": "string",
   "appearance:layout_members_side": "string",
+  "appearance:name_effects": "boolean",
   "advanced:copy_id": "boolean",
   "sounds:message_variant": "number",
   "sounds:ringtone_variant": "number",
@@ -381,6 +387,7 @@ const DEFAULT_VALUES: TypeSettings = {
   // Today's arrangement, so shipping the designer reflows nobody.
   "appearance:layout_nav_side": "left",
   "appearance:layout_members_side": "auto",
+  "appearance:name_effects": true,
   "sounds:message_variant": 4,
   "sounds:ringtone_variant": 8,
   "sounds:disconnect_variant": 3,
@@ -448,6 +455,8 @@ export class Settings extends AbstractStore<"settings", TypeSettings> {
       // Mirrored in DEFAULT_VALUES — see the note there.
       "appearance:layout_nav_side": "left",
       "appearance:layout_members_side": "auto",
+      // Mirrored in DEFAULT_VALUES — see the note there.
+      "appearance:name_effects": true,
       "advanced:copy_id": false,
       "sounds:message_variant": 4,
       "sounds:ringtone_variant": 8,

@@ -71,7 +71,8 @@ type Field =
   | "new-password"
   | "log-out"
   | "username"
-  | "invite";
+  | "invite"
+  | "referral_code";
 
 /**
  * Properties to apply to fields
@@ -121,6 +122,16 @@ const useFieldConfiguration = () => {
       autocomplete: "none",
       name: () => t`Invite Code`,
       placeholder: () => t`Enter your invite code.`,
+    },
+    // Optional, so it must never block signup: `Fields` spreads this config
+    // after its default `required`, and `required: false` reaches the input
+    referral_code: {
+      maxLength: 32,
+      type: "text" as const,
+      autocomplete: "off",
+      required: false,
+      name: () => t`Referral code (optional)`,
+      placeholder: () => t`e.g. SLOGA-KX7P`,
     },
   };
 };
