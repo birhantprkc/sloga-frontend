@@ -9,7 +9,9 @@
 import assert from "node:assert/strict";
 import { mock, test } from "node:test";
 
-import { Client } from "stoat.js";
+import type { Client } from "stoat.js";
+
+import { offlineClient } from "./offlineClient.ts";
 
 const ME = "01ME00000000000000000000000";
 const OTHER = "01OTHER00000000000000000000";
@@ -18,7 +20,7 @@ const MSG = (n: number) => `01MSG${String(n).padStart(22, "0")}`;
 
 /** A client with one text channel, read up to MSG(1) with two mentions. */
 function setup() {
-  const client = new Client({ syncUnreads: true, autoReconnect: false });
+  const client = offlineClient({ syncUnreads: true, autoReconnect: false });
   client.user = client.users.getOrCreate(ME, {
     _id: ME,
     username: "me",
