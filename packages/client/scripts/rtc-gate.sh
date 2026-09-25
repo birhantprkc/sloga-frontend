@@ -99,6 +99,8 @@ EXPECTED=(
   "components/rtc/mlsCallModePolicy.test.ts 117 0"
   "components/rtc/mlsCallSession.escape.test.ts 17 0"
   "components/rtc/mlsCallSession.falsered.test.ts 11 0"
+  "components/rtc/mlsCallSession.fleet.test.ts 5 0"
+  "components/rtc/mlsCallSession.groupscope.test.ts 19 0"
   "components/rtc/mlsCallSession.heal.test.ts 7 0"
   "components/rtc/mlsCallSession.joinrace.test.ts 37 0"
   "components/rtc/mlsCallSession.resecure.test.ts 23 0"
@@ -122,6 +124,8 @@ EXPECTED=(
   "components/rtc/screenAudioWire.test.ts 17 0"
   "components/rtc/screenAudioNativeWin.test.ts 51 0"
   "components/rtc/pauseClauseHold.test.ts 7 0"
+  "components/client/mlsInboundBuffer.test.ts 11 0"
+  "components/client/mlsEnvelopeClassify.test.ts 12 0"
 )
 
 counter() { # counter <log> <name> — the runner's own summary counter, or ""
@@ -211,7 +215,15 @@ SPECS=(components/rtc/mls*.test.ts components/rtc/rosterReconcile.test.ts
   # 🔴 NOT matched by the mls*.test.ts glob above — a literal, or the
   # banner's pause-clause hold (wave 3) runs nowhere and its EXPECTED row
   # trips "never ran" instead of measuring anything.
-  components/rtc/pauseClauseHold.test.ts)
+  components/rtc/pauseClauseHold.test.ts
+  # 🔴 Outside components/rtc, so no glob above reaches them. The inbound
+  # buffer is what keeps a connect-time mailbox drain of MLS envelopes off the
+  # Olm path until a call session's sink exists; the classifier maps a native
+  # `e2ee_call_process` rejection to the ack / park / drop disposition the
+  # session's drain acts on. The classifier's spec ran nowhere before these
+  # two lines.
+  components/client/mlsInboundBuffer.test.ts
+  components/client/mlsEnvelopeClassify.test.ts)
 # 🔴 Arguments ADD to that set; they do not replace it. They used to replace
 # it, so the natural invocation for this branch —
 #   rtc-gate.sh components/rtc/mls*.test.ts
@@ -269,7 +281,15 @@ FILES=(components/rtc/mlsCallSession.ts components/rtc/mlsCallModePolicy.ts
   components/ui/components/features/voice/callCard/VoiceCallCardStatus.tsx
   components/rtc/pauseClauseHold.ts components/rtc/pauseClauseHold.test.ts
   components/rtc/mlsJoinTimeline.ts components/rtc/mlsJoinTimeline.test.ts
-  components/rtc/mlsCallSession.timeline.test.ts)
+  components/rtc/mlsCallSession.timeline.test.ts
+  components/rtc/mlsCallSession.fleet.test.ts
+  components/rtc/mlsCallSession.groupscope.test.ts
+  components/client/mlsInboundBuffer.ts
+  components/client/mlsInboundBuffer.test.ts
+  # Enrolled because it is clean: `prettier --check` passes on it (and passed
+  # at base c219c107), and eslint exits 0 on it with ONE pre-existing warning
+  # (see the eslint step below).
+  components/client/e2ee.ts)
 # 🔴 NOT in FILES: components/ui/components/features/voice/watch/WatchOverlay.tsx.
 # Wave 3 changes ONE line of it (`bannerParksFloat(voice.callBanner())`), but
 # the file carries 101 pre-existing prettier/prettier warnings and fails
@@ -494,11 +514,14 @@ run "prettier --check" 12 "$ROOT/node_modules/.bin/prettier" --check "${FILES[@]
 # file was only enrolled in FILES after an audit found this branch modifies it
 # while nothing linted or formatted it. All left unsuppressed on purpose:
 # neither file carries an eslint-disable and a suppression would hide the next
-# real one.
+# real one. A FOURTH, not solid/reactivity, arrived with `e2ee.ts` (wave 1 of
+# the rejoin-resume plan): @typescript-eslint/no-unused-vars on the unused
+# `catch (error)` binding in the encrypted-send path, pre-existing at base
+# c219c107 and in no line that wave touched.
 #
 # 🔴 This gate reads eslint's EXIT STATUS and eslint exits 0 on warnings, so
 # this step is WARNING-BLIND by construction. Do not read the count above as
-# something enforced — nothing checks it. If you add --max-warnings, three is
+# something enforced — nothing checks it. If you add --max-warnings, four is
 # the baseline; until then, this comment is prose and goes stale like all the
 # others this file has carried.
 run "eslint" 30 "$ROOT/node_modules/.bin/eslint" "${FILES[@]}"

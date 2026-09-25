@@ -1060,6 +1060,14 @@ export interface MlsCallSessionDeps {
    * (`negotiatingFailsafeReason`).
    */
   channelHasOpenGroup?: () => "open" | "none" | "pending" | "ratelimited";
+  /**
+   * The per-channel §4.1 startup-wipe tokens this session reads and spends.
+   * Absent ⇒ the module-level page-lifetime set (`startupWipedChannels`),
+   * which is what production uses. A spec that models a page reload passes
+   * a fresh set per page, because the module set outlives the page it
+   * stands for.
+   */
+  startupWipeTokens?: Set<string>;
 }
 
 /** One staged own commit awaiting arbitration (native pending mirror). */
@@ -2116,7 +2124,8 @@ export class MlsCallSession {
    * broken store loudly. Never burns `MAX_REESTABLISH`.
    */
   async #startupWipe(orphanGroupId: string | null): Promise<void> {
-    if (startupWipedChannels.has(this.#deps.channelId)) return;
+    const tokens = this.#deps.startupWipeTokens ?? startupWipedChannels;
+    if (tokens.has(this.#deps.channelId)) return;
     let localGroupIds: string[];
     try {
       localGroupIds = await this.#deps.bridge.callLocalGroups(
@@ -2134,7 +2143,7 @@ export class MlsCallSession {
     const targets = startupWipeTargets({
       localGroupIds,
       orphanGroupId,
-      tokenSpent: startupWipedChannels.has(this.#deps.channelId),
+      tokenSpent: tokens.has(this.#deps.channelId),
     });
     if (targets.length === 0) return;
     try {
@@ -2143,7 +2152,7 @@ export class MlsCallSession {
         // nothing but also tell nobody; this path must degrade loudly).
         await this.#deps.bridge.callLeaveCleanup(groupId);
       }
-      startupWipedChannels.add(this.#deps.channelId); // spent ONLY on full success
+      tokens.add(this.#deps.channelId); // spent ONLY on full success
       console.warn(
         "[mls] startup fresh-rejoin: wiped surviving local call-group state",
         targets,
@@ -3267,6 +3276,53 @@ export class MlsCallSession {
   async #consume(envelope: MlsEnvelope): Promise<void> {
     if (this.#seen.has(envelope.id)) {
       this.#metrics.recordDedupSkip(); // ULID dedup (drain-vs-live-push race)
+      return;
+    }
+
+    // Group scoping (audit M2): an envelope for a group other than the live
+    // one (including while none is live) is applied natively and acked only
+    // on a terminal disposition. Every other arm below acts on OUR group —
+    // the H1 clear, the gap refetch of `#groupId`, the desync escalation, the
+    // removed-self/successor/rejoin transitions, the inbound memo — so a
+    // drained or replayed envelope for a group we left must reach none of
+    // them. A non-terminal one (gap, identity, transient) stays unacked in
+    // the mailbox (invariant 10). Welcomes are exempt: the join path adopts
+    // its group from one.
+    const liveGroup = this.#groupId;
+    if (
+      envelope.content_type !== "mls_welcome" &&
+      envelope.group_id !== liveGroup
+    ) {
+      const foreign = await this.#deps.bridge.processEnvelope(
+        envelope,
+        this.#deps.userId,
+      );
+      if (foreign.kind === "drop" && foreign.loud) {
+        // A loud-classified drop consumed an unrepeatable envelope; it says
+        // nothing about OUR group, so it latches nothing, but it is never
+        // quiet either.
+        console.error("[mls] loud drop for another group", {
+          group: envelope.group_id,
+          liveGroup,
+          epoch: envelope.epoch,
+          contentType: envelope.content_type,
+          reason: foreign.reason,
+        });
+      } else {
+        console.info("[mls] envelope for another group", {
+          group: envelope.group_id,
+          liveGroup,
+          epoch: envelope.epoch,
+          contentType: envelope.content_type,
+          disposition: foreign.kind,
+          acked: foreign.ack,
+        });
+      }
+      if (foreign.ack) {
+        this.#seen.add(envelope.id);
+        this.#retries.delete(envelope.id);
+        this.#deps.bridge.ackEnvelopes([envelope.id]);
+      }
       return;
     }
 

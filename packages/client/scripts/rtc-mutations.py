@@ -393,6 +393,10 @@ CHIP = "chipInputs.ts"
 #: constants use.
 HOLD = "pauseClauseHold.ts"
 TIMELINE = "mlsJoinTimeline.ts"
+#: 🔴 NOT under `components/rtc`. `apply` and the restore in `main` both
+#: address `RTC / mutation.file`, so a `components/client` module is named
+#: relative to `RTC`, and the restore writes back to that same path.
+INBOUND_BUFFER = "../client/mlsInboundBuffer.ts"
 
 JOINRACE_SPEC = "components/rtc/mlsCallSession.joinrace.test.ts"
 HEAL_SPEC = "components/rtc/mlsCallSession.heal.test.ts"
@@ -410,6 +414,9 @@ CHIP_SPEC = "components/rtc/chipInputs.test.ts"
 HOLD_SPEC = "components/rtc/pauseClauseHold.test.ts"
 TIMELINE_SPEC = "components/rtc/mlsJoinTimeline.test.ts"
 SESSION_TIMELINE_SPEC = "components/rtc/mlsCallSession.timeline.test.ts"
+FLEET_SPEC = "components/rtc/mlsCallSession.fleet.test.ts"
+GROUPSCOPE_SPEC = "components/rtc/mlsCallSession.groupscope.test.ts"
+INBOUND_BUFFER_SPEC = "components/client/mlsInboundBuffer.test.ts"
 ALL_SPECS = [POLICY_SPEC, HEAL_SPEC, JOINRACE_SPEC]
 
 
@@ -438,6 +445,17 @@ class Mutation:
     #: alongside a CHIP_SPEC that always reddens, and the pin was measured
     #: inert.
     must_red: list[str] = field(default_factory=list)
+    #: Further `(search, replace)` edits to the SAME `file`, applied after the
+    #: first, each held to the same exactly-once rule.
+    #:
+    #: 🔴 For a defect that only exists as a CONJUNCTION. The stagger entry
+    #: below re-introduces a timing (a short Welcome wait) together with the
+    #: missing re-check that made that timing harmless; each half alone leaves
+    #: its spec green, so two separate entries would both be "uncaught" and
+    #: prove nothing about the defect. Every edit is applied in memory and the
+    #: file written once, so a stale anchor in any of them refuses before the
+    #: tree is touched.
+    also: list[tuple[str, str]] = field(default_factory=list)
 
 
 MUTATIONS: list[Mutation] = []
@@ -715,21 +733,22 @@ def exclusive_run_lock() -> Iterator[None]:
 def apply(mutation: Mutation) -> str:
     path = RTC / mutation.file
     original = path.read_text(encoding="utf-8")
-    count = original.count(mutation.search)
-    if count == 0:
-        raise SystemExit(
-            f"MUTATION {mutation.id}: search string not found in "
-            f"{mutation.file} — refusing to report a result.\n"
-            f"  looked for: {mutation.search!r}"
-        )
-    if count > 1:
-        raise SystemExit(
-            f"MUTATION {mutation.id}: search string is ambiguous "
-            f"({count} matches) in {mutation.file} — refusing to guess."
-        )
-    path.write_text(
-        original.replace(mutation.search, mutation.replace), encoding="utf-8"
-    )
+    mutated = original
+    for search, replace in [(mutation.search, mutation.replace), *mutation.also]:
+        count = mutated.count(search)
+        if count == 0:
+            raise SystemExit(
+                f"MUTATION {mutation.id}: search string not found in "
+                f"{mutation.file} — refusing to report a result.\n"
+                f"  looked for: {search!r}"
+            )
+        if count > 1:
+            raise SystemExit(
+                f"MUTATION {mutation.id}: search string is ambiguous "
+                f"({count} matches) in {mutation.file} — refusing to guess."
+            )
+        mutated = mutated.replace(search, replace)
+    path.write_text(mutated, encoding="utf-8")
     return original
 
 
@@ -3251,6 +3270,123 @@ MUTATIONS += [
         replace="",
         specs=[SESSION_TIMELINE_SPEC],
         must_red=[SESSION_TIMELINE_SPEC],
+    ),
+]
+
+
+# --- Rejoin resume, wave 1: fleet, group scoping, inbound buffer -------------
+#
+# The harness now models N seats against one delivery service
+# (`newFleet`), which is what lets a rejoin served by EVERY member be stated
+# at all: the stagger entry below is the defect class the one-seat world could
+# not express. The session gained a per-page startup-wipe token dep and a
+# group-scope check at the head of `#consume`; the bridge gained a pure pre-sink
+# hold for MLS envelopes (`components/client/mlsInboundBuffer.ts`). Each entry
+# is judged on the ONE spec that owns it, and `must_red` on that spec alone.
+
+MUTATIONS += [
+    # ---- the fleet --------------------------------------------------------
+    #
+    # 🔴 No single-edit entry removes ONLY the fire-time §4.8 re-check yet. Its
+    # killer would be a fleet case whose serving member sits at leaf >= 6, so
+    # its stagger fires after the re-seated member's Add at REAL constants —
+    # and that case is RED on the live tree with no mutant at all (fleet F4
+    # finding, 2026-09-25), so it did not land and nothing here could tell the
+    # mutant from the tree. Pending the operator's decision on that defect, the
+    # re-check is guarded only by the conjunction below.
+    Mutation(
+        id="rejoin-stagger-refire",
+        what="a higher leaf's staggered rejoin serve fires after the live member was re-seated and stages a Remove of it — the Welcome wait short enough for the re-add to land inside the stagger, and the fire-time §4.8 re-check gone",
+        file=SESSION,
+        # BOTH halves, in one entry: measured, each alone leaves the fleet
+        # spec green (see `also` on the dataclass).
+        search="""const JOINER_RETRY_MS = 10_000;""",
+        replace="""const JOINER_RETRY_MS = 1_500;""",
+        also=[
+            (
+                """    // §4.8 re-check at FIRE time (the stagger can outlast the schedule-time
+    // check): a re-add that landed during our delay makes this serve stale.
+    if (
+      rejoinServeAction({
+        addedAtMs:
+          this.#recentAdds.get(`${request.user_id}:${request.device_id}`) ??
+          null,
+        nowMs: Date.now(),
+      }) === "refuse_recent_add"
+    ) {
+      return;
+    }
+""",
+                "",
+            ),
+        ],
+        specs=[FLEET_SPEC],
+        must_red=[FLEET_SPEC],
+    ),
+    Mutation(
+        id="wipe-token-dep-ignored",
+        what="the session spends the module-level startup-wipe token instead of its page's own, so a reloaded page shares one Set with every other session and skips the wipe its fresh page owes",
+        file=SESSION,
+        search="""const tokens = this.#deps.startupWipeTokens ?? startupWipedChannels;""",
+        replace="""const tokens = startupWipedChannels;""",
+        specs=[FLEET_SPEC],
+        must_red=[FLEET_SPEC],
+    ),
+    # ---- group scoping ------------------------------------------------------
+    Mutation(
+        id="group-scope-check-removed",
+        what="an envelope for a group other than the live one runs the live group's arms — a drained removed-self, successor or gap for a group we left transitions, refetches or acks against OUR call",
+        file=SESSION,
+        search="""      envelope.group_id !== liveGroup
+    ) {""",
+        replace="""      false
+    ) {""",
+        specs=[GROUPSCOPE_SPEC],
+        must_red=[GROUPSCOPE_SPEC],
+    ),
+    Mutation(
+        id="ctl-exempt-from-scope",
+        what="`mls_ctl` joins the Welcome exemption from group scoping, so another group's ctl-announce skips the check and drives OUR mode machine",
+        file=SESSION,
+        search="""      envelope.content_type !== "mls_welcome" &&
+""",
+        replace="""      envelope.content_type !== "mls_welcome" &&
+      envelope.content_type !== "mls_ctl" &&
+""",
+        specs=[GROUPSCOPE_SPEC],
+        must_red=[GROUPSCOPE_SPEC],
+    ),
+    # ---- the inbound buffer -------------------------------------------------
+    Mutation(
+        id="inbound-commit-routes-olm",
+        what="`inboundRoute` sends `mls_commit` to the Olm path, so a drained commit is decrypted as Olm, fails, and is acked away before the call that needed it exists",
+        file=INBOUND_BUFFER,
+        # The case label dropped whole (newline included), so `mls_commit`
+        # falls through to `default` and the mutant is still well-formed TS.
+        search="""    case "mls_commit":
+""",
+        replace="",
+        specs=[INBOUND_BUFFER_SPEC],
+        must_red=[INBOUND_BUFFER_SPEC],
+    ),
+    Mutation(
+        id="inbound-drain-empty",
+        what="`drain()` empties the hold and hands the sink nothing, so every envelope held before the session registered is lost locally while still queued server-side",
+        file=INBOUND_BUFFER,
+        search="""    return held;""",
+        replace="""    return [];""",
+        specs=[INBOUND_BUFFER_SPEC],
+        must_red=[INBOUND_BUFFER_SPEC],
+    ),
+    Mutation(
+        id="inbound-dedup-removed",
+        what="the hold keeps a repeated envelope id twice, so a live push that the connect-time drain repeats reaches the session twice",
+        file=INBOUND_BUFFER,
+        search="""    if (this.#ids.has(id)) return "duplicate";
+""",
+        replace="",
+        specs=[INBOUND_BUFFER_SPEC],
+        must_red=[INBOUND_BUFFER_SPEC],
     ),
 ]
 
