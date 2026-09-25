@@ -171,12 +171,94 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //     message authors without a reload. The field was emptied by script
   //     (the test browser dropped Backspace); Save was a real click. Not
   //     checked on the desktop or Android apps.
+  // - 2026-09-25 referrals (frontend `feat/referrals-client` `0a64e3ad`,
+  //   backend `feat/referrals` as merged in wt-referrals-merge `8de325b4`).
+  //   It is the bigger change, so the headline names it and its section
+  //   goes FIRST. 🔴 NOBODY HAS USED THIS ON PRODUCTION. Every check ran on
+  //   a local test stack: the onboarding field, the /r/ link, pending ->
+  //   qualified, the badges, the color trial, the name-style editor, and a
+  //   second account seeing the styles in the member list and author line.
+  //   So the bullets say what the feature IS and what the rules are, and
+  //   never how fast anything happens (crond sweeps hourly; not a promise).
+  //   - 🔴 NO Ko-fi, supporting, donating, payment, supporter perks or
+  //     tiers, or anything bought with money. Store builds (Google Play and
+  //     iOS) show these same notes and store policy forbids perk-for-money
+  //     copy there; Ko-fi is not switched on yet either. The app hides its
+  //     own Support rows behind allowsDonationLinks(); these notes have no
+  //     such gate, so they cover earned referral rewards only.
+  //   - 🔴 The 50-referral upload reward is NOT announced. It is off on the
+  //     server until the config gains a [features.limits.perk] table
+  //     (User::limits, users/model.rs), and nobody can reach 50 for weeks
+  //     anyway. The ladder bullet stops at 25 and says "more further up":
+  //     never a size, never a retention. The 100-referral custom badge is
+  //     left out with it, so the list skips no rung. Outside this file:
+  //     the Referrals page renders every rung the server sends, so it does
+  //     show the upload reward's label today.
+  //   - 🔴 The counting rule is the server's (Referral::evaluate in
+  //     referrals/model.rs, numbers in referrals/tiers.rs), NOT the
+  //     Referrals page's looser "used Sloga regularly for a week, chatting on
+  //     several different days". All of: a verified
+  //     email; 7 days since onboarding recorded the referral; activity on 4
+  //     distinct UTC days, one of them day 7 or later ("second week or
+  //     later"); 10 messages, or 3 plus a server join through an invite the
+  //     referrer did not create. Activity is a message sent anywhere but
+  //     Saved Notes (an encrypted send only once it reached someone else),
+  //     a channel marked read (not Saved Notes), or an invite join. At most
+  //     10 qualify per referrer per rolling 7 days; the rest stay pending
+  //     and still expire 60 days after onboarding, hence the two sentences
+  //     sit together.
+  //   - 🔴 The bullets do NOT publish those thresholds (10 messages, 4 days,
+  //     10 per 7 days): spelling them out is a how-to for gaming the check.
+  //     They reuse the Referrals page's own wording ("used Sloga regularly
+  //     for a week, chatting on several different days"), which ships in the
+  //     same build, plus the verified email. Keep "a
+  //     week" vague; never "after 7 days", which the rule does not promise.
+  //   - Left out: a bot, deleted, banned or spam-flagged invitee never
+  //     counts, a suspended one waits, a deleted referrer's referrals
+  //     expire, a self-referral is never recorded, and staff can revoke.
+  //   - Server invites credit the invite's creator only when the sign-up
+  //     started at an /invite/ link and no referral code was entered (a
+  //     code wins). Referral codes are SLOGA- plus four characters; the
+  //     field accepts them with or without the prefix, in any case.
+  //   - The /r/ link: signed out, it keeps a well-formed code and opens
+  //     account creation, and the code is pre-filled in the optional field
+  //     at the username step (FlowLogin and FlowOAuthCallback alike).
+  //     Signed in, it only opens the app. The link's host comes from the
+  //     server config, so the copy names no domain.
+  //   - The friend's reward starts when the referral QUALIFIES, not at
+  //     sign-up: the "Joined Sloga through a friend" badge (it stays) and
+  //     a name-color perk for 30 days (WELCOME_TRIAL_DAYS). After that the
+  //     stored color is kept but no longer shown.
+  //   - 🔴 Name styles: the server sends every viewer only the parts the
+  //     owner's perks allow; only clients from this release draw them
+  //     (nameStyle.ts is new here), hence "everyone using this version".
+  //     In a server a role color beats the personal color (nameLayers.ts)
+  //     while font and effect still show. A masquerade shows nothing
+  //     personal and staff names keep their brand letters; both left out.
+  //   - Effects animate only in a message's author line (sent or still
+  //     sending; not in search results), the profile banner and the
+  //     Appearance preview, and only while "Show animated name effects" is
+  //     on (the default); everywhere else they are a still frame, as they
+  //     are under reduced motion. The Name style editor preview is the
+  //     exception: it always plays (NameStyleEditor never reads the
+  //     setting), hence the parenthesis in the bullet.
   {
     id: "sloga-2026-09-23",
     title: "Patch Notes",
     published_at: "2026-09-23T23:59:00.000Z",
     web_version: "0.63.0",
-    markdown_content: `## v0.63.0 — One-click reactions
+    markdown_content: `## v0.63.0 — Invite friends, style your name
+
+### 🎁 Invite friends
+- **Invite friends to Sloga and earn rewards.** Your referral code and link are on the new **Settings → Referrals** page. Your link opens sign-up and fills in your code at the username step, and a friend who signs up through one of your server invites counts too.
+- **Anyone signing up can enter a code.** It goes in the optional **Referral code** field when they choose a username, with or without the SLOGA- in front.
+- **A referral counts once your friend has settled in.** It shows as pending until they have verified their email and used Sloga regularly for a week, chatting on several different days.
+- **Pending referrals don't wait forever.** Only so many of your referrals can count each week, and any more stay pending until there is room. A referral that has not counted within 60 days of sign-up expires.
+- **Your friend gets something too.** When their referral counts, they get a **Joined Sloga through a friend** badge and 30 days of a custom name color.
+- **What you can earn.** A Recruiter badge at 1 referral, a custom name color at 3, an Elite recruiter badge at 5, a name font at 10 and an animated name effect at 25. There are more rewards further up.
+- **Style your name.** Once you unlock them, **Settings → Profile → Name style** sets your name's color, one of five fonts, and a Shimmer, Glow or Rainbow effect. Everyone using this version of Sloga sees it next to your messages, in member lists and on your profile.
+- **Role colors still come first in servers.** Where you have a colored role, your name shows the role's color there instead of yours. Your font and effect still show.
+- **Animated effects move next to messages and on profiles, and hold still everywhere else.** To keep them still on your screen, turn off **Show animated name effects** in **Settings → Appearance** (the Name style preview still plays them).
 
 ### 💬 Messages
 - **React without opening the emoji picker.** Right-click a message, or open its **⋯** menu, and 👍 👎 ❤ 🙂 🙁 sit across the top. One click adds the reaction; a highlighted one is already yours, and clicking it again takes it back off.
