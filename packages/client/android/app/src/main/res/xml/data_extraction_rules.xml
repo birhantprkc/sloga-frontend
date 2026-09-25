@@ -2,17 +2,20 @@
 <!-- Android 12+ backup & device-transfer rules. See backup_rules.xml for
      why the native E2EE store (files/e2ee), the WebView storage
      (app_webview — holds plaintext DM drafts in localStorage/IndexedDB)
-     AND the push prefs (sloga_push.xml — holds a live session token) are
-     excluded from both cloud backup and device transfer. -->
+     the push prefs (sloga_push.xml — holds a live session token) AND the
+     Intent nonce (sloga_ipc.xml) are excluded from both cloud backup and
+     device transfer. -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="file" path="e2ee" />
         <exclude domain="root" path="app_webview" />
         <exclude domain="sharedpref" path="sloga_push.xml" />
+        <exclude domain="sharedpref" path="sloga_ipc.xml" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="file" path="e2ee" />
         <exclude domain="root" path="app_webview" />
         <exclude domain="sharedpref" path="sloga_push.xml" />
+        <exclude domain="sharedpref" path="sloga_ipc.xml" />
     </device-transfer>
 </data-extraction-rules>

@@ -132,6 +132,45 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //   - Deliberately left out: the web push re-subscribe on a VAPID key
   //     change (`c826eb0e`). Nothing visible happens until the server key
   //     rotates, and that rollout (R3+) has not happened.
+  //   - 🔴 Other apps controlling Sloga (frontend `fdbc539b`, audit H2): the
+  //     launcher activity is exported, so an app with no permissions could
+  //     start it with crafted notification extras. They were pasted into the
+  //     JavaScript run inside the app (code injection in Sloga's origin), and
+  //     `sloga_answer_call` joined that channel's call. Fixed with a
+  //     per-install nonce on every notification Intent plus JSON-built
+  //     payloads. Compile-checked on both flavors and code-reviewed; never
+  //     run on a phone. Android only, hence "on your phone". Nothing shows it
+  //     was ever used, so never say anyone was affected. A notification
+  //     posted by the old version opens the app but not its channel after the
+  //     update; left out, it lasts one notification.
+  //   - Deliberately left out: the Recents replay (`e2c5874e`). Reopening
+  //     from Recents after the process died could re-run an earlier Answer
+  //     tap. It follows from how Android recreates activities but was never
+  //     reproduced, so it gets no bullet.
+  //   - 🔴 Server hardening from the 2026-09-24 audit, server-side and live
+  //     for EVERY app version. bonfire moved to tungstenite 0.20.1
+  //     (CVE-2023-43669; backend `34ef5670`, live 2026-09-25 13:40:51Z, exe
+  //     `a7c36915`). Push delivery is held to the browsers' push services:
+  //     delta has refused other endpoints since `9fbcc76e` (live 05:28Z) and
+  //     pushd re-checks every send and gives up after 10 s (`a7e0fe52`, live
+  //     13:41:53Z, exe `8d256e1e`). Proven by unit tests (a real handshake,
+  //     a silent socket, a redirect that must not be followed) and a live
+  //     handshake through the edge (101). Neither problem was ever seen in
+  //     prod and pushd refused 0 stored endpoints at deploy, so never say
+  //     anyone was attacked or that a notification went astray.
+  //   - 🔴 Clearing a display name (stoat.js `45070b6`, frontend `fb36822a`
+  //     and `beaee6d2`): two bugs. The profile editor sent
+  //     `display_name: ""` for a blank field, which the server rejects (2-32
+  //     chars), so a display name could not be removed at all; it now sends
+  //     `remove: ["DisplayName"]` (the bot profile editor is the same
+  //     component). And UserUpdate never handled `clear: ["DisplayName"]`,
+  //     so a removed name, including a deleted account's or bot's
+  //     (`mark_deleted`), stayed on every open client until a reload.
+  //     Checked live on the web client against production, two accounts:
+  //     clearing and restoring one's name updated the other's DM list and
+  //     message authors without a reload. The field was emptied by script
+  //     (the test browser dropped Backspace); Save was a real click. Not
+  //     checked on the desktop or Android apps.
   {
     id: "sloga-2026-09-23",
     title: "Patch Notes",
@@ -166,6 +205,7 @@ export const CHANGELOGS: ChangelogResponse[] = [
 - **The Windows app no longer shows a push notification switch that could not work.** Notifications while Sloga is open are unchanged.
 - **Sloga Helper is back online.** Its commands (**/remind**, **/giveaway**, **/coinflip** and **/8ball**) had stopped answering since late August.
 - **Profile badges now show their icons.** Every badge on a profile was drawn as the same blank white square. Each one now has its own icon.
+- **You can remove your display name.** Emptying **Display Name** in **Settings → Profile** and saving did not remove it, so there was no way back to showing just your username. It now does, and anyone who already has Sloga open sees the change without reloading. The same goes for a deleted account or bot, whose old display name used to stay on screen until a reload.
 
 ### 🛡️ Safety and privacy
 - **A channel's member list now stays behind its age, password or spoiler screen.** Until you get past that screen, the member list beside the channel list stays hidden too. Before, a mature channel showed who was in it right next to the "are you 18?" prompt.
@@ -175,6 +215,9 @@ export const CHANGELOGS: ChangelogResponse[] = [
 - **Forum posts now respect Read Message History.** A role denied it can still see which posts exist and their titles, but can no longer open older posts or read their earlier replies.
 - **Server owners can choose who may hand over control of their screen.** **Remote Control** now appears under **Voice** in a server's and channel's permissions. It covers handing over your own shared screen; nobody can take control of someone else's.
 - **Android backups no longer include your sign-in.** The Android app keeps a copy of it so push notifications can renew themselves, and Google backup and moving to a new phone carried that copy along. Backups made from now on leave it out.
+- **Other apps on your phone can no longer control Sloga.** An app installed on the same Android phone could open Sloga as if it were one of Sloga's own notifications, and use that to run its own code inside Sloga or put you in a voice call. Sloga now only acts on notifications it created itself.
+- **A malformed connection can no longer tie up Sloga's servers.** A specially built connection request could keep the server that delivers your messages live busy for minutes. The part that handles those connections is now on a version that is not affected.
+- **Push notifications only go to real push services.** Sloga's servers now refuse to send a browser push notification anywhere other than the browser's own push service, and stop waiting on one that does not answer.
 - **sloga.gg and app.sloga.gg now always use a secure connection.** Typing an \`http://\` address sends you to the \`https://\` one.
 `,
   },
