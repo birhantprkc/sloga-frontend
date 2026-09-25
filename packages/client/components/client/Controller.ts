@@ -383,7 +383,14 @@ class Lifecycle {
         }
         break;
       case State.Error:
-        if (transition.type === TransitionType.Dismiss) {
+        // Logout too: deleting or disabling your own account signs out every
+        // session, so the server's Logout event can land us here just before
+        // the client's own logout() arrives. It must still finish the sign-out
+        // instead of leaving the user on the error screen.
+        if (
+          transition.type === TransitionType.Dismiss ||
+          transition.type === TransitionType.Logout
+        ) {
           this.#enter(State.Dispose);
         }
         break;
