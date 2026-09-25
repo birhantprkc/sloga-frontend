@@ -127,7 +127,11 @@ const Config: SettingsConfiguration<{ server: Server }> = {
       case "keybinds":
         return <KeybindsSettings />;
       case "notifications":
-        return <Notifications isDesktop={!!window.native} />;
+        // Both shells count as desktop, so neither shows the push toggle:
+        // their webviews have no push service to subscribe to, and the toggle
+        // could only fail. Electron exposes window.native; the Windows (Tauri)
+        // shell only shows up through its command bridge (same as "native").
+        return <Notifications isDesktop={!!window.native || !!tauriInvoke()} />;
       case "streamer":
         return <StreamerModeSettings />;
       case "connections":
