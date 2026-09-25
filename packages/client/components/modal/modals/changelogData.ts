@@ -105,6 +105,16 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //     "on a phone": a Windows touch laptop does not get the hold. Saying
   //     the handle "did not work with a finger" is exact; it armed the list
   //     but never started a drag itself.
+  //   - 🔴 Stuck panes (frontend `eba358cb`): this does NOT fix whatever
+  //     threw in the Android report behind it. That cause is still unknown.
+  //     The boundary only stops one error from freezing a pane for the rest
+  //     of the session. So the bullet promises recovery and an error message,
+  //     never "fixed the freeze", and it asks for the screenshot we need.
+  //     Proven in a node harness on the real solid-js; never seen on a device.
+  //   - 🔴 Stuck drawer (`4619cf0f`): proven only in a node harness with
+  //     simulated touches (the two stuck cases fail on the old code), never
+  //     on a phone. The edge back-swipe and the notification shade are the
+  //     documented ways Android cancels a touch; do not add other triggers.
   {
     id: "sloga-2026-09-23",
     title: "Patch Notes",
@@ -132,6 +142,8 @@ export const CHANGELOGS: ChangelogResponse[] = [
 - **Forum posts no longer show an empty Permissions page in their settings.** A post follows its forum's permissions, so there is nothing to set on the post itself.
 - **Permission lists keep their section titles.** On some channel types a section's title went missing and its settings ran on under the section before.
 - **You can reorder roles on a phone.** In **Server Settings → Roles**, press and hold a role, then drag it into place. The small handle beside each role did not work with a finger.
+- **The channel list and chat no longer stay stuck after an error.** If one of them runs into a problem, it now shows what went wrong and a **Try again** button, and tapping another server or channel brings it back too. Before, it could stop updating until you restarted Sloga, while the server list beside it kept working. If you see this message, please send us a screenshot of it: it tells us what to fix.
+- **The side panel on a phone no longer stops sliding.** If a swipe was interrupted, for example by the back gesture from the edge of the screen or by pulling down the notification shade, the panel could stop responding until you restarted Sloga. It now slides back into place.
 - **Signing out now stops push notifications to that device.** A phone you signed out of could keep receiving notifications for the account.
 - **The soundboard works on older servers.** On servers created before the soundboard arrived in July, members got an error when they tried to play a sound.
 - **The Windows app no longer shows a push notification switch that could not work.** Notifications while Sloga is open are unchanged.
