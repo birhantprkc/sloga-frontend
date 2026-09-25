@@ -132,6 +132,25 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //   - Deliberately left out: the web push re-subscribe on a VAPID key
   //     change (`c826eb0e`). Nothing visible happens until the server key
   //     rotates, and that rollout (R3+) has not happened.
+  //   - 🔴 Other apps controlling Sloga (frontend `fdbc539b`, audit H2): the
+  //     launcher activity is exported, so an app with no permissions could
+  //     start it with crafted notification extras. They were pasted into the
+  //     JavaScript run inside the app (code injection in Sloga's origin), and
+  //     `sloga_answer_call` joined that channel's call. Fixed with a
+  //     per-install nonce on every notification Intent plus JSON-built
+  //     payloads. Compile-checked on both flavors and code-reviewed; never
+  //     run on a phone. Android only, hence "on your phone". Nothing shows it
+  //     was ever used, so never say anyone was affected. A notification
+  //     posted by the old version opens the app but not its channel after the
+  //     update; left out, it lasts one notification.
+  //   - Deliberately left out: the Recents replay (`e2c5874e`). Reopening
+  //     from Recents after the process died could re-run an earlier Answer
+  //     tap. It follows from how Android recreates activities but was never
+  //     reproduced, so it gets no bullet.
+  //   - Deliberately left out: server hardening from the 2026-09-24 audit
+  //     that was not deployed when this was written (bonfire's WebSocket
+  //     library for CVE-2023-43669; pushd re-checking push endpoints and
+  //     timing out a send). Nobody would see a difference either way.
   {
     id: "sloga-2026-09-23",
     title: "Patch Notes",
@@ -175,6 +194,7 @@ export const CHANGELOGS: ChangelogResponse[] = [
 - **Forum posts now respect Read Message History.** A role denied it can still see which posts exist and their titles, but can no longer open older posts or read their earlier replies.
 - **Server owners can choose who may hand over control of their screen.** **Remote Control** now appears under **Voice** in a server's and channel's permissions. It covers handing over your own shared screen; nobody can take control of someone else's.
 - **Android backups no longer include your sign-in.** The Android app keeps a copy of it so push notifications can renew themselves, and Google backup and moving to a new phone carried that copy along. Backups made from now on leave it out.
+- **Other apps on your phone can no longer control Sloga.** An app installed on the same Android phone could open Sloga as if it were one of Sloga's own notifications, and use that to run its own code inside Sloga or put you in a voice call. Sloga now only acts on notifications it created itself.
 - **sloga.gg and app.sloga.gg now always use a secure connection.** Typing an \`http://\` address sends you to the \`https://\` one.
 `,
   },
