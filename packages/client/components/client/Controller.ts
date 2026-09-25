@@ -496,7 +496,7 @@ class Lifecycle {
    * surfaced after the socket closed and the first reconnect was refused, and
    * a call kept running until then. Treat it as the InvalidSession it is.
    */
-  private onEvent(event: { type: string }) {
+  private onEvent(event: ProtocolV1["server"]) {
     if (event.type === "Logout") {
       this.transition({
         type: TransitionType.PermanentFailure,
