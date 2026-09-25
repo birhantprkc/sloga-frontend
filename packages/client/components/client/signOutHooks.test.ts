@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { createSignOutHooks } from "./signOutHooks.ts";
+import { createSignOutHooks, transitionEndsSession } from "./signOutHooks.ts";
 
 const noReport = () => {
   assert.fail("report must not be called");
@@ -119,4 +119,44 @@ test("a hook added during a run waits for the next run", () => {
 
   hooks.run(noReport);
   assert.equal(lateCalls, 1);
+});
+
+test("an explicit logout ends the session", () => {
+  assert.equal(transitionEndsSession({ kind: "logout" }), true);
+});
+
+test("a remotely revoked session ends it, so the call hangs up", () => {
+  assert.equal(
+    transitionEndsSession({
+      kind: "permanent-failure",
+      error: "InvalidSession",
+    }),
+    true,
+  );
+});
+
+test("other permanent errors do not hang up a call on their own", () => {
+  for (const error of ["InternalError", "OnboardingNotFinished", ""]) {
+    assert.equal(
+      transitionEndsSession({ kind: "permanent-failure", error }),
+      false,
+      `${error || "(empty)"} must not fire the hooks`,
+    );
+  }
+});
+
+test("dismissing the error screen ends the session, whatever the error", () => {
+  assert.equal(
+    transitionEndsSession({ kind: "dismiss", fromErrorState: true }),
+    true,
+  );
+  assert.equal(
+    transitionEndsSession({ kind: "dismiss", fromErrorState: false }),
+    false,
+    "a stray dismiss outside the error screen changes nothing",
+  );
+});
+
+test("every other transition leaves the session alone", () => {
+  assert.equal(transitionEndsSession({ kind: "other" }), false);
 });

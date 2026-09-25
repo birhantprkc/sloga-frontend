@@ -11,7 +11,7 @@ import type { Session } from "@revolt/state/stores/Auth";
 import { killServiceWorkerSubscription } from "./NotificationsController";
 import { E2EEBridge, nativeE2EEAvailable } from "./e2ee";
 import { IS_OVERLAY_WINDOW } from "./popout";
-import { createSignOutHooks } from "./signOutHooks";
+import { createSignOutHooks, transitionEndsSession } from "./signOutHooks";
 
 export enum State {
   Ready = "Ready",
@@ -288,9 +288,11 @@ class Lifecycle {
    * lives OUTSIDE this controller never heard about it — above all the voice
    * call: the LiveKit room survived a sign-out and kept the user in the call,
    * floating card and all, on top of the login page, under a session the
-   * server had just revoked. Hooks fire for every Logout transition, whether
-   * or not the current state has an arm for it (a state without a call has
-   * nothing to tear down, and the callers are idempotent). `DisposeOnly`
+   * server had just revoked. Hooks fire for every transition that ends the
+   * session (`transitionEndsSession`: a Logout, an `InvalidSession` failure,
+   * or dismissing the error screen), whether or not the current state has an
+   * arm for it (a state without a call has nothing to tear down, and the
+   * callers are idempotent). `DisposeOnly`
    * deliberately does NOT fire these: it runs on every route change and HMR
    * update, and a hook there would hang up the call on navigation.
    *
@@ -309,10 +311,24 @@ class Lifecycle {
       return;
     }
 
-    if (transition.type === TransitionType.Logout) {
+    if (
+      transitionEndsSession(
+        transition.type === TransitionType.Logout
+          ? { kind: "logout" }
+          : transition.type === TransitionType.PermanentFailure
+            ? { kind: "permanent-failure", error: transition.error }
+            : transition.type === TransitionType.Dismiss
+              ? {
+                  kind: "dismiss",
+                  fromErrorState: this.state() === State.Error,
+                }
+              : { kind: "other" },
+      )
+    ) {
       // Fire BEFORE the state machine moves: the old client is still alive,
       // so a teardown that wants the API one last time (the MLS session's
-      // best-effort self-remove) still has it.
+      // best-effort self-remove) still has it. A revoked session is covered
+      // too (see transitionEndsSession): it used to leave the call running.
       this.#signOutHooks.run((_hook, error) => {
         // One failing teardown must not keep the user signed in.
         console.error("Sign-out hook failed", error);
