@@ -63,6 +63,29 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //   get a push. The same fallback can also show people as offline in a
   //   connection made during that outage. The copy leaves that out on
   //   purpose, but must never claim that presence is unaffected.
+  // - 2026-09-25 additions. NONE of these was clicked through live; each is
+  //   covered by unit/route tests with negative controls and nothing else.
+  //   - Server-side and live for EVERY app version: owner rank (delta
+  //     `99b84f74`, deployed 09-25), password reset for unverified accounts
+  //     (`bd12181f`, same deploy), http->https (Caddy, 09-24). 🔴 The forum
+  //     ReadMessageHistory bullet is only true once that delta deploy has
+  //     happened; if it has not by the sweep, take the bullet out.
+  //   - Client-side, ships here: the call leaving on a revoked session, the
+  //     disappearing timer hidden under E2EE, the member list behind the
+  //     gates, the forum-post Permissions entry, permission headings and the
+  //     Remote Control row.
+  //   - 🔴 The disappearing-timer bullet must not say the timer WORKS
+  //     anywhere. It deletes from the sending tab after the delay, so a closed
+  //     tab never deletes. The bullet only says it is gone where it never
+  //     took effect.
+  //   - 🔴 The Remote Control row: the bit is enforced on the server for
+  //     server channels (code-verified, never a live leg), and it governs who
+  //     may HAND OVER their own screen, never who may take one. Owners and
+  //     staff always have it. The copy says only that the setting exists.
+  //   - 🔴 The sign-out bullet says the device LEAVES the call when the
+  //     server ends its session. It must not say "instantly": it happens
+  //     when the server's logout message arrives or, failing that, at the
+  //     first refused reconnect.
   {
     id: "sloga-2026-09-23",
     title: "Patch Notes",
@@ -84,6 +107,18 @@ export const CHANGELOGS: ChangelogResponse[] = [
 - **Mentioning yourself no longer notifies you.** That includes **@everyone** and a role you have.
 - **Scheduled messages now arrive like normal ones.** A message you scheduled used to go out without a push notification, without counting as a mention for anyone it @mentioned, and without marking the channel unread for people who were not online. It now goes out the same as a message you send yourself.
 - **Notifications no longer quietly stop after a problem on our servers.** Two rare problems could stop the part of Sloga that delivers mentions, unread badges and push notifications. One was an **@everyone** or role mention in a channel that was deleted a few seconds later. The other was a brief outage of the service that tracks who is online. Each could lose a batch of notifications, and if it happened enough times, delivery stopped until the server restarted. Sloga now handles both, and if that part of Sloga stops for any other reason, it restarts itself. If the online check has an outage now, the worst case is a push notification on a device where you already have Sloga open.
+- **Signing a device out from somewhere else now takes it out of the call too.** If you remove a session in your settings, or sign out everywhere, a device that was in a voice call leaves it when its session ends. It used to stay connected, even behind the "You were logged out" screen.
+- **Forgot your password before verifying your email? The reset email now arrives.** It used to say "check your email" and send nothing. Setting a new password from that email also verifies your address, so you can sign straight in.
+- **The disappearing-messages timer is no longer offered in encrypted chats.** It never deleted encrypted messages, so it showed a timer that did nothing there.
+- **Forum posts no longer show an empty Permissions page in their settings.** A post follows its forum's permissions, so there is nothing to set on the post itself.
+- **Permission lists keep their section titles.** On some channel types a section's title went missing and its settings ran on under the section before.
+
+### 🛡️ Safety and privacy
+- **A channel's member list now stays behind its age, password or spoiler screen.** Until you get past that screen, the member list beside the channel list stays hidden too. Before, a mature channel showed who was in it right next to the "are you 18?" prompt.
+- **Moderators can no longer mute, deafen or rename the server owner.** An owner with no roles counted as the lowest rank, so anyone allowed to mute members could mute them too.
+- **Forum posts now respect Read Message History.** A role denied it can still see which posts exist, but no longer reads their opening messages or replies.
+- **Server owners can choose who may hand over control of their screen.** **Remote Control** now appears under **Voice** in a server's and channel's permissions. It covers handing over your own shared screen; nobody can take control of someone else's.
+- **sloga.gg and app.sloga.gg now always use a secure connection.** Typing an \`http://\` address sends you to the \`https://\` one.
 `,
   },
   // ==========================================================================
