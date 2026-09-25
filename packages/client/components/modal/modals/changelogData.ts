@@ -158,9 +158,12 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //     `remove: ["DisplayName"]` (the bot profile editor is the same
   //     component). And UserUpdate never handled `clear: ["DisplayName"]`,
   //     so a removed name, including a deleted account's or bot's
-  //     (`mark_deleted`), stayed on every open client until a reload. The
-  //     server path was read, not run. Covered by tsc only; never clicked
-  //     signed-in and never watched on a second client.
+  //     (`mark_deleted`), stayed on every open client until a reload.
+  //     Checked live on the web client against production, two accounts:
+  //     clearing and restoring one's name updated the other's DM list and
+  //     message authors without a reload. The field was emptied by script
+  //     (the test browser dropped Backspace); Save was a real click. Not
+  //     checked on the desktop or Android apps.
   {
     id: "sloga-2026-09-23",
     title: "Patch Notes",
