@@ -247,9 +247,9 @@ export const CHANGELOGS: ChangelogResponse[] = [
     title: "Patch Notes",
     published_at: "2026-09-23T23:59:00.000Z",
     web_version: "0.63.0",
-    markdown_content: `## v0.63.0 — Invite friends, style your name
+    markdown_content: `## v0.63.0 — Referral Program, Get Perks
 
-### 🎁 Invite friends
+### 🎁 Referral Program - Invite Friends
 - **Invite friends to Sloga and earn rewards.** Your referral code and link are on the new **Settings → Referrals** page. Your link opens sign-up and fills in your code at the username step, and a friend who signs up through one of your server invites counts too.
 - **Anyone signing up can enter a code.** It goes in the optional **Referral code** field when they choose a username, with or without the SLOGA- in front.
 - **A referral counts once your friend has settled in.** It shows as pending until they have verified their email and used Sloga regularly for a week, chatting on several different days.
