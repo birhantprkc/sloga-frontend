@@ -99,6 +99,12 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //     server ends its session. It must not say "instantly": it happens
   //     when the server's logout message arrives or, failing that, at the
   //     first refused reconnect.
+  //   - 🔴 Roles by touch: proven only in a browser harness with synthetic
+  //     touches under an emulated Android browser, never on a real phone. The
+  //     switch is `useDevice().isMobile` (a mobile-browser check), so it says
+  //     "on a phone": a Windows touch laptop does not get the hold. Saying
+  //     the handle "did not work with a finger" is exact; it armed the list
+  //     but never started a drag itself.
   {
     id: "sloga-2026-09-23",
     title: "Patch Notes",
@@ -125,6 +131,7 @@ export const CHANGELOGS: ChangelogResponse[] = [
 - **The disappearing-messages timer is no longer offered in encrypted chats.** It never deleted encrypted messages, so it showed a timer that did nothing there.
 - **Forum posts no longer show an empty Permissions page in their settings.** A post follows its forum's permissions, so there is nothing to set on the post itself.
 - **Permission lists keep their section titles.** On some channel types a section's title went missing and its settings ran on under the section before.
+- **You can reorder roles on a phone.** In **Server Settings → Roles**, press and hold a role, then drag it into place. The small handle beside each role did not work with a finger.
 - **Signing out now stops push notifications to that device.** A phone you signed out of could keep receiving notifications for the account.
 - **The soundboard works on older servers.** On servers created before the soundboard arrived in July, members got an error when they tried to play a sound.
 - **The Windows app no longer shows a push notification switch that could not work.** Notifications while Sloga is open are unchanged.
