@@ -3684,6 +3684,10 @@ msgid "How it works"
 msgstr "How it works"
 
 #: components/app/interface/settings/user/Referrals.tsx
+msgid "A friend who signs up with your code or link, or through one of your server invites, shows up as pending. The referral counts once they've used Sloga regularly for a week, chatting on several different days. Pending referrals expire after 60 days."
+msgstr "A friend who signs up with your code or link, or through one of your server invites, shows up as pending. The referral counts once they've used Sloga regularly for a week, chatting on several different days. Pending referrals expire after 60 days."
+
+#: components/app/interface/settings/user/Referrals.tsx
 msgid "A friend who signs up with your code or link, or through one of your server invites, shows up as pending. The referral counts once they have been active on Sloga for a week. Pending referrals expire after 60 days."
 msgstr "A friend who signs up with your code or link, or through one of your server invites, shows up as pending. The referral counts once they have been active on Sloga for a week. Pending referrals expire after 60 days."
 

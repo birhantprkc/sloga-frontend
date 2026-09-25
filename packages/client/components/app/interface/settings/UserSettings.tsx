@@ -38,6 +38,7 @@ import MdWorkspacePremium from "@material-design-icons/svg/outlined/workspace_pr
 import pkg from "../../../../../../package.json";
 
 import { SettingsConfiguration } from ".";
+import { useSettingsNavigation } from "./Settings";
 import { AccountCard, BackCard } from "./user/_AccountCard";
 import { MyAccount } from "./user/Account";
 import AdvancedSettings from "./user/Advanced";
@@ -156,6 +157,9 @@ const Config: SettingsConfiguration<{ server: Server }> = {
   list(_, onClose) {
     const { pop, openModal } = useModals();
     const client = useClient();
+    // The list is built inside the settings navigation provider (the header
+    // AccountCard relies on the same thing), so a row can switch pages itself.
+    const { navigate } = useSettingsNavigation();
 
     // Which streaming platforms this server can link. Connections is a dead
     // page ("not enabled on this server yet") wherever all are off, so the
@@ -423,13 +427,17 @@ const Config: SettingsConfiguration<{ server: Server }> = {
           ],
         },
         {
-          // Everything here leaves the app or opens a one-shot dialog — none of
-          // it is a setting, which is why it sits below the settings instead of
-          // in the middle of them.
+          // Nothing here is a setting — support, patch notes, feedback and the
+          // policies — which is why it sits below the settings instead of in
+          // the middle of them.
           title: <Trans>About</Trans>,
           entries: [
             {
               id: "donate",
+              // Opens the in-app Supporter page (the same page as the Account
+              // row) rather than linking straight out to Ko-fi, so the perks
+              // are explained before anyone leaves the app. Its id stays
+              // `donate`: the sidebar highlights the Account row once there.
               // Google Play treats linking out to donations as a payments-policy
               // gray area and Sloga is not a registered nonprofit, and the App
               // Store only allows in-app purchase, so this is hidden in Play and
@@ -446,7 +454,9 @@ const Config: SettingsConfiguration<{ server: Server }> = {
                   <Trans>Support Sloga</Trans>
                 </ColouredText>
               ),
-              href: "https://ko-fi.com/slogatech",
+              onClick() {
+                navigate("supporter");
+              },
             },
             {
               id: "changelog",

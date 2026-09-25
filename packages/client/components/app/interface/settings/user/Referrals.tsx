@@ -271,9 +271,9 @@ function HowItWorks() {
       <Text class="label">
         <Trans>
           A friend who signs up with your code or link, or through one of your
-          server invites, shows up as pending. The referral counts once they
-          have been active on Sloga for a week. Pending referrals expire after
-          60 days.
+          server invites, shows up as pending. The referral counts once they've
+          used Sloga regularly for a week, chatting on several different days.
+          Pending referrals expire after 60 days.
         </Trans>
       </Text>
     </Column>
