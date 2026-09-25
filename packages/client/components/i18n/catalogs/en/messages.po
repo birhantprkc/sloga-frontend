@@ -5558,6 +5558,10 @@ msgid "Read past messages sent in channel"
 msgstr "Read past messages sent in channel"
 
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
+msgid "Read past posts and their replies. Without it, older posts show only their titles"
+msgstr "Read past posts and their replies. Without it, older posts show only their titles"
+
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Read past messages sent in channels"
 msgstr "Read past messages sent in channels"
 

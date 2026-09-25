@@ -268,12 +268,13 @@ export function ChannelPermissionsEditor(props: Props) {
       title: t`Read Message History`,
       description: {
         TextChannel: t`Read past messages sent in channel`,
-        // Deliberately NOT "read past posts": the forum post list is gated on
-        // View Channel alone, and the server hands back every starter message
-        // with it, so this permission only ever governs the replies inside a
-        // post. Promising more would let an admin deny it and believe the
-        // posts were hidden.
-        Forum: t`Read past replies inside a post`,
+        // Since backend c48a7a2b the server withholds starter messages (and
+        // any thread message fetched by id) without this permission, so it
+        // governs what older posts SAY as well as their replies. Keep "past":
+        // live delivery is not gated, so new posts and replies still arrive
+        // for a connected member. The post list (titles, tags) is View
+        // Channel only. 🔴 Must not ship before c48a7a2b is deployed.
+        Forum: t`Read past posts and their replies. Without it, older posts show only their titles`,
         Server: t`Read past messages sent in channels`,
       },
     },
