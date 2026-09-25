@@ -439,6 +439,19 @@ export function ChannelPermissionsEditor(props: Props) {
       },
     },
     {
+      // Bit 41. Checked on the SHARER: it governs who may hand control of
+      // their own shared screen to someone, never who may take control. It
+      // had no row at all, so the only way to change it was a raw API call.
+      // DMs and group DMs never consult it, hence no Group wording.
+      key: "UseRemoteControl",
+      value: 2n ** 41n,
+      title: t`Remote Control`,
+      description: {
+        TextChannel: t`Hand control of their own shared screen to someone in the call`,
+        Server: t`Hand control of their own shared screen to someone in the call`,
+      },
+    },
+    {
       // Bit 42. Off by default (not in DEFAULT_PERMISSION), so this row is the
       // only way an ordinary member gets it — recording is the one voice action
       // whose output outlives the call. The description says everyone is told,
@@ -493,14 +506,38 @@ export function ChannelPermissionsEditor(props: Props) {
     return desc[context] ?? desc.Any;
   }
 
+  /**
+   * The heading to draw above each entry.
+   *
+   * A heading is declared on the first entry of its section, but that entry
+   * can be hidden in this context (no wording for it). Drawing the heading
+   * only with its own entry took the whole section's title away with it, so
+   * the section's remaining rows ran on under the previous heading. The
+   * heading now goes above the first entry of the section that IS shown.
+   */
+  const headingFor = (() => {
+    const headings = new Map<(typeof Permissions)[number], string>();
+    let section: string | undefined;
+    let drawn: string | undefined;
+    for (const entry of Permissions) {
+      if (entry.heading) section = entry.heading;
+      if (!description(entry)) continue;
+      if (section && section !== drawn) {
+        headings.set(entry, section);
+        drawn = section;
+      }
+    }
+    return (entry: (typeof Permissions)[number]) => headings.get(entry);
+  })();
+
   return (
     <div class={css({ display: "flex", flexDirection: "column" })}>
       <For each={Permissions}>
         {(entry) => (
           <Show when={description(entry)}>
-            <Show when={entry.heading}>
+            <Show when={headingFor(entry)}>
               <span class={css({ marginTop: "var(--gap-md)" })}>
-                <Text class="label">{entry.heading}</Text>
+                <Text class="label">{headingFor(entry)}</Text>
               </span>
             </Show>
 

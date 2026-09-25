@@ -5293,6 +5293,11 @@ msgstr "Platform"
 msgid "Play server soundboard sounds in a voice call"
 msgstr "Play server soundboard sounds in a voice call"
 
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
+#: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
+msgid "Hand control of their own shared screen to someone in the call"
+msgstr "Hand control of their own shared screen to someone in the call"
+
 #: components/app/interface/settings/user/notifications/Sounds.tsx
 msgid "Play sound"
 msgstr "Play sound"
