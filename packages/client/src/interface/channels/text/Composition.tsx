@@ -780,14 +780,31 @@ export function MessageComposition(props: Props) {
       }
     }
 
+    // Disappearing-message timer. Re-checked here, not only by hiding the
+    // icon: a timer picked while the conversation was plaintext must not arm
+    // once it has become encrypted. The indicator mode is a cache, and for a
+    // group it stays unset if priming failed, so ask the native layer
+    // authoritatively (only when a timer is set; plain sends skip the
+    // round-trip). An unverifiable mode does not arm.
+    let timer = disappearAllowed() ? disappearOption().seconds : null;
+    if (
+      timer !== null &&
+      e2ee &&
+      (props.channel.type === "DirectMessage" || props.channel.type === "Group")
+    ) {
+      try {
+        const mode = await e2ee.sendModeNowFor(props.channel);
+        if (mode !== null && mode !== "plaintext") timer = null;
+      } catch {
+        timer = null;
+      }
+    }
+
     stopTyping();
     sound.playSound("messageSent");
     props.onMessageSend?.();
 
-    // Schedule disappearing message deletion. Re-checked here, not only by
-    // hiding the icon: a timer picked while the conversation was plaintext
-    // must not arm once it has become encrypted.
-    const timer = disappearAllowed() ? disappearOption().seconds : null;
+    // Schedule disappearing message deletion
     if (timer !== null) {
       const channelId = props.channel.id;
       const userId = client()!.user!.id;

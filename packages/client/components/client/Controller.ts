@@ -326,9 +326,10 @@ class Lifecycle {
       )
     ) {
       // Fire BEFORE the state machine moves: the old client is still alive,
-      // so a teardown that wants the API one last time (the MLS session's
-      // best-effort self-remove) still has it. A revoked session is covered
-      // too (see transitionEndsSession): it used to leave the call running.
+      // so a teardown that wants the API one last time still has it (after a
+      // revocation every call fails, so hooks must not depend on one). A
+      // revoked session is covered too (see transitionEndsSession): it used
+      // to leave the call running.
       this.#signOutHooks.run((_hook, error) => {
         // One failing teardown must not keep the user signed in.
         console.error("Sign-out hook failed", error);
