@@ -37,6 +37,7 @@ import { VoiceTranscriptPanel } from "@revolt/ui/components/features/voice/callC
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
 import { SlideDrawer } from "../components/ui/components/navigation/SlideDrawer";
+import { PaneErrorBoundary } from "./interface/PaneErrorBoundary";
 import { Sidebar } from "./interface/Sidebar";
 
 /**
@@ -183,7 +184,9 @@ const Interface = (props: { children: JSX.Element }) => {
                 )}
                 navRight={sides().nav === "right"}
               >
-                {props.children}
+                <PaneErrorBoundary pane="content">
+                  {props.children}
+                </PaneErrorBoundary>
               </Content>
             </Layout>
           </Match>

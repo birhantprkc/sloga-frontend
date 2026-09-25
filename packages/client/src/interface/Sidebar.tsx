@@ -16,6 +16,7 @@ import { LAYOUT_SECTIONS } from "@revolt/state/stores/Layout";
 
 import { useLayoutSides } from "@revolt/ui";
 
+import { PaneErrorBoundary } from "./PaneErrorBoundary";
 import { HomeSidebar, ServerList, ServerSidebar } from "./navigation";
 import { UserFooter } from "./navigation/UserFooter";
 import { RAIL_EXPANDED_DEFAULT } from "./navigation/servers/ServerList";
@@ -148,11 +149,15 @@ export const Sidebar = (props: {
         menuGenerator={props.menuGenerator}
       />
       <Show when={showSidebar()}>
-        <Switch fallback={<Home />}>
-          <Match when={params.server}>
-            <Server />
-          </Match>
-        </Switch>
+        {/* The server rail stays outside the boundary, so after an error
+            it is still there to navigate away with, which resets it. */}
+        <PaneErrorBoundary pane="sidebar">
+          <Switch fallback={<Home />}>
+            <Match when={params.server}>
+              <Server />
+            </Match>
+          </Switch>
+        </PaneErrorBoundary>
       </Show>
       <Show when={showFooter()}>
         <UserFooter stacked={footerStacked()} />
