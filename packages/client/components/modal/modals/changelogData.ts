@@ -147,10 +147,17 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //     from Recents after the process died could re-run an earlier Answer
   //     tap. It follows from how Android recreates activities but was never
   //     reproduced, so it gets no bullet.
-  //   - Deliberately left out: server hardening from the 2026-09-24 audit
-  //     that was not deployed when this was written (bonfire's WebSocket
-  //     library for CVE-2023-43669; pushd re-checking push endpoints and
-  //     timing out a send). Nobody would see a difference either way.
+  //   - 🔴 Server hardening from the 2026-09-24 audit, server-side and live
+  //     for EVERY app version. bonfire moved to tungstenite 0.20.1
+  //     (CVE-2023-43669; backend `34ef5670`, live 2026-09-25 13:40:51Z, exe
+  //     `a7c36915`). Push delivery is held to the browsers' push services:
+  //     delta has refused other endpoints since `9fbcc76e` (live 05:28Z) and
+  //     pushd re-checks every send and gives up after 10 s (`a7e0fe52`, live
+  //     13:41:53Z, exe `8d256e1e`). Proven by unit tests (a real handshake,
+  //     a silent socket, a redirect that must not be followed) and a live
+  //     handshake through the edge (101). Neither problem was ever seen in
+  //     prod and pushd refused 0 stored endpoints at deploy, so never say
+  //     anyone was attacked or that a notification went astray.
   //   - 🔴 Clearing a display name (stoat.js `45070b6`, frontend `fb36822a`
   //     and `beaee6d2`): two bugs. The profile editor sent
   //     `display_name: ""` for a blank field, which the server rejects (2-32
@@ -209,6 +216,8 @@ export const CHANGELOGS: ChangelogResponse[] = [
 - **Server owners can choose who may hand over control of their screen.** **Remote Control** now appears under **Voice** in a server's and channel's permissions. It covers handing over your own shared screen; nobody can take control of someone else's.
 - **Android backups no longer include your sign-in.** The Android app keeps a copy of it so push notifications can renew themselves, and Google backup and moving to a new phone carried that copy along. Backups made from now on leave it out.
 - **Other apps on your phone can no longer control Sloga.** An app installed on the same Android phone could open Sloga as if it were one of Sloga's own notifications, and use that to run its own code inside Sloga or put you in a voice call. Sloga now only acts on notifications it created itself.
+- **A malformed connection can no longer tie up Sloga's servers.** A specially built connection request could keep the server that delivers your messages live busy for minutes. The part that handles those connections is now on a version that is not affected.
+- **Push notifications only go to real push services.** Sloga's servers now refuse to send a browser push notification anywhere other than the browser's own push service, and stop waiting on one that does not answer.
 - **sloga.gg and app.sloga.gg now always use a secure connection.** Typing an \`http://\` address sends you to the \`https://\` one.
 `,
   },
