@@ -130,7 +130,16 @@ public class MainActivity extends BridgeActivity {
                     android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         }
 
-        handleNotificationIntent(getIntent());
+        // A recreated activity (process death, then back via Recents) or a
+        // launch from history is handed the ORIGINAL Intent again, not the
+        // copy handleNotificationIntent stripped in memory. Replaying it would
+        // re-run a stale Answer tap and join that call, mic live, long after
+        // the ring ended; the nonce cannot catch it because it is our own.
+        boolean fromHistory =
+                (getIntent().getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0;
+        if (savedInstanceState == null && !fromHistory) {
+            handleNotificationIntent(getIntent());
+        }
     }
 
     @Override
@@ -143,6 +152,8 @@ public class MainActivity extends BridgeActivity {
     /** Route notification taps (message / ring / answer call) into the web app */
     private void handleNotificationIntent(Intent intent) {
         if (intent == null) return;
+        // Every notification extra is read below the nonce gate. A new extra
+        // must be read there too, never above it.
         String path = intent.getStringExtra("sloga_path");
         if (path == null) return;
 
@@ -153,6 +164,8 @@ public class MainActivity extends BridgeActivity {
         // app from driving the WebView -- or from forcing a mic-live call
         // join by handing us sloga_answer_call.
         if (!IntentNonce.matches(this, intent.getStringExtra(IntentNonce.EXTRA))) {
+            // No field is logged: the extras are untrusted input.
+            android.util.Log.w("SlogaIntent", "dropped a notification Intent without this install's nonce");
             intent.removeExtra("sloga_path");
             intent.removeExtra("sloga_ring_call");
             intent.removeExtra("sloga_answer_call");
