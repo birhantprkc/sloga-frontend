@@ -115,6 +115,7 @@ export const CHANGELOGS: ChangelogResponse[] = [
 
 ### 🛡️ Safety and privacy
 - **A channel's member list now stays behind its age, password or spoiler screen.** Until you get past that screen, the member list beside the channel list stays hidden too. Before, a mature channel showed who was in it right next to the "are you 18?" prompt.
+- **Forum posts and threads now sit behind their channel's screen.** A post in a mature, password-protected or spoiler forum used to open straight away, with no screen at all. Getting past the forum's screen once covers its posts.
 - **Moderators can no longer mute, deafen or rename the server owner.** An owner with no roles counted as the lowest rank, so anyone allowed to mute members could mute them too.
 - **Forum posts now respect Read Message History.** A role denied it can still see which posts exist, but no longer reads their opening messages or replies.
 - **Server owners can choose who may hand over control of their screen.** **Remote Control** now appears under **Voice** in a server's and channel's permissions. It covers handing over your own shared screen; nobody can take control of someone else's.
