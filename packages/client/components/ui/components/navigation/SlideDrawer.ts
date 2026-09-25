@@ -51,6 +51,15 @@ export function claimSlideGesture() {
   };
 }
 
+/**
+ * Whether a touch list contains the touch with this identifier.
+ */
+function hasTouch(list: TouchList, id: number) {
+  for (let i = 0; i < list.length; i++)
+    if (list[i].identifier === id) return true;
+  return false;
+}
+
 export enum SlideState {
   HIDDEN = 1,
   SHOWN,
@@ -78,10 +87,12 @@ export class SlideDrawer {
   ) {
     this.start = this.start.bind(this);
     this.move = this.move.bind(this);
+    this.cancel = this.cancel.bind(this);
     this.resize = this.resize.bind(this);
     root.addEventListener("touchstart", this.start);
     root.addEventListener("touchmove", this.move);
     root.addEventListener("touchend", this.move);
+    root.addEventListener("touchcancel", this.cancel);
     addEventListener("resize", this.resize);
     addEventListener("orientationchange", this.resize);
 
@@ -105,8 +116,13 @@ export class SlideDrawer {
   }
 
   private start(e: TouchEvent) {
+    //`touches` lists every finger on the screen now. If the one being tracked
+    //is not among them it lifted without an end or cancel reaching us, and
+    //holding on to it would refuse every later swipe and `setShown` call
+    if (this.touch && !hasTouch(e.touches, this.touch.id)) this.abandonTouch();
+
     //Cancel if more than one finger
-    if (e.touches.length > 1) return this.endTouch();
+    if (e.touches.length > 1) return this.abandonTouch();
     if (this.touch || !this.eGet() || claims) return;
 
     //Leave the gesture to any ancestor that actually scrolls horizontally
@@ -137,10 +153,7 @@ export class SlideDrawer {
 
     //Something claimed the gesture mid-touch; hand it over, and put the drawer
     //back where it was if it had already started following the finger
-    if (claims) {
-      if (this.touch.trig) this.tfTimer(true, this.ofs !== 0);
-      return this.endTouch();
-    }
+    if (claims) return this.abandonTouch();
 
     const isEnd = e.type === "touchend";
     let t, tNew;
@@ -251,6 +264,27 @@ export class SlideDrawer {
     }
   }
 
+  /**
+   * The system took the tracked touch away: an edge back-swipe, the
+   * notification shade, the app going to the background. `touchend` never
+   * follows a `touchcancel`, so without this the drawer kept the touch
+   * forever: every later swipe was ignored and `setShown` refused, leaving
+   * the phone stuck on whichever pane was showing until the app restarted.
+   */
+  private cancel(e: TouchEvent) {
+    if (this.touch && hasTouch(e.changedTouches, this.touch.id))
+      this.abandonTouch();
+  }
+
+  /**
+   * Stop tracking without finishing the gesture, putting the drawer back
+   * where it was if it had already started following the finger.
+   */
+  private abandonTouch() {
+    if (this.touch?.trig) this.tfTimer(true, this.ofs !== 0);
+    this.endTouch();
+  }
+
   private endTouch() {
     clearInterval(this.vTmr!);
     this.touch = this.vTmr = null;
@@ -292,6 +326,7 @@ export class SlideDrawer {
     this.root.removeEventListener("touchstart", this.start);
     this.root.removeEventListener("touchmove", this.move);
     this.root.removeEventListener("touchend", this.move);
+    this.root.removeEventListener("touchcancel", this.cancel);
     removeEventListener("resize", this.resize);
     removeEventListener("orientationchange", this.resize);
     this.dispose();
