@@ -60,6 +60,7 @@ import MdChevronRight from "@material-design-icons/svg/filled/chevron_right.svg?
 import MdLibraryAdd from "@material-design-icons/svg/outlined/library_add.svg?component-solid";
 import MdSettings from "@material-symbols/svg-400/outlined/settings-fill.svg?component-solid";
 
+import { isChannelGated } from "../../channels/channelGates";
 import { ServerMemberSidebar } from "../../channels/text/MemberSidebar";
 
 import { parseChannelPassword } from "../../../lib/channelPassword";
@@ -215,11 +216,26 @@ export const ServerSidebar = (props: Props) => {
   // plant a member column beside every thread unconditionally; now that it
   // defers to the layout setting like a text channel does, this column has to
   // pick a thread up or a forum post would have no member list anywhere.
+  //
+  // The list sits OUTSIDE the channel's age/password/spoiler gates (those wrap
+  // the channel pane), so it has to ask them itself: it used to render the
+  // full roster of a mature channel right beside the "are you 18?" prompt.
   const showMemberList = () =>
     (selectedChannel()?.type === "TextChannel" ||
       !!selectedChannel()?.isThread) &&
     !sides().membersOwnColumn &&
-    state.layout.getSectionState(LAYOUT_SECTIONS.MEMBER_SIDEBAR, true);
+    state.layout.getSectionState(LAYOUT_SECTIONS.MEMBER_SIDEBAR, true) &&
+    !isChannelGated(
+      {
+        id: selectedChannel()!.id,
+        mature: !!selectedChannel()!.mature,
+        isSpoiler: !!selectedChannel()!.isSpoiler,
+        hasPassword: !!parseChannelPassword(selectedChannel()!.description)
+          .passwordHash,
+      },
+      (key) => state.layout.getSectionState(key, false),
+      LAYOUT_SECTIONS.MATURE,
+    );
 
   // Last scroll position the user actually chose.
   //
