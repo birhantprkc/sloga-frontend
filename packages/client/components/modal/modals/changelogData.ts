@@ -9,12 +9,12 @@ import type { ChangelogResponse } from "./Changelog";
  */
 export const CHANGELOGS: ChangelogResponse[] = [
   // ==========================================================================
-  // v0.63.0 (not yet cut). Copy constraints, load-bearing:
-  // - 🔴 PROVISIONAL ENTRY. Written when quick reactions merged, ahead of the
-  //   release. The sweep that cuts v0.63.0 sets `published_at`, retitles the
-  //   headline if a bigger change lands, and folds its other bullets in HERE
-  //   rather than adding a second entry. Any web deploy from main before then
-  //   pops this entry for everyone, so a mid-cycle hotfix must hold it back.
+  // v0.63.0 (cut 2026-09-25 at main `5a6c9ee0`). Copy constraints, load-bearing:
+  // - The entry was written provisionally from 2026-09-23 and folded in as
+  //   fixes landed. The `id` keeps its 2026-09-23 date on purpose: the live
+  //   web served nothing newer than `sloga-2026-09-21` at the cut, so nobody
+  //   has seen this entry and it pops once. `published_at` is the release
+  //   day, set by the sweep. A further edit after the cut moves the cut point.
   // - 🔴 The quick-reaction bullet must NOT promise more than the menu does.
   //   Nobody has clicked the row in a signed-in session: it is covered by tsc,
   //   eslint, and a built bundle that boots, never by use. It says what the
@@ -275,7 +275,7 @@ export const CHANGELOGS: ChangelogResponse[] = [
   {
     id: "sloga-2026-09-23",
     title: "Patch Notes",
-    published_at: "2026-09-23T23:59:00.000Z",
+    published_at: "2026-09-26T12:00:00.000Z",
     web_version: "0.63.0",
     markdown_content: `## v0.63.0 — Referral Program, Get Perks
 
