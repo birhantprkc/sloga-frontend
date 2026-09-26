@@ -15,6 +15,9 @@
 // Fix pass 2: both discards also wait out every delete pending when called,
 // including one nothing names any more (W2R-m1), and a keep of a group whose
 // delete is pending is refused (W2R-n1).
+// Wave 3: `keep` answers whether it created an entry, so the session writes a
+// recency record only after an accepted keep, and `discardChannel` leaves a
+// group another channel's live entry names to that entry's keep (W2S-m2).
 import assert from "node:assert/strict";
 import { type TestContext, test } from "node:test";
 
@@ -186,7 +189,8 @@ function keepGRacingItsDelete(
     return g === G ? gate : Promise.resolve();
   };
   r.kept.keep(H, channelId, 5_000);
-  r.kept.keep(G, channelId, 5_000);
+  // The refusal check ran before the delete started: the entry was created.
+  assert.equal(r.kept.keep(G, channelId, 5_000), true);
   assert.ok(started.deleting, "G's delete started inside its keep");
   assert.equal(r.kept.isInFlight(G), true);
   assert.equal(r.kept.size, 1, "and the keep's entry stands");
@@ -558,7 +562,7 @@ test("release: true while nothing is deleting the group, false while its cleanup
   // entry, size unchanged, and release still reports the delete. (An entry
   // that names G mid-delete anyway is the re-entry case below.)
   t.mock.method(console, "info", () => undefined);
-  r.kept.keep(G, CH, 5_000);
+  assert.equal(r.kept.keep(G, CH, 5_000), false, "refused");
   assert.equal(r.kept.size, 0, "refused: no entry");
   assert.deepEqual(r.clock.armed(), []);
   assert.equal(r.kept.release(G), false);
@@ -573,7 +577,10 @@ test("release: true while nothing is deleting the group, false while its cleanup
   assert.deepEqual(r.deleted, [G], "release itself never deletes");
 });
 
-test("claim: refused while the group is in flight", async (t) => {
+// W2S-n2: since W2R-n1 the keep is refused, so no entry reaches `claim` and
+// this case no longer exercises its in-flight check; the re-entry case below
+// pins that check.
+test("keep: refused (false) while the group is in flight, by a cleanup or by its keep expiring, so there is no entry to claim before or after the delete settles", async (t) => {
   t.mock.method(console, "info", () => undefined);
   // G in flight by a cleanup started first, and by its keep expiring.
   for (const via of ["cleanup", "expiry"] as const) {
@@ -589,7 +596,7 @@ test("claim: refused while the group is in flight", async (t) => {
     assert.equal(r.kept.isInFlight(G), true, via);
     // A keep lands while the native delete is still running: refused
     // (W2R-n1), so there is no entry to claim, before or after it settles.
-    r.kept.keep(G, CH, 5_000);
+    assert.equal(r.kept.keep(G, CH, 5_000), false, `${via}: refused`);
     assert.equal(r.kept.size, 0, `${via}: refused, no entry`);
     assert.equal(r.kept.claim(CH), null, `${via}: in flight → no claim`);
     gate.resolve();
@@ -647,7 +654,7 @@ test("keep: a keep of a group whose delete is pending is REFUSED — no entry, n
   r.deleteImpl = () => gate.promise;
   const cleaning = r.kept.cleanup(G);
   const before = info.mock.callCount();
-  r.kept.keep(G, CH, 5_000);
+  assert.equal(r.kept.keep(G, CH, 5_000), false, "refused");
   assert.equal(info.mock.callCount(), before + 1, "info logged");
   assert.equal(r.kept.size, 0, "no entry");
   assert.deepEqual(r.clock.armed(), [], "no timer");
@@ -676,7 +683,7 @@ test("keep: a refused keep of a group mid-delete touches nothing else — the ch
   const gate = deferred<void>();
   r.deleteImpl = (g) => (g === G ? gate.promise : Promise.resolve());
   const cleaning = r.kept.cleanup(G);
-  r.kept.keep(G, CH, 5_000);
+  assert.equal(r.kept.keep(G, CH, 5_000), false, "refused");
   assert.equal(r.kept.size, 2, "size unchanged");
   assert.deepEqual(r.clock.armed(), [t0 + 5_000, t0 + 5_000]);
   assert.equal(r.kept.isInFlight(H), false, "H not superseded");
@@ -697,7 +704,7 @@ test("keep: once the pending delete has settled (resolved or rejected), a keep o
     const gate = deferred<void>();
     r.deleteImpl = () => gate.promise;
     const cleaning = r.kept.cleanup(G).catch(() => undefined);
-    r.kept.keep(G, CH, 5_000);
+    assert.equal(r.kept.keep(G, CH, 5_000), false, outcome);
     assert.equal(r.kept.size, 0, `${outcome}: refused mid-delete`);
     if (outcome === "resolved") gate.resolve();
     else gate.reject(new Error("native delete failed"));
@@ -705,7 +712,7 @@ test("keep: once the pending delete has settled (resolved or rejected), a keep o
     assert.equal(r.kept.isInFlight(G), false, outcome);
     r.deleteImpl = () => Promise.resolve();
     const t1 = r.clock.t;
-    r.kept.keep(G, CH, 5_000);
+    assert.equal(r.kept.keep(G, CH, 5_000), true, outcome);
     assert.equal(r.kept.size, 1, outcome);
     assert.deepEqual(r.clock.armed(), [t1 + 5_000], outcome);
     const claim = r.kept.claim(CH);
@@ -719,6 +726,49 @@ test("keep: once the pending delete has settled (resolved or rejected), a keep o
     await settle();
     assert.deepEqual(r.deleted, [G, G], `${outcome}: expires normally`);
   }
+});
+
+test("keep: returns true iff it created an entry (a keep, a re-keep, a superseding keep, a keep beside a displaced claim) and false on either refusal, keeps refused or the group's delete pending (Wave-3 folds (c))", async (t) => {
+  t.mock.method(console, "info", () => undefined);
+  const X = "group-x";
+  const Y = "group-y";
+  const r = new Rig();
+  assert.equal(r.kept.keep(G, CH, 5_000), true, "a keep");
+  assert.equal(r.kept.keep(G, CH, 5_000), true, "a re-keep: a fresh entry");
+  assert.equal(r.kept.size, 1);
+  assert.equal(r.kept.keep(H, CH, 5_000), true, "superseding unclaimed G");
+  assert.equal(r.kept.isInFlight(G), true, "G's delete pending");
+
+  // Refused while G's delete runs: no entry, whichever channel it names.
+  assert.equal(r.kept.keep(G, "chan-2", 5_000), false, "G mid-delete");
+  assert.equal(r.kept.size, 1, "H's entry only");
+  assert.equal(r.kept.claim("chan-2"), null);
+  await settle();
+  assert.equal(r.kept.isInFlight(G), false);
+  assert.equal(r.kept.keep(G, "chan-2", 5_000), true, "the delete settled");
+  assert.equal(r.kept.size, 2);
+
+  // H claimed, then displaced from CH by X: X's keep creates an entry.
+  const held = r.kept.claim(CH);
+  assert.equal(held?.groupId, H);
+  assert.equal(r.kept.keep(X, CH, 5_000), true, "beside a displaced claim");
+  assert.equal(r.kept.size, 3);
+
+  // Keeps refused: the group is cleaned instead, and nothing else changes.
+  r.kept.setKeepsRefused(true);
+  assert.equal(r.kept.keep(Y, "chan-3", 5_000), false, "keeps refused");
+  assert.equal(r.kept.isInFlight(Y), true, "cleaned instead");
+  assert.equal(r.kept.size, 3, "no entry");
+  // Refused on the in-flight check too, keeps still refused.
+  assert.equal(r.kept.keep(Y, "chan-3", 5_000), false, "Y mid-delete");
+  await settle();
+  assert.deepEqual(r.deleted, [G, Y], "the refusals delete nothing else");
+  assert.equal(r.kept.keep(Y, "chan-3", 5_000), false, "still refused");
+  await settle();
+  r.kept.setKeepsRefused(false);
+  assert.equal(r.kept.keep(Y, "chan-3", 5_000), true, "keeps restored");
+  assert.equal(r.kept.size, 4);
+  assert.equal(r.kept.claim("chan-3")?.groupId, Y);
 });
 
 test("claim: refused at or past the deadline even if the timer has not fired", async () => {
@@ -1033,6 +1083,32 @@ test("discardChannel: cleans the group only the channel's record names, stale or
   assert.equal(m.storage.getItem(KEY), null);
 });
 
+test("discardChannel: a group the channel's record names but ANOTHER channel's live entry holds, not mid-delete, claimed or not, is left to that entry's keep; only the channel's record goes (W2S-m2)", async () => {
+  for (const claimed of [false, true]) {
+    const at = claimed ? "claimed" : "unclaimed";
+    const r = new Rig();
+    const t0 = r.clock.t;
+    r.kept.keep(G, "chan-2", 5_000);
+    const held = claimed ? r.kept.claim("chan-2") : null;
+    if (claimed) assert.ok(held, at);
+    r.record(CH, G);
+    r.record("chan-2", G);
+    const record2 = r.storage.getItem("mls-resume:chan-2");
+    assert.equal(r.kept.isInFlight(G), false, `${at}: not mid-delete`);
+    await r.kept.discardChannel(CH);
+    assert.equal(readResumeRecord(r.storage, CH), null, `${at}: CH's record`);
+    assert.equal(r.kept.isInFlight(G), false, at);
+    assert.deepEqual(r.deleted, [], `${at}: nothing deleted`);
+    assert.equal(r.kept.size, 1, `${at}: chan-2's entry stands`);
+    assert.equal(r.storage.getItem("mls-resume:chan-2"), record2, at);
+    if (held) r.kept.handBack(held.token);
+    assert.deepEqual(r.clock.armed(), [t0 + 5_000], `${at}: its own deadline`);
+    r.clock.advance(5_000);
+    await settle();
+    assert.deepEqual(r.deleted, [G], `${at}: its keep deletes it, once`);
+  }
+});
+
 test("discardChannel: never cleans a group twice (one its entry named, one already in flight) and still clears the record (W2-m1)", async () => {
   const r = new Rig();
   r.record(CH, G);
@@ -1140,7 +1216,7 @@ test("discardChannel: waits for the pending delete of a group already in flight 
   r.deleteImpl = () => gate.promise;
   const cleaning = r.kept.cleanup(G);
   // A keep of G lands while its delete runs: refused, no entry.
-  r.kept.keep(G, CH, 5_000);
+  assert.equal(r.kept.keep(G, CH, 5_000), false);
   assert.equal(r.kept.size, 0);
   let done = false;
   const discarding = r.kept.discardChannel(CH).then(() => (done = true));
@@ -1183,7 +1259,7 @@ test("discardChannel: waits for the pending delete of a record's group whose kee
   const cleaning = r.kept.cleanup(G);
   // While G's delete runs, a keep of G under chan-2 is refused, and CH's
   // record names G.
-  r.kept.keep(G, "chan-2", 5_000);
+  assert.equal(r.kept.keep(G, "chan-2", 5_000), false);
   assert.equal(info.mock.callCount(), 1, "refused");
   assert.equal(r.kept.size, 0, "no entry");
   r.record(CH, G);
@@ -1357,7 +1433,7 @@ test("setKeepsRefused: a refused keep cleans at once; lifting it restores keeps"
   const r = new Rig();
   r.record(CH, G);
   r.kept.setKeepsRefused(true);
-  r.kept.keep(G, CH, 5_000);
+  assert.equal(r.kept.keep(G, CH, 5_000), false, "refused");
   assert.equal(r.kept.isInFlight(G), true);
   assert.equal(r.kept.size, 0);
   assert.deepEqual(r.clock.armed(), []);
@@ -1366,7 +1442,7 @@ test("setKeepsRefused: a refused keep cleans at once; lifting it restores keeps"
   assert.deepEqual(r.deleted, [G]);
   r.kept.setKeepsRefused(false);
   const t1 = r.clock.t;
-  r.kept.keep(H, CH, 5_000);
+  assert.equal(r.kept.keep(H, CH, 5_000), true, "restored");
   assert.equal(r.kept.size, 1);
   assert.deepEqual(r.clock.armed(), [t1 + 5_000]);
   await settle();

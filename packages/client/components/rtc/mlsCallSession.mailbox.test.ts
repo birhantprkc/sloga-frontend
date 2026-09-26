@@ -21,6 +21,12 @@
 // And the pre-sink hold's device filter: another device's copy is dropped
 // when it arrives, never held for the next sink.
 //
+// The last group pins the harness's other native and page facts the resume
+// specs stand on (W2R-m2, and what wave 3 added to the harness): the native
+// downgrade grant (marked by a native Ok, cleared by a clear, outliving a page
+// death, and cleared by the leave-clean of its channel's LAST row), the page
+// death's abort of its own prefetch, and a hang-up and rejoin on one page.
+//
 // No spec here re-intents faster than the DS's 5 s join-intent slowmode,
 // which the harness DS does not model (W1-n5): the only re-intent is the
 // session's own, at `JOINER_RETRY_MS` (10 s).
@@ -29,9 +35,11 @@ import { type TestContext, test } from "node:test";
 
 import type { MlsEnvelope } from "@revolt/client";
 
+import { readResumeRecord } from "../client/mlsResumeKeep.ts";
 import {
   type Fleet,
   type Identity,
+  type World,
   advance,
   flush,
   GROUP,
@@ -523,4 +531,253 @@ test("hold: another device's copy is dropped when it arrives, never held for the
     { liveGroup: null, epoch: 6, disposition: "drop", acked: true },
   ]);
   assert.deepEqual(heldIds(self), []);
+});
+
+// ---- The native downgrade grant (W2R-m2) -----------------------------------
+//
+// `mls_downgrade_confirmed` is engine memory keyed by CHANNEL: the shell's,
+// not the page's, so a Ctrl+R keeps it (W2-M3). Where a live session is not
+// the point, rows are seated by hand on seats whose sessions never started,
+// so nothing but the calls under test reaches the grant.
+
+/** A native row for `groupId` on `channelId`, seated by hand. */
+function holdRow(world: World, groupId: string, channelId: string): void {
+  world.native.localGroups.set(groupId, {
+    channelId,
+    epoch: 0,
+    leaves: [world.me],
+    state: "active",
+  });
+}
+
+test("grant: a native Ok marks the channel's grant on that device alone, a clear removes it, and the announce is refused without it", async (t) => {
+  const channel = "ch-grant-mark";
+  const fleet = newFleet(t, [SELF, PEER], channel);
+  const self = fleet.seat(SELF);
+  const peer = fleet.seat(PEER);
+  holdRow(self, GROUP, channel);
+  holdRow(peer, GROUP, channel);
+  const notConfirmed = { type: "mls_not_confirmed" };
+  await assert.rejects(
+    self.bridge.callAnnounce(GROUP, SELF.user_id),
+    notConfirmed,
+  );
+
+  // A declined dialog, and one over a group the store does not hold, mark
+  // nothing.
+  self.declineDowngradeOnce();
+  await assert.rejects(self.bridge.callConfirmDowngrade(GROUP, [], {}), {
+    type: "declined",
+  });
+  await assert.rejects(
+    self.bridge.callConfirmDowngrade("group-unheld", [], {}),
+    { type: "mls_group_not_found" },
+  );
+  assert.equal(self.native.downgradeConfirmed(channel), false);
+
+  await self.bridge.callConfirmDowngrade(GROUP, [], {});
+  assert.equal(self.native.downgradeConfirmed(channel), true, "no grant");
+  assert.equal(
+    peer.native.downgradeConfirmed(channel),
+    false,
+    "another device's native was marked",
+  );
+  const payload = await self.bridge.callAnnounce(GROUP, SELF.user_id);
+  assert.equal(payload.group_id, GROUP);
+  await assert.rejects(
+    peer.bridge.callAnnounce(GROUP, PEER.user_id),
+    notConfirmed,
+  );
+
+  await self.bridge.callClearDowngrade(GROUP);
+  assert.equal(self.native.downgradeConfirmed(channel), false, "not cleared");
+  await assert.rejects(
+    self.bridge.callAnnounce(GROUP, SELF.user_id),
+    notConfirmed,
+  );
+});
+
+test("grant: it outlives a page death, whose dispose cannot clear it, and the next page's announce is built on it", async (t) => {
+  const channel = "ch-grant-reload";
+  const fleet = newFleet(t, [SELF, PEER], channel);
+  await fleet.bringUp();
+  await advance(t, 3_000);
+  const peer = fleet.seat(PEER);
+  await peer.bridge.callConfirmDowngrade(GROUP, [], {});
+  assert.equal(peer.native.downgradeConfirmed(channel), true);
+  const clears = peer.clearDowngrades();
+
+  // PEER's live session holds GROUP, so its default dispose WOULD clear the
+  // grant (R2-M1) if its bridge still reached native. The page is dead first.
+  peer.pageDeath();
+  assert.equal(
+    peer.native.downgradeConfirmed(channel),
+    true,
+    "the page death took the grant",
+  );
+  assert.equal(peer.clearDowngrades(), clears, "the dead page reached native");
+
+  peer.boot(); // the next page; its session is not started
+  assert.equal(peer.native.downgradeConfirmed(channel), true);
+  const payload = await peer.bridge.callAnnounce(GROUP, PEER.user_id);
+  assert.equal(payload.group_id, GROUP);
+});
+
+test("grant: a leave-clean clears it only with the channel's LAST row, by whichever route; a failed one clears nothing", async (t) => {
+  const channel = "ch-grant-rows";
+  const fleet = newFleet(t, [SELF], channel);
+  const self = fleet.seat(SELF);
+  holdRow(self, GROUP, channel);
+  holdRow(self, "group-succ", channel);
+  holdRow(self, "group-other", "ch-other");
+  await self.bridge.callConfirmDowngrade(GROUP, [], {});
+  await self.bridge.callConfirmDowngrade("group-other", [], {});
+  const granted = () =>
+    [channel, "ch-other"].filter((c) => self.native.downgradeConfirmed(c));
+  assert.deepEqual(granted(), [channel, "ch-other"]);
+
+  // A row of the channel remains (a successor created before the cleanup).
+  await self.bridge.callLeaveCleanup(GROUP);
+  assert.deepEqual(
+    granted(),
+    [channel, "ch-other"],
+    "cleared while a row of the channel remained",
+  );
+  // Another channel's last row takes that channel's grant only.
+  await self.bridge.callLeaveCleanup("group-other");
+  assert.deepEqual(granted(), [channel]);
+  // A leave-clean native rolled back wiped nothing, so it clears nothing.
+  self.failLeaveCleanupOnce("group-succ");
+  await assert.rejects(self.bridge.callLeaveCleanup("group-succ"));
+  assert.ok(self.localGroups.has("group-succ"));
+  assert.deepEqual(granted(), [channel]);
+  // The last row goes by a keep's expiry: the registry's own delete.
+  assert.equal(self.bridge.keepLocalGroup("group-succ", channel, 10_000), true);
+  await advance(t, 10_250);
+  assert.equal(self.localGroups.has("group-succ"), false, "never expired");
+  assert.deepEqual(granted(), [], "the last row left its grant behind");
+});
+
+// ---- A page's own connects: page death, hang-up, rejoin ---------------------
+
+test("page death aborts its own prefetch: a held commits read released as a failure afterwards clears nothing, and a dead page keeps nothing", async (t) => {
+  const channel = "ch-page-abort";
+  const fleet = newFleet(t, [SELF, PEER], channel);
+  await fleet.bringUp();
+  await advance(t, 3_000);
+  const peer = fleet.seat(PEER);
+  // PEER's session installed GROUP's keys: the tab records it as resumable.
+  assert.equal(readResumeRecord(peer.sessionStorage, channel)?.groupId, GROUP);
+
+  // A new page whose host starts a prefetch, its session never started (so
+  // nothing but the host can abort it), on a DS that holds the last read.
+  const release = fleet.ds.holdFetchCommits();
+  const requests = fleet.ds.fetchCommitsRequests.length;
+  peer.pageDeath();
+  peer.boot({ prefetchFromBridge: true });
+  await flush();
+  assert.equal(
+    fleet.ds.fetchCommitsRequests.length,
+    requests + 1,
+    "the prefetch never reached its commits read",
+  );
+  const signal = peer.resumePrefetchSignal;
+  assert.ok(signal, "no prefetch signal");
+  assert.equal(signal.aborted, false);
+
+  peer.pageDeath();
+  assert.equal(signal.aborted, true, "the page death left its prefetch live");
+  // Released as a failure: a prefetch still running would `giveUp`, clearing
+  // the tab's record for a page that no longer exists. Its outcome is read
+  // after an `advance`, never awaited: a `giveUp` that ran would clean the
+  // candidate up through the dead page's bridge, which never settles, and an
+  // await on it would hang the file instead of failing this case.
+  const prefetch = peer.resumePrefetch;
+  assert.ok(prefetch, "no prefetch");
+  const settled: ({ value: unknown } | { error: unknown })[] = [];
+  void prefetch.then(
+    (value) => settled.push({ value }),
+    (error: unknown) => settled.push({ error }),
+  );
+  fleet.ds.failFetchCommitsOnce();
+  release();
+  await advance(t, 1);
+  assert.deepEqual(
+    settled,
+    [{ value: null }],
+    "the dead page's prefetch did not settle to null (a giveUp that ran never settles)",
+  );
+  assert.equal(
+    readResumeRecord(peer.sessionStorage, channel)?.groupId,
+    GROUP,
+    "the dead page's prefetch cleared the tab's record",
+  );
+  assert.ok(peer.localGroups.has(GROUP));
+  assert.equal(
+    peer.prefetchAborts,
+    0,
+    "the host's abort counted as a dep call",
+  );
+  // A dead page's bridge keeps nothing, so no recency record may follow.
+  assert.equal(peer.bridge.keepLocalGroup(GROUP, channel, 10_000), false);
+});
+
+test("rejoin: a hang-up keeps the group on the SAME page, and the next connect's prefetch claims it there", async (t) => {
+  const channel = "ch-page-rejoin";
+  const fleet = newFleet(t, [SELF, PEER], channel);
+  await fleet.bringUp();
+  await advance(t, 3_000);
+  const peer = fleet.seat(PEER);
+  const first = peer.session;
+  const kept = peer.kept;
+  const tokens = peer.startupWipeTokens;
+  const calls = peer.bridgeCalls.length;
+
+  await fleet.rejoin(PEER);
+
+  assert.equal(first.state(), "closed", "the hung-up session is still up");
+  assert.notEqual(peer.session, first, "no new session");
+  assert.equal(peer.kept, kept, "the rejoin ran on a new page");
+  assert.equal(peer.startupWipeTokens, tokens);
+  // The hang-up cleared the grant and KEPT the group, recorded it, and only
+  // then did the new connect start its prefetch.
+  const since = peer.bridgeCalls.slice(calls);
+  const at = (name: string) => {
+    const index = since.indexOf(name);
+    assert.ok(index >= 0, `no ${name}`);
+    return index;
+  };
+  assert.ok(at("callClearDowngrade") < at("keepLocalGroup"));
+  assert.ok(at("keepLocalGroup") < at("touchResumeRecord"));
+  assert.ok(at("touchResumeRecord") < at("prefetchResume"));
+  const prefetch = await peer.resumePrefetch;
+  assert.equal(prefetch?.groupId, GROUP);
+  assert.notEqual(
+    prefetch?.claimToken ?? null,
+    null,
+    "the entry was unclaimed",
+  );
+  assert.ok(peer.localGroups.has(GROUP));
+  assert.ok(peer.gate.has("negotiating"), "the connect did not seed the gate");
+});
+
+test("hang-up on sign-out: the kept groups are discarded ahead of the dispose, the group goes at once, and later keeps are refused", async (t) => {
+  const channel = "ch-page-signout";
+  const fleet = newFleet(t, [SELF, PEER], channel);
+  await fleet.bringUp();
+  await advance(t, 3_000);
+  const peer = fleet.seat(PEER);
+  const calls = peer.bridgeCalls.length;
+
+  peer.hangUp({ discardMls: true });
+  await flush();
+
+  const since = peer.bridgeCalls.slice(calls);
+  assert.equal(since[0], "discardKeptLocalGroups");
+  assert.equal(since.includes("keepLocalGroup"), false, "a sign-out kept");
+  assert.equal(peer.session.state(), "closed");
+  assert.ok(peer.leaveCleanups.includes(GROUP), "the group was not deleted");
+  assert.equal(peer.localGroups.has(GROUP), false);
+  assert.equal(readResumeRecord(peer.sessionStorage, channel), null);
+  assert.equal(peer.bridge.keepLocalGroup("group-later", channel, 1), false);
 });

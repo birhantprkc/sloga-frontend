@@ -15,15 +15,28 @@
 // A refused serve removes nothing, so it must also note nothing: no
 // served-rejoin observation (`#noteRejoinServed`, which extends the target's
 // admit-grace) and no "removing stale leaf" warning.
+//
+// Before it fires, a serve reads the roster (`callState`) to find the target
+// and its own leaf, and the group can change under that read too (W15R-m1).
+// Every such change reset the group's maps, so the dedup key and the retry
+// ledger the serve would write when the read settles now belong to the live
+// group, where the same key can be a newer serve's. The last cases hold that
+// read across each change, answered and thrown, and check that a live-group
+// serve reserved (re-entry) or ledgered (reset) for the same device in the
+// meantime keeps its entry.
 import assert from "node:assert/strict";
 import { type TestContext, test } from "node:test";
 
+import type { MlsCallState } from "@revolt/client";
+
 import {
   type Identity,
+  type World,
   advance,
   bringUpJoiner,
   flush,
   GROUP,
+  groupNotFound,
   newFleet,
   newWorld,
   PEER,
@@ -63,6 +76,14 @@ const REMOVING_PEER = `${REMOVING} for rejoin: ${PEER_ID}`;
 const TARGET_FRESH = "[mls] serve target was removed after scheduling";
 const EARLIER_ESTABLISH = "[mls] serve was scheduled for an earlier establish";
 const ANOTHER_GROUP = "[mls] serve was scheduled for another group";
+/** What a serve logs when its roster read outlived the group it was for. */
+const OUTLIVED_READ = "[mls] rejoin serve outlived its group during the read";
+/** The retry ledger's re-drive tick (`ADMIT_RETRY_MS`, private). */
+const ADMIT_RETRY_MS = 5_000;
+/** The attempt number in each "retry n/max" warning for PEER's rejoin serve. */
+const PEER_RETRY = new RegExp(
+  `^\\[mls\\] admit of rejoin:${PEER_ID} aborted \\(\\w+\\), retry (\\d+)/`,
+);
 
 /** Bridge calls named `name` in `calls`. */
 const count = (calls: string[], name: string) =>
@@ -105,6 +126,51 @@ function servedObservations(t: TestContext): Map<Session, number> {
   );
   return seen;
 }
+
+/** How a held roster read ends. */
+type ReadOutcome = "answers" | "throws";
+
+/**
+ * Hold the first roster read a rejoin serve makes: `world.callState` called
+ * from `#serveRejoin`, found on the stack as the served-rejoin probe finds
+ * `#removeStaleLeaf`. Every other read answers at once. `settle` ends the
+ * held one with the state it read when it was made (SELF and the target both
+ * present), or rejects it as native does for a group it does not hold.
+ */
+function holdServeRead(t: TestContext, world: World) {
+  const read = world.callState;
+  let held: {
+    state: MlsCallState;
+    resolve: (state: MlsCallState) => void;
+    reject: (error: unknown) => void;
+  } | null = null;
+  t.mock.method(world, "callState", function (this: World) {
+    const state = read.call(this);
+    if (held || !(new Error().stack ?? "").includes("serveRejoin")) {
+      return state;
+    }
+    // The bridge stub is `async () => world.callState()`, so the read waits
+    // on the promise returned here.
+    return new Promise<MlsCallState>((resolve, reject) => {
+      held = { state, resolve, reject };
+    }) as unknown as MlsCallState;
+  });
+  return {
+    held: () => held !== null,
+    settle(outcome: ReadOutcome) {
+      assert.ok(held, "no serve read the roster");
+      if (outcome === "answers") held.resolve(held.state);
+      else held.reject(groupNotFound(GROUP));
+    },
+  };
+}
+
+/** The attempt number of each "retry n/max" warning for PEER's rejoin serve. */
+const peerRetries = (warned: () => string[]) =>
+  warned().flatMap((line) => {
+    const match = PEER_RETRY.exec(line);
+    return match ? [Number(match[1])] : [];
+  });
 
 test("serve guard: a serve refused by the Remove's epoch under the lock notes no served rejoin and warns no removal", async (t) => {
   const served = servedObservations(t);
@@ -281,3 +347,152 @@ test("serve guard: a serve that builds between a reset and the next establish re
     "the serve was not refused on the group",
   );
 });
+
+for (const outcome of ["answers", "throws"] as const) {
+  test(`serve guard: a serve roster read that ${outcome} after a re-entry into the SAME group leaves the new establish's serve its reservation`, async (t) => {
+    const world = newWorld(
+      t,
+      "joiner",
+      `ch-serveguard-read-reentry-${outcome}`,
+    );
+    await bringUpJoiner(t, world, 0);
+    await advance(t, SETTLE_MS);
+    const read = holdServeRead(t, world);
+    const warned = logged(t, "warn");
+    const informed = logged(t, "info");
+    const mark = world.bridgeCalls.length;
+    const since = () => world.bridgeCalls.slice(mark);
+    const intentsBefore = count(world.bridgeCalls, "mlsJoinIntent");
+
+    // PEER's rejoin intent. The serve checks the live group, reads the
+    // roster, and the read waits.
+    await world.joinRequest(PEER, { rejoin: true });
+    await advance(t, 1);
+    await flush();
+    assert.ok(read.held(), "the serve never read the roster");
+    // The commit that removed SELF lands. The removed_self action resets the
+    // group and re-enters it: a new establish joins GROUP again, the same
+    // group id, and its Welcome lands.
+    await world.removedSelf(1);
+    for (let i = 0; i < 20; i++) await advance(t, 50);
+    assert.equal(
+      world.session.groupId(),
+      GROUP,
+      "the re-entry is not in GROUP",
+    );
+    assert.ok(
+      count(world.bridgeCalls, "mlsJoinIntent") > intentsBefore,
+      "the re-entry sent no join intent",
+    );
+    await world.welcome(2);
+    assert.equal(world.session.state(), "active", "the re-entry never landed");
+    // The new group's first roster reconcile stamps PEER as freshly added
+    // (§4.8); past that window a serve of PEER arms again.
+    await advance(t, SETTLE_MS);
+
+    // PEER re-broadcasts. The new establish's serve reserves PEER's key and
+    // waits in its listing reconcile.
+    const releaseReconcile = world.holdReconcileRoster();
+    t.after(releaseReconcile);
+    const reconciles = count(world.bridgeCalls, "reconcileCallRoster");
+    await world.joinRequest(PEER, { rejoin: true });
+    assert.equal(
+      count(world.bridgeCalls, "reconcileCallRoster"),
+      reconciles + 1,
+      "the new establish never served PEER",
+    );
+
+    // The first serve's read settles, into the new establish's maps, and any
+    // timer it armed there fires.
+    read.settle(outcome);
+    await flush();
+    await advance(t, 1);
+    await flush();
+    // A duplicate of PEER's intent is still deduped on the live serve's key.
+    await world.joinRequest(PEER, { rejoin: true });
+    assert.equal(
+      count(world.bridgeCalls, "reconcileCallRoster"),
+      reconciles + 1,
+      "the live serve's reservation was dropped: a duplicate started a serve",
+    );
+
+    // The live serve goes on and removes the stale leaf, once.
+    releaseReconcile();
+    await flush();
+    await advance(t, 1);
+    await flush();
+    assert.equal(
+      count(since(), "callRemove"),
+      1,
+      "the new establish's serve did not remove PEER's stale leaf once",
+    );
+    assert.deepEqual(
+      warned().filter((line) => line.startsWith(REMOVING)),
+      [REMOVING_PEER],
+      "a warning other than the new establish's one removal",
+    );
+    assert.ok(
+      !informed().some((line) => line.startsWith(EARLIER_ESTABLISH)),
+      "the outlived read armed a serve that fired into the new establish",
+    );
+    assert.equal(
+      informed().filter((line) => line.startsWith(OUTLIVED_READ)).length,
+      1,
+      "the read was not refused as outliving its establish",
+    );
+  });
+
+  test(`serve guard: a serve roster read that ${outcome} after a reset, before the next establish, leaves the ledgered serve to its re-drive`, async (t) => {
+    const world = newWorld(t, "joiner", `ch-serveguard-read-gap-${outcome}`);
+    await bringUpJoiner(t, world, 0);
+    await advance(t, SETTLE_MS);
+    const read = holdServeRead(t, world);
+    const warned = logged(t, "warn");
+    const informed = logged(t, "info");
+    const mark = world.bridgeCalls.length;
+    const since = () => world.bridgeCalls.slice(mark);
+
+    // As above: the serve's roster read waits.
+    await world.joinRequest(PEER, { rejoin: true });
+    await advance(t, 1);
+    await flush();
+    assert.ok(read.held(), "the serve never read the roster");
+    // The removed_self action resets the group and its leave-clean hangs:
+    // `#groupId` is null, and no new establish has bumped the generation.
+    const releaseLeave = world.holdLeaveCleanup();
+    t.after(releaseLeave);
+    await world.removedSelf(1);
+    for (let i = 0; i < 20; i++) await advance(t, 50);
+    assert.equal(world.session.groupId(), null, "the reset had not happened");
+    assert.ok(
+      since().includes("callLeaveCleanup"),
+      "the removed_self action never reached its leave-clean",
+    );
+    // PEER re-broadcasts into the gap: ledgered for the re-drive.
+    await world.joinRequest(PEER, { rejoin: true });
+    assert.deepEqual(
+      peerRetries(warned),
+      [1],
+      "PEER's intent was not ledgered",
+    );
+
+    // The first serve's read settles, into the reset maps. The re-drive tick
+    // runs inside the gap: the entry aborts again and counts attempt 2.
+    read.settle(outcome);
+    await flush();
+    await advance(t, ADMIT_RETRY_MS + 1_000);
+
+    assert.equal(world.session.groupId(), null, "the gap closed");
+    assert.deepEqual(
+      peerRetries(warned),
+      [1, 2],
+      "PEER's ledger entry was dropped: the re-drive never ran it",
+    );
+    assert.equal(count(since(), "callRemove"), 0, "a serve staged a Remove");
+    assert.equal(
+      informed().filter((line) => line.startsWith(OUTLIVED_READ)).length,
+      1,
+      "the read was not refused as outliving its group",
+    );
+  });
+}

@@ -420,6 +420,8 @@ SESSION_TIMELINE_SPEC = "components/rtc/mlsCallSession.timeline.test.ts"
 FLEET_SPEC = "components/rtc/mlsCallSession.fleet.test.ts"
 GROUPSCOPE_SPEC = "components/rtc/mlsCallSession.groupscope.test.ts"
 SERVEGUARD_SPEC = "components/rtc/mlsCallSession.serveguard.test.ts"
+RESUME_SPEC = "components/rtc/mlsCallSession.resume.test.ts"
+MAILBOX_SPEC = "components/rtc/mlsCallSession.mailbox.test.ts"
 REJOIN_POLICY_SPEC = "components/rtc/mlsRejoinPolicy.test.ts"
 INBOUND_BUFFER_SPEC = "components/client/mlsInboundBuffer.test.ts"
 RESUME_KEEP_SPEC = "components/client/mlsResumeKeep.test.ts"
@@ -3651,14 +3653,15 @@ MUTATIONS += [
 
 # --- Rejoin resume, wave 2: the resume foundations ---------------------------
 #
-# Wave 2 is inert in the session (`resumePrefetch` is accepted and ignored),
-# so what is measured here is the three pure modules wave 3 will stand on,
-# each loadable, so each rule is reachable: `resumeDecision` and
-# `recencyValid` in `mlsRejoinPolicy.ts` (the go/no-go and the recency
-# record's validity); `KeptLocalGroups` and `prefetchResume` in
-# `components/client/mlsResumeKeep.ts` (keep, claim, hand-back, cleanup, and
-# the read-only prefetch); and `mlsHoldVerdict` in `mlsInboundBuffer.ts` (what
-# the bridge does with an MLS envelope before a sink exists). Every entry is
+# Wave 2 was inert in the session (`resumePrefetch` was accepted and ignored
+# until wave 3, whose entries follow this block), so what is measured here is
+# the three pure modules wave 3 stands on, each loadable, so each rule is
+# reachable: `resumeDecision` and `recencyValid` in `mlsRejoinPolicy.ts` (the
+# go/no-go and the recency record's validity); `KeptLocalGroups` and
+# `prefetchResume` in `components/client/mlsResumeKeep.ts` (keep, claim,
+# hand-back, cleanup, and the read-only prefetch); and `mlsHoldVerdict` in
+# `mlsInboundBuffer.ts` (what the bridge does with an MLS envelope before a
+# sink exists). Every entry is
 # `must_red` on the ONE spec that owns its rule. The bridge (`e2ee.ts`) and
 # host (`state.tsx`) wiring cannot be loaded by `node --test` and has no
 # entry.
@@ -4020,12 +4023,15 @@ MUTATIONS += [
         file=RESUME_KEEP,
         # The refusal block dropped whole (newline included); the comment
         # above it is left, and the keep falls through to its normal path.
+        # Re-anchored 2026-09-26 (resume wave 3): `keep` now answers whether
+        # it kept, so the refusal's `return;` is `return false;`. Same block,
+        # same defect.
         search="""    if (this.isInFlight(groupId)) {
       console.info("[mls] keep refused: the group's delete is pending", {
         groupId,
         channelId,
       });
-      return;
+      return false;
     }
 """,
         replace="",
@@ -4052,6 +4058,385 @@ MUTATIONS += [
         replace="",
         specs=[INBOUND_BUFFER_SPEC],
         must_red=[INBOUND_BUFFER_SPEC],
+    ),
+]
+
+
+# --- Rejoin resume, wave 3: the resume itself --------------------------------
+#
+# The session now RESUMES. The startup establish (and only it) reads the
+# host's prefetch, bounded by `RESUME_PREFETCH_WAIT_MS`; on a `"resume"`
+# decision it adopts the held group (only if `releaseKeptGroup` answers
+# true), clears the group's native downgrade grant, catches the fetched
+# commits up under the lock, checks native, and goes active with an explicit
+# key install — no intent, no create, no commit. Anything short of that takes
+# the join path in its binding order: abort the prefetch, clean up the
+# candidate (step 6), discard the channel's kept groups (both bounded by
+# `KEPT_DISCARD_WAIT_MS`, LOUD past it, never the ladder), then today's
+# ladder. A hang-up KEEPS its group for `LOCAL_GROUP_KEEP_MS` (grant cleared
+# first), `keep` answers whether it kept, and a `removed_self` dropped while
+# another group action runs is recorded and re-checked against native when
+# that action ends.
+#
+# Most entries are `must_red` on `mlsCallSession.resume.test.ts`, which runs
+# the REAL `KeptLocalGroups` and `prefetchResume` behind the harness bridge,
+# so the registry and prefetch entries below are reachable from it too. Each
+# entry names the case(s) measured to kill it, and lists only the spec files
+# measured red under it.
+
+MUTATIONS += [
+    # ---- the resume branch --------------------------------------------------
+    Mutation(
+        id="resume-always-join",
+        what="the startup establish reads every decision as `join`, so a reload or a hang-up → rejoin inside the keep abandons the held group and re-enrols through today's ladder — the 11 s rejoin this wave removes",
+        file=SESSION,
+        search="""    if (prefetch === null || decision !== "resume") {""",
+        replace="""    if (true) {""",
+        # Killed by 18 of the resume spec's 36 cases: every case that expects
+        # a resume ((a), (a′, i′), (b), (b′), (d)'s lag-11 half, (e′) moot,
+        # (f), (g), the (i′) re-keep and racing connects, (i″), (q)), every
+        # one whose setup resumes first ((h′), (m)), and the ones that assert
+        # the step-6 order against a candidate that now never reaches
+        # adoption ((e, e″), (e′, e″), (h), (t)).
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-keys-install-dropped",
+        what="the resume no longer installs the current epoch's keys explicitly, so a catch-up that processed nothing (native fired no keys-changed) goes active with the new worker holding no frame key",
+        file=SESSION,
+        search="""    void this.onLocalKeysChanged(groupId, prefetch.currentEpoch);
+""",
+        replace="",
+        # Killed by 14 resume cases, (a) first: a resume that applied nothing
+        # never installs the current epoch's key, and the seat's mode never
+        # reaches `e2ee`. (b) is not among them: its catch-up APPLIES
+        # commits, and native's keys-changed for a processed commit installs
+        # the keys without the explicit call (the spec's (a) comment says so).
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-startup-check-dropped",
+        what="every establish that holds a prefetch takes the resume branch, not only the one `start()` names, so a rejoin-fresh, successor or re-upgrade establish re-reads the startup's prefetch and runs its abort, release and discard (audit M6)",
+        file=SESSION,
+        # The `startup` PARAMETER, which only `start()` passes true: dropping
+        # it is the defect. `resumeDecision`'s own `isStartup` rule (fed
+        # `#startupEstablish`) still answers `join` for a re-establish, so no
+        # resume happens — what the (m) case catches is the join path's
+        # abort, release and discard running on an establish that is not the
+        # startup's.
+        search="""    if (startup && this.#deps.resumePrefetch !== undefined) {""",
+        replace="""    if (this.#deps.resumePrefetch !== undefined) {""",
+        # Killed by (m) and (h′): each asserts that a re-establish takes no
+        # abort, no `releaseKeptGroup` and no `discardKeptForChannel`.
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- the removed-self record (resume plan step 4, R2-M3) ----------------
+    Mutation(
+        id="removed-self-record-replayed-blindly",
+        what="a `removed_self` dropped mid-action is replayed when the action ends without asking native, so a removal the resume made moot — native still lists this device — tears down the group the device just resumed",
+        file=SESSION,
+        search="""    void this.#confirmRemovedSelf(record);""",
+        replace="""    void record;
+    this.#scheduleGroupAction(() => this.#onRemovedSelf(), "removed_self");""",
+        # Killed by the two (e′) cases that act at the action's end: the moot
+        # one (the replay tears the resumed group down) and the
+        # acted-on one (its `acting on a removal dropped mid-action` line is
+        # the re-check's, which the replay skips). The (e″) cases stay green
+        # by design: step 6 forgets the record before any action ends, so
+        # there is nothing left to replay.
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="removed-self-record-never-acted-on",
+        what="the record of a `removed_self` dropped mid-action is never taken when the action ends, so a device the group removed while its join ladder waited stays in a group native no longer seats it in",
+        file=SESSION,
+        search="""        this.#actOnRemovedSelfRecord();
+""",
+        replace="",
+        # Killed by the same two (e′) cases from the other side: the acted-on
+        # one (the group is never left, and the device never re-intents) and
+        # the moot one (the re-check's `moot` line never comes).
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="step6-forget-dropped",
+        what="step 6 no longer forgets the candidate's removed-self record, before or after its delete, so a removal dropped during the resume survives the cleanup and is acted on against the fallback that re-entered the SAME DS group id (R2-M3)",
+        file=SESSION,
+        # Both sites in `#joinWithoutResume`, each anchored on its
+        # neighbouring line: the call before the delete and the one after
+        # it are the same text. Both are dropped, as the wave-3 audit
+        # measured it (W3-m1); a single-site drop is not measured here.
+        # Killed by (e, e″) and (e′, e″).
+        search="""      this.#forgetRemovedSelf(candidate);
+      await this.#awaitJoinPathDelete(""",
+        replace="""      await this.#awaitJoinPathDelete(""",
+        also=[
+            (
+                """      this.#forgetRemovedSelf(candidate);
+      if (this.#pendingIdentityFetch === candidate) {""",
+                """      if (this.#pendingIdentityFetch === candidate) {""",
+            ),
+        ],
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- the join path (Wave-3 folds, binding order) ------------------------
+    Mutation(
+        id="join-path-skips-abort",
+        what="the join path no longer aborts the prefetch, so an abandoned prefetch keeps running under the fallback: its claim is never handed back and its `giveUp` can delete the group the fallback joined under the same DS group id (W2R-M1)",
+        file=SESSION,
+        # The 4-space call with its next line: the two `"stop"` exits in
+        # `#startupResume` carry the same call at 6 spaces, which contains
+        # the bare 4-space line as a substring.
+        search="""    this.#deps.abortResumePrefetch?.();
+    const live = () =>""",
+        replace="""    const live = () =>""",
+        # Killed by the 7 resume cases that assert the join path's abort:
+        # (d), (e, e″), (h), (j), both (p) and (r).
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="join-path-skips-discard",
+        what="the join path no longer discards the channel's kept groups, so a group a null prefetch left on disk (claimed elsewhere) is still there when the ladder creates or joins the same group id (W2-m1)",
+        file=SESSION,
+        search="""    await this.#awaitJoinPathDelete(
+      this.#deps.bridge.discardKeptForChannel(this.#deps.channelId),
+      "the channel's kept local groups",
+    );
+""",
+        replace="",
+        # Killed by 6 resume cases: the null-prefetch (p), (r), (s), (j)'s
+        # byte-for-byte prefix, (l)'s stale record and (i′)'s in-flight
+        # expiry.
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="discard-timeout-falls-through",
+        what="a join-path delete that did not finish inside `KEPT_DISCARD_WAIT_MS` is logged and the ladder runs anyway, re-entering a group id whose local delete is still running — the fallback's group can be deleted under it",
+        file=SESSION,
+        search="""      throw new Error(
+        `MLS call join refused: deleting ${what} did not finish — joining ` +
+          `now could re-enter a group whose local delete is still running.`,
+      );
+""",
+        replace="",
+        # Killed by (s) alone: not loud at the bound, and the ladder runs.
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- adoption -------------------------------------------------------------
+    Mutation(
+        id="adopt-ignores-release-false",
+        what="the resume adopts even when `releaseKeptGroup` answers false, so a candidate whose delete is already in flight is adopted and deleted under the call (W2-m2)",
+        file=SESSION,
+        search="""    if (!this.#deps.bridge.releaseKeptGroup(groupId)) {""",
+        replace="""    if (!(this.#deps.bridge.releaseKeptGroup(groupId) || true)) {""",
+        # Killed by (t) alone: the in-flight candidate is adopted (its grant
+        # clear runs) instead of taking step 6.
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-release-never-called",
+        what="`releaseKeptGroup` is never called, at the adopt or at step 6, so the kept entry the resume adopted keeps its timer and deletes the live group under the call (R2-B1)",
+        file=SESSION,
+        # Both call sites, and the adopt no longer refuses either: never
+        # called means never answered.
+        search="""    if (!this.#deps.bridge.releaseKeptGroup(groupId)) {""",
+        replace="""    if (false) {""",
+        also=[
+            (
+                """      this.#deps.bridge.releaseKeptGroup(candidate);
+""",
+                "",
+            ),
+        ],
+        # Killed by 4 resume cases: (a) and (a′, i′) assert the adopt's
+        # release, (j) the step-6 release in its byte-for-byte prefix, and
+        # (t) the adoption of an in-flight candidate.
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-skips-grant-clear",
+        what="the resume adopts without clearing the group's native downgrade grant, so a Ctrl+R after a confirmed downgrade enables on the dead page's grant (W2-M3)",
+        file=SESSION,
+        search="""    try {
+      await this.#deps.bridge.callClearDowngrade(groupId);
+    } catch (error) {
+      console.warn("[mls] resume: downgrade grant clear failed", error);
+      return this.#joinWithoutResume(generation, groupId);
+    }
+""",
+        replace="",
+        # Killed by (q) (enabled on a live grant) and (a) (the clear's place
+        # between the release and the key install).
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- dispose: keep vs discard -------------------------------------------
+    Mutation(
+        id="dispose-discard-ignored",
+        what="`dispose({ discard: true })` (sign-out) keeps the group like a hang-up and writes its recency record, so a signed-out device's call group stays on disk and resumable",
+        file=SESSION,
+        search="""    if (opts?.discard) {""",
+        replace="""    if (false) {""",
+        # Killed by the resume spec's discarding hang-up (its direct
+        # `dispose({ discard: true })` half is kept and recorded) and by the
+        # mailbox spec's sign-out hang-up. Each pinned on its own.
+        specs=[RESUME_SPEC, MAILBOX_SPEC],
+        must_red=[RESUME_SPEC, MAILBOX_SPEC],
+    ),
+    Mutation(
+        id="keep-skips-grant-clear",
+        what="a hang-up keeps its group without clearing the native downgrade grant, so the kept row keeps the grant alive for the channel's next call (R2-M1)",
+        file=SESSION,
+        search="""    void this.#deps.bridge
+      .callClearDowngrade(groupId)
+      .catch((error: unknown) => {
+        console.warn("[mls] downgrade grant clear at hang-up failed", error);
+      });
+""",
+        replace="",
+        # Killed by (i″) and by the mailbox spec's same-page hang-up → rejoin
+        # case. Each pinned on its own.
+        specs=[RESUME_SPEC, MAILBOX_SPEC],
+        must_red=[RESUME_SPEC, MAILBOX_SPEC],
+    ),
+    # ---- the rejoin serve's roster read (W15R-m1) ---------------------------
+    Mutation(
+        id="serve-rejoin-no-postawait-recheck",
+        what="`#serveRejoin` no longer re-checks generation and group after its `callState` await, so a read that straddled a re-establish or a group change retires or schedules against the LIVE group's reservations and ledger",
+        file=SESSION,
+        # The check occurs TWICE (the read's success path and its catch), so
+        # each is anchored with the line above it and both are dropped.
+        search="""      const state = await this.#deps.bridge.callState(this.#groupId);
+      if (this.#serveOutlivedRead(request, scheduledGeneration)) return;
+""",
+        replace="""      const state = await this.#deps.bridge.callState(this.#groupId);
+""",
+        also=[
+            (
+                """    } catch {
+      if (this.#serveOutlivedRead(request, scheduledGeneration)) return;
+""",
+                """    } catch {
+""",
+            ),
+        ],
+        # Killed by all four of the serve-guard spec's straddling reads
+        # (answers or throws, after a same-group re-entry or a reset gap).
+        specs=[SERVEGUARD_SPEC],
+        must_red=[SERVEGUARD_SPEC],
+    ),
+    # ---- the prefetch and the kept-group registry ---------------------------
+    Mutation(
+        id="resume-fetch-failure-reads-caught-up",
+        what="a failed commits fetch (the DS's 404, a 500) is read as nothing missed, so the prefetch hands the session a resumable candidate at the device's own epoch instead of cleaning it up — a DS that refuses the catch-up gets a resume at a stale epoch",
+        file=RESUME_KEEP,
+        search="""    const fetched = await deps.fetchCommits(candidate, state.epoch + 1, signal);""",
+        replace="""    const fetched = await deps
+      .fetchCommits(candidate, state.epoch + 1, signal)
+      .catch(() => ({
+        kind: "ok" as const,
+        body: { commits: [] as C[], current_epoch: state.epoch },
+      }));""",
+        # The harness runs the REAL `prefetchResume`, and a 404 reaches it the
+        # way `#apiMls` delivers one: THROWN (`requestFetchCommits`). So the
+        # defect is that rejection read as an empty, current list. Killed by
+        # both (c) cases, the 404 and the 500.
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="prefetch-giveup-ignores-abort",
+        what="an aborted prefetch's `giveUp` still cleans its candidate up, so a prefetch the join path abandoned can delete the group the fallback just joined under the same DS group id (W2S-m1)",
+        file=RESUME_KEEP,
+        search="""    if (signal?.aborted) return null;
+""",
+        replace="",
+        # Killed by the keep spec's two abort cases (before the reads, during
+        # the commits fetch), by the resume spec's racing connects (i′) and
+        # by one mailbox case. Each pinned on its own. The mailbox spec used
+        # to HANG under this mutant past `SPEC_TIMEOUT_S`; the wave-3 fix
+        # pass (W3-m2) made it fail on an assertion in seconds instead, so
+        # it is listed now.
+        specs=[RESUME_KEEP_SPEC, RESUME_SPEC, MAILBOX_SPEC],
+        must_red=[RESUME_KEEP_SPEC, RESUME_SPEC, MAILBOX_SPEC],
+    ),
+    Mutation(
+        id="keep-returns-true-always",
+        what="`keep` answers true on both refusals, so a hang-up whose keep was refused writes a recency record naming a group that is already on its way off the disk",
+        file=RESUME_KEEP,
+        search="""      return false;
+    }
+    if (this.#refused) {
+      this.#cleanupLogged(groupId, "keep refused");
+      return false;
+    }""",
+        replace="""      return true;
+    }
+    if (this.#refused) {
+      this.#cleanupLogged(groupId, "keep refused");
+      return true;
+    }""",
+        # Killed by 9 keep-spec cases (every asserted refusal), by the resume
+        # spec's sign-out case and by the mailbox spec's sign-out hang-up (a
+        # keep after the sign-out answers true). Each pinned on its own.
+        specs=[RESUME_KEEP_SPEC, RESUME_SPEC, MAILBOX_SPEC],
+        must_red=[RESUME_KEEP_SPEC, RESUME_SPEC, MAILBOX_SPEC],
+    ),
+    Mutation(
+        id="discard-channel-ignores-entries",
+        what="`discardChannel` deletes its record's group even when ANOTHER channel's live keep entry names it, deleting a group that entry is still keeping (W2S-m2)",
+        file=RESUME_KEEP,
+        search="""      rec !== null && !this.#hasEntry(rec.groupId) ? rec.groupId : null;""",
+        replace="""      rec !== null ? rec.groupId : null;""",
+        # Killed by the keep spec's W2S-m2 case (the other channel's entry
+        # NOT mid-delete, claimed or not), which the wave-2 spec lacked.
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    Mutation(
+        id="keep-consumed-per-group",
+        what="the registry marks a released (adopted) group consumed by GROUP ID instead of dropping its entry, so a later keep of that group — the next hang-up after a resume — never expires and the group outlives its keep (R2-B1 gap 1)",
+        file=RESUME_KEEP,
+        # Not a session edit: the session holds no keep state at all (its
+        # only keep-side act is the `keepLocalGroup` call in `dispose`). The
+        # state is `KeptLocalGroups`', and this is the defect the R2-B1
+        # re-check named ("per keep ENTRY, not per group, else a later keep
+        # of G never expires"), built at its two sites: `release` marks the
+        # group, and `#expire` refuses a marked group's timer.
+        search="""    this.#deleteEntries(groupId);
+    return !this.isInFlight(groupId);""",
+        replace="""    this.#deleteEntries(groupId);
+    ((this as unknown as { consumed?: Set<string> }).consumed ??=
+      new Set()).add(groupId);
+    return !this.isInFlight(groupId);""",
+        also=[
+            (
+                """    if (entry.timer !== slot || !this.#entries.has(entry)) return;""",
+                """    if (entry.timer !== slot || !this.#entries.has(entry)) return;
+    if (
+      (this as unknown as { consumed?: Set<string> }).consumed?.has(
+        entry.groupId,
+      )
+    )
+      return;""",
+            ),
+        ],
+        # Killed by the resume spec's (i′) "resume, then hang up" (the new
+        # keep never expires) and by the keep spec's release case ("a later
+        # keep of that group expires normally"). Each pinned on its own.
+        specs=[RESUME_SPEC, RESUME_KEEP_SPEC],
+        must_red=[RESUME_SPEC, RESUME_KEEP_SPEC],
     ),
 ]
 

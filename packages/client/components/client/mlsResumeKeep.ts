@@ -244,8 +244,12 @@ export class KeptLocalGroups {
    * Keep `groupId` on disk for `ms`, then delete it. While keeps are refused
    * the group is deleted at once instead. A keep of a group whose delete is
    * pending is refused outright (W2R-n1).
+   *
+   * `true` iff an entry was created. `false` on either refusal, and the
+   * caller must then not write a recency record for the group: the group is
+   * already on its way off the disk, and a record would name a deleted group.
    */
-  keep(groupId: string, channelId: string, ms: number): void {
+  keep(groupId: string, channelId: string, ms: number): boolean {
     // W2R-n1: `cleanup` dropped every entry naming the group when its delete
     // started, so an entry created now would outlive that delete and be
     // claimable once it settled, naming a group no longer on disk. The
@@ -255,11 +259,11 @@ export class KeptLocalGroups {
         groupId,
         channelId,
       });
-      return;
+      return false;
     }
     if (this.#refused) {
       this.#cleanupLogged(groupId, "keep refused");
-      return;
+      return false;
     }
     const deadlineMs = this.#deps.now() + ms;
     // Gap (1): any older entry for this group, claimed or not, is dropped and
@@ -285,6 +289,7 @@ export class KeptLocalGroups {
     this.#entries.add(entry);
     this.#byChannel.set(channelId, entry);
     this.#arm(entry, ms);
+    return true;
   }
 
   /**

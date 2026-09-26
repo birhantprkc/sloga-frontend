@@ -4835,8 +4835,13 @@ export class E2EEBridge implements E2EEAdapter {
    * it; it is deleted when that runs out. Refused, and the group deleted at
    * once, while E2EE is not enabled here, while either ownership latch is
    * set, or for good once `discardKeptLocalGroups` has run.
+   *
+   * `true` when a keep entry now exists: the caller may write the resume
+   * record. `false` when the keep was refused, by any rule above or because
+   * the group's delete is already in flight: the group is being, or will be,
+   * deleted, so no resume record may name it.
    */
-  keepLocalGroup(groupId: string, channelId: string, ms: number): void {
+  keepLocalGroup(groupId: string, channelId: string, ms: number): boolean {
     if (
       this.status.get("state")?.enabled !== true ||
       this.deviceOwnedElsewhere.has("state") ||
@@ -4848,9 +4853,9 @@ export class E2EEBridge implements E2EEAdapter {
           error,
         });
       });
-      return;
+      return false;
     }
-    this.#kept.keep(groupId, channelId, ms);
+    return this.#kept.keep(groupId, channelId, ms);
   }
 
   /**

@@ -163,6 +163,18 @@ export type AbortResumePrefetchDep = NonNullable<
 >;
 
 /**
+ * What the host hands a new session (`World.boot` / `World.connect`): the
+ * spec's own `resumePrefetch` / `abortResumePrefetch`, each only when given,
+ * or `prefetchFromBridge` for one started on the live page's bridge under a
+ * controller of the harness's, as `state.tsx` starts one per connect.
+ */
+export interface ConnectOptions {
+  resumePrefetch?: ResumePrefetchDep;
+  abortResumePrefetch?: AbortResumePrefetchDep;
+  prefetchFromBridge?: boolean;
+}
+
+/**
  * One webview page's lifetime. A page death (`Fleet.reload`) marks it dead,
  * and from then on its bridge and media binding answer nothing: the session
  * that ran on it can no longer reach native state, the DS or the UI.
@@ -182,6 +194,13 @@ interface Page {
   readonly kept: KeptLocalGroups;
   /** Every keep timer this page armed that has neither fired nor been cleared. */
   readonly timers: Set<unknown>;
+  /**
+   * The live connect's prefetch controller (`prefetchFromBridge`), as
+   * `state.tsx` holds one per connect attempt: aborted by a hang-up and by
+   * the page's death, so a prefetch the page abandoned can never run its
+   * `giveUp` afterwards. `null` when the connect started none.
+   */
+  prefetchAbort: AbortController | null;
 }
 
 /** A bridge that throws on any method the ladder touches without a stub. */
@@ -201,17 +220,18 @@ function fakeBridge(stubs: BridgeStubs, page: Page): E2EEBridge {
  * What a dead page's bridge answers: nothing, ever. An async method never
  * settles (the continuation that awaited it died with the page), and the
  * synchronous ones do nothing (a claim finds nothing, a release frees
- * nothing to adopt). Nothing is recorded: the page made no call.
+ * nothing to adopt, a keep keeps nothing, so no recency record may follow
+ * it). Nothing is recorded: the page made no call.
  */
 function deadRoute(prop: string): unknown {
   switch (prop) {
     case "ackEnvelopes":
-    case "keepLocalGroup":
     case "touchResumeRecord":
     case "clearResumeRecord":
       return () => {};
     case "claimKeptLocalGroup":
       return () => null;
+    case "keepLocalGroup":
     case "releaseKeptGroup":
       return () => false;
     case "registerMlsSink":
@@ -1359,6 +1379,13 @@ export class World {
   }[] = [];
   /** The group of every `callClearDowngrade` (the T6 re-upgrade), in order. */
   clearDowngradeCalls: string[] = [];
+  /**
+   * Every §3.4 ctl payload `mlsSendCtl` DELIVERED to the DS, in order. Only
+   * an announce native built gets here, so only one over a group whose
+   * channel holds the downgrade grant (`callAnnounce`); `bridgeCalls` counts
+   * every attempt, refused ones included (W2R-m2).
+   */
+  sentCtl: CtlPayload[] = [];
   /** The group of every `callCommitLost`, in order. */
   commitLosts: string[] = [];
   /** The group of every `callLeaveCleanup` that WIPED, in order. */
@@ -1885,6 +1912,19 @@ export class World {
    * session would do; a spec may call it to play that part.
    */
   abortResumePrefetch: AbortResumePrefetchDep | undefined = undefined;
+  /**
+   * The signal of the live connect's prefetch, when the harness started it
+   * (`prefetchFromBridge`); `undefined` otherwise. Aborted by the session's
+   * `abortResumePrefetch`, by a hang-up and by the page's death alike.
+   */
+  resumePrefetchSignal: AbortSignal | undefined = undefined;
+  /**
+   * How many times the `abortResumePrefetch` the harness handed over
+   * (`prefetchFromBridge`) was called, over every connect of this seat: by
+   * the session, or by a spec playing it. The host's own aborts (a hang-up,
+   * a page death) abort the controller directly and are not counted.
+   */
+  prefetchAborts = 0;
 
   /**
    * The live page's bridge, for a spec playing the HOST (`state.tsx`): a
@@ -1931,6 +1971,7 @@ export class World {
       tokens: new Set<string>(),
       buffer: new MlsInboundBuffer(),
       timers,
+      prefetchAbort: null,
       kept: new KeptLocalGroups({
         now: () => Date.now(),
         setTimer: (fn, ms) => {
@@ -1987,26 +2028,81 @@ export class World {
    * `state.tsx` does per connect attempt. With neither the session gets no
    * dep, as before resume existed.
    */
-  boot({
-    resumePrefetch,
-    abortResumePrefetch,
-    prefetchFromBridge = false,
-  }: {
-    resumePrefetch?: ResumePrefetchDep;
-    abortResumePrefetch?: AbortResumePrefetchDep;
-    prefetchFromBridge?: boolean;
-  } = {}): void {
+  boot(opts: ConnectOptions = {}): void {
     const page = this.#newPage();
     this.#page = page;
     this.drainMailbox();
-    const bridge = bridgeFor(this, page);
-    this.#bridge = bridge;
+    this.#bridge = bridgeFor(this, page);
+    this.#newSession(opts);
+  }
+
+  /**
+   * A new call on the SAME page (`state.tsx`'s next `connect()` after a
+   * `hangUp`): a fresh `Session` on the live page's bridge, so it finds the
+   * page's kept-group registry, claims and pending deletes as the hang-up
+   * left them, and shares the page's `startupWipeTokens`. No WS reconnect,
+   * so no mailbox drain. The publish gate is re-seeded with `negotiating`
+   * and the chip's latch starts empty, as `connect()` leaves them. The deps
+   * are `boot`'s; a same-page rejoin in the app runs its prefetch, so a
+   * spec modeling one passes `prefetchFromBridge: true` (`Fleet.rejoin`).
+   * Not started: the spec calls `start()`.
+   */
+  connect(opts: ConnectOptions = {}): void {
+    assert.equal(this.#page.dead, false, "the page is dead: boot a new one");
+    assert.equal(
+      this.session.state(),
+      "closed",
+      "the previous call is still up: hang up first",
+    );
+    this.gate = new Set<PublishGateReason>(["negotiating"]);
+    this.journal = [];
+    this.localPublications = [];
+    this.#newSession(opts);
+  }
+
+  /**
+   * `state.tsx`'s `disconnect(opts)` for the live call, page kept: the
+   * connect's prefetch is aborted FIRST (a claim it holds goes back to its
+   * keep timer), then, on sign-out (`discardMls`), the bridge's
+   * `discardKeptLocalGroups` runs ahead of the dispose, and the session is
+   * disposed with `{ discard: discardMls }` — by default it KEEPS its group
+   * (resume plan "Dispose / keep"). The gate, the chip's latch and hold and
+   * the local publications are cleared, as the disconnect clears them: with
+   * no room, `publishing()` means nothing until the next `connect`. The SFU
+   * room is left as it is (a spec drives `onParticipantLeft` on the peers).
+   */
+  hangUp({ discardMls = false }: { discardMls?: boolean } = {}): void {
+    const page = this.#page;
+    page.prefetchAbort?.abort();
+    page.prefetchAbort = null;
+    if (discardMls) void this.bridge.discardKeptLocalGroups();
+    this.session.dispose({ discard: discardMls });
+    this.gate = new Set<PublishGateReason>();
+    this.journal = [];
+    this.localPublications = [];
+  }
+
+  /** A session on the live page with `opts`' deps, bound to its media fakes. */
+  #newSession({
+    resumePrefetch,
+    abortResumePrefetch,
+    prefetchFromBridge = false,
+  }: ConnectOptions): void {
+    const page = this.#page;
+    const bridge = this.bridge;
     let prefetch = resumePrefetch;
     let abort = abortResumePrefetch;
+    page.prefetchAbort = null;
+    this.resumePrefetchSignal = undefined;
     if (prefetchFromBridge) {
       const controller = new AbortController();
+      page.prefetchAbort = controller;
+      this.resumePrefetchSignal = controller.signal;
       prefetch = bridge.prefetchResume(this.channelId, controller.signal);
-      abort = () => controller.abort();
+      abort = () => {
+        this.prefetchAborts++;
+        controller.abort();
+      };
     }
     this.resumePrefetch = prefetch;
     this.abortResumePrefetch = abort;
@@ -2027,15 +2123,19 @@ export class World {
    * disposed WITHOUT native teardown — its bridge is dead first, so its
    * leave-clean (and every continuation still in flight) reaches nothing —
    * and what lived in the page goes with it: the sink, the pre-sink buffer,
-   * the kept-group registry and its timers, the publish gate, the chip's
-   * latch journal and the local publications. The native store, the tab's
-   * `sessionStorage`, the DS (and its mailboxes) and the SFU room are
-   * untouched, and so are the append-only logs a spec reads (`states`,
-   * `events`, `bridgeCalls`, …).
+   * the kept-group registry and its timers, the live connect's prefetch
+   * (aborted, so a held DS read released later never runs the dead page's
+   * `giveUp`, whose recency clear would reach the tab's storage), the
+   * publish gate, the chip's latch journal and the local publications. The
+   * native store, the tab's `sessionStorage`, the DS (and its mailboxes)
+   * and the SFU room are untouched, and so are the append-only logs a spec
+   * reads (`states`, `events`, `bridgeCalls`, …).
    */
   pageDeath(): void {
     const page = this.#page;
     page.dead = true;
+    page.prefetchAbort?.abort();
+    page.prefetchAbort = null;
     for (const handle of page.timers) {
       clearTimeout(handle as ReturnType<typeof setTimeout>);
     }
@@ -3013,8 +3113,9 @@ function bridgeFor(world: World, page: Page): E2EEBridge {
     // `e2ee_call_announce` builds the group-encrypted ctl payload natively and
     // `mlsSendCtl` relays it; `#announceDowngrade` calls them in that order
     // inside one try. Both resolve, so the announce completes without its
-    // catch: an announce is counted by the "callAnnounce" entry in
-    // `bridgeCalls` (the escape suite's `watchAnnounces`), not by the warn the
+    // catch: an announce ATTEMPT is counted by the "callAnnounce" entry in
+    // `bridgeCalls` (the escape suite's `watchAnnounces`), and a DELIVERED
+    // one by `sentCtl` (`watchDeliveries`), not by the warn the
     // catch emitted while these were unstubbed — that warn was the Proxy's
     // "not stubbed" throw being swallowed, so it counted attempts that never
     // reached the wire. Stubbing one without the other leaves it firing from
@@ -3041,12 +3142,14 @@ function bridgeFor(world: World, page: Page): E2EEBridge {
         };
       },
     ),
+    // The DS relays it: kept in `sentCtl`, the delivery an announce witness
+    // reads, where `bridgeCalls` also counts the refused attempts.
     mlsSendCtl: record(
       "mlsSendCtl",
-      async (): Promise<MlsHttpResult<void>> => ({
-        kind: "ok",
-        body: undefined,
-      }),
+      async (payload): Promise<MlsHttpResult<void>> => {
+        world.sentCtl.push({ ...payload });
+        return { kind: "ok", body: undefined };
+      },
     ),
     // ---- The resume keep (plan R-W2-1): the REAL registry, per page ----
     //
@@ -3571,7 +3674,9 @@ export interface Fleet {
    * The SFU room is left as it is: a spec modelling the Room's disconnect
    * and reconnect drives `onParticipantLeft` / `onParticipantJoined` itself.
    * Resolves once the new session's `start()` has run to its first await;
-   * its establish runs on the next `advance`.
+   * its establish runs on the next `advance`. With a held group on disk and
+   * a DS that confirms it, that establish RESUMES it (no wipe of it, no
+   * intent); a spec about today's wipe-and-rejoin uses `wipeRejoin`.
    */
   reload(id: Identity | string): Promise<World>;
   /**
@@ -3591,6 +3696,16 @@ export interface Fleet {
    * has seen some of them already. Resolves after a `flush`.
    */
   reconnect(id: Identity | string): Promise<World>;
+  /**
+   * A hang-up and a rejoin on the SAME page (`World.hangUp`, then
+   * `World.connect` with a prefetch on the page's bridge), started: the
+   * disposed session keeps its group in the page's registry (resume plan
+   * "Dispose / keep"), and the new one's prefetch can claim it. No page
+   * death, no WS reconnect, no mailbox drain. The SFU room is left as it
+   * is, as for `reload`. Resolves once the new session's `start()` has run
+   * to its first await.
+   */
+  rejoin(id: Identity | string): Promise<World>;
 }
 
 /**
@@ -3693,6 +3808,14 @@ export function newFleet(
     async reconnect(id) {
       const world = seat(id);
       world.drainMailbox();
+      await flush();
+      return world;
+    },
+    async rejoin(id) {
+      const world = seat(id);
+      world.hangUp();
+      world.connect({ prefetchFromBridge: true });
+      void world.session.start();
       await flush();
       return world;
     },
