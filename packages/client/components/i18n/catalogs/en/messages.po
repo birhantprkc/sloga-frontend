@@ -570,6 +570,18 @@ msgid "A moderator deafened you in this server. You won't hear this call until t
 msgstr "A moderator deafened you in this server. You won't hear this call until they lift it."
 
 #: components/rtc/state.tsx
+msgid "You were moved to a voice channel that isn't available here, so you have left the call."
+msgstr "You were moved to a voice channel that isn't available here, so you have left the call."
+
+#: components/rtc/state.tsx
+msgid "You were moved to #{destName}, but the call there couldn't be joined."
+msgstr "You were moved to #{destName}, but the call there couldn't be joined."
+
+#: components/rtc/state.tsx
+msgid "Moved to #{destName}"
+msgstr "Moved to #{destName}"
+
+#: components/rtc/state.tsx
 msgid "A moderator muted you in this server. Your microphone and camera stay off for everyone until they lift it."
 msgstr "A moderator muted you in this server. Your microphone and camera stay off for everyone until they lift it."
 
@@ -1005,6 +1017,11 @@ msgstr "Ask them to move their mouse. Their pointer should move on the screen yo
 msgid "Asked"
 msgstr "Asked"
 
+#. placeholder {0}: displayName()
+#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
+msgid "Stop watching stream from {0}"
+msgstr "Stop watching stream from {0}"
+
 #: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
 msgid "Asked for a turn"
 msgstr "Asked for a turn"
@@ -1390,6 +1407,15 @@ msgstr "Camera settings"
 #: components/app/interface/settings/user/voice/CameraOptions.tsx
 #~ msgid "Camera Settings"
 #~ msgstr "Camera Settings"
+
+#: components/ui/components/features/voice/callCard/VoiceCallCardActiveRoom.tsx
+#: components/ui/components/features/voice/callCard/VoiceCallCardActiveRoom.tsx
+msgid "Show all participants"
+msgstr "Show all participants"
+
+#: components/ui/components/features/voice/callCard/VoiceCallCardActiveRoom.tsx
+msgid "Hide participants without video"
+msgstr "Hide participants without video"
 
 #: components/app/interface/settings/user/voice/CameraPreview.tsx
 msgid "Camera unavailable — check permissions and that no other app is using it."
@@ -2434,6 +2460,14 @@ msgstr "Deafened by a moderator. They cannot hear this call."
 msgid "Decline"
 msgstr "Decline"
 
+#: components/ui/components/features/voice/VoiceChannelPreview.tsx
+msgid "Join the call, then press Watch to see their screen"
+msgstr "Join the call, then press Watch to see their screen"
+
+#: components/ui/components/features/voice/VoiceChannelPreview.tsx
+msgid "Press Watch to see their screen"
+msgstr "Press Watch to see their screen"
+
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "Deep"
@@ -2656,6 +2690,10 @@ msgstr "Disconnect"
 #: components/app/menus/UserContextMenu.tsx
 msgid "Disconnect from call"
 msgstr "Disconnect from call"
+
+#: components/app/menus/UserContextMenu.tsx
+msgid "Move to…"
+msgstr "Move to…"
 
 #: components/app/interface/settings/user/notifications/Sounds.tsx
 msgid "Disconnect Sound Style"
@@ -6905,6 +6943,11 @@ msgstr "Show message timestamps"
 msgid "Show Others"
 msgstr "Show Others"
 
+#. placeholder {0}: selection().hiddenCount
+#: components/ui/components/features/voice/callCard/VoiceCallCardActiveRoom.tsx
+msgid "{0, plural, one {# participant without video hidden} other {# participants without video hidden}}"
+msgstr "{0, plural, one {# participant without video hidden} other {# participants without video hidden}}"
+
 #: components/app/interface/settings/user/voice/OverlaySettings.tsx
 msgid "Show overlay during calls"
 msgstr "Show overlay during calls"
@@ -7298,6 +7341,24 @@ msgstr "Stop all drawing"
 msgid "Stop all drawing on my screen"
 msgstr "Stop all drawing on my screen"
 
+#: components/app/menus/UserContextMenu.tsx
+#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
+msgid "Watch stream"
+msgstr "Watch stream"
+
+#: components/app/menus/UserContextMenu.tsx
+#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
+msgid "Stop watching"
+msgstr "Stop watching"
+
+#: components/app/menus/UserContextMenu.tsx
+msgid "Listen to stream audio"
+msgstr "Listen to stream audio"
+
+#: components/app/menus/UserContextMenu.tsx
+msgid "Stop listening"
+msgstr "Stop listening"
+
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
 msgid "Stop at any time with Ctrl+Shift+Alt+Q."
 msgstr "Stop at any time with Ctrl+Shift+Alt+Q."
@@ -7326,6 +7387,16 @@ msgstr "Stop screen share"
 #: components/ui/components/features/voice/callCard/ParticipantTile.tsx
 msgid "Stop sharing"
 msgstr "Stop sharing"
+
+#. placeholder {0}: displayName()
+#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
+msgid "{0} is sharing their screen"
+msgstr "{0} is sharing their screen"
+
+#. placeholder {0}: displayName()
+#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
+msgid "Watch stream from {0}"
+msgstr "Watch stream from {0}"
 
 #: components/ui/components/features/voice/callCard/VoiceTranscribeButton.tsx
 msgid "Stop transcribing"
@@ -7551,6 +7622,21 @@ msgstr "That bot is currently offline — try again once it reconnects."
 #: components/app/menus/UserContextMenu.tsx
 msgid "That didn't go through. They may have left, or you may not have permission."
 msgstr "That didn't go through. They may have left, or you may not have permission."
+
+#: components/app/menus/UserContextMenu.tsx
+#: src/interface/navigation/channels/ServerSidebar.tsx
+msgid "Couldn't move you to that channel."
+msgstr "Couldn't move you to that channel."
+
+#: components/app/menus/UserContextMenu.tsx
+#: src/interface/navigation/channels/ServerSidebar.tsx
+msgid "They can't see that channel, so they can't be moved there."
+msgstr "They can't see that channel, so they can't be moved there."
+
+#: components/app/menus/UserContextMenu.tsx
+#: src/interface/navigation/channels/ServerSidebar.tsx
+msgid "Couldn't move them. They may have left the call, or you may not have permission."
+msgstr "Couldn't move them. They may have left the call, or you may not have permission."
 
 #: components/modal/modals/ImportDiscord.tsx
 msgid "That doesn't look like a Discord server template link."

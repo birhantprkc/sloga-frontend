@@ -127,6 +127,14 @@ EXPECTED=(
   "components/rtc/pauseClauseHold.test.ts 7 0"
   "components/client/mlsInboundBuffer.test.ts 11 0"
   "components/client/mlsEnvelopeClassify.test.ts 12 0"
+  # Call-view suggestions (opt-in screen shares, video-only grid, member
+  # moves, opt-in share recording), measured at 0c672a54.
+  "components/rtc/screenShareWatchPolicy.test.ts 48 0"
+  "components/rtc/voiceMovePolicy.test.ts 49 0"
+  "components/rtc/moveEventRedaction.test.ts 6 0"
+  "components/rtc/callModerationPolicy.test.ts 16 0"
+  "components/rtc/callRecorder.test.ts 25 0"
+  "components/ui/components/features/voice/callCard/callTileSelection.test.ts 23 0"
 )
 
 counter() { # counter <log> <name> — the runner's own summary counter, or ""
@@ -224,7 +232,22 @@ SPECS=(components/rtc/mls*.test.ts components/rtc/rosterReconcile.test.ts
   # session's drain acts on. The classifier's spec ran nowhere before these
   # two lines.
   components/client/mlsInboundBuffer.test.ts
-  components/client/mlsEnvelopeClassify.test.ts)
+  components/client/mlsEnvelopeClassify.test.ts
+  # Call-view suggestions. The watch policy decides which remote shares we
+  # subscribe to (a share nobody chose to watch must never be pulled); the
+  # move policy decides when a client obeys a move and whether a move token
+  # is usable here; the redaction spec keeps the move token (a live SFU
+  # credential) out of the SDK's debug event log. It imports the stoat.js
+  # SOURCE module, but it is a client spec and runs from here.
+  components/rtc/screenShareWatchPolicy.test.ts
+  components/rtc/voiceMovePolicy.test.ts
+  components/rtc/moveEventRedaction.test.ts
+  # Moderation (disconnect / move offer) and opt-in share recording both
+  # changed shape in this work and had no gate running them.
+  components/rtc/callModerationPolicy.test.ts
+  components/rtc/callRecorder.test.ts
+  # Outside components/rtc: which tiles the video-only grid shows.
+  components/ui/components/features/voice/callCard/callTileSelection.test.ts)
 # 🔴 Arguments ADD to that set; they do not replace it. They used to replace
 # it, so the natural invocation for this branch —
 #   rtc-gate.sh components/rtc/mls*.test.ts
@@ -295,7 +318,37 @@ FILES=(components/rtc/mlsCallSession.ts components/rtc/mlsCallModePolicy.ts
   # Enrolled because it is clean: `prettier --check` passes on it (and passed
   # at base c219c107), and eslint exits 0 on it with ONE pre-existing warning
   # (see the eslint step below).
-  components/client/e2ee.ts)
+  components/client/e2ee.ts
+  # Call-view suggestions. Enrolled because every file here is clean:
+  # `prettier --check` exits 0 and `eslint --max-warnings 0` exits 0 on each,
+  # one file at a time (measured at 0c672a54). The policies and their specs:
+  components/rtc/screenShareWatchPolicy.ts
+  components/rtc/screenShareWatchPolicy.test.ts
+  components/rtc/voiceMovePolicy.ts components/rtc/voiceMovePolicy.test.ts
+  components/rtc/voiceMoveDrag.ts components/rtc/moveEventRedaction.test.ts
+  components/rtc/callModerationPolicy.ts
+  components/rtc/callModerationPolicy.test.ts
+  components/rtc/callRecorder.ts components/rtc/callRecorder.test.ts
+  components/ui/components/features/voice/callCard/callTileSelection.ts
+  components/ui/components/features/voice/callCard/callTileSelection.test.ts
+  # The files this work edits to wire those policies in. Same rule as
+  # VoiceCallDowngradeBanner.tsx above: a file the branch modifies is linted
+  # and formatted, or nothing is. RoomAudioManager.tsx failed `prettier
+  # --check` before 0c672a54 fixed it; it is clean now.
+  components/rtc/components/RoomAudioManager.tsx components/rtc/index.ts
+  components/ui/components/features/voice/callCard/ParticipantTile.tsx
+  components/ui/components/features/voice/callCard/VoiceCallCardActiveRoom.tsx
+  components/ui/components/features/voice/callCard/VoiceCallCardPiP.tsx
+  components/ui/components/features/voice/callCard/VoiceMoveNotices.tsx
+  components/ui/components/features/voice/VoiceChannelPreview.tsx
+  components/app/menus/UserContextMenu.tsx
+  components/state/stores/Voice.ts
+  src/interface/navigation/channels/ServerSidebar.tsx)
+# 🔴 NOT in FILES: src/Interface.tsx. This work adds 4 lines to it, but eslint
+# reports two pre-existing solid/components-return-once warnings on it (both
+# present at base 3e9df3e8, in lines the work did not touch). The eslint step
+# below is warning-blind, so enrolling it would only raise the prose baseline;
+# `prettier --check` is clean on it and tsc still type-checks it.
 # 🔴 NOT in FILES: components/ui/components/features/voice/watch/WatchOverlay.tsx.
 # Wave 3 changes ONE line of it (`bannerParksFloat(voice.callBanner())`), but
 # the file carries 101 pre-existing prettier/prettier warnings and fails
@@ -523,7 +576,8 @@ run "prettier --check" 12 "$ROOT/node_modules/.bin/prettier" --check "${FILES[@]
 # real one. A FOURTH, not solid/reactivity, arrived with `e2ee.ts` (wave 1 of
 # the rejoin-resume plan): @typescript-eslint/no-unused-vars on the unused
 # `catch (error)` binding in the encrypted-send path, pre-existing at base
-# c219c107 and in no line that wave touched.
+# c219c107 and in no line that wave touched. The call-view suggestions files
+# enrolled in FILES add none: each was measured at `--max-warnings 0`.
 #
 # 🔴 This gate reads eslint's EXIT STATUS and eslint exits 0 on warnings, so
 # this step is WARNING-BLIND by construction. Do not read the count above as
