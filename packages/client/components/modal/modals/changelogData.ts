@@ -9,12 +9,12 @@ import type { ChangelogResponse } from "./Changelog";
  */
 export const CHANGELOGS: ChangelogResponse[] = [
   // ==========================================================================
-  // v0.63.0 (not yet cut). Copy constraints, load-bearing:
-  // - 🔴 PROVISIONAL ENTRY. Written when quick reactions merged, ahead of the
-  //   release. The sweep that cuts v0.63.0 sets `published_at`, retitles the
-  //   headline if a bigger change lands, and folds its other bullets in HERE
-  //   rather than adding a second entry. Any web deploy from main before then
-  //   pops this entry for everyone, so a mid-cycle hotfix must hold it back.
+  // v0.63.0 (cut 2026-09-25 at main `5a6c9ee0`). Copy constraints, load-bearing:
+  // - The entry was written provisionally from 2026-09-23 and folded in as
+  //   fixes landed. The `id` keeps its 2026-09-23 date on purpose: the live
+  //   web served nothing newer than `sloga-2026-09-21` at the cut, so nobody
+  //   has seen this entry and it pops once. `published_at` is the release
+  //   day, set by the sweep. A further edit after the cut moves the cut point.
   // - 🔴 The quick-reaction bullet must NOT promise more than the menu does.
   //   Nobody has clicked the row in a signed-in session: it is covered by tsc,
   //   eslint, and a built bundle that boots, never by use. It says what the
@@ -29,7 +29,9 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //   but from New Jersey: no latency was measured from Asia, so still no
   //   millisecond figures.
   //   Only the call's FIRST joiner picks the server, so "Sloga picks for you"
-  //   stays conditional ("calls you start").
+  //   stays conditional ("calls you start"). 🔴 A region the server owner
+  //   pinned overrides the measurement, hence "unless the server owner has
+  //   chosen a region"; never drop that clause.
   // - The own-message fix has two halves. The server half went live
   //   2026-09-24 for EVERY app version: sending marks the channel read for
   //   its author. Checked in the database on one real send plus the organic
@@ -125,8 +127,12 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //     held the API URL and a live session token, and the backup rules let
   //     Google cloud backup and device transfer carry it. Only backups made
   //     AFTER this update leave it out; one already stored keeps its copy
-  //     until the phone replaces it. So the bullet says "backups made from
-  //     now on", never that old backups are clean. Signing out does NOT end
+  //     until the phone replaces it. So the bullet says backups made after
+  //     "you update the Android app", never that old backups are clean. The
+  //     fix lives in the APK: Play still carries vc66 (vc67-69 were never
+  //     uploaded), so nothing changes on a phone until it installs this
+  //     release. The same holds for the other-apps bullet below, hence its
+  //     "after this update". Signing out does NOT end
   //     the session on the server (see above), so do not suggest it as the
   //     remedy; removing the session in Settings → Sessions does.
   //   - Deliberately left out: the web push re-subscribe on a VAPID key
@@ -275,7 +281,7 @@ export const CHANGELOGS: ChangelogResponse[] = [
   {
     id: "sloga-2026-09-23",
     title: "Patch Notes",
-    published_at: "2026-09-23T23:59:00.000Z",
+    published_at: "2026-09-26T12:00:00.000Z",
     web_version: "0.63.0",
     markdown_content: `## v0.63.0 — Referral Program, Get Perks
 
@@ -296,7 +302,7 @@ export const CHANGELOGS: ChangelogResponse[] = [
 - **You only see the ones you can use.** The row is hidden where you do not have permission to react, and on a message that only accepts certain reactions, only those appear.
 
 ### 🌏 Voice
-- **Sloga now has a voice server in Asia, in Singapore.** If you are in the Philippines, Indonesia, Malaysia, Thailand, Vietnam or nearby, calls you start no longer have to cross the Pacific to reach the US. Sloga measures which server is fastest for you and uses it, so there is nothing to set.
+- **Sloga now has a voice server in Asia, in Singapore.** If you are in the Philippines, Indonesia, Malaysia, Thailand, Vietnam or nearby, calls you start no longer have to cross the Pacific to reach the US. Unless the server owner has chosen a region, Sloga measures which server is fastest for you and uses it, so there is nothing to set.
 - **Server owners can pin calls to it.** **Server Settings → Overview → Voice region** now lists **Asia (Singapore)** alongside US East and South America (São Paulo).
 
 ### 🔔 Fixes
@@ -330,8 +336,8 @@ export const CHANGELOGS: ChangelogResponse[] = [
 - **Moderators can no longer mute, deafen or rename the server owner.** An owner with no roles counted as the lowest rank, so anyone allowed to mute members could mute them too.
 - **Forum posts now respect Read Message History.** A role denied it can still see which posts exist and their titles, but can no longer open older posts or read their earlier replies.
 - **Server owners can choose who may hand over control of their screen.** **Remote Control** now appears under **Voice** in a server's and channel's permissions. It covers handing over your own shared screen; nobody can take control of someone else's.
-- **Android backups no longer include your sign-in.** The Android app keeps a copy of it so push notifications can renew themselves, and Google backup and moving to a new phone carried that copy along. Backups made from now on leave it out.
-- **Other apps on your phone can no longer control Sloga.** An app installed on the same Android phone could open Sloga as if it were one of Sloga's own notifications, and use that to run its own code inside Sloga or put you in a voice call. Sloga now only acts on notifications it created itself.
+- **Android backups no longer include your sign-in.** The Android app keeps a copy of it so push notifications can renew themselves, and Google backup and moving to a new phone carried that copy along. Once you update the Android app, backups made after that leave it out.
+- **Other apps on your phone can no longer control Sloga after this update.** An app installed on the same Android phone could open Sloga as if it were one of Sloga's own notifications, and use that to run its own code inside Sloga or put you in a voice call. Sloga now only acts on notifications it created itself.
 - **A malformed connection can no longer tie up Sloga's servers.** A specially built connection request could keep the server that delivers your messages live busy for minutes. The part that handles those connections is now on a version that is not affected.
 - **Push notifications only go to real push services.** Sloga's servers now refuse to send a browser push notification anywhere other than the browser's own push service, and stop waiting on one that does not answer.
 - **sloga.gg and app.sloga.gg now always use a secure connection.** Typing an \`http://\` address sends you to the \`https://\` one.
