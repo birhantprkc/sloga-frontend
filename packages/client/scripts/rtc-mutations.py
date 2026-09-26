@@ -67,11 +67,12 @@ NODE = "node"
 SESSION = "mlsCallSession.ts"
 POLICY = "mlsCallModePolicy.ts"
 HARNESS = "mlsCallSession.harness.ts"
-#: No entry targets `state.tsx` any more — wave 1 moved everything a mutation
-#: could reach into `publishGateEpisode.ts`, and the seam wave moved the
-#: verdict DERIVATION into `pauseVerdict.ts` (see `VERDICT` below). What is
-#: LEFT in `state.tsx` is WIRING, and it is still unreachable here: that
-#: `beginDrive` is passed as
+#: Wave 1 moved everything a mutation could reach into
+#: `publishGateEpisode.ts`, and the seam wave moved the verdict DERIVATION
+#: into `pauseVerdict.ts` (see `VERDICT` below). What is LEFT in `state.tsx`
+#: is WIRING. Only the `state-*` entries at the end of this table reach any of
+#: it (see the next paragraph), and the publish-gate wiring is still
+#: unreachable here: that `beginDrive` is passed as
 #: `coalescingSweeper`'s FOURTH positional argument (a three-argument call
 #: still compiles and silently degrades drive scope to no scope), that the
 #: `EpisodeDeps` thunks are bound to the right room, and that `scheduleConfirm`
@@ -80,8 +81,15 @@ HARNESS = "mlsCallSession.harness.ts"
 #: as an `expect="green"` entry, which would be an admission dressed as a
 #: measurement.
 #:
-#: 🔴 ZERO entries carry `file=STATE`, and the wave-1 fix round ADDED to what
-#: that leaves unmeasured. `#gateGen` plus the per-sweeper `stillCurrent`
+#: 🔴 The ONLY entries that carry `file=STATE` are the `state-*` entries at the
+#: end of this table (call-view suggestions, wave 7). They reach nothing but
+#: the voice-move and chip-publication statements `stateWiring.test.ts` pins
+#: as TEXT: those source pins strip comments before matching (`codeOf`, in
+#: `sourcePins.harness.ts`), so unlike a `grep -qF` one comment line cannot
+#: satisfy them, but the same text in dead code still would, and a pin proves
+#: a statement is PRESENT, never what it does at runtime. Nothing else in
+#: `state.tsx` is pinned, and the wave-1 fix round ADDED to what that leaves
+#: unmeasured. `#gateGen` plus the per-sweeper `stillCurrent`
 #: closure (`gen === this.#gateGen && this.room() === room`, captured when the
 #: sweeper is BUILT) is now the only thing keeping a sweep parked on an awaited
 #: livekit op from spending publications in the NEXT call's episode. The
@@ -89,8 +97,10 @@ HARNESS = "mlsCallSession.harness.ts"
 #: answers false; nothing pins that the closure ANSWERS false for a disposed
 #: sweeper, and nothing in this table can. Do not paper over it with a
 #: source-text assertion: a `grep -qF` over a file no runner can load does not
-#: converge — one comment line defeats it. Closing this needs a further
-#: extraction or a live leg, not another entry here.
+#: converge — one comment line defeats it — and even a comment-stripped pin
+#: would hold the closure's TEXT, not that it answers false for a disposed
+#: sweeper. Closing this needs a further extraction or a live leg, not
+#: another entry here.
 #:
 #: 🔴 AND THE TWO VERDICT-READER ASSIGNMENTS, which is the residue the seam
 #: wave did NOT close and must not be read as covered:
@@ -2832,10 +2842,28 @@ MUTATIONS += [
         id="chip-observed-accessor-detached",
         what="the observed-status accessor is passed detached, losing its receiver",
         file=CHIP,
-        search="""    observedEncrypted: observedEncryptionMap(publishing, (identity) =>
-      sources.observedEncryption(identity),
-    ),""",
-        replace="""    observedEncrypted: observedEncryptionMap(publishing, () => true),""",
+        search="""      (identity) => sources.observedEncryption(identity),""",
+        replace="""      () => true,""",
+        specs=[CHIP_SPEC],
+    ),
+    # Opt-in shares (final audit F2): nobody here subscribes an unwatched
+    # share, so its GCM declaration is the only thing that can contradict a
+    # "not NONE" status. Both halves of that one-way rule must stay pinned.
+    Mutation(
+        id="chip-share-declaration-not-none",
+        what="an unwatched share passes on any declaration that is not NONE, so a missing field reads green",
+        file=CHIP,
+        search="""  return publications.some((pub) => pub.encryption !== ENCRYPTION_TYPE_GCM);""",
+        replace="""  return publications.some((pub) => pub.encryption === 0);""",
+        specs=[CHIP_SPEC],
+    ),
+    Mutation(
+        id="chip-share-contradiction-dropped",
+        what="a non-GCM declaration on an all-unwatched-shares participant no longer forces the status false",
+        file=CHIP,
+        search="""    if (shareOnlyDeclarationContradicts(participant))
+      observed.set(participant.identity, false);""",
+        replace="""    if (shareOnlyDeclarationContradicts(participant)) continue;""",
         specs=[CHIP_SPEC],
     ),
     Mutation(
@@ -3642,6 +3670,597 @@ MUTATIONS += [
         ],
         specs=[SERVEGUARD_SPEC, FLEET_SPEC],
         must_red=[SERVEGUARD_SPEC, FLEET_SPEC],
+    ),
+]
+
+
+# --- Opt-in screen shares (call-view suggestions, wave 5, audit F3) ----------
+#
+# A remote screen share is subscribed only once its identity is WATCHED. The
+# media-e2ee final audit found the enforcement had no mutation coverage at
+# all: deleting the watch check from `RoomAudioManager`'s video effect brought
+# back blanket share subscription with every gate green. The decisions now
+# live in `screenShareWatchPolicy.ts` (pure, spec'd), and
+# `RoomAudioManager.tsx` — which `node --test` cannot load — is held to
+# calling them by the SOURCE PINS at the end of
+# `screenShareWatchPolicy.test.ts`. So a `file=AUDIO_MANAGER` entry below is
+# killed by a pin, not by running the effect: what it proves is that the pin
+# notices the wiring change, and the policy entries prove the functions it
+# pins are themselves held by assertions. The pins strip comments before
+# matching, so commenting a call out does not satisfy them; the same text in
+# dead code (`if (false) { ... }`) would, and nothing here measures that.
+#
+# 🔴 No entry touches the cryptor-disarm sweep, even transiently: the pins
+# assert its inputs (`tracks()` / `videoTracks()`) stay unfiltered, but that
+# rule is not mutation-tested here.
+
+#: Relative to `RTC`, like every other target (`apply` reads
+#: `RTC / mutation.file`).
+AUDIO_MANAGER = "components/RoomAudioManager.tsx"
+WATCH_POLICY = "screenShareWatchPolicy.ts"
+RECORDER = "callRecorder.ts"
+WATCH_POLICY_SPEC = "components/rtc/screenShareWatchPolicy.test.ts"
+RECORDER_SPEC = "components/rtc/callRecorder.test.ts"
+
+MUTATIONS += [
+    # ---- the wiring in RoomAudioManager.tsx (killed by the source pins) -----
+    Mutation(
+        id="watch-audio-gate-dropped",
+        what="the audio memo filters inline again without the watch check, so every remote screen share's audio is subscribed and played whether or not anyone pressed Watch",
+        file=AUDIO_MANAGER,
+        search="""    return remoteAudioToPlay(tracks(), watched, {
+      isLocal: (track) => isLocal(track.participant),
+      isAudio: (track) => track.publication.kind === Track.Kind.Audio,
+      addressee: (track) => whisperTarget(track.publication.trackName),
+      localUserId: myUserId,
+      watchPub: watchPubOf,
+    });
+""",
+        replace="""    return tracks().filter((track) => {
+      if (isLocal(track.participant)) return false;
+      if (track.publication.kind !== Track.Kind.Audio) return false;
+      const addressee = whisperTarget(track.publication.trackName);
+      if (addressee && addressee !== myUserId()) return false;
+      return true;
+    });
+""",
+        specs=[WATCH_POLICY_SPEC],
+        must_red=[WATCH_POLICY_SPEC],
+    ),
+    Mutation(
+        id="watch-audio-view-neutered",
+        what="the audio memo still calls `remoteAudioToPlay`, but hands it a watch view that calls every track a microphone, so the watch gate passes all share audio",
+        file=AUDIO_MANAGER,
+        search="""      watchPub: watchPubOf,
+""",
+        replace="""      watchPub: (track) => ({ ...watchPubOf(track), source: "microphone" }),
+""",
+        specs=[WATCH_POLICY_SPEC],
+        must_red=[WATCH_POLICY_SPEC],
+    ),
+    Mutation(
+        id="watch-audio-subscribes-unfiltered",
+        what="the audio subscribe effect requests every track in the UNFILTERED list instead of the gated memo, so unwatched share audio is subscribed",
+        file=AUDIO_MANAGER,
+        # Two anchors, so the debug `console.info` between them is free to go:
+        # `const tracks = filteredTracks();` alone also opens the normalizer
+        # effect, hence the `createEffect` line in front of it.
+        search="""  createEffect(() => {
+    const tracks = filteredTracks();
+""",
+        replace="""  createEffect(() => {
+""",
+        also=[
+            (
+                """    for (const track of tracks) {
+""",
+                """    for (const track of tracks()) {
+""",
+            ),
+        ],
+        specs=[WATCH_POLICY_SPEC],
+        must_red=[WATCH_POLICY_SPEC],
+    ),
+    Mutation(
+        id="watch-camera-effect-takes-shares",
+        what="the camera effect subscribes every remote video, screen shares included, so unwatched share video is pulled down alongside the cameras",
+        file=AUDIO_MANAGER,
+        search="""    for (const track of nonShareVideoToSubscribe(filteredVideoTracks())) {
+""",
+        replace="""    for (const track of filteredVideoTracks()) {
+""",
+        specs=[WATCH_POLICY_SPEC],
+        must_red=[WATCH_POLICY_SPEC],
+    ),
+    Mutation(
+        id="watch-share-video-ungated",
+        what="the watched-share video effect subscribes every remote screen share (the audit's F3 deletion), so share video flows before anyone presses Watch",
+        file=AUDIO_MANAGER,
+        search="""    for (const track of watchedShareVideoToSubscribe(
+      filteredVideoTracks(),
+      watched,
+      watchPubOf,
+    )) {
+""",
+        replace="""    for (const track of filteredVideoTracks().filter((track) =>
+      isShareSource(track.source),
+    )) {
+""",
+        specs=[WATCH_POLICY_SPEC],
+        must_red=[WATCH_POLICY_SPEC],
+    ),
+    Mutation(
+        id="watch-share-video-watch-set-ignored",
+        what="the watched-share video effect still calls the policy, but with a watch set of everyone publishing video, so every remote share counts as watched",
+        file=AUDIO_MANAGER,
+        search="""      filteredVideoTracks(),
+      watched,
+      watchPubOf,
+""",
+        replace="""      filteredVideoTracks(),
+      new Set(filteredVideoTracks().map((t) => t.participant.identity)),
+      watchPubOf,
+""",
+        specs=[WATCH_POLICY_SPEC],
+        must_red=[WATCH_POLICY_SPEC],
+    ),
+    Mutation(
+        id="watch-unsubscribe-backstop-dropped",
+        what="the explicit-unsubscribe backstop never selects anything, so a share some other path made desired while unwatched stays subscribed and is re-requested on every resume",
+        file=AUDIO_MANAGER,
+        search="""    for (const { publication } of sharesToUnsubscribe(pubs, watched)) {
+""",
+        replace="""    for (const { publication } of pubs.filter(() => false)) {
+""",
+        specs=[WATCH_POLICY_SPEC],
+        must_red=[WATCH_POLICY_SPEC],
+    ),
+    Mutation(
+        id="watch-reconcile-sees-no-transition",
+        what="the watch-transition effect reconciles the previous set against itself, so Stop watching never unsubscribes the share and a re-Watch never re-requests its audio",
+        file=AUDIO_MANAGER,
+        search="""      for (const change of reconcileShareSubscriptions(prev, next, pubs)) {
+""",
+        replace="""      for (const change of reconcileShareSubscriptions(prev, prev, pubs)) {
+""",
+        specs=[WATCH_POLICY_SPEC],
+        must_red=[WATCH_POLICY_SPEC],
+    ),
+    # ---- the decisions in screenShareWatchPolicy.ts --------------------------
+    Mutation(
+        id="watch-policy-watched-check-flipped",
+        what="`shouldSubscribeRemote` subscribes a share only when its identity is NOT watched: every unwatched share flows and a Watch press cuts it off",
+        file=WATCH_POLICY,
+        search="""  return watched.has(pub.identity);
+""",
+        replace="""  return !watched.has(pub.identity);
+""",
+        specs=[WATCH_POLICY_SPEC],
+        must_red=[WATCH_POLICY_SPEC],
+    ),
+    Mutation(
+        id="watch-policy-unsubscribe-check-flipped",
+        what="`sharesToUnsubscribe` selects WATCHED shares instead of unwatched ones, so the backstop tears down what the viewer chose and keeps what they did not",
+        file=WATCH_POLICY,
+        search="""    if (pub.isSelfLeg || !watched.has(pub.identity)) out.push(pub);
+""",
+        replace="""    if (pub.isSelfLeg || watched.has(pub.identity)) out.push(pub);
+""",
+        specs=[WATCH_POLICY_SPEC],
+        must_red=[WATCH_POLICY_SPEC],
+    ),
+    Mutation(
+        id="watch-policy-audio-gate-dropped",
+        what="`remoteAudioToPlay` keeps every remote audio track that is not a whisper to someone else, so unwatched share audio (and our own leg's) is subscribed and played",
+        file=WATCH_POLICY,
+        search="""    return shouldSubscribeRemote(reads.watchPub(ref), watched);
+""",
+        replace="""    return true;
+""",
+        specs=[WATCH_POLICY_SPEC],
+        must_red=[WATCH_POLICY_SPEC],
+    ),
+    Mutation(
+        id="watch-policy-share-video-gate-dropped",
+        what="`watchedShareVideoToSubscribe` returns every share-source reference without the watch check, so all remote share video is subscribed",
+        file=WATCH_POLICY,
+        search="""      isShareSource(ref.source) &&
+      shouldSubscribeRemote(watchPub(ref), watched),
+""",
+        replace="""      isShareSource(ref.source),
+""",
+        specs=[WATCH_POLICY_SPEC],
+        must_red=[WATCH_POLICY_SPEC],
+    ),
+    Mutation(
+        id="watch-policy-camera-takes-shares",
+        what="`nonShareVideoToSubscribe` returns every video reference, so the camera effect subscribes screen shares too, watched or not",
+        file=WATCH_POLICY,
+        search="""  return refs.filter((ref) => !isShareSource(ref.source));
+""",
+        replace="""  return [...refs];
+""",
+        specs=[WATCH_POLICY_SPEC],
+        must_red=[WATCH_POLICY_SPEC],
+    ),
+    # ---- the recorder's watch-set getter (callRecorder.ts) -------------------
+    Mutation(
+        id="recorder-watch-set-ignored",
+        what="the recorder asks the policy about a watch set that always contains the sender, so every share's audio the SFU pushes is mixed into the recording, watched or not",
+        file=RECORDER,
+        search="""      this.#watchedShares(),
+""",
+        replace="""      new Set([identity]),
+""",
+        specs=[RECORDER_SPEC],
+        must_red=[RECORDER_SPEC],
+    ),
+    Mutation(
+        id="recorder-watch-set-snapshotted",
+        what="the recorder reads the watch set once at construction, so a Watch or Stop watching during a recording never moves that share into or out of the mix",
+        file=RECORDER,
+        search="""    this.#watchedShares = watchedShares;
+""",
+        replace="""    const snapshot = watchedShares();
+    this.#watchedShares = () => snapshot;
+""",
+        specs=[RECORDER_SPEC],
+        must_red=[RECORDER_SPEC],
+    ),
+]
+
+
+# --- Voice moves and chip publications (call-view suggestions, wave 7) ------
+#
+# Both reviewers of waves 5-6 found that the `state.tsx` wiring of four fixes
+# could be undone by a one-token edit with every gate green: F1 (a device the
+# user's own other session kicked must not follow that session's move), F4
+# (a dropped move token answers from the refusal latch it bypassed), S1 (only
+# some latched refusals may be bypassed) and F2 (the chip's share-only
+# contradiction reads each remote publication's desired/subscribed state and
+# re-derives when it flips). The decisions live in `voiceMovePolicy.ts` and
+# `chipInputs.ts`, whose own specs hold them (the `move-policy-*` and
+# `chip-pubs-*` entries); `state.tsx` is held to CALLING them by the source
+# pins in `stateWiring.test.ts` (the `state-*` entries), which is the same
+# arrangement as the `watch-*` entries above: a `file=STATE` entry is killed
+# by a pin noticing the text changed, not by running the code, and dead code
+# carrying the pinned text would not be noticed.
+
+#: Relative to `RTC`, like every other target (`apply` reads
+#: `RTC / mutation.file`).
+VOICE_MOVE_POLICY = "voiceMovePolicy.ts"
+STATE_WIRING_SPEC = "components/rtc/stateWiring.test.ts"
+VOICE_MOVE_SPEC = "components/rtc/voiceMovePolicy.test.ts"
+
+MUTATIONS += [
+    # ---- the wiring in state.tsx (killed by the source pins) ----------------
+    Mutation(
+        id="state-move-token-check-bypassed",
+        what="`#followMove` hands `shouldObeyMove` a constant `tokenForThisConnection: true`, so a device the user's own other session removed follows that session's move back into the call (F1)",
+        file=STATE,
+        search="""        tokenForThisConnection,
+      })
+""",
+        replace="""        tokenForThisConnection: true,
+      })
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-move-token-wrong-identity",
+        what="`#followMove` checks the move's token against the bare user id instead of the identity this connection last held, so a token minted for another session's identity reads as this connection's (F1)",
+        file=STATE,
+        search="""      lastLocalIdentity: this.#lastLocalIdentity,
+""",
+        replace="""      lastLocalIdentity: this.getClient()?.user?.id,
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-move-verdict-or-true",
+        what="`#followMove`'s token verdict gains an appended `|| true`, so every move reads as minted for this connection and a device the user's own other session removed follows that session's move (F1; the pinned text is still there, as a prefix)",
+        file=STATE,
+        search="""      lastLocalIdentity: this.#lastLocalIdentity,
+      to,
+    });
+""",
+        replace="""      lastLocalIdentity: this.#lastLocalIdentity,
+      to,
+    }) || true;
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-last-identity-gen-guard-dropped",
+        what="the connected listener records `#lastLocalIdentity` without its generation check, so a superseded Room connecting late overwrites the identity the move rule compares against (F1)",
+        file=STATE,
+        search="""      if (gen === this.#connectGen)
+        this.#lastLocalIdentity = room.localParticipant.identity;
+""",
+        replace="""      this.#lastLocalIdentity = room.localParticipant.identity;
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-last-identity-suffix",
+        what="the connected listener records only the user-id part of the identity (`.split(\":\")[0]`), so a token minted for another session's `user:device` identity is compared against the bare user id (F1; the pinned text is still there, as a prefix)",
+        file=STATE,
+        search="""        this.#lastLocalIdentity = room.localParticipant.identity;
+""",
+        replace="""        this.#lastLocalIdentity = room.localParticipant.identity.split(":")[0];
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-last-identity-written-at-connect",
+        what="`#lastLocalIdentity` is also written when the Room is created, from the bare user id, so it names an identity the connection never held until (and unless) it connects (F1)",
+        file=STATE,
+        search="""      this.#setRoom(room);
+      this.#setChannel(channel);
+      this.#setState("CONNECTING");
+""",
+        replace="""      this.#setRoom(room);
+      this.#setChannel(channel);
+      this.#lastLocalIdentity = this.getClient()?.user?.id;
+      this.#setState("CONNECTING");
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-f4-latch-reads-joinblocked",
+        what="the decision after M3 reads the latch through `joinBlocked`, which answers \"in-flight\" inside the attempt, so `answer_latch` is unreachable and a dropped move token joins past a refusal that still holds (F4)",
+        file=STATE,
+        search="""        bypassedRefusal !== undefined && this.#refusalLatchHolds(channel),
+""",
+        replace="""        bypassedRefusal !== undefined && this.joinBlocked(channel) === "refused",
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-f4-latch-helper-sees-in-flight",
+        what="`#refusalLatchHolds` passes the in-flight channel, so it reads \"in-flight\" for the attempt asking and never \"refused\": `answer_latch` is unreachable again (F4)",
+        file=STATE,
+        search="""    return this.#joinBlockedWith(channel, undefined) === "refused";
+""",
+        replace="""    return this.#joinBlockedWith(channel, this.joinPending()) === "refused";
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-joinblockedwith-reads-pending",
+        what="`#joinBlockedWith` looks the in-flight attempt up itself instead of using what its caller passed, so `#refusalLatchHolds` reads \"in-flight\" inside the attempt and `answer_latch` is unreachable again (D1/F4)",
+        file=STATE,
+        search="""      inFlightChannelId,
+      latch,
+""",
+        replace="""      inFlightChannelId: this.joinPending(),
+      latch,
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-joinblocked-drops-in-flight",
+        what="the public `joinBlocked` passes no in-flight channel, so a join affordance stays live while its own attempt is in flight (D1)",
+        file=STATE,
+        search="""    return this.#joinBlockedWith(channel, this.joinPending());
+""",
+        replace="""    return this.#joinBlockedWith(channel, undefined);
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-f4-answer-latch-joins",
+        what="the `answer_latch` arm drops the token and falls through to the normal join instead of answering from the latch, so a refusal the move bypassed is joined past anyway (F4)",
+        file=STATE,
+        search="""        this.disconnect();
+        this.onErr(new Error(this.#joinRefusalText(channel, bypassedRefusal!)));
+        return false;
+""",
+        replace="""        auth = undefined;
+        break;
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-latch-bypass-any-reason",
+        what="`connect()` lets a move token past ANY latched refusal, not only the ones `moveBypassesRefusalLatch` allows, so a move steps past a device or encryption refusal (S1)",
+        file=STATE,
+        search="""        auth &&
+        opts?.moveLatchBypass &&
+        moveBypassesRefusalLatch(latchedReason)
+""",
+        replace="""        auth &&
+        opts?.moveLatchBypass
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-latch-bypass-without-token",
+        what="`connect()` honors `moveLatchBypass` with no move token in hand, so a caller passing the option steps past a latched refusal on its own (S1)",
+        file=STATE,
+        search="""        auth &&
+        opts?.moveLatchBypass &&
+""",
+        replace="""        opts?.moveLatchBypass &&
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-chip-publications-inline-desired",
+        what="the chip's remote publications are mapped inline again with `desired: true`, so an unwatched share never reads undesired and F2's share-only contradiction is off for every participant",
+        file=STATE,
+        search="""                  publications: chipPublicationsOf(
+                    p.trackPublications.values(),
+                  ),
+""",
+        replace="""                  publications: [...p.trackPublications.values()].map(
+                    (pub) => ({
+                      source: pub.source,
+                      desired: true,
+                      subscribed: pub.isSubscribed,
+                      encryption: pub.trackInfo?.encryption,
+                    }),
+                  ),
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-chip-subscription-listener-removed",
+        what="nothing listens for `trackSubscriptionStatusChanged`, so Stop watching flips `isDesired` without re-deriving the chip, which keeps reading the stale state (F2)",
+        file=STATE,
+        search="""    room.addListener("trackSubscriptionStatusChanged", () => {
+      if (this.room() !== room) return;
+      this.#setChipPublicationsVersion((v) => v + 1);
+    });
+""",
+        replace="",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-chip-reconnect-bump-removed",
+        what="the `reconnected` listener no longer bumps the chip's publication version, so a subscription change whose event `SignalResumed` discarded never re-derives the chip (F2)",
+        file=STATE,
+        search="""      this.#seedLiveRemoteShares(room);
+      // The same discard can eat a `trackSubscriptionStatusChanged` (below).
+      this.#setChipPublicationsVersion((v) => v + 1);
+""",
+        replace="""      this.#seedLiveRemoteShares(room);
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-chip-version-read-removed",
+        what="`callEncryptionChip()` no longer reads the publication version, so the bumps above re-run nothing and the chip keeps a stale desired/subscribed reading (F2)",
+        file=STATE,
+        search="""    this.#chipPublicationsVersion();
+    const room = this.room();
+""",
+        replace="""    const room = this.room();
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-move-event-name-unchecked",
+        what="the move event's name loses `satisfies keyof Events`, so a misspelling (or an SDK rename) registers a listener that never fires and no move is ever followed, with tsc green",
+        file=STATE,
+        search="""const VOICE_MOVE_REQUESTED = "voiceMoveRequested" satisfies keyof Events;
+""",
+        replace="""const VOICE_MOVE_REQUESTED: string = "voiceMoveRequested";
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    # ---- the decisions in voiceMovePolicy.ts --------------------------------
+    Mutation(
+        id="move-policy-disconnected-token-dropped",
+        what="`shouldObeyMove` no longer requires a token for this connection when DISCONNECTED by removal, so a device the user's own other session kicked follows that session's move (F1)",
+        file=VOICE_MOVE_POLICY,
+        search="""  if (input.tokenForThisConnection !== true) return false;
+""",
+        replace="",
+        specs=[VOICE_MOVE_SPEC],
+        must_red=[VOICE_MOVE_SPEC],
+    ),
+    Mutation(
+        id="move-policy-reconnecting-token-ignored",
+        what="`shouldObeyMove` obeys any move while RECONNECTING into the source, whoever the token was minted for (F1)",
+        file=VOICE_MOVE_POLICY,
+        search="""      return input.tokenForThisConnection === true;
+""",
+        replace="""      return true;
+""",
+        specs=[VOICE_MOVE_SPEC],
+        must_red=[VOICE_MOVE_SPEC],
+    ),
+    Mutation(
+        id="move-policy-dropped-token-always-joins",
+        what="`moveAuthDecision` ignores `latchStillRefused` and joins normally with any dropped token, so a move whose token M3 rejected joins past the refusal latch it bypassed (F4, fail open)",
+        file=VOICE_MOVE_POLICY,
+        search="""  return input.latchStillRefused ? "answer_latch" : "join";
+""",
+        replace="""  return "join";
+""",
+        specs=[VOICE_MOVE_SPEC],
+        must_red=[VOICE_MOVE_SPEC],
+    ),
+    Mutation(
+        id="move-policy-dropped-token-always-answers",
+        what="`moveAuthDecision` ignores `latchStillRefused` and answers from the latch for every dropped token, so a move into a channel whose latch has cleared is refused (F4, fail closed but wrong)",
+        file=VOICE_MOVE_POLICY,
+        search="""  return input.latchStillRefused ? "answer_latch" : "join";
+""",
+        replace="""  return "answer_latch";
+""",
+        specs=[VOICE_MOVE_SPEC],
+        must_red=[VOICE_MOVE_SPEC],
+    ),
+    Mutation(
+        id="move-policy-bypass-allowlist-widened",
+        what="the move bypass allowlist gains `DeviceNotRegistered`, so a move token steps past a device refusal that no moderator can waive (S1)",
+        file=VOICE_MOVE_POLICY,
+        search="""  "MissingPermission",
+  "CannotJoinCall",
+]);
+""",
+        replace="""  "MissingPermission",
+  "CannotJoinCall",
+  "DeviceNotRegistered",
+]);
+""",
+        specs=[VOICE_MOVE_SPEC],
+        must_red=[VOICE_MOVE_SPEC],
+    ),
+    # ---- the F2 mapping in chipInputs.ts ------------------------------------
+    Mutation(
+        id="chip-pubs-desired-constant",
+        what="`chipPublicationsOf` maps every publication as desired, so an unwatched share never reads undesired and F2's share-only contradiction never applies",
+        file=CHIP,
+        search="""    desired: pub.isDesired,
+""",
+        replace="""    desired: true,
+""",
+        specs=[CHIP_SPEC],
+        must_red=[CHIP_SPEC],
+    ),
+    Mutation(
+        id="chip-pubs-subscribed-dropped",
+        what="`chipPublicationsOf` drops `subscribed`, so F2 reads every publication as unsubscribed",
+        file=CHIP,
+        search="""    subscribed: pub.isSubscribed,
+""",
+        replace="",
+        specs=[CHIP_SPEC],
+        must_red=[CHIP_SPEC],
+    ),
+    Mutation(
+        id="chip-pubs-encryption-defaulted",
+        what="`chipPublicationsOf` defaults a missing declaration to GCM, so a share whose `trackInfo.encryption` was dropped reads as declared encrypted",
+        file=CHIP,
+        search="""    encryption: pub.trackInfo?.encryption,
+  }));
+""",
+        replace="""    encryption: pub.trackInfo?.encryption ?? 1,
+  }));
+""",
+        specs=[CHIP_SPEC],
+        must_red=[CHIP_SPEC],
     ),
 ]
 

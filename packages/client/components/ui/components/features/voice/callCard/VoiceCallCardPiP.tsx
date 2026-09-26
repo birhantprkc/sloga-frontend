@@ -55,23 +55,31 @@ export function VoiceCallCardPiP() {
   const hiddenCount = () => audTracks().length - shownTracks().length;
 
   /**
-   * Whether the viewer has chosen to receive this screen share (plan
-   * decision A). `MiniVideo` is a `manageSubscription` VideoTrack, which
-   * SUBSCRIBES the track the moment it is visible, so drawing an unwatched
-   * share here would bypass the Watch gate; it gets the roster instead.
+   * Whether the PiP may draw this screen share as video (plan decision A).
+   * `MiniVideo` is a `manageSubscription` VideoTrack, which SUBSCRIBES the
+   * track the moment it is visible, so drawing an unwatched share here would
+   * bypass the Watch gate; it gets the roster instead.
    *
-   * Exempt, as everywhere else in the watch policy: our own participant, and
-   * our own device's screen leg (compared by DEVICE, as `isSelfLeg` is in
-   * `ParticipantTile`; another of our devices' legs still needs a Watch).
+   * Our own participant's share (a desktop sharing its own screen) is local
+   * media with nothing to subscribe, so it is drawn.
+   *
+   * Our own device's screen leg is NEVER drawn, watched or not. It is a
+   * separate SFU participant, so drawing it would subscribe the phone to its
+   * own full-rate share: the download `ParticipantTile`'s `SelfLegPlaceholder`
+   * exists to avoid, and one that `RoomAudioManager`'s explicit-unsubscribe
+   * effect (`sharesToUnsubscribe`, which always drops a self leg) fights. Auto
+   * focus already skips the leg, but a manual click on its tile still focuses
+   * it. Compared by DEVICE, as `isSelfLeg` is in `ParticipantTile`: another
+   * of our devices' legs is a remote share and still needs a Watch.
    */
-  const isWatchedOrOwnShare = (track: TrackReferenceOrPlaceholder) => {
+  const isDrawableShare = (track: TrackReferenceOrPlaceholder) => {
     const identity = track.participant.identity;
     if (track.participant.isLocal) return true;
     if (
       isScreenLeg(identity) &&
       stripLeg(identity) === voice.room()?.localParticipant.identity
     )
-      return true;
+      return false;
     return voice.isWatchingShare(identity);
   };
 
@@ -80,7 +88,7 @@ export function VoiceCallCardPiP() {
     if (!track) return false;
 
     if (track.source === Track.Source.ScreenShare)
-      return isWatchedOrOwnShare(track);
+      return isDrawableShare(track);
 
     return !useIsMuted({
       participant: track.participant,

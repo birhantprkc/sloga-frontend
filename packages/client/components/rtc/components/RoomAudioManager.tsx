@@ -27,9 +27,11 @@ import {
   type ReconcilePub,
   type WatchPub,
   isShareSource,
+  nonShareVideoToSubscribe,
   reconcileShareSubscriptions,
+  remoteAudioToPlay,
   sharesToUnsubscribe,
-  shouldSubscribeRemote,
+  watchedShareVideoToSubscribe,
 } from "../screenShareWatchPolicy";
 import { useVoice } from "../state";
 import { identityUserId, whisperTarget } from "../whisperPermissions";
@@ -89,18 +91,19 @@ export function RoomAudioManager() {
   // <AudioTrack>. Mic, whisper and unknown sources pass the policy untouched.
   // Gated here and never in `tracks()`: the cryptor-disarm sweep below reads
   // the UNFILTERED lists and must still see unwatched plaintext shares.
+  // Whisper tracks addressed to someone else are dropped too: the SFU already
+  // refuses us the subscription, but don't even try — a permission gap must
+  // not become audible here, and the retry churn is pointless.
+  // The decision is `remoteAudioToPlay` (screenShareWatchPolicy.ts); its spec
+  // also pins this wiring, so edit both together.
   const filteredTracks = createMemo(() => {
     const watched = voice.watchedShares();
-    return tracks().filter((track) => {
-      if (isLocal(track.participant)) return false;
-      if (track.publication.kind !== Track.Kind.Audio) return false;
-      // Whisper tracks addressed to someone else: the SFU already refuses us
-      // the subscription, but don't even try — a permission gap must not
-      // become audible here, and the retry churn is pointless.
-      const addressee = whisperTarget(track.publication.trackName);
-      if (addressee && addressee !== myUserId()) return false;
-      if (!shouldSubscribeRemote(watchPubOf(track), watched)) return false;
-      return true;
+    return remoteAudioToPlay(tracks(), watched, {
+      isLocal: (track) => isLocal(track.participant),
+      isAudio: (track) => track.publication.kind === Track.Kind.Audio,
+      addressee: (track) => whisperTarget(track.publication.trackName),
+      localUserId: myUserId,
+      watchPub: watchPubOf,
     });
   });
 
@@ -423,10 +426,11 @@ export function RoomAudioManager() {
   // Subscribe to remote camera tracks so they are received. Screen shares are
   // left to the watched-share effect below, so this effect keeps exactly
   // today's reactivity and a Watch press never re-subscribes a camera that
-  // the `VideoTrack` visibility observer has turned off.
+  // the `VideoTrack` visibility observer has turned off. Both video decisions
+  // live in screenShareWatchPolicy.ts, whose spec pins these subscribe and
+  // unsubscribe effects word for word: edit both together.
   createEffect(() => {
-    for (const track of filteredVideoTracks()) {
-      if (isShareSource(track.source)) continue;
+    for (const track of nonShareVideoToSubscribe(filteredVideoTracks())) {
       (track.publication as RemoteTrackPublication).setSubscribed(true);
     }
   });
@@ -438,9 +442,11 @@ export function RoomAudioManager() {
   // subscribes video; this effect and the `VideoTrack` observer own that.
   createEffect(() => {
     const watched = voice.watchedShares();
-    for (const track of filteredVideoTracks()) {
-      if (!isShareSource(track.source)) continue;
-      if (!shouldSubscribeRemote(watchPubOf(track), watched)) continue;
+    for (const track of watchedShareVideoToSubscribe(
+      filteredVideoTracks(),
+      watched,
+      watchPubOf,
+    )) {
       (track.publication as RemoteTrackPublication).setSubscribed(true);
     }
   });

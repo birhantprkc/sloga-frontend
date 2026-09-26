@@ -195,7 +195,9 @@ import { VoiceAudioPipeline } from "./voiceAudioPipeline";
 import {
   type ObeyMoveInput,
   type VoiceConnectionState,
+  moveAuthDecision,
   moveBypassesRefusalLatch,
+  moveTokenForConnection,
   moveTokenUsable,
   shouldObeyMove,
 } from "./voiceMovePolicy";
@@ -237,7 +239,7 @@ import {
 } from "./cameraEffects";
 import { createCaptionEngine } from "./captions/captionEngine";
 import { LiveCaptions } from "./captions/liveCaptions";
-import { chipStateFrom } from "./chipInputs.ts";
+import { chipPublicationsOf, chipStateFrom } from "./chipInputs.ts";
 import { CaptionPublisher } from "./components/CaptionPublisher";
 import { CaptionSpeaker } from "./components/CaptionSpeaker";
 import { InRoom } from "./components/InRoom";
@@ -879,6 +881,18 @@ class Voice {
    */
   #lastDisconnect: ObeyMoveInput["lastDisconnect"];
   /**
+   * The LiveKit identity this connection held the last time one of its
+   * Rooms connected, for the move rule's token check (`#followMove`): a
+   * removed or reconnecting connection follows a move only when the event's
+   * token was minted for this identity, so a move meant for another of the
+   * user's sessions cannot pull this device into the call. Written at
+   * `connected` only by a Room whose generation still owns the call, so a
+   * superseded Room cannot overwrite it. Kept across the rejoin loop's
+   * attempts, which is when RECONNECTING needs it: there may be no Room
+   * then. Our own identity, never anything from the move event.
+   */
+  #lastLocalIdentity: string | undefined;
+  /**
    * One-shot "you were moved" notice for the UI to show as a snackbar, the
    * `recordingNotice` shape: the Voice instance sits outside
    * `SnackbarProvider`, so it cannot show one itself. `at` keys repeats.
@@ -1244,6 +1258,15 @@ class Voice {
    *  participant/track domain changed (R2-3/FE-8). */
   callParticipantsVersion: Accessor<number>;
   #setCallParticipantsVersion: Setter<number>;
+  /**
+   * Chip-only bump: a remote publication's subscription status changed (a
+   * Stop watching turns `isDesired` false, a subscription lands), which the
+   * share-only contradiction reads and nothing bumps the participants
+   * version for. Kept apart from `callParticipantsVersion` so its other
+   * readers do not re-run on every subscription edge.
+   */
+  #chipPublicationsVersion: Accessor<number>;
+  #setChipPublicationsVersion: Setter<number>;
   /** Whether the call roster / verification panel is open (chip click). */
   callRosterPanelOpen: Accessor<boolean>;
   #setCallRosterPanelOpen: Setter<boolean>;
@@ -1986,6 +2009,11 @@ class Voice {
     this.callParticipantsVersion = callParticipantsVersion;
     this.#setCallParticipantsVersion = setCallParticipantsVersion;
 
+    const [chipPublicationsVersion, setChipPublicationsVersion] =
+      createSignal(0);
+    this.#chipPublicationsVersion = chipPublicationsVersion;
+    this.#setChipPublicationsVersion = setChipPublicationsVersion;
+
     const [callRosterPanelOpen, setCallRosterPanelOpen] = createSignal(false);
     this.callRosterPanelOpen = callRosterPanelOpen;
     this.#setCallRosterPanelOpen = setCallRosterPanelOpen;
@@ -2590,23 +2618,29 @@ class Voice {
     // and the affordances disable on `joinPending` so a press cannot
     // reach it anyway.
     const refusal = this.#joinRefusals().get(channel.id);
+    const latchedReason =
+      refusal && this.joinBlocked(channel) === "refused"
+        ? refusal.reason
+        : undefined;
     if (
-      refusal &&
-      this.joinBlocked(channel) === "refused" &&
+      latchedReason !== undefined &&
       !(
         auth &&
         opts?.moveLatchBypass &&
-        moveBypassesRefusalLatch(refusal.reason)
+        moveBypassesRefusalLatch(latchedReason)
       )
     ) {
-      this.onErr(new Error(this.#joinRefusalText(channel, refusal.reason)));
+      this.onErr(new Error(this.#joinRefusalText(channel, latchedReason)));
       return false;
     }
     this.disconnect();
     const pendingToken = ++this.#joinPendingSeq;
     this.#setJoinPending(channel.id);
     try {
-      return await this.#connectAttempt(channel, auth);
+      // Past the check above, a latched reason means the move token alone
+      // let this attempt through: `#connectAttempt` answers from the latch
+      // if M3 then drops that token (F4).
+      return await this.#connectAttempt(channel, auth, latchedReason);
     } finally {
       // Only the newest attempt owns the flag: a superseded attempt settling
       // late must not clear what its successor set.
@@ -2614,10 +2648,15 @@ class Voice {
     }
   }
 
-  /** The body of `connect()`; the previous call has already been left. */
+  /**
+   * The body of `connect()`; the previous call has already been left.
+   * `bypassedRefusal` is the latched refusal a move token stepped past, if
+   * any.
+   */
   async #connectAttempt(
     channel: Channel,
     auth?: { url: string; token: string },
+    bypassedRefusal?: JoinRefusalReason,
   ): Promise<boolean> {
     // Supersession token: a later connect() runs disconnect() first and bumps
     // this, so a stale invocation resuming after an await can detect it lost
@@ -2856,19 +2895,51 @@ class Voice {
     // token can never make this device join as someone it is not. The claims
     // are compared and dropped here, never logged. The identity assertion
     // after `room.connect` stays as the backstop.
-    if (
-      auth &&
-      !moveTokenUsable({
-        token: auth.token,
-        expectedIdentity: !selfUserId
-          ? ""
-          : e2eeDeviceId
-            ? `${selfUserId}:${e2eeDeviceId}`
-            : selfUserId,
-        to: channel.id,
-      })
-    )
-      auth = undefined;
+    //
+    // F4: a dropped token whose latch bypass is all that let this attempt
+    // past a refusal that STILL holds answers from that latch, exactly as
+    // `connect()` would have without the bypass, and never `joinCall`. The
+    // latch is read again HERE rather than taken from `connect()`: it may
+    // have been released during the device enumeration above.
+    const authDecision = moveAuthDecision({
+      hasAuth: !!auth,
+      tokenUsable:
+        !!auth &&
+        moveTokenUsable({
+          token: auth.token,
+          expectedIdentity: !selfUserId
+            ? ""
+            : e2eeDeviceId
+              ? `${selfUserId}:${e2eeDeviceId}`
+              : selfUserId,
+          to: channel.id,
+        }),
+      latchStillRefused:
+        bypassedRefusal !== undefined && this.#refusalLatchHolds(channel),
+    });
+    switch (authDecision) {
+      case "use":
+        break;
+      case "join":
+        auth = undefined;
+        break;
+      case "answer_latch":
+        // No await separates this from the generation check after the
+        // device enumeration, so this cannot fail today. It stays so that
+        // an await added above can never raise a superseded attempt's
+        // refusal over the newer call.
+        if (gen !== this.#connectGen) return false;
+        // `connect()` has already left the previous call; `disconnect()`
+        // releases the worker and provider constructed above (no Room
+        // exists yet). `latchStillRefused` implies `bypassedRefusal`.
+        this.disconnect();
+        this.onErr(new Error(this.#joinRefusalText(channel, bypassedRefusal!)));
+        return false;
+      default: {
+        const exhaustive: never = authDecision;
+        return exhaustive;
+      }
+    }
 
     // Resolved once so the Room option and the post-connect sink switch below
     // can never disagree about which audio path this call is on.
@@ -3070,6 +3141,10 @@ class Voice {
 
     room.addListener("connected", () => {
       this.#setState("CONNECTED");
+      // For the move rule's token check (see the field). Only while this
+      // Room's generation owns the call.
+      if (gen === this.#connectGen)
+        this.#lastLocalIdentity = room.localParticipant.identity;
       // 🔴 The participants already in the call when we joined never bump this
       // otherwise. livekit routes `ParticipantConnected` through
       // `emitWhenConnected`, which DROPS it unless the room is already
@@ -3337,14 +3412,44 @@ class Voice {
     // response, whose publications never reach `trackPublished` (livekit
     // builds them before it forwards participant events). Seed the shares
     // live now, silently, like the `connected` seed, so their real end still
-    // chimes. `reconnected` fires before livekit flushes the events it
-    // buffered during the outage, so a buffered publish or unmute of a
-    // seeded share finds its sid already here and does not chime either. On
-    // a RESUME nothing was unwound, and every share already in the set makes
-    // this a no-op.
+    // chimes. After a full restart `reconnected` fires before livekit
+    // flushes the events it buffered during the outage, so a buffered
+    // publish or unmute of a seeded share finds its sid already here and
+    // does not chime either. A RESUME is the other way round (livekit
+    // flushes, then emits `reconnected`), but it unwound nothing, so the
+    // flushed events meet the set as they would have without the outage,
+    // and every share already in it makes this seed a no-op. Only what was
+    // buffered AFTER `SignalResumed` is flushed, though: that event
+    // DISCARDS the buffer (livekit 2.15.13 `Room.ts:498-499`), so a
+    // publish from the part of the outage before it never arrives at all,
+    // and this seed is what catches that share (silently, no start chime).
     room.addListener("reconnected", () => {
       if (this.room() !== room) return;
       this.#seedLiveRemoteShares(room);
+      // The same discard can eat a `trackSubscriptionStatusChanged` (below).
+      this.#setChipPublicationsVersion((v) => v + 1);
+    });
+
+    // A remote publication's subscription status moved: re-derive the chip,
+    // whose share-only contradiction reads `isDesired` / `isSubscribed`.
+    // Stop watching flips `isDesired` inside `setSubscribed(false)`, which
+    // emits this at once (unless the room is reconnecting, below); nothing
+    // else bumps a version the chip reads for it. Driven by this event and
+    // NOT by `watchedShares()`: the chip could re-derive off the watch set
+    // before RoomAudioManager's effect has called `setSubscribed(false)`, and
+    // read the stale `isDesired`.
+    // livekit routes it through `Room.emitWhenConnected`, which BUFFERS it
+    // while the room is Reconnecting, `isResuming` or the engine has a
+    // `pendingReconnect`. A resume DISCARDS that buffer at `SignalResumed`; a
+    // full restart flushes it after `reconnected`. The `reconnected` listener
+    // above re-bumps either way, so a Stop watching pressed during the
+    // viewer's OWN reconnect can leave the chip stale until `reconnected`.
+    // That window is accepted and bounded: the witness covered the share
+    // while it was watched. Removed with the room's other listeners
+    // (`removeAllListeners`).
+    room.addListener("trackSubscriptionStatusChanged", () => {
+      if (this.room() !== room) return;
+      this.#setChipPublicationsVersion((v) => v + 1);
     });
 
     // Publish-gate hardening (R2-1): a NEW local publication, or any of
@@ -4555,6 +4660,16 @@ class Voice {
       (state === "CONNECTED" && this.room()) || state === "RECONNECTING"
         ? this.channel()?.id
         : undefined;
+    // F1: whether the event's token was minted for the identity THIS
+    // connection last held, for exactly `to`. The removed and reconnecting
+    // branches require it: the user's own other session can remove this
+    // device (`force_disconnect`) and then move within the window. A bare
+    // token still passes for a bare identity. Only the verdict is kept.
+    const tokenForThisConnection = moveTokenForConnection({
+      token,
+      lastLocalIdentity: this.#lastLocalIdentity,
+      to,
+    });
 
     // (4)
     if (
@@ -4565,6 +4680,7 @@ class Voice {
         state,
         lastDisconnect: this.#lastDisconnect,
         now: performance.now(),
+        tokenForThisConnection,
       })
     )
       return;
@@ -4637,19 +4753,26 @@ class Voice {
     }
     // False: superseded (a newer join or a hang-up owns the call now, so
     // stop), or answered from a latched refusal, which `connect()` has
-    // already put in front of the user. The latched answer is the one false
-    // that returns without tearing anything down, so the SOURCE call is
-    // still asserted, and step 5 has cancelled the rejoin loop that would
-    // otherwise have moved it on: leave it, rather than strand a
+    // already put in front of the user. `connect()`'s own latched answer is
+    // the one false that returns without tearing anything down, so the SOURCE
+    // call is still asserted, and step 5 has cancelled the rejoin loop that
+    // would otherwise have moved it on: leave it, rather than strand a
     // "Reconnecting" card (or a rejoin attempt still in flight) on a channel
     // the server has already taken us out of.
     //
-    // Told apart by the generation, not by the channel alone: a latched
+    // Told apart by the generation, not by the channel alone: that latched
     // answer returns before `connect()` reaches its `disconnect()` or
     // `#connectAttempt`, the only two places `#connectGen` moves, while
     // every other `connect()` (the user's own rejoin of `from` included)
     // bumps it. So an unchanged generation means no join has started since,
     // and a user who rejoined `from` meanwhile keeps that call.
+    //
+    // F4 is the other latched false: `#connectAttempt` dropped the token
+    // (M3), and the latch its bypass stepped past still refuses. It also
+    // answers from the latch, but only AFTER `connect()` has left the source
+    // call. The generation has moved, so the `disconnect()` below is
+    // skipped; the call is already torn down (READY, no channel), and the
+    // refusal is shown once, by `#connectAttempt`.
     if (
       this.#connectGen === genBefore &&
       this.channel()?.id === from &&
@@ -9082,12 +9205,30 @@ class Voice {
    * latch's release (channel event or hold timer).
    */
   joinBlocked(channel: Channel): JoinBlockedReason | undefined {
+    return this.#joinBlockedWith(channel, this.joinPending());
+  }
+
+  /**
+   * Whether a refusal latch still holds for `channel`, whatever attempt is in
+   * flight. F4 asks from INSIDE `#connectAttempt`, where `connect()` has
+   * already set `joinPending` to this very channel, so `joinBlocked(channel)`
+   * answers "in-flight" there and never "refused".
+   */
+  #refusalLatchHolds(channel: Channel): boolean {
+    return this.#joinBlockedWith(channel, undefined) === "refused";
+  }
+
+  /** `joinBlocked`, with the in-flight channel supplied by the caller. */
+  #joinBlockedWith(
+    channel: Channel,
+    inFlightChannelId: string | undefined,
+  ): JoinBlockedReason | undefined {
     const latch = this.#joinRefusals().get(channel.id);
     return joinBlockedReason({
       channelId: channel.id,
       now: Date.now(),
       channelVersion: this.#channelVersions.get(channel.id) ?? 0,
-      inFlightChannelId: this.joinPending(),
+      inFlightChannelId,
       latch,
       // A `DeviceNotRegistered` refusal is answered by the device claim that
       // lands a beat later: once the corroborated verdict is in, the next
@@ -9298,6 +9439,10 @@ class Voice {
    */
   callEncryptionChip(): ChipState {
     this.callParticipantsVersion(); // reactive dependency (FE-8/R2-3)
+    // The publications' `isDesired` / `isSubscribed` flip on their own (a
+    // Stop watching, a subscription landing) without a participants bump;
+    // see `#chipPublicationsVersion`.
+    this.#chipPublicationsVersion();
     const room = this.room();
     const session = this.#mlsSession;
     // 🔴 BINDINGS ONLY — nothing is derived here any more. The screen-leg
@@ -9380,6 +9525,13 @@ class Voice {
                 ...[...room.remoteParticipants.values()].map((p) => ({
                   identity: p.identity,
                   publicationCount: p.trackPublications.size,
+                  // For the share-only contradiction (F2). Read on the same
+                  // participants-version bump, and on the chip-only
+                  // subscription bump above; with autoSubscribe:false an
+                  // unwatched share is undesired from its first publication.
+                  publications: chipPublicationsOf(
+                    p.trackPublications.values(),
+                  ),
                 })),
               ],
               localPublications: [

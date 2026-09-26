@@ -99,6 +99,97 @@ export function shouldSubscribeRemote(
 }
 
 /**
+ * How {@link remoteAudioToPlay} reads one audio track reference. Every read
+ * is a callback, called in the order and only in the cases listed on that
+ * function, so a caller's reactive reads (`voice.room()` inside `localUserId`
+ * or `watchPub`) are tracked only where the filter really needs them.
+ */
+export interface AudioFilterReads<T> {
+  /** Published by the local participant. */
+  isLocal(ref: T): boolean;
+  /** The publication is an audio track (`Track.Kind.Audio`). */
+  isAudio(ref: T): boolean;
+  /** The user id a whisper track is addressed to (`whisperTarget`), if any. */
+  addressee(ref: T): string | undefined;
+  /** Our own USER id, or undefined while it is not known yet. */
+  localUserId(): string | undefined;
+  /** The reference as {@link shouldSubscribeRemote} sees it. */
+  watchPub(ref: T): WatchPub;
+}
+
+/**
+ * The remote audio `RoomAudioManager` subscribes AND renders (its
+ * `filteredTracks`), in `refs` input order. A reference is kept only when all
+ * of these hold, checked in this order, each read made only if every earlier
+ * check passed:
+ *
+ * 1. Not local (`isLocal`).
+ * 2. An audio publication (`isAudio`).
+ * 3. Not a whisper addressed to someone else: an `addressee` that is truthy
+ *    and not `localUserId()` refuses it. `localUserId` is read only for an
+ *    addressed track, and an undefined one refuses every addressed track.
+ * 4. {@link shouldSubscribeRemote} on `watchPub`: remote ScreenShareAudio
+ *    only for a watched identity, never our own screen leg; the microphone
+ *    and `"unknown"` (whisper) sources pass untouched.
+ *
+ * The caller must pass the UNFILTERED track list and the live watch set, and
+ * must read both inside the same computation, so the result follows a Watch
+ * press and a new publication alike. It must never filter the list it hands
+ * the cryptor-disarm sweep: that sweep has to see unwatched shares too.
+ *
+ * `T` is inferred from `refs` alone (`NoInfer`): a `watchPub` taking a
+ * narrower parameter type must not narrow the result, or every consumer of
+ * the kept references loses the fields that type leaves out.
+ */
+export function remoteAudioToPlay<T>(
+  refs: readonly T[],
+  watched: ReadonlySet<string>,
+  reads: AudioFilterReads<NoInfer<T>>,
+): T[] {
+  return refs.filter((ref) => {
+    if (reads.isLocal(ref)) return false;
+    if (!reads.isAudio(ref)) return false;
+    const addressee = reads.addressee(ref);
+    if (addressee && addressee !== reads.localUserId()) return false;
+    return shouldSubscribeRemote(reads.watchPub(ref), watched);
+  });
+}
+
+/**
+ * The remote video the camera subscribe effect requests, in `refs` input
+ * order: every reference whose source is NOT a screen share (the camera).
+ * Screen-share video is never in it, watched or not; that belongs to
+ * {@link watchedShareVideoToSubscribe}. Takes no watch set on purpose: the
+ * camera effect must not re-run on a Watch press, or it would re-subscribe a
+ * camera the `VideoTrack` visibility observer has turned off.
+ */
+export function nonShareVideoToSubscribe<T extends { source: string }>(
+  refs: readonly T[],
+): T[] {
+  return refs.filter((ref) => !isShareSource(ref.source));
+}
+
+/**
+ * The remote screen-share video the watched-share effect requests, in `refs`
+ * input order: each reference with a share source for which
+ * {@link shouldSubscribeRemote} holds, so only a watched identity and never
+ * our own screen leg. `watchPub` is called for share sources only. Cameras
+ * are never in it; they belong to {@link nonShareVideoToSubscribe}. `T` is
+ * inferred from `refs` alone, as in {@link remoteAudioToPlay}.
+ */
+export function watchedShareVideoToSubscribe<T extends { source: string }>(
+  refs: readonly T[],
+  watched: ReadonlySet<string>,
+  watchPub: (ref: NoInfer<T>) => WatchPub,
+): T[] {
+  return refs.filter(
+    (ref) =>
+      isShareSource(ref.source) &&
+      shouldSubscribeRemote(watchPub(ref), watched),
+  );
+}
+
+/**
  * Identities currently publishing ScreenShare OR ScreenShareAudio — so an
  * audio-only share counts as live. Local publications and our own screen
  * leg are skipped: they are never watchable.

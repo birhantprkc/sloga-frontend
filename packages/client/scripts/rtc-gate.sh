@@ -121,20 +121,24 @@ EXPECTED=(
   "components/rtc/micPipelinePolicy.test.ts 4 0"
   "components/rtc/publishKickPolicy.test.ts 4 0"
   "components/rtc/decodeWitnessListener.test.ts 42 0"
-  "components/rtc/chipInputs.test.ts 31 0"
+  "components/rtc/chipInputs.test.ts 50 0"
   "components/rtc/screenAudioWire.test.ts 17 0"
   "components/rtc/screenAudioNativeWin.test.ts 51 0"
   "components/rtc/pauseClauseHold.test.ts 7 0"
   "components/client/mlsInboundBuffer.test.ts 11 0"
   "components/client/mlsEnvelopeClassify.test.ts 12 0"
   # Call-view suggestions (opt-in screen shares, video-only grid, member
-  # moves, opt-in share recording), measured at 0c672a54.
-  "components/rtc/screenShareWatchPolicy.test.ts 48 0"
-  "components/rtc/voiceMovePolicy.test.ts 49 0"
+  # moves, opt-in share recording), first measured at 0c672a54; the watch,
+  # move and chip counts were re-measured after the final-audit fix rounds.
+  "components/rtc/screenShareWatchPolicy.test.ts 66 0"
+  "components/rtc/voiceMovePolicy.test.ts 68 0"
   "components/rtc/moveEventRedaction.test.ts 6 0"
   "components/rtc/callModerationPolicy.test.ts 16 0"
   "components/rtc/callRecorder.test.ts 25 0"
   "components/ui/components/features/voice/callCard/callTileSelection.test.ts 23 0"
+  # Source pins over the state.tsx wiring of member moves and the chip's
+  # publication read (wave 7): no spec can load state.tsx itself.
+  "components/rtc/stateWiring.test.ts 13 0"
 )
 
 counter() { # counter <log> <name> — the runner's own summary counter, or ""
@@ -247,7 +251,9 @@ SPECS=(components/rtc/mls*.test.ts components/rtc/rosterReconcile.test.ts
   components/rtc/callModerationPolicy.test.ts
   components/rtc/callRecorder.test.ts
   # Outside components/rtc: which tiles the video-only grid shows.
-  components/ui/components/features/voice/callCard/callTileSelection.test.ts)
+  components/ui/components/features/voice/callCard/callTileSelection.test.ts
+  # The state.tsx move and chip wiring, pinned as comment-stripped source.
+  components/rtc/stateWiring.test.ts)
 # 🔴 Arguments ADD to that set; they do not replace it. They used to replace
 # it, so the natural invocation for this branch —
 #   rtc-gate.sh components/rtc/mls*.test.ts
@@ -329,6 +335,7 @@ FILES=(components/rtc/mlsCallSession.ts components/rtc/mlsCallModePolicy.ts
   components/rtc/callModerationPolicy.ts
   components/rtc/callModerationPolicy.test.ts
   components/rtc/callRecorder.ts components/rtc/callRecorder.test.ts
+  components/rtc/stateWiring.test.ts components/rtc/sourcePins.harness.ts
   components/ui/components/features/voice/callCard/callTileSelection.ts
   components/ui/components/features/voice/callCard/callTileSelection.test.ts
   # The files this work edits to wire those policies in. Same rule as

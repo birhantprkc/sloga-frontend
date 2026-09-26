@@ -11,13 +11,19 @@
  *  - `shouldObeyMove`: whether THIS connection follows a
  *    `UserMoveVoiceChannel` it received. The event reaches every device of
  *    the target when no bound session exists, and every window on the bound
- *    session when one does, so most receivers must ignore it.
+ *    session when one does, so most receivers must ignore it. A connection
+ *    that is no longer live in the call follows only with a move token
+ *    minted for its own identity.
  *  - `decodeMoveTokenClaims` / `moveTokenUsable`: M3. A pre-minted move
  *    token is used only when it names exactly the identity this attempt
  *    would request, for exactly the destination room. Anything else falls
  *    back to a normal join.
+ *  - `moveTokenForConnection`: F1, client half. Whether a received move's
+ *    token names the identity this connection last held.
  *  - `moveBypassesRefusalLatch`: S1. Which latched join refusals a move
  *    token may step past.
+ *  - `moveAuthDecision`: F4. After M3, use the token, join normally, or
+ *    answer from a refusal latch the dropped token had bypassed.
  *  - `moveTargets` / `canDragParticipant`: what the menu offers and what
  *    the sidebar lets you drag. These mirror the server's checks; the
  *    server stays the authority.
@@ -78,32 +84,74 @@ export interface ObeyMoveInput {
     at: number;
   };
   now: number;
+  /**
+   * Whether the event carries a move token that `moveTokenUsable` accepts
+   * for the participant identity THIS connection last held in the call
+   * (`${userId}:${e2eeDeviceId}`, or the bare user id), with `to` set to the
+   * event's `to`. False with no token, or one minted for another identity.
+   * Only the RECONNECTING and DISCONNECTED rules read it.
+   */
+  tokenForThisConnection: boolean;
 }
 
 /**
  * Whether this connection should follow the move.
  *
  * True only when:
- *  - it holds a live Room in `from` and is CONNECTED or RECONNECTING, or
+ *  - it holds a live Room in `from` and is CONNECTED, or
+ *  - it is RECONNECTING into `from` and `tokenForThisConnection` is true, or
  *  - it is DISCONNECTED because the server removed it from `from`
- *    (`PARTICIPANT_REMOVED`) no more than `MOVE_OBEY_WINDOW_MS` ago.
+ *    (`PARTICIPANT_REMOVED`) no more than `MOVE_OBEY_WINDOW_MS` ago, and
+ *    `tokenForThisConnection` is true.
  *
  * Everything else is ignored: an idle second device, a sibling window with
  * no live Room, and a device that gave up and shows the Rejoin card. A
  * negative elapsed time (a clock that stepped backwards) is also ignored.
  * Ignoring is the safe side: the user can still join by hand.
+ *
+ * Why the token gates RECONNECTING and DISCONNECTED: `PARTICIPANT_REMOVED`
+ * does not say who removed us. Joining from the user's OWN other session
+ * (`join_call` with `force_disconnect`) removes this device with the same
+ * reason. If a move for that other session then arrived inside the window,
+ * this device would rejoin the destination with its mic live and kick the
+ * session the user is actually in. The token closes that: the server mints
+ * it for the participant being moved, so it names this connection's
+ * identity only when this connection is the one being moved. CONNECTED
+ * with a live Room in `from` needs no token: that connection is
+ * demonstrably the in-call participant, and a target with no token (an
+ * unbound session) must still follow.
+ *
+ * Accepted degradation: a tokenless or unbound target whose kick lands
+ * before the event (so it is DISCONNECTED or RECONNECTING when the event
+ * arrives) is simply disconnected, not moved, as on a client that predates
+ * moves.
+ *
+ * Two BARE sessions (media E2EE off) share the bare identity, so a bare
+ * token passes for both, and the token alone cannot tell the kicked one from
+ * the moved one. The server fix (wave 6a) closes that case: it delivers the
+ * move event only to the session that owns the in-call participant
+ * (`private_session`), so the other session never sees it.
+ *
+ * RESIDUAL, accepted: sibling windows or tabs on the SAME session. They
+ * share one session, so the server's delivery reaches all of them, and bare
+ * they share one identity (a qualified one too, wherever they share an E2EE
+ * device), so the token passes for all of them. A sibling kicked by the
+ * other one's `force_disconnect` inside the window still follows. Neither
+ * this rule nor the server fix closes that; live-leg C5 and item 12 (a
+ * sibling window on the same session) cover it.
  */
 export function shouldObeyMove(input: ObeyMoveInput): boolean {
   if (!input.from) return false;
 
-  if (
-    input.liveRoomChannelId === input.from &&
-    (input.state === "CONNECTED" || input.state === "RECONNECTING")
-  )
-    return true;
+  if (input.liveRoomChannelId === input.from) {
+    if (input.state === "CONNECTED") return true;
+    if (input.state === "RECONNECTING")
+      return input.tokenForThisConnection === true;
+  }
 
   const last = input.lastDisconnect;
   if (input.state !== "DISCONNECTED" || !last) return false;
+  if (input.tokenForThisConnection !== true) return false;
   if (last.channelId !== input.from) return false;
   if (last.reason !== PARTICIPANT_REMOVED_REASON) return false;
   const elapsed = input.now - last.at;
@@ -191,6 +239,31 @@ export function moveTokenUsable(input: {
 }
 
 /**
+ * F1, client half: whether a received move's token was minted for the
+ * identity THIS connection last held in the call, for exactly `to`. This is
+ * `shouldObeyMove`'s `tokenForThisConnection`.
+ *
+ * `lastLocalIdentity` is the local participant identity recorded when this
+ * connection last connected (`${userId}:${e2eeDeviceId}`, or the bare user
+ * id). With none recorded, no token is for this connection. A bare token
+ * still passes for a bare identity (see the residual on `shouldObeyMove`).
+ * Only the verdict leaves here; the caller must not log the token.
+ */
+export function moveTokenForConnection(input: {
+  token?: string;
+  lastLocalIdentity?: string;
+  to: string;
+}): boolean {
+  const { token, lastLocalIdentity, to } = input;
+  return (
+    typeof token === "string" &&
+    token !== "" &&
+    !!lastLocalIdentity &&
+    moveTokenUsable({ token, expectedIdentity: lastLocalIdentity, to })
+  );
+}
+
+/**
  * S1: the latched refusals a move token may bypass. A moderator can move a
  * member into a channel they could not join themselves, so a refusal about
  * permission or capacity does not apply to the move. Device and encryption
@@ -210,6 +283,42 @@ export function moveBypassesRefusalLatch(
   errorType: string | undefined,
 ): boolean {
   return errorType !== undefined && MOVE_LATCH_BYPASS.has(errorType);
+}
+
+/**
+ * What a connect attempt does with the auth it was handed, once M3 has
+ * judged it:
+ *  - `"use"`: join with the pre-minted auth.
+ *  - `"join"`: drop any auth and join the normal way (`joinCall`).
+ *  - `"answer_latch"`: drop the auth, answer from the refusal latch and
+ *    never call `joinCall`.
+ */
+export type MoveAuthDecision = "use" | "join" | "answer_latch";
+
+/**
+ * F4: the decision after M3.
+ *
+ * `hasAuth`: the attempt was handed pre-minted auth (a move token).
+ * `tokenUsable`: M3 (`moveTokenUsable`) accepted it for this attempt.
+ * `latchStillRefused`: the attempt got past a refusal latch only through the
+ * move bypass (S1), AND that latch still refuses the channel when M3 runs.
+ * Read the latch again at that point: it may have cleared during the awaits
+ * before M3.
+ *
+ * A usable token is used. A dropped token whose bypass is all that let the
+ * attempt past a latch that still refuses answers from that latch, exactly
+ * as `connect()` would have without the bypass. Everything else joins
+ * normally: with no auth there was no bypass, and a latch that cleared no
+ * longer refuses.
+ */
+export function moveAuthDecision(input: {
+  hasAuth: boolean;
+  tokenUsable: boolean;
+  latchStillRefused: boolean;
+}): MoveAuthDecision {
+  if (!input.hasAuth) return "join";
+  if (input.tokenUsable) return "use";
+  return input.latchStillRefused ? "answer_latch" : "join";
 }
 
 /**

@@ -1,10 +1,14 @@
 // Unit spec for the voice move policy — run with Node's built-in runner:
 //   node --test --conditions=browser components/rtc/voiceMovePolicy.test.ts
 // Focus: only the connection that is actually in the source call follows a
-// move (the event reaches idle devices and sibling windows too), a move
+// move (the event reaches idle devices and sibling windows too), a
+// connection that is no longer live follows only with a token minted for its
+// own identity (so a self-kick is never mistaken for a move), a move
 // token is used only when it names exactly this attempt's identity and the
 // destination room, the refusal latch is bypassed for permission and
-// capacity refusals only, the menu and drag gates mirror the server, and a
+// capacity refusals only, a token M3 drops after such a bypass answers from
+// the latch while it still refuses, the menu and drag gates mirror the
+// server, and a
 // move refused because the target cannot see the destination is recognized
 // in the shape the SDK actually rejects with.
 import assert from "node:assert/strict";
@@ -16,13 +20,16 @@ import { DisconnectReason } from "livekit-client";
 
 import type { JoinRefusalReason } from "./joinRefusalPolicy.ts";
 import {
+  type MoveAuthDecision,
   type ObeyMoveInput,
   canDragParticipant,
   decodeMoveTokenClaims,
   isTargetCannotViewError,
   MOVE_OBEY_WINDOW_MS,
+  moveAuthDecision,
   moveBypassesRefusalLatch,
   moveTargets,
+  moveTokenForConnection,
   moveTokenUsable,
   PARTICIPANT_REMOVED_REASON,
   shouldObeyMove,
@@ -64,15 +71,20 @@ const T0 = 1_000_000;
 const moveToken = (sub: unknown = QUALIFIED, room: unknown = TO) =>
   jwt({ sub, video: { room, roomJoin: true }, exp: 2_000_000_000 });
 
-/** The live-call case that obeys; each test varies it. */
+/**
+ * The live-call case that obeys; each test varies it. It carries a token for
+ * this connection, so a case that expects "ignore" is ignored for its own
+ * reason and not for a missing token.
+ */
 const live: ObeyMoveInput = {
   from: FROM,
   liveRoomChannelId: FROM,
   state: "CONNECTED",
   now: T0,
+  tokenForThisConnection: true,
 };
 
-/** The just-removed case that obeys; each test varies it. */
+/** The just-removed case that obeys; each test varies it. Token as `live`. */
 const removed = (
   over: Partial<NonNullable<ObeyMoveInput["lastDisconnect"]>> = {},
   now = T0,
@@ -87,7 +99,16 @@ const removed = (
     ...over,
   },
   now,
+  tokenForThisConnection: true,
 });
+
+const STATES = [
+  "READY",
+  "DISCONNECTED",
+  "CONNECTING",
+  "CONNECTED",
+  "RECONNECTING",
+] as const;
 
 // --- shouldObeyMove: live Room in `from` -----------------------------------
 
@@ -146,15 +167,18 @@ test("a Room in the source that is still CONNECTING, READY or DISCONNECTED does 
 });
 
 test("an idle second device does not obey", () => {
-  assert.equal(
-    shouldObeyMove({
-      from: FROM,
-      liveRoomChannelId: undefined,
-      state: "READY",
-      now: T0,
-    }),
-    false,
-  );
+  for (const tokenForThisConnection of [false, true])
+    assert.equal(
+      shouldObeyMove({
+        from: FROM,
+        liveRoomChannelId: undefined,
+        state: "READY",
+        now: T0,
+        tokenForThisConnection,
+      }),
+      false,
+      String(tokenForThisConnection),
+    );
 });
 
 test("an empty `from` never obeys, even against an empty live channel", () => {
@@ -226,6 +250,82 @@ test("a recent removal only counts while the state is DISCONNECTED", () => {
     "CONNECTED",
   ] as const)
     assert.equal(shouldObeyMove({ ...removed(), state }), false, state);
+});
+
+// --- shouldObeyMove: a token for this connection ---------------------------
+
+test("F1: a device removed by the user's own other session does not follow that session's move", () => {
+  // `join_call` with `force_disconnect` from the user's other session also
+  // removes this device as PARTICIPANT_REMOVED. A move for the other
+  // session carries no token for this device's identity, so following it
+  // would rejoin with the mic live and kick the session the user is in.
+  for (const now of [T0, T0 + 1, T0 + MOVE_OBEY_WINDOW_MS])
+    assert.equal(
+      shouldObeyMove({ ...removed({}, now), tokenForThisConnection: false }),
+      false,
+      String(now - T0),
+    );
+});
+
+test("DISCONNECTED by removal obeys with a token for this connection", () => {
+  for (const now of [T0, T0 + 1, T0 + MOVE_OBEY_WINDOW_MS])
+    assert.equal(
+      shouldObeyMove({ ...removed({}, now), tokenForThisConnection: true }),
+      true,
+      String(now - T0),
+    );
+});
+
+test("RECONNECTING into the source without a token for this connection does not obey", () => {
+  assert.equal(
+    shouldObeyMove({
+      ...live,
+      state: "RECONNECTING",
+      tokenForThisConnection: false,
+    }),
+    false,
+  );
+});
+
+test("RECONNECTING into the source with a token for this connection obeys", () => {
+  assert.equal(
+    shouldObeyMove({
+      ...live,
+      state: "RECONNECTING",
+      tokenForThisConnection: true,
+    }),
+    true,
+  );
+});
+
+test("CONNECTED with a live Room in the source obeys without a token for this connection", () => {
+  // The in-call participant, demonstrably; a tokenless or unbound target
+  // must still follow.
+  assert.equal(
+    shouldObeyMove({ ...live, tokenForThisConnection: false }),
+    true,
+  );
+});
+
+test("live Room in the source, state by token: CONNECTED always, RECONNECTING only with the token", () => {
+  for (const state of STATES)
+    for (const tokenForThisConnection of [false, true])
+      assert.equal(
+        shouldObeyMove({ ...live, state, tokenForThisConnection }),
+        state === "CONNECTED" ||
+          (state === "RECONNECTING" && tokenForThisConnection),
+        `${state} token=${tokenForThisConnection}`,
+      );
+});
+
+test("just removed from the source, state by token: only DISCONNECTED with the token", () => {
+  for (const state of STATES)
+    for (const tokenForThisConnection of [false, true])
+      assert.equal(
+        shouldObeyMove({ ...removed(), state, tokenForThisConnection }),
+        state === "DISCONNECTED" && tokenForThisConnection,
+        `${state} token=${tokenForThisConnection}`,
+      );
 });
 
 // --- decodeMoveTokenClaims -------------------------------------------------
@@ -459,6 +559,123 @@ test("a malformed token is not usable", () => {
     );
 });
 
+// --- moveTokenForConnection (F1, client half) ------------------------------
+
+test("F1: a token for this connection's last identity and `to` is for this connection", () => {
+  assert.equal(
+    moveTokenForConnection({
+      token: moveToken(),
+      lastLocalIdentity: QUALIFIED,
+      to: TO,
+    }),
+    true,
+  );
+});
+
+test("F1: no token, an empty token or no recorded identity is never for this connection", () => {
+  const cases: Parameters<typeof moveTokenForConnection>[0][] = [
+    { lastLocalIdentity: QUALIFIED, to: TO },
+    { token: undefined, lastLocalIdentity: QUALIFIED, to: TO },
+    { token: "", lastLocalIdentity: QUALIFIED, to: TO },
+    { token: moveToken(), to: TO },
+    { token: moveToken(), lastLocalIdentity: undefined, to: TO },
+    { token: moveToken(), lastLocalIdentity: "", to: TO },
+    // An empty identity must not match a token minted with an empty sub.
+    { token: moveToken(""), lastLocalIdentity: "", to: TO },
+  ];
+  cases.forEach((input, index) =>
+    assert.equal(moveTokenForConnection(input), false, `case #${index}`),
+  );
+});
+
+test("F1: a non-string token at runtime is not for this connection and never throws", () => {
+  for (const token of [null, 42, {}, [moveToken()]]) {
+    let result: boolean | undefined;
+    assert.doesNotThrow(() => {
+      result = moveTokenForConnection({
+        token: token as unknown as string,
+        lastLocalIdentity: QUALIFIED,
+        to: TO,
+      });
+    });
+    assert.equal(result, false, String(token));
+  }
+});
+
+test("F1: a token minted for another device of the same user is not for this connection", () => {
+  // The self-kick case: the user's other session was moved, and its token
+  // names that session's device, not this one.
+  assert.equal(
+    moveTokenForConnection({
+      token: moveToken(`${SELF}:dev-2`),
+      lastLocalIdentity: QUALIFIED,
+      to: TO,
+    }),
+    false,
+  );
+});
+
+test("F1: bare versus qualified never matches, either way round", () => {
+  assert.equal(
+    moveTokenForConnection({
+      token: moveToken(SELF),
+      lastLocalIdentity: QUALIFIED,
+      to: TO,
+    }),
+    false,
+  );
+  assert.equal(
+    moveTokenForConnection({
+      token: moveToken(QUALIFIED),
+      lastLocalIdentity: SELF,
+      to: TO,
+    }),
+    false,
+  );
+});
+
+test("F1: the right identity for the wrong room is not for this connection", () => {
+  assert.equal(
+    moveTokenForConnection({
+      token: moveToken(QUALIFIED, FROM),
+      lastLocalIdentity: QUALIFIED,
+      to: TO,
+    }),
+    false,
+  );
+});
+
+test("F1 RESIDUAL: a bare token passes for a bare identity", () => {
+  // Documented on `shouldObeyMove`: bare sessions share one identity, so the
+  // token cannot tell them apart. The server's session-scoped delivery
+  // covers separate sessions; sibling windows on one session stay accepted.
+  assert.equal(
+    moveTokenForConnection({
+      token: moveToken(SELF),
+      lastLocalIdentity: SELF,
+      to: TO,
+    }),
+    true,
+  );
+});
+
+test("F1: agrees with moveTokenUsable on the recorded identity whenever one is recorded", () => {
+  const tokens = [
+    moveToken(),
+    moveToken(SELF),
+    moveToken(`${SELF}:dev-2`),
+    moveToken(QUALIFIED, FROM),
+    "a.b",
+  ];
+  for (const token of tokens)
+    for (const identity of [QUALIFIED, SELF, `${SELF}:dev-2`])
+      assert.equal(
+        moveTokenForConnection({ token, lastLocalIdentity: identity, to: TO }),
+        moveTokenUsable({ token, expectedIdentity: identity, to: TO }),
+        `${identity} / ${token}`,
+      );
+});
+
 // --- moveBypassesRefusalLatch (S1) -----------------------------------------
 
 test("only MissingPermission and CannotJoinCall bypass the refusal latch", () => {
@@ -504,6 +721,72 @@ test("of every latched refusal reason, exactly two are bypassed", () => {
     "MissingPermission",
     "CannotJoinCall",
   ]);
+});
+
+// --- moveAuthDecision (F4) -------------------------------------------------
+
+test("F4: the full truth table of the decision after M3", () => {
+  // [hasAuth, tokenUsable, latchStillRefused] -> decision, all 8 rows.
+  const rows: [boolean, boolean, boolean, MoveAuthDecision][] = [
+    [false, false, false, "join"],
+    [false, false, true, "join"],
+    [false, true, false, "join"],
+    [false, true, true, "join"],
+    [true, false, false, "join"],
+    [true, false, true, "answer_latch"],
+    [true, true, false, "use"],
+    [true, true, true, "use"],
+  ];
+  assert.equal(rows.length, 8);
+  for (const [hasAuth, tokenUsable, latchStillRefused, expected] of rows)
+    assert.equal(
+      moveAuthDecision({ hasAuth, tokenUsable, latchStillRefused }),
+      expected,
+      `hasAuth=${hasAuth} tokenUsable=${tokenUsable} latchStillRefused=${latchStillRefused}`,
+    );
+});
+
+test("F4: a dropped token answers from the latch only while the latch still refuses", () => {
+  // The latch may clear during the awaits before M3: then the attempt is
+  // one `connect()` would have let through, so it joins normally.
+  assert.equal(
+    moveAuthDecision({
+      hasAuth: true,
+      tokenUsable: false,
+      latchStillRefused: true,
+    }),
+    "answer_latch",
+  );
+  assert.equal(
+    moveAuthDecision({
+      hasAuth: true,
+      tokenUsable: false,
+      latchStillRefused: false,
+    }),
+    "join",
+  );
+});
+
+test("F4: a usable token is used even past a latch it bypassed", () => {
+  // S1: the move token is what lets a moved member past a permission or
+  // capacity latch, so a usable one must still be used.
+  assert.equal(
+    moveAuthDecision({
+      hasAuth: true,
+      tokenUsable: true,
+      latchStillRefused: true,
+    }),
+    "use",
+  );
+});
+
+test("F4: without auth there is no pre-minted token to use or bypass with", () => {
+  for (const tokenUsable of [false, true])
+    for (const latchStillRefused of [false, true])
+      assert.equal(
+        moveAuthDecision({ hasAuth: false, tokenUsable, latchStillRefused }),
+        "join",
+      );
 });
 
 // --- moveTargets -----------------------------------------------------------

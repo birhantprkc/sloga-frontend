@@ -6,27 +6,39 @@
 // media is never pulled back down; a watch dies with its share; and a
 // watch-set change only ever subscribes share AUDIO, never share video (the
 // VideoTrack visibility observer owns that), while ending a watch releases
-// both.
+// both. The subscribe effects in `RoomAudioManager.tsx` make their decisions
+// through this module, and the source pins at the end of this file hold them
+// to it.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import type { Track } from "livekit-client";
 
 import {
+  type AudioFilterReads,
   type ReconcilePub,
   type WatchPub,
   isShareSource,
   liveShareIdentities,
   nextWatchPruneAt,
+  nonShareVideoToSubscribe,
   pruneWatchedWithGrace,
   reconcileShareSubscriptions,
+  remoteAudioToPlay,
   SHARE_SOURCES,
   sharesToUnsubscribe,
   shouldSubscribeRemote,
   WATCH_ABSENCE_GRACE_MS,
   watchedAfterStop,
   watchedAfterWatch,
+  watchedShareVideoToSubscribe,
 } from "./screenShareWatchPolicy.ts";
+import {
+  assertLexesInSync,
+  codeOf,
+  wiredAsserter,
+} from "./sourcePins.harness.ts";
 
 // Type-level pins, checked by tsc and erased at runtime. The module keeps no
 // livekit-client import, so these tie its source strings to livekit-client's
@@ -993,4 +1005,636 @@ test("next prune deadline: the earliest absence plus the grace, or null", () => 
   // A bad grace means "due now", matching the prune's treatment of it.
   assert.equal(nextWatchPruneAt(gone, NaN), 2_000);
   assert.equal(nextWatchPruneAt(new Map([["corrupt:d1", NaN]])), null);
+});
+
+// --- The subscribe effects' decisions ---
+// `RoomAudioManager` used to make these inline, where no spec reached them:
+// deleting the watch check from an effect brought back blanket share
+// subscription with every gate green. Each case below says what the effect
+// did inline at 9e56ec83, and the equivalence cases replay that inline code
+// (transcribed below) against the pure functions over every combination.
+
+/** A track reference as these cases see it: every livekit read a field. */
+interface Ref {
+  id: string;
+  identity: string;
+  source: string;
+  local: boolean;
+  /** `publication.kind`: "audio" or "video". */
+  kind: string;
+  /** `whisperTarget(publication.trackName)`. */
+  addressee?: string;
+  /** Our own device's screen leg. */
+  selfLeg: boolean;
+}
+
+function ref(
+  id: string,
+  identity: string,
+  source: string,
+  over?: Partial<Ref>,
+): Ref {
+  return {
+    id,
+    identity,
+    source,
+    local: false,
+    kind: source === "screen_share" || source === "camera" ? "video" : "audio",
+    selfLeg: false,
+    ...over,
+  };
+}
+
+const watchPubOfRef = (r: Ref): WatchPub => ({
+  identity: r.identity,
+  source: r.source,
+  isLocal: r.local,
+  isSelfLeg: r.selfLeg,
+});
+
+/** Reads over `Ref`, logging every call so read order can be compared. */
+function readsFor(
+  localUserId: string | undefined,
+  log: string[] = [],
+): AudioFilterReads<Ref> {
+  return {
+    isLocal(r) {
+      log.push(`isLocal ${r.id}`);
+      return r.local;
+    },
+    isAudio(r) {
+      log.push(`isAudio ${r.id}`);
+      return r.kind === "audio";
+    },
+    addressee(r) {
+      log.push(`addressee ${r.id}`);
+      return r.addressee;
+    },
+    localUserId() {
+      log.push("localUserId");
+      return localUserId;
+    },
+    watchPub(r) {
+      log.push(`watchPub ${r.id}`);
+      return watchPubOfRef(r);
+    },
+  };
+}
+
+/** `watchPubOfRef`, logging the id of every reference it is asked about. */
+function loggedWatchPub(seen: string[]): (r: Ref) => WatchPub {
+  return (r) => {
+    seen.push(r.id);
+    return watchPubOfRef(r);
+  };
+}
+
+/**
+ * `RoomAudioManager`'s `filteredTracks` predicate as it stood inline at
+ * 9e56ec83, each livekit read replaced by the read of the same name:
+ * `isLocal(track.participant)` → `isLocal`, `track.publication.kind !==
+ * Track.Kind.Audio` → `!isAudio`, `whisperTarget(trackName)` → `addressee`,
+ * `myUserId()` → `localUserId`, `watchPubOf(track)` → `watchPub`.
+ */
+function inlineAudioFilter(
+  refs: readonly Ref[],
+  watched: ReadonlySet<string>,
+  reads: AudioFilterReads<Ref>,
+): Ref[] {
+  return refs.filter((track) => {
+    if (reads.isLocal(track)) return false;
+    if (!reads.isAudio(track)) return false;
+    const addressee = reads.addressee(track);
+    if (addressee && addressee !== reads.localUserId()) return false;
+    if (!shouldSubscribeRemote(reads.watchPub(track), watched)) return false;
+    return true;
+  });
+}
+
+/** The camera effect's loop at 9e56ec83: what it `setSubscribed(true)`. */
+function inlineCameraLoop(refs: readonly Ref[]): Ref[] {
+  const requested: Ref[] = [];
+  for (const track of refs) {
+    if (isShareSource(track.source)) continue;
+    requested.push(track);
+  }
+  return requested;
+}
+
+/** The watched-share video effect's loop at 9e56ec83. */
+function inlineShareVideoLoop(
+  refs: readonly Ref[],
+  watched: ReadonlySet<string>,
+  watchPub: (r: Ref) => WatchPub,
+): Ref[] {
+  const requested: Ref[] = [];
+  for (const track of refs) {
+    if (!isShareSource(track.source)) continue;
+    if (!shouldSubscribeRemote(watchPub(track), watched)) continue;
+    requested.push(track);
+  }
+  return requested;
+}
+
+/** Every combination of the fields the decisions read. */
+function everyRef(): Ref[] {
+  const out: Ref[] = [];
+  let n = 0;
+  for (const identity of [ALICE, BOB, ALICE_LEG, "me:d1", "me:d1:screen"]) {
+    for (const source of [
+      "microphone",
+      "screen_share_audio",
+      "unknown",
+      "screen_share",
+      "camera",
+    ]) {
+      for (const kind of ["audio", "video"]) {
+        for (const local of [false, true]) {
+          for (const selfLeg of [false, true]) {
+            for (const addressee of [undefined, "", "me", "bob"]) {
+              out.push(
+                ref(`r${n++}`, identity, source, {
+                  kind,
+                  local,
+                  selfLeg,
+                  addressee,
+                }),
+              );
+            }
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+const EVERYONE: ReadonlySet<string> = new Set([
+  ALICE,
+  BOB,
+  ALICE_LEG,
+  "me:d1",
+  "me:d1:screen",
+]);
+const WATCH_SETS: ReadonlySet<string>[] = [NONE, new Set([BOB]), EVERYONE];
+
+test("audio filter: an unwatched share's audio is dropped, a watched one kept", () => {
+  const bobShare = ref("s", BOB, "screen_share_audio");
+  const reads = readsFor("me");
+  assert.deepEqual(remoteAudioToPlay([bobShare], NONE, reads), []);
+  assert.deepEqual(remoteAudioToPlay([bobShare], new Set([ALICE]), reads), []);
+  assert.deepEqual(remoteAudioToPlay([bobShare], new Set([BOB]), reads), [
+    bobShare,
+  ]);
+});
+
+test("audio filter: mic and whisper tracks pass untouched, watched or not", () => {
+  const mic = ref("m", BOB, "microphone");
+  const whisperToMe = ref("w", BOB, "unknown", { addressee: "me" });
+  const plainUnknown = ref("u", BOB, "unknown");
+  for (const watched of WATCH_SETS) {
+    assert.deepEqual(
+      remoteAudioToPlay(
+        [mic, whisperToMe, plainUnknown],
+        watched,
+        readsFor("me"),
+      ),
+      [mic, whisperToMe, plainUnknown],
+    );
+  }
+});
+
+test("audio filter: local, video and whispers to someone else are dropped", () => {
+  const watched = new Set([BOB]);
+  const reads = readsFor("me");
+  for (const r of [
+    ref("l", "me:d1", "microphone", { local: true }),
+    ref("ls", "me:d1", "screen_share_audio", { local: true }),
+    ref("v", BOB, "screen_share_audio", { kind: "video" }),
+    ref("w", BOB, "unknown", { addressee: "bob" }),
+    ref("ws", BOB, "screen_share_audio", { addressee: "bob" }),
+  ]) {
+    assert.deepEqual(remoteAudioToPlay([r], watched, reads), [], r.id);
+  }
+  // Our identity not known yet: every addressed whisper is refused.
+  assert.deepEqual(
+    remoteAudioToPlay(
+      [ref("w", BOB, "unknown", { addressee: "me" })],
+      watched,
+      readsFor(undefined),
+    ),
+    [],
+  );
+  // An empty addressee is no addressee.
+  const empty = ref("e", BOB, "unknown", { addressee: "" });
+  assert.deepEqual(remoteAudioToPlay([empty], watched, readsFor(undefined)), [
+    empty,
+  ]);
+});
+
+test("audio filter: our own screen leg's audio is dropped even when watched", () => {
+  const leg = ref("g", "me:d1:screen", "screen_share_audio", { selfLeg: true });
+  assert.deepEqual(
+    remoteAudioToPlay([leg], new Set(["me:d1:screen"]), readsFor("me")),
+    [],
+  );
+});
+
+test("audio filter: reacts to the watch set AND to the publications", () => {
+  // The memo reads both, so a Watch press and a newly published share each
+  // change what is subscribed and rendered.
+  const mic = ref("m", BOB, "microphone");
+  const share = ref("s", BOB, "screen_share_audio");
+  const reads = readsFor("me");
+  const before = remoteAudioToPlay([mic, share], NONE, reads);
+  const watchedNow = remoteAudioToPlay([mic, share], new Set([BOB]), reads);
+  assert.deepEqual(before, [mic]);
+  assert.deepEqual(watchedNow, [mic, share]);
+  const published = ref("s2", ALICE, "screen_share_audio");
+  assert.deepEqual(
+    remoteAudioToPlay([mic, share, published], new Set([BOB, ALICE]), reads),
+    [mic, share, published],
+  );
+  // Input order is kept, and the input is untouched.
+  const input = [share, mic];
+  assert.deepEqual(remoteAudioToPlay(input, new Set([BOB]), reads), [
+    share,
+    mic,
+  ]);
+  assert.deepEqual(input, [share, mic]);
+});
+
+test("audio filter: a narrower watch view never narrows the result type", () => {
+  // Type-level pin, checked by tsc. RoomAudioManager passes `watchPubOf`,
+  // whose parameter type is narrower than a track reference, beside reads
+  // that are inline arrows. Were `T` inferred from it, the kept references
+  // would lose `publication` and every consumer would stop compiling, with
+  // this runner green (it strips types). `NoInfer` keeps `T` on `refs`.
+  const narrowView = (r: { identity: string; source: string }): WatchPub => ({
+    identity: r.identity,
+    source: r.source,
+    isLocal: false,
+    isSelfLeg: false,
+  });
+  const mic = ref("m", BOB, "microphone");
+  const kept: Ref[] = remoteAudioToPlay([mic], NONE, {
+    isLocal: (r) => r.local,
+    isAudio: (r) => r.kind === "audio",
+    addressee: (r) => r.addressee,
+    localUserId: () => "me",
+    watchPub: narrowView,
+  });
+  assert.deepEqual(kept, [mic]);
+  const share = ref("s", BOB, "screen_share");
+  const video: Ref[] = watchedShareVideoToSubscribe(
+    [share],
+    new Set([BOB]),
+    narrowView,
+  );
+  assert.deepEqual(video, [share]);
+});
+
+test("audio filter: reads are made in order, and only when needed", () => {
+  const log: string[] = [];
+  const reads = readsFor("me", log);
+  remoteAudioToPlay(
+    [ref("l", "me:d1", "microphone", { local: true })],
+    NONE,
+    reads,
+  );
+  assert.deepEqual(log, ["isLocal l"]);
+  log.length = 0;
+  remoteAudioToPlay([ref("v", BOB, "camera")], NONE, reads);
+  assert.deepEqual(log, ["isLocal v", "isAudio v"]);
+  log.length = 0;
+  // Unaddressed: our own id is never read.
+  remoteAudioToPlay([ref("m", BOB, "microphone")], NONE, reads);
+  assert.deepEqual(log, [
+    "isLocal m",
+    "isAudio m",
+    "addressee m",
+    "watchPub m",
+  ]);
+  log.length = 0;
+  // Addressed to someone else: refused before the watch gate is read.
+  remoteAudioToPlay(
+    [ref("w", BOB, "unknown", { addressee: "bob" })],
+    NONE,
+    reads,
+  );
+  assert.deepEqual(log, [
+    "isLocal w",
+    "isAudio w",
+    "addressee w",
+    "localUserId",
+  ]);
+});
+
+test("audio filter: identical to the inline filter it replaced, over every combination", () => {
+  const refs = everyRef();
+  for (const localUserId of [undefined, "me"]) {
+    for (const watched of WATCH_SETS) {
+      const oldLog: string[] = [];
+      const newLog: string[] = [];
+      const old = inlineAudioFilter(
+        refs,
+        watched,
+        readsFor(localUserId, oldLog),
+      );
+      const now = remoteAudioToPlay(
+        refs,
+        watched,
+        readsFor(localUserId, newLog),
+      );
+      const label = `${localUserId} ${[...watched].join(",")}`;
+      assert.deepEqual(now, old, label);
+      // Same reads, same order: the caller's reactive reads are unchanged.
+      assert.deepEqual(newLog, oldLog, label);
+      // Not vacuous: each run keeps some and drops some.
+      assert.ok(now.length > 0 && now.length < refs.length, label);
+    }
+  }
+});
+
+test("camera effect: requests every non-share video and never a share", () => {
+  const cam = ref("c", BOB, "camera");
+  const share = ref("s", BOB, "screen_share");
+  const shareAudio = ref("a", BOB, "screen_share_audio");
+  const otherCam = ref("c2", ALICE, "camera");
+  assert.deepEqual(
+    nonShareVideoToSubscribe([cam, share, shareAudio, otherCam]),
+    [cam, otherCam],
+  );
+  // It takes no watch set: a Watch press cannot re-run the camera effect.
+  assert.equal(nonShareVideoToSubscribe.length, 1);
+});
+
+test("share video effect: only a watched remote share, never a camera or our own leg", () => {
+  const cam = ref("c", BOB, "camera");
+  const bob = ref("s", BOB, "screen_share");
+  const alice = ref("t", ALICE, "screen_share");
+  const leg = ref("g", "me:d1:screen", "screen_share", { selfLeg: true });
+  const all = [cam, bob, alice, leg];
+  assert.deepEqual(watchedShareVideoToSubscribe(all, NONE, watchPubOfRef), []);
+  assert.deepEqual(
+    watchedShareVideoToSubscribe(all, new Set([BOB]), watchPubOfRef),
+    [bob],
+  );
+  assert.deepEqual(
+    watchedShareVideoToSubscribe(
+      all,
+      new Set([BOB, ALICE, BOB, "me:d1:screen"]),
+      watchPubOfRef,
+    ),
+    [bob, alice],
+  );
+  // The watch view is read for share sources only.
+  const seen: string[] = [];
+  watchedShareVideoToSubscribe(all, NONE, loggedWatchPub(seen));
+  assert.deepEqual(seen, ["s", "t", "g"]);
+});
+
+test("video effects: identical to the inline loops they replaced, over every combination", () => {
+  const refs = everyRef();
+  assert.deepEqual(nonShareVideoToSubscribe(refs), inlineCameraLoop(refs));
+  for (const watched of WATCH_SETS) {
+    const oldSeen: string[] = [];
+    const newSeen: string[] = [];
+    const old = inlineShareVideoLoop(refs, watched, loggedWatchPub(oldSeen));
+    const now = watchedShareVideoToSubscribe(
+      refs,
+      watched,
+      loggedWatchPub(newSeen),
+    );
+    const label = [...watched].join(",");
+    assert.deepEqual(now, old, label);
+    assert.deepEqual(newSeen, oldSeen, label);
+  }
+  // Not vacuous: with everyone watched, some share video is requested.
+  const shares = watchedShareVideoToSubscribe(refs, EVERYONE, watchPubOfRef);
+  assert.ok(shares.length > 0);
+  // The two effects never request the same reference.
+  const cameras = new Set(nonShareVideoToSubscribe(refs));
+  for (const r of shares) assert.ok(!cameras.has(r), r.id);
+});
+
+// --- Source pins: RoomAudioManager.tsx calls the decisions above ---
+// `node --test` cannot load RoomAudioManager.tsx (Solid JSX, livekit), so its
+// wiring is pinned as TEXT, and `rtc-mutations.py` proves each pin kills a
+// wiring mutation. The file and every pin both go through `codeOf` first:
+// comments are stripped, whitespace outside strings is removed, a comma right
+// before `)`, `]` or `}` is dropped, and so is a semicolon right before `}`.
+// So a commented-out copy never satisfies a pin, and a prettier reflow
+// (rewrapping lines, adding or removing a trailing comma, or the `;` a
+// wrapped type literal gains) never breaks one. Other rewrites still do, such
+// as parentheses prettier adds or removes. What a pin cannot see: the same
+// text put in dead code (`if (false) { ... }`).
+// Changing any of these effects on purpose means changing its pin here too.
+// `codeOf`, `assertWired` and the lexer-sync check live in
+// `sourcePins.harness.ts`, shared with `stateWiring.test.ts`; its header
+// lists what the lexer does not read (regex literals, JSX text).
+
+const MANAGER_SOURCE = readFileSync(
+  new URL("./components/RoomAudioManager.tsx", import.meta.url),
+  "utf8",
+);
+const MANAGER_CODE = codeOf(MANAGER_SOURCE);
+
+/** `snippet` must appear exactly once in RoomAudioManager.tsx's code. */
+const assertWired = wiredAsserter("RoomAudioManager.tsx", MANAGER_CODE);
+
+test("source pin: the comment stripper keeps code and strings, drops comments", () => {
+  assert.equal(
+    codeOf(
+      `a(); // x "y\nb("// not a comment", " k , ) "); /* c 'd */ e('f\\'g');`,
+    ),
+    `a();b("// not a comment"," k , ) ");e('f\\'g');`,
+  );
+  // On the real file, a non-log string survives.
+  assert.ok(
+    MANAGER_CODE.includes(codeOf(`} from "../screenShareWatchPolicy";`)),
+  );
+});
+
+test("source pin: RoomAudioManager.tsx lexes in sync, and its comments are stripped", () => {
+  assertLexesInSync("RoomAudioManager.tsx", MANAGER_SOURCE, MANAGER_CODE, 10);
+});
+
+test("source pin: a prettier reflow normalizes equal, a token change does not", () => {
+  const oneLine = `for (const track of watchedShareVideoToSubscribe(filteredVideoTracks(), watched, watchPubOf)) {`;
+  assert.equal(
+    codeOf(`for (const track of watchedShareVideoToSubscribe(
+      filteredVideoTracks(),
+      watched,
+      watchPubOf,
+    )) {`),
+    codeOf(oneLine),
+  );
+  // A trailing comma before `]` and `}` goes the same way.
+  assert.equal(
+    codeOf(`useTracks(
+      [
+        Track.Source.Camera,
+        Track.Source.ScreenShare,
+      ],
+      {
+        updateOnlyOn: [],
+        onlySubscribed: false,
+      },
+    );`),
+    codeOf(
+      `useTracks([Track.Source.Camera, Track.Source.ScreenShare], { updateOnlyOn: [], onlySubscribed: false });`,
+    ),
+  );
+  // So does the `;` a type literal gains when prettier wraps it.
+  assert.equal(
+    codeOf(`const pubs: (ReconcilePub & {
+      publication: RemoteTrackPublication;
+    })[] = [];`),
+    codeOf(
+      `const pubs: (ReconcilePub & { publication: RemoteTrackPublication })[] = [];`,
+    ),
+  );
+  // The one-line form finds the real file's wrapped site.
+  assertWired("the watched-share loop, written on one line", oneLine);
+  // Any token change still differs.
+  for (const changed of [
+    oneLine.replace("watched,", "everyone,"),
+    oneLine.replace("watchPubOf)", "watchPubOf())"),
+    oneLine.replace("filteredVideoTracks(), ", ""),
+    oneLine.replace(" of ", " in "),
+  ]) {
+    assert.notEqual(codeOf(changed), codeOf(oneLine), changed);
+  }
+  // A `;` between statements is kept.
+  assert.notEqual(codeOf(`a(); b()`), codeOf(`a() b()`));
+  // Inside a string, punctuation and whitespace are data, not layout.
+  assert.notEqual(codeOf(`f("a, )")`), codeOf(`f("a )")`));
+  assert.notEqual(codeOf(`f("a; }")`), codeOf(`f("a }")`));
+  assert.notEqual(codeOf(`f("a b")`), codeOf(`f("ab")`));
+});
+
+test("source pin: the audio memo gates through remoteAudioToPlay, and only its output is subscribed and rendered", () => {
+  assertWired(
+    "filteredTracks",
+    `const filteredTracks = createMemo(() => {
+      const watched = voice.watchedShares();
+      return remoteAudioToPlay(tracks(), watched, {
+        isLocal: (track) => isLocal(track.participant),
+        isAudio: (track) => track.publication.kind === Track.Kind.Audio,
+        addressee: (track) => whisperTarget(track.publication.trackName),
+        localUserId: myUserId,
+        watchPub: watchPubOf,
+      });
+    });`,
+  );
+  // Only the load-bearing statements are pinned, so the debug logging around
+  // them can go without touching this.
+  assertWired(
+    "the audio subscribe effect's input",
+    `createEffect(() => {
+      const tracks = filteredTracks();`,
+  );
+  assertWired(
+    "the audio subscribe effect",
+    `for (const track of tracks) {
+      (track.publication as RemoteTrackPublication).setSubscribed(true);`,
+  );
+  assertWired("the rendered audio", `<Key each={filteredTracks()}`);
+});
+
+test("source pin: the video effects subscribe only through the policy", () => {
+  assertWired(
+    "the camera effect",
+    `createEffect(() => {
+      for (const track of nonShareVideoToSubscribe(filteredVideoTracks())) {
+        (track.publication as RemoteTrackPublication).setSubscribed(true);
+      }
+    });`,
+  );
+  assertWired(
+    "the watched-share video effect",
+    `createEffect(() => {
+      const watched = voice.watchedShares();
+      for (const track of watchedShareVideoToSubscribe(
+        filteredVideoTracks(),
+        watched,
+        watchPubOf,
+      )) {
+        (track.publication as RemoteTrackPublication).setSubscribed(true);
+      }
+    });`,
+  );
+  // Exactly those three effects request a subscription; a fourth blanket
+  // loop anywhere in the file is a new path around the watch set.
+  assert.equal(
+    MANAGER_CODE.split(".setSubscribed(true)").length - 1,
+    3,
+    "setSubscribed(true) call sites in RoomAudioManager.tsx",
+  );
+});
+
+test("source pin: watch transitions and the unsubscribe backstop go through the policy", () => {
+  assertWired(
+    "the watch-transition effect",
+    `for (const change of reconcileShareSubscriptions(prev, next, pubs)) {`,
+  );
+  assertWired(
+    "the explicit-unsubscribe effect",
+    `createEffect(() => {
+      tracks();
+      videoTracks();
+      const watched = voice.watchedShares();
+      const room = voice.room();
+      if (!room) return;
+      const pubs: (ReconcilePub & { publication: RemoteTrackPublication })[] = [];
+      for (const participant of room.remoteParticipants.values()) {
+        for (const publication of participant.trackPublications.values()) {
+          if (!isShareSource(publication.source)) continue;
+          pubs.push({
+            ...watchPubOf({ participant, source: publication.source }),
+            isDesired: publication.isDesired,
+            publication,
+          });
+        }
+      }
+      for (const { publication } of sharesToUnsubscribe(pubs, watched)) {
+        if (!publication.isDesired) continue;
+        publication.setSubscribed(false);
+      }
+    });`,
+  );
+});
+
+test("source pin: the lists the cryptor-disarm sweep reads stay unfiltered", () => {
+  // The watch gate lives in the memo, never in these: the sweep must still
+  // see (and disarm for) an unwatched plaintext share.
+  assertWired(
+    "tracks",
+    `const tracks = useTracks(
+      [
+        Track.Source.Microphone,
+        Track.Source.ScreenShareAudio,
+        Track.Source.Unknown,
+      ],
+      {
+        updateOnlyOn: [],
+        onlySubscribed: false,
+      },
+    );`,
+  );
+  assertWired(
+    "videoTracks",
+    `const videoTracks = useTracks(
+      [Track.Source.Camera, Track.Source.ScreenShare],
+      {
+        updateOnlyOn: [],
+        onlySubscribed: false,
+      },
+    );`,
+  );
+  assertWired(
+    "the sweep's input",
+    `for (const ref of [...tracks(), ...videoTracks()]) {`,
+  );
 });
