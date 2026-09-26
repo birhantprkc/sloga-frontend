@@ -132,6 +132,8 @@ import {
   negotiatingFailsafeReason,
 } from "./mlsNegotiatingFailsafe";
 import {
+  type ResumeCommitRef,
+  type ResumePrefetch,
   admitInProgressVerdict,
   rejoinReintentWindowMs,
   rejoinServeAction,
@@ -1069,6 +1071,26 @@ export interface MlsCallSessionDeps {
    * stands for.
    */
   startupWipeTokens?: Set<string>;
+  /**
+   * The host's resume prefetch for this channel, started before the room
+   * connects and never awaited there (plan: "The resume path"). Consumed
+   * from wave 3; today it is IGNORED and the session always joins through
+   * today's join ladder. Absent ⇒ no resume is ever attempted.
+   */
+  resumePrefetch?: Promise<ResumePrefetch<
+    MlsCommitInfo & ResumeCommitRef
+  > | null>;
+  /**
+   * Aborts THIS attempt's resume prefetch (W2R-M1). Consumed from wave 3;
+   * today it is IGNORED and never called. From wave 3 the session calls it
+   * before ANY join path it takes while the prefetch may still be running
+   * (its bounded wait timing out, a `"join"` decision, the step-6
+   * fallback). Aborting makes `prefetchResume` hand its claim back and skip
+   * `giveUp`'s cleanup, so an abandoned prefetch can never delete the group
+   * the fallback just joined under the same DS group id. Absent ⇒ no
+   * prefetch was started.
+   */
+  abortResumePrefetch?: () => void;
 }
 
 /** One staged own commit awaiting arbitration (native pending mirror). */
@@ -1867,8 +1889,13 @@ export class MlsCallSession {
    * leaf (CannotRemoveSelf); peers' SFU-departure leave-grace removal (or
    * the DS rejoin affordance, for a still-connected device) clears our
    * roster entry.
+   *
+   * `opts.discard` is IGNORED today. From wave 3 a dispose keeps the local
+   * group for a bounded resume window by default, and `discard: true` (sign
+   * out) destroys it at once instead.
    */
-  dispose(): void {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  dispose(opts?: { discard?: boolean }): void {
     if (this.#state === "closed") return;
     // Emit the R-1/R-2 session summary (§7.3) before tearing down.
     const summary = this.#foldTimelines(this.#metrics.summary());

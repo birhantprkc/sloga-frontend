@@ -103,14 +103,15 @@ EXPECTED=(
   "components/rtc/mlsCallSession.groupscope.test.ts 19 0"
   "components/rtc/mlsCallSession.heal.test.ts 7 0"
   "components/rtc/mlsCallSession.joinrace.test.ts 37 0"
+  "components/rtc/mlsCallSession.mailbox.test.ts 7 0"
   "components/rtc/mlsCallSession.resecure.test.ts 23 0"
   "components/rtc/mlsCallSession.serveguard.test.ts 3 0"
   "components/rtc/mlsCallSession.timeline.test.ts 4 0"
   "components/rtc/mlsDrainPolicy.test.ts 14 0"
   "components/rtc/mlsJoinRequestPolicy.test.ts 4 0"
-  "components/rtc/mlsJoinTimeline.test.ts 9 0"
+  "components/rtc/mlsJoinTimeline.test.ts 10 0"
   "components/rtc/mlsNegotiatingFailsafe.test.ts 13 0"
-  "components/rtc/mlsRejoinPolicy.test.ts 22 0"
+  "components/rtc/mlsRejoinPolicy.test.ts 54 0"
   "components/rtc/mlsSessionSetupPolicy.test.ts 19 0"
   "components/rtc/rosterReconcile.test.ts 27 0"
   "components/rtc/localPublicationEncryption.test.ts 10 0"
@@ -125,8 +126,9 @@ EXPECTED=(
   "components/rtc/screenAudioWire.test.ts 17 0"
   "components/rtc/screenAudioNativeWin.test.ts 51 0"
   "components/rtc/pauseClauseHold.test.ts 7 0"
-  "components/client/mlsInboundBuffer.test.ts 11 0"
+  "components/client/mlsInboundBuffer.test.ts 17 0"
   "components/client/mlsEnvelopeClassify.test.ts 12 0"
+  "components/client/mlsResumeKeep.test.ts 62 0"
 )
 
 counter() { # counter <log> <name> — the runner's own summary counter, or ""
@@ -224,7 +226,12 @@ SPECS=(components/rtc/mls*.test.ts components/rtc/rosterReconcile.test.ts
   # session's drain acts on. The classifier's spec ran nowhere before these
   # two lines.
   components/client/mlsInboundBuffer.test.ts
-  components/client/mlsEnvelopeClassify.test.ts)
+  components/client/mlsEnvelopeClassify.test.ts
+  # 🔴 Same reason, and the same directory. The kept-group registry decides
+  # when a hung-up call's local group is finally deleted and whether a resume
+  # may ever claim it; without this literal its spec runs nowhere and its
+  # EXPECTED row trips "never ran".
+  components/client/mlsResumeKeep.test.ts)
 # 🔴 Arguments ADD to that set; they do not replace it. They used to replace
 # it, so the natural invocation for this branch —
 #   rtc-gate.sh components/rtc/mls*.test.ts
@@ -292,6 +299,12 @@ FILES=(components/rtc/mlsCallSession.ts components/rtc/mlsCallModePolicy.ts
   components/rtc/mlsRejoinPolicy.ts components/rtc/mlsRejoinPolicy.test.ts
   components/client/mlsInboundBuffer.ts
   components/client/mlsInboundBuffer.test.ts
+  # Enrolled because all three are clean: `prettier --check` and eslint each
+  # exit 0 on them, with no warnings (measured when the rejoin-resume plan's
+  # wave 2 added the kept-group registry, its spec and the mailbox spec).
+  components/client/mlsResumeKeep.ts
+  components/client/mlsResumeKeep.test.ts
+  components/rtc/mlsCallSession.mailbox.test.ts
   # Enrolled because it is clean: `prettier --check` passes on it (and passed
   # at base c219c107), and eslint exits 0 on it with ONE pre-existing warning
   # (see the eslint step below).

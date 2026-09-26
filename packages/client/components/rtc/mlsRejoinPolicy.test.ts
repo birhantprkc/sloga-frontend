@@ -5,15 +5,22 @@
 // (channel-scoped, orphan-sparing, once-per-page), the peer-side rejoin-serve
 // staleness gate, and the generation-guarded Welcome acceptance. Wave 1.5:
 // the epoch-keyed serve-target check that stops a staggered serve removing a
-// member re-seated after the serve was scheduled.
+// member re-seated after the serve was scheduled. Resume wave 2: every rule
+// of `resumeDecision` failing alone, its age/lag boundaries, `recencyValid`,
+// and the startup wipe sparing the resumed group.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  REJOIN_SERVE_SUPPRESS_MS,
+  type ResumePrefetch,
   admitInProgressVerdict,
+  LOCAL_GROUP_KEEP_MS,
+  recencyValid,
+  REJOIN_SERVE_SUPPRESS_MS,
   rejoinReintentWindowMs,
   rejoinServeAction,
+  RESUME_MAX_LAG,
+  resumeDecision,
   serveTargetStillStale,
   startupWipeTargets,
   welcomeVerdict,
@@ -62,6 +69,60 @@ test("a spent page-lifetime token wipes nothing more — later establishes own t
       tokenSpent: true,
     }),
     [],
+  );
+});
+
+test("the group a resume adopts is spared, like the create route's orphan (D2/D6)", () => {
+  assert.deepEqual(
+    startupWipeTargets({
+      localGroupIds: ["stale", "kept"],
+      orphanGroupId: null,
+      tokenSpent: false,
+      spareGroupId: "kept",
+    }),
+    ["stale"],
+  );
+  assert.deepEqual(
+    startupWipeTargets({
+      localGroupIds: ["stale", "kept", "orphan"],
+      orphanGroupId: "orphan",
+      tokenSpent: false,
+      spareGroupId: "kept",
+    }),
+    ["stale"],
+  );
+});
+
+test("a spent token wipes nothing even with a group to spare", () => {
+  assert.deepEqual(
+    startupWipeTargets({
+      localGroupIds: ["stale", "kept"],
+      orphanGroupId: null,
+      tokenSpent: true,
+      spareGroupId: "kept",
+    }),
+    [],
+  );
+});
+
+test("no group to spare wipes exactly as before", () => {
+  assert.deepEqual(
+    startupWipeTargets({
+      localGroupIds: ["g1", "g2"],
+      orphanGroupId: null,
+      tokenSpent: false,
+      spareGroupId: null,
+    }),
+    ["g1", "g2"],
+  );
+  assert.deepEqual(
+    startupWipeTargets({
+      localGroupIds: ["stale", "orphan"],
+      orphanGroupId: "orphan",
+      tokenSpent: false,
+      spareGroupId: null,
+    }),
+    ["stale"],
   );
 });
 
@@ -280,4 +341,224 @@ test("a Remove from before scheduling (an earlier rejoin cycle) never blocks the
       `removed at ${removedAtEpoch}`,
     );
   }
+});
+
+// ---- resumeDecision (resume plan, session step 1) ---------------------------
+//
+// Each negative case breaks exactly ONE rule of an otherwise valid prefetch,
+// so a rule that stops being checked leaves its case resuming.
+
+const CH = "chan";
+const NOW = 1_000_000;
+const LOCAL_EPOCH = 7;
+
+/** `n` fetched commits taking the local epoch forward one epoch at a time. */
+function contiguous(n: number): ResumePrefetch["commits"] {
+  return Array.from({ length: n }, (_, i) => ({
+    epoch: LOCAL_EPOCH + 1 + i,
+    committerIsSelf: false,
+  }));
+}
+
+/** A prefetch every rule accepts, `lag` epochs behind the DS. */
+function valid(lag = 2): ResumePrefetch {
+  return {
+    groupId: "kept",
+    claimToken: "token",
+    fetchedAtMs: NOW - 1_000,
+    queriedChannelId: CH,
+    localEpoch: LOCAL_EPOCH,
+    localState: "active",
+    localChannelId: CH,
+    selfInLocalRoster: true,
+    openGroupId: "kept",
+    pendingCommit: null,
+    commits: contiguous(lag),
+    currentEpoch: LOCAL_EPOCH + lag,
+  };
+}
+
+/** The startup establish on the intended channel, at `NOW`. */
+function decide(p: ResumePrefetch | null): "resume" | "join" {
+  return resumeDecision(p, CH, true, NOW);
+}
+
+test("a fully valid prefetch resumes", () => {
+  assert.equal(decide(valid()), "resume");
+});
+
+test("a recency-only candidate (Ctrl+R, no claim token) resumes on the same rules", () => {
+  assert.equal(decide({ ...valid(), claimToken: null }), "resume");
+});
+
+test("(1) no prefetch joins — an old shell, no candidate, or a failed prefetch", () => {
+  assert.equal(decide(null), "join");
+});
+
+test("(2) only the startup establish may resume (M6/R2-m7)", () => {
+  assert.equal(resumeDecision(valid(), CH, false, NOW), "join");
+});
+
+test("(3) a prefetch older than the keep window joins (R2-m1)", () => {
+  assert.equal(
+    decide({ ...valid(), fetchedAtMs: NOW - LOCAL_GROUP_KEEP_MS - 1 }),
+    "join",
+  );
+});
+
+test("(3) a prefetch stamped after now (a backwards clock) joins", () => {
+  assert.equal(decide({ ...valid(), fetchedAtMs: NOW + 1 }), "join");
+});
+
+test("(3) boundary: a prefetch exactly the keep window old, or just taken, resumes", () => {
+  assert.equal(
+    decide({ ...valid(), fetchedAtMs: NOW - LOCAL_GROUP_KEEP_MS }),
+    "resume",
+  );
+  assert.equal(decide({ ...valid(), fetchedAtMs: NOW }), "resume");
+});
+
+test("(4) no group open on the DS for the channel joins", () => {
+  assert.equal(decide({ ...valid(), openGroupId: null }), "join");
+});
+
+test("(4) the DS's open group being another group joins", () => {
+  assert.equal(decide({ ...valid(), openGroupId: "other" }), "join");
+});
+
+test("(5) an open-group GET for another channel joins (T-15 binding, R2-m1)", () => {
+  assert.equal(decide({ ...valid(), queriedChannelId: "other" }), "join");
+});
+
+test("(5) a local group bound to another channel joins (T-15 binding, R2-m1)", () => {
+  assert.equal(decide({ ...valid(), localChannelId: "other" }), "join");
+});
+
+test("(5) a prefetch agreeing with itself but not with the intended channel joins", () => {
+  assert.equal(resumeDecision(valid(), "other", true, NOW), "join");
+});
+
+test("(6) a poisoned local group joins", () => {
+  assert.equal(decide({ ...valid(), localState: "poisoned" }), "join");
+});
+
+test("(6) self absent from the local roster joins", () => {
+  assert.equal(decide({ ...valid(), selfInLocalRoster: false }), "join");
+});
+
+test("(7) a staged pending commit joins (B3)", () => {
+  for (const pendingCommit of [LOCAL_EPOCH + 1, 0]) {
+    assert.equal(
+      decide({ ...valid(), pendingCommit }),
+      "join",
+      `pending at ${pendingCommit}`,
+    );
+  }
+});
+
+test("(8) a fetched commit this device authored joins", () => {
+  for (const selfAt of [0, 1]) {
+    const commits = contiguous(2).map((c, i) => ({
+      ...c,
+      committerIsSelf: i === selfAt,
+    }));
+    assert.equal(decide({ ...valid(), commits }), "join", `self at ${selfAt}`);
+  }
+});
+
+test("(9) boundary: a lag of RESUME_MAX_LAG - 1 resumes", () => {
+  assert.equal(decide(valid(RESUME_MAX_LAG - 1)), "resume");
+});
+
+test("(9) a lag of RESUME_MAX_LAG joins (the session's desync threshold)", () => {
+  assert.equal(decide(valid(RESUME_MAX_LAG)), "join");
+});
+
+test("(9) a local epoch ahead of the DS joins", () => {
+  // No list can match a negative lag, so rule (10) necessarily fails with it.
+  assert.equal(decide({ ...valid(0), currentEpoch: LOCAL_EPOCH - 1 }), "join");
+});
+
+test("boundary: lag 0 with no commits to catch up resumes", () => {
+  assert.equal(decide(valid(0)), "resume");
+});
+
+test("(10) a commit list shorter or longer than the lag joins", () => {
+  const cases: [string, ResumePrefetch][] = [
+    ["short", { ...valid(2), commits: contiguous(1) }],
+    ["long", { ...valid(2), commits: contiguous(3) }],
+    ["empty", { ...valid(2), commits: [] }],
+    ["extra at lag 0", { ...valid(0), commits: contiguous(1) }],
+  ];
+  for (const [label, p] of cases) {
+    assert.equal(decide(p), "join", label);
+  }
+});
+
+test("(10) a right-length list that does not step epoch by epoch joins (R-W2-5)", () => {
+  // The expected list for lag 2 from epoch 7 is [8, 9].
+  for (const epochs of [
+    [8, 10],
+    [9, 8],
+    [8, 8],
+    [9, 10],
+    [7, 8],
+  ]) {
+    const commits = epochs.map((epoch) => ({ epoch, committerIsSelf: false }));
+    assert.equal(
+      decide({ ...valid(2), commits }),
+      "join",
+      `epochs ${epochs.join(",")}`,
+    );
+  }
+});
+
+// ---- recencyValid (D7) -------------------------------------------------------
+
+test("no recency record is never valid", () => {
+  assert.equal(recencyValid(null, "kept", NOW), false);
+});
+
+test("a recency record for another group is not valid", () => {
+  assert.equal(recencyValid({ groupId: "other", at: NOW }, "kept", NOW), false);
+});
+
+test("a recency record up to exactly the keep window old is valid", () => {
+  assert.equal(recencyValid({ groupId: "kept", at: NOW }, "kept", NOW), true);
+  assert.equal(
+    recencyValid(
+      { groupId: "kept", at: NOW - LOCAL_GROUP_KEEP_MS },
+      "kept",
+      NOW,
+    ),
+    true,
+  );
+});
+
+test("a recency record past the keep window is not valid", () => {
+  assert.equal(
+    recencyValid(
+      { groupId: "kept", at: NOW - LOCAL_GROUP_KEEP_MS - 1 },
+      "kept",
+      NOW,
+    ),
+    false,
+  );
+});
+
+test("a recency record stamped after now (a backwards clock) is not valid", () => {
+  assert.equal(
+    recencyValid({ groupId: "kept", at: NOW + 1 }, "kept", NOW),
+    false,
+  );
+});
+
+// ---- the constants the session mirrors ---------------------------------------
+
+test("a group is kept for 10 s (the session's LEAVE_GRACE_MS)", () => {
+  assert.equal(LOCAL_GROUP_KEEP_MS, 10_000);
+});
+
+test("a resume catches up at most 11 epochs (the session's LAG_DESYNC_THRESHOLD is 12)", () => {
+  assert.equal(RESUME_MAX_LAG, 12);
 });

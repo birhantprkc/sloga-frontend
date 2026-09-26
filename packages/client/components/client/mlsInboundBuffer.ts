@@ -14,6 +14,8 @@
  * with no session registered, until a session registers and takes them in
  * order. Nothing here acks: a held envelope is still queued server-side, and
  * the session acks it after durable processing, exactly as for a live push.
+ * `mlsHoldVerdict` decides, per envelope, whether it goes to the sink, into
+ * the hold, or nowhere.
  *
  * Kept free of every app import so `node --test` can load it.
  */
@@ -115,4 +117,39 @@ export class MlsInboundBuffer {
   get size(): number {
     return this.#held.length;
   }
+}
+
+/** What the bridge does with one inbound MLS envelope (`mlsHoldVerdict`). */
+export type MlsHoldVerdict = "sink" | "hold" | "drop";
+
+/**
+ * Hand one MLS envelope to the active sink, hold it in `MlsInboundBuffer`
+ * until a sink registers, or drop it. Dropping acks nothing: the envelope
+ * stays queued in its device's server-side mailbox.
+ *
+ * - A registered sink gets every copy, whatever the other inputs say. The
+ *   session filters by `recipientDeviceId` itself, as it did before the hold
+ *   existed.
+ * - A disabled bridge (`enabled === false`) holds nothing: it must not hand
+ *   a later call envelopes it will never ack. `undefined` is not disabled —
+ *   the status may not have loaded yet when the connect-time drain lands.
+ * - Only this device's copies are held. A live MLS push goes to the
+ *   recipient's user channel (delta `commits_submit.rs` publishes each
+ *   device's copy with `.private(user)`), so every session of the account
+ *   receives the copies addressed to all of its devices; held, the other
+ *   devices' copies would only fill the buffer's cap ahead of ours. While
+ *   this device's id is not yet known (`null`, `undefined` or `""`)
+ *   everything is held, and the session's own recipient filter drops the
+ *   rest at flush.
+ */
+export function mlsHoldVerdict(i: {
+  sinkPresent: boolean;
+  enabled: boolean | undefined;
+  ownDeviceId: string | null | undefined;
+  recipientDeviceId: string;
+}): MlsHoldVerdict {
+  if (i.sinkPresent) return "sink";
+  if (i.enabled === false) return "drop";
+  if (i.ownDeviceId && i.ownDeviceId !== i.recipientDeviceId) return "drop";
+  return "hold";
 }

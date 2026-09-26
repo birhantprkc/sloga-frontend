@@ -398,6 +398,8 @@ REJOIN_POLICY = "mlsRejoinPolicy.ts"
 #: address `RTC / mutation.file`, so a `components/client` module is named
 #: relative to `RTC`, and the restore writes back to that same path.
 INBOUND_BUFFER = "../client/mlsInboundBuffer.ts"
+#: 🔴 Same form, same reason: relative to `RTC`, not `components/client/…`.
+RESUME_KEEP = "../client/mlsResumeKeep.ts"
 
 JOINRACE_SPEC = "components/rtc/mlsCallSession.joinrace.test.ts"
 HEAL_SPEC = "components/rtc/mlsCallSession.heal.test.ts"
@@ -420,6 +422,7 @@ GROUPSCOPE_SPEC = "components/rtc/mlsCallSession.groupscope.test.ts"
 SERVEGUARD_SPEC = "components/rtc/mlsCallSession.serveguard.test.ts"
 REJOIN_POLICY_SPEC = "components/rtc/mlsRejoinPolicy.test.ts"
 INBOUND_BUFFER_SPEC = "components/client/mlsInboundBuffer.test.ts"
+RESUME_KEEP_SPEC = "components/client/mlsResumeKeep.test.ts"
 ALL_SPECS = [POLICY_SPEC, HEAL_SPEC, JOINRACE_SPEC]
 
 
@@ -3642,6 +3645,413 @@ MUTATIONS += [
         ],
         specs=[SERVEGUARD_SPEC, FLEET_SPEC],
         must_red=[SERVEGUARD_SPEC, FLEET_SPEC],
+    ),
+]
+
+
+# --- Rejoin resume, wave 2: the resume foundations ---------------------------
+#
+# Wave 2 is inert in the session (`resumePrefetch` is accepted and ignored),
+# so what is measured here is the three pure modules wave 3 will stand on,
+# each loadable, so each rule is reachable: `resumeDecision` and
+# `recencyValid` in `mlsRejoinPolicy.ts` (the go/no-go and the recency
+# record's validity); `KeptLocalGroups` and `prefetchResume` in
+# `components/client/mlsResumeKeep.ts` (keep, claim, hand-back, cleanup, and
+# the read-only prefetch); and `mlsHoldVerdict` in `mlsInboundBuffer.ts` (what
+# the bridge does with an MLS envelope before a sink exists). Every entry is
+# `must_red` on the ONE spec that owns its rule. The bridge (`e2ee.ts`) and
+# host (`state.tsx`) wiring cannot be loaded by `node --test` and has no
+# entry.
+
+MUTATIONS += [
+    # ---- resumeDecision ------------------------------------------------------
+    #
+    # Rules 2 to 8, 9's upper bound, and 10's length check and contiguity
+    # each have an entry (6, 8, 9's upper bound and 10's length since the
+    # wave-2 fix pass, audit W2-m3). NOT entered here, and not claimed to be
+    # measured by this table: rule 1 (`p === null`). Dropping it does not
+    # resume anything: the next rule to read `p` throws on `null`, so the
+    # mutant is a crash in the caller, not the defect the rule exists for.
+    Mutation(
+        id="resume-ignores-open-group",
+        what="`resumeDecision` drops rule 4, so a resume proceeds whatever group the DS's open-group GET names, or none at all — the DS verdict the resume rests on (D2) is never consulted, and a moved or hostile DS's answer is resumed over",
+        file=REJOIN_POLICY,
+        # The rule's line dropped whole (newline included) so the mutant is
+        # still well-formed TS.
+        search="""  if (!(p.openGroupId !== null && p.openGroupId === p.groupId)) return "join";
+""",
+        replace="",
+        specs=[REJOIN_POLICY_SPEC],
+        must_red=[REJOIN_POLICY_SPEC],
+    ),
+    Mutation(
+        id="resume-ignores-pending-commit",
+        what="`resumeDecision` drops rule 7, so a device with its own commit still pending natively resumes, and the next inbound commit poisons the group it just resumed (audit B3)",
+        file=REJOIN_POLICY,
+        search="""  if (p.pendingCommit !== null) return "join";
+""",
+        replace="",
+        specs=[REJOIN_POLICY_SPEC],
+        must_red=[REJOIN_POLICY_SPEC],
+    ),
+    Mutation(
+        id="resume-ignores-startup",
+        what="`resumeDecision` drops rule 2, so a rejoin-fresh, poisoned-successor or re-upgrade establish — all sharing the 409/rejoin route — adopts held state instead of re-enrolling (audit M6, R2-m7)",
+        file=REJOIN_POLICY,
+        search="""  if (!isStartup) return "join";
+""",
+        replace="",
+        specs=[REJOIN_POLICY_SPEC],
+        must_red=[REJOIN_POLICY_SPEC],
+    ),
+    Mutation(
+        id="resume-ignores-prefetch-age",
+        what="`resumeDecision` drops rule 3 on BOTH sides, so a prefetch of any age resumes — one gathered before a long stall, or one a clock that ran backwards makes read as from the future — on a DS verdict that may be long stale (R2-m1)",
+        file=REJOIN_POLICY,
+        # Both lines, so no dead `ageMs` is left behind.
+        search="""  const ageMs = nowMs - p.fetchedAtMs;
+  if (!(ageMs >= 0 && ageMs <= LOCAL_GROUP_KEEP_MS)) return "join";
+""",
+        replace="",
+        specs=[REJOIN_POLICY_SPEC],
+        must_red=[REJOIN_POLICY_SPEC],
+    ),
+    Mutation(
+        id="resume-ignores-channel-binding",
+        what="`resumeDecision` drops rule 5, so a resume is bound to neither the channel the GET was made for nor the channel native holds the group for — a group held for one channel is resumed into another (the T-15 binding on this route, R2-m1)",
+        file=REJOIN_POLICY,
+        # Rule 5 is TWO lines and the entry drops both (see `also`): the
+        # defect its name states is the binding gone. Measured 2026-09-26 on
+        # a copy of the tree: dropping EITHER line alone is also red on the
+        # policy spec (one failing case each), so neither half is unpinned —
+        # but this entry cannot see a future spec edit that loses one half's
+        # case while keeping the other's.
+        search="""  if (p.queriedChannelId !== intendedChannelId) return "join";
+""",
+        replace="",
+        also=[
+            (
+                """  if (p.localChannelId !== intendedChannelId) return "join";
+""",
+                "",
+            ),
+        ],
+        specs=[REJOIN_POLICY_SPEC],
+        must_red=[REJOIN_POLICY_SPEC],
+    ),
+    Mutation(
+        id="resume-ignores-contiguity",
+        what="`resumeDecision` keeps rule 10's length check but drops its contiguity loop, so a commit list of the right LENGTH is accepted whatever epochs it carries — a hostile DS padding or reordering the list passes on the count alone (R-W2-5)",
+        file=REJOIN_POLICY,
+        # The LOOP, not the length check: the length check alone is the
+        # pre-R-W2-5 rule, and dropping it too would measure a different
+        # (grosser) defect under this name.
+        search="""  for (let i = 0; i < p.commits.length; i++) {
+    if (p.commits[i].epoch !== p.localEpoch + 1 + i) return "join";
+  }
+""",
+        replace="",
+        specs=[REJOIN_POLICY_SPEC],
+        must_red=[REJOIN_POLICY_SPEC],
+    ),
+    # ---- resumeDecision, the wave-2 fix pass (audit W2-m3) -------------------
+    #
+    # The four rules the wave-2 table left unpinned. The auditor killed each
+    # by hand; these entries make that a standing measurement.
+    Mutation(
+        id="resume-ignores-local-state",
+        what="`resumeDecision` drops rule 6, so a group native holds as POISONED, or one whose own roster no longer names this device, is resumed — a device the group removed adopts it as if it were still a member",
+        file=REJOIN_POLICY,
+        # The rule is ONE line with both conjuncts, dropped whole. Measured
+        # 2026-09-26 on a copy of the tree: dropping EITHER conjunct alone is
+        # also red on the policy spec (one failing case each), so neither half
+        # is unpinned.
+        search="""  if (!(p.localState === "active" && p.selfInLocalRoster)) return "join";
+""",
+        replace="",
+        specs=[REJOIN_POLICY_SPEC],
+        must_red=[REJOIN_POLICY_SPEC],
+    ),
+    Mutation(
+        id="resume-ignores-own-commit",
+        what="`resumeDecision` drops rule 8, so a fetched commit this device authored and never merged is accepted for catch-up as though a peer sent it — the other half of audit B3",
+        file=REJOIN_POLICY,
+        search="""  if (p.commits.some((c) => c.committerIsSelf)) return "join";
+""",
+        replace="",
+        specs=[REJOIN_POLICY_SPEC],
+        must_red=[REJOIN_POLICY_SPEC],
+    ),
+    Mutation(
+        id="resume-lag-bound-inclusive",
+        what="rule 9's upper bound admits `RESUME_MAX_LAG` itself, so a held group exactly at the lag the live session calls desync is caught up by a resume instead of abandoned for a clean join",
+        file=REJOIN_POLICY,
+        # The boundary, not the whole bound: `<=` is the smallest edit that
+        # breaks it, and the spec's lag-12 case kills it. Dropping the bound
+        # outright is grosser and is killed by the same case.
+        search="""  if (!(lag >= 0 && lag < RESUME_MAX_LAG)) return "join";""",
+        replace="""  if (!(lag >= 0 && lag <= RESUME_MAX_LAG)) return "join";""",
+        specs=[REJOIN_POLICY_SPEC],
+        must_red=[REJOIN_POLICY_SPEC],
+    ),
+    Mutation(
+        id="resume-ignores-commit-count",
+        what="`resumeDecision` drops rule 10's length check and keeps the contiguity loop, so a DS returning FEWER commits than the lag passes as long as the ones it did send are in order — the resume catches up short of the current epoch (audit M4)",
+        file=REJOIN_POLICY,
+        # The length line alone; `resume-ignores-contiguity` above drops the
+        # loop alone. Each half of rule 10 is pinned by its own entry.
+        search="""  if (p.commits.length !== lag) return "join";
+""",
+        replace="",
+        specs=[REJOIN_POLICY_SPEC],
+        must_red=[REJOIN_POLICY_SPEC],
+    ),
+    # 🔴 NOT AN ENTRY, and recorded rather than silently absent: dropping
+    # `lag >= 0` from rule 9 alone (`lag < RESUME_MAX_LAG` kept). It is an
+    # EQUIVALENT mutant — rule 10's `commits.length !== lag` already refuses a
+    # negative lag, because no list has a negative length — so every input
+    # answers the same and no spec can turn it red (measured by the lane that
+    # wrote the spec, 2026-09-25). An entry for it could only ever be
+    # `expect="green"`, an admission dressed as a measurement. The conjunct
+    # stays in the source as the rule's own statement of intent.
+    Mutation(
+        id="recency-always-valid",
+        what="`recencyValid` answers true for any record — absent, naming another group, or of any age — so a hostile DS can steer a resume into an OLDER group this device still holds, and whatever a dead page left on disk is resumable forever (D7, audit M1)",
+        file=REJOIN_POLICY,
+        search="""  if (rec === null || rec.groupId !== groupId) return false;
+  const ageMs = nowMs - rec.at;
+  return ageMs >= 0 && ageMs <= LOCAL_GROUP_KEEP_MS;""",
+        replace="""  return true;""",
+        specs=[REJOIN_POLICY_SPEC],
+        must_red=[REJOIN_POLICY_SPEC],
+    ),
+    # ---- the kept-group registry --------------------------------------------
+    Mutation(
+        id="keep-handback-rearms-full-ms",
+        what="a handed-back claim re-arms its keep timer for the keep's FULL `ms` from now instead of the time left to its ORIGINAL deadline, so every claim a superseded prefetch hands back stretches the keep, and repeated claims hold a hung-up call's group on disk indefinitely (R2-B1)",
+        file=RESUME_KEEP,
+        # Two edits: `keep` records its `ms` on the entry, and `handBack`
+        # re-arms with it. The past-deadline branch is kept, so this measures
+        # the re-arm duration alone. (A literal `10_000` in place of
+        # `remaining` would also drop that branch, and — the spec keeps at
+        # 5 000 ms — re-arm at twice the keep: a grosser defect than this
+        # one's name.)
+        search="""    this.#byChannel.set(channelId, entry);
+    this.#arm(entry, ms);""",
+        replace="""    this.#byChannel.set(channelId, entry);
+    (entry as unknown as { ms: number }).ms = ms;
+    this.#arm(entry, ms);""",
+        also=[
+            (
+                """        this.#arm(entry, remaining);""",
+                """        this.#arm(entry, (entry as unknown as { ms: number }).ms);""",
+            ),
+        ],
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    Mutation(
+        id="keep-release-keeps-entry",
+        what="`release` leaves the entry tracked, so a group the session ADOPTED is still deleted under the call — by its keep timer, or by a later hand-back of its claim re-arming that timer (R2-B1 gap 1)",
+        file=RESUME_KEEP,
+        # Anchored with the comment line above it: `this.#deleteEntries(
+        # groupId);` alone also occurs in `keep`, `cleanup` and `#delete`.
+        # Rewording that comment hard-errors this entry; it fails loud, never
+        # silently.
+        search="""    // the group afterwards; a later keep of it starts a fresh entry.
+    this.#deleteEntries(groupId);""",
+        replace="""    // the group afterwards; a later keep of it starts a fresh entry.
+    void groupId;""",
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    Mutation(
+        id="keep-claim-ignores-inflight",
+        what="`claim` grants a group whose cleanup has already started, so a superseding connect resumes a group that is halfway off the disk",
+        file=RESUME_KEEP,
+        search="""    if (this.isInFlight(entry.groupId)) return null;
+""",
+        replace="",
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    Mutation(
+        id="keep-recency-ignores-inflight",
+        what="`recencyCandidate` offers a group whose cleanup is in flight, so a resume with no kept entry to claim (a Ctrl+R) adopts a group the native delete is removing",
+        file=RESUME_KEEP,
+        search="""    if (rec === null || this.isInFlight(rec.groupId)) return null;""",
+        replace="""    if (rec === null) return null;""",
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    Mutation(
+        id="keep-cleanup-keeps-recency",
+        what="`cleanup` leaves the group's recency record behind, so a group deleted from disk — by expiry, a superseded or refused keep, discard-all or a leave — is still offered as a recency candidate (R2-B1 gaps 3 and 4)",
+        file=RESUME_KEEP,
+        search="""      clearResumeRecordsForGroup(this.#deps.storage, groupId);
+      await this.#deps.deleteLocal(groupId);""",
+        replace="""      await this.#deps.deleteLocal(groupId);""",
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    Mutation(
+        id="prefetch-abort-no-handback",
+        what="the prefetch's abort listener does not hand the claim back, so a superseded connect's claim stays taken: the kept group's timer is never re-armed, the superseding connect cannot claim it, and it is neither resumed nor deleted until the page dies (R2-B1 gap 2)",
+        file=RESUME_KEEP,
+        search="""    if (claim !== null) deps.kept.handBack(claim.token);""",
+        replace="""    void claim;""",
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    # ---- the kept-group registry, the wave-2 fix pass ------------------------
+    #
+    # W2-m3's fifth pin (the prefetch's failure-path cleanup), then the W2-m1 /
+    # W2-m2 / F1-R1 changes: `release` reporting an in-flight group,
+    # `recencyCandidate` refusing a group a live entry names, `discardChannel`,
+    # and `cleanup` handing a later caller the pending delete.
+    Mutation(
+        id="prefetch-giveup-no-cleanup",
+        what="the prefetch's failure path returns `null` without cleaning its candidate, so a group an old shell, a non-ok commits fetch or a failed recency check gave up on stays on disk for the join path's create to trip over (W2-m3)",
+        file=RESUME_KEEP,
+        # The awaited cleanup line alone; its `try`/`catch` is left with an
+        # empty body, which is still well-formed.
+        search="""      await deps.kept.cleanup(groupId);
+""",
+        replace="",
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    Mutation(
+        id="keep-release-ignores-inflight",
+        what="`release` answers true while the group's cleanup is in flight, so an adopter is told the group is its own while the native delete is removing it (W2-m2)",
+        file=RESUME_KEEP,
+        search="""    return !this.isInFlight(groupId);""",
+        replace="""    return true;""",
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    Mutation(
+        id="keep-recency-ignores-entries",
+        what="`recencyCandidate` offers a group a live keep entry still names, so a resume adopts it with no claim and that entry's timer deletes it under the call (W2-m2)",
+        file=RESUME_KEEP,
+        # The line alone: `#hasEntry(rec.groupId)` also occurs in
+        # `discardChannel`, as a ternary, which this window cannot match.
+        search="""    if (this.#hasEntry(rec.groupId)) return null;
+""",
+        replace="",
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    Mutation(
+        id="keep-discard-channel-skips-claimed",
+        what="`discardChannel` cleans only UNCLAIMED entries for the channel, so a group a null prefetch left claimed survives the join path's discard and is still on disk when the create runs (W2-m1)",
+        file=RESUME_KEEP,
+        search="""      if (entry.channelId === channelId) groups.add(entry.groupId);""",
+        replace="""      if (entry.channelId === channelId && entry.claimToken === null)
+        groups.add(entry.groupId);""",
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    Mutation(
+        id="keep-discard-channel-skips-inflight",
+        what="`discardChannel` does not route a group whose delete is already running through `cleanup`, so `cleanup`'s pending path never drops what still names the group: a record on ANOTHER channel naming it survives the discard, and can offer the group as a recency candidate once its delete settles (F1-R1). Since fix pass 2 the WAIT on that delete is `#withPending`'s, so this no longer settles early",
+        file=RESUME_KEEP,
+        # Anchored with the comment line above it: the bare `const pending =
+        # [...groups].map(...)` line also occurs in `discardAll`.
+        search="""    // A group whose delete is pending gets that delete back from `cleanup`.
+    const pending = [...groups].map((g) => this.cleanup(g));""",
+        replace="""    // A group whose delete is pending gets that delete back from `cleanup`.
+    const pending = [...groups]
+      .filter((g) => !this.isInFlight(g))
+      .map((g) => this.cleanup(g));""",
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    Mutation(
+        id="keep-cleanup-ignores-pending",
+        what="`cleanup` of a group whose delete is already running starts a SECOND native delete instead of returning the pending one, and the first one's settling clears the in-flight mark while the second still runs (F1-R1)",
+        file=RESUME_KEEP,
+        search="""    if (pending !== undefined) {""",
+        replace="""    if (pending !== undefined && false) {""",
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    # The next line was unreached by any keep-spec case when the entries above
+    # were written (dropped alone, it left the spec green); the spec gained a
+    # case for it, and this entry pins it.
+    Mutation(
+        id="keep-cleanup-pending-keeps-recency",
+        what="`cleanup` of a group whose delete is already running leaves the records naming it, so a record written while the delete runs outlives it and the deleted group can be offered as a recency candidate afterwards (F1-R1)",
+        file=RESUME_KEEP,
+        # Two lines: `clearResumeRecordsForGroup(this.#deps.storage,
+        # groupId);` alone also occurs in `#delete` (the path
+        # `keep-cleanup-keeps-recency` breaks), so the pending path's
+        # `return pending;` is what tells them apart.
+        search="""      clearResumeRecordsForGroup(this.#deps.storage, groupId);
+      return pending;""",
+        replace="""      return pending;""",
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    # 🔴 RETIRED, and recorded rather than silently absent:
+    # `keep-discard-channel-skips-running` (fix pass, 2026-09-26) dropped
+    # `discardChannel`'s wait on a record's group whose delete was running
+    # while ANOTHER channel's entry named it. Fix pass 2 made that wait dead
+    # code and deleted it, so the anchor is gone. Two changes made it dead: a
+    # keep of a group whose delete is pending is now refused (W2R-n1), so an
+    # entry can name an in-flight group only through the re-entry the keep
+    # spec builds (a delete started from inside `keep`); and `#withPending`
+    # makes every discard wait on EVERY delete pending at the call (W2R-m1),
+    # whatever does or does not still name the group. That wait is pinned by
+    # `keep-discard-waits-attributable-only` below.
+    # ---- the kept-group registry, fix pass 2 (W2R-m1, W2R-n1) --------------
+    Mutation(
+        id="keep-discard-waits-attributable-only",
+        what="`discardAll` and `discardChannel` wait only on the cleanups they started, not on every delete already pending, so a discard resolves while a delete it cannot attribute (a keep expiry, a hand-back past its deadline, a superseded keep or a prefetch's give-up, all of which drop the group's entries and records when they start) is still running natively, and a join can race it (W2R-m1)",
+        file=RESUME_KEEP,
+        search="""    return [...new Set([...started, ...this.#pending.values()])];""",
+        replace="""    return started;""",
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    Mutation(
+        id="keep-accepts-inflight-keep",
+        what="`keep` of a group whose delete is pending creates an entry anyway, so the entry outlives that delete and is claimable once it settles, naming a group no longer on disk (W2R-n1)",
+        file=RESUME_KEEP,
+        # The refusal block dropped whole (newline included); the comment
+        # above it is left, and the keep falls through to its normal path.
+        search="""    if (this.isInFlight(groupId)) {
+      console.info("[mls] keep refused: the group's delete is pending", {
+        groupId,
+        channelId,
+      });
+      return;
+    }
+""",
+        replace="",
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    # ---- the pre-sink hold verdict ------------------------------------------
+    Mutation(
+        id="hold-verdict-ignores-disabled",
+        what="a disabled bridge still HOLDS MLS envelopes before a sink exists, so a later call is handed envelopes this bridge will never ack (W1R-m4)",
+        file=INBOUND_BUFFER,
+        search="""  if (i.enabled === false) return "drop";
+""",
+        replace="",
+        specs=[INBOUND_BUFFER_SPEC],
+        must_red=[INBOUND_BUFFER_SPEC],
+    ),
+    Mutation(
+        id="hold-verdict-ignores-device",
+        what="an envelope addressed to ANOTHER device of this account is held and handed to this device's session when its sink registers (W1R-m1)",
+        file=INBOUND_BUFFER,
+        search="""  if (i.ownDeviceId && i.ownDeviceId !== i.recipientDeviceId) return "drop";
+""",
+        replace="",
+        specs=[INBOUND_BUFFER_SPEC],
+        must_red=[INBOUND_BUFFER_SPEC],
     ),
 ]
 

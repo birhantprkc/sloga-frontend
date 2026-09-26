@@ -22,6 +22,13 @@
 // their commits, Welcomes and join intents to each other and answers their
 // refetches, so the order a membership change reaches each seat EMERGES from
 // the real ladders rather than being placed by hand.
+//
+// Two pieces of the bridge are the REAL modules, not stubs of them: each page's
+// pre-sink hold is an `MlsInboundBuffer` fed through `mlsHoldVerdict`, and its
+// kept-group registry, claims, recency records and resume prefetch are
+// `mlsResumeKeep.ts` (plan R-W2-1). The DS keeps a mailbox per seat device
+// that only an ack empties, and a page's WS connect drains it, so what a seat
+// sees after a reload or a reconnect is what bonfire would hand it.
 import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
 import type { TestContext } from "node:test";
@@ -49,6 +56,17 @@ import type {
 } from "@revolt/client";
 
 import { classifyEnvelopeError } from "../client/mlsEnvelopeClassify.ts";
+import {
+  mlsHoldVerdict,
+  MlsInboundBuffer,
+} from "../client/mlsInboundBuffer.ts";
+import {
+  type ResumeStorage,
+  clearResumeRecord,
+  KeptLocalGroups,
+  prefetchResume,
+  writeResumeRecord,
+} from "../client/mlsResumeKeep.ts";
 import { chipStateFrom } from "./chipInputs.ts";
 import {
   type LocalPublicationEncryption,
@@ -67,6 +85,7 @@ import type {
   KeyInstaller,
   MediaEncryptionState,
   MlsCallSession,
+  MlsCallSessionDeps,
   MlsMediaBinding,
   PublishGateReason,
 } from "./mlsCallSession.ts";
@@ -133,6 +152,16 @@ type CreateGroupResult = Awaited<ReturnType<E2EEBridge["mlsCreateGroup"]>>;
 /** `MlsCtlPayload` — not re-exported by `@revolt/client`, so read off the bridge. */
 type CtlPayload = Awaited<ReturnType<E2EEBridge["callAnnounce"]>>;
 
+/** The host's `resumePrefetch` session dep (`state.tsx` starts it per connect). */
+export type ResumePrefetchDep = NonNullable<
+  MlsCallSessionDeps["resumePrefetch"]
+>;
+
+/** The host's `abortResumePrefetch` dep: aborts THAT prefetch (W2R-M1). */
+export type AbortResumePrefetchDep = NonNullable<
+  MlsCallSessionDeps["abortResumePrefetch"]
+>;
+
 /**
  * One webview page's lifetime. A page death (`Fleet.reload`) marks it dead,
  * and from then on its bridge and media binding answer nothing: the session
@@ -142,6 +171,17 @@ interface Page {
   dead: boolean;
   /** The page's `startupWipeTokens`: module state, so fresh per page. */
   readonly tokens: Set<string>;
+  /** The bridge's pre-sink hold (`#mlsBuffer`): the real buffer, per page. */
+  readonly buffer: MlsInboundBuffer;
+  /**
+   * The bridge's kept-group registry: the real one, per page. Its entries
+   * and timers are page memory, so a page death takes them (`timers`); the
+   * rows it kept are native and stay, and the next page can reach them only
+   * through the seat's recency records.
+   */
+  readonly kept: KeptLocalGroups;
+  /** Every keep timer this page armed that has neither fired nor been cleared. */
+  readonly timers: Set<unknown>;
 }
 
 /** A bridge that throws on any method the ladder touches without a stub. */
@@ -159,13 +199,26 @@ function fakeBridge(stubs: BridgeStubs, page: Page): E2EEBridge {
 
 /**
  * What a dead page's bridge answers: nothing, ever. An async method never
- * settles (the continuation that awaited it died with the page), and the two
- * synchronous ones do nothing. Nothing is recorded: the page made no call.
+ * settles (the continuation that awaited it died with the page), and the
+ * synchronous ones do nothing (a claim finds nothing, a release frees
+ * nothing to adopt). Nothing is recorded: the page made no call.
  */
 function deadRoute(prop: string): unknown {
-  if (prop === "ackEnvelopes") return () => {};
-  if (prop === "registerMlsSink") return () => () => {};
-  return () => new Promise<never>(() => {});
+  switch (prop) {
+    case "ackEnvelopes":
+    case "keepLocalGroup":
+    case "touchResumeRecord":
+    case "clearResumeRecord":
+      return () => {};
+    case "claimKeptLocalGroup":
+      return () => null;
+    case "releaseKeptGroup":
+      return () => false;
+    case "registerMlsSink":
+      return () => () => {};
+    default:
+      return () => new Promise<never>(() => {});
+  }
 }
 
 /**
@@ -229,9 +282,39 @@ function unsolicitedWelcome(groupId: string): Error {
   });
 }
 
+/**
+ * Native's `MlsNotConfirmed`: `mls_call_announce` for a channel whose
+ * downgrade the user never confirmed in the native dialog (fold ME-12).
+ */
+function notConfirmed(groupId: string): Error {
+  return Object.assign(new Error("mls_not_confirmed"), {
+    type: "mls_not_confirmed",
+    group_id: groupId,
+  });
+}
+
 /** A non-2xx the bridge's `#apiMls` does not map to an outcome: it throws. */
 function dsFailure(method: string, path: string, status: string): Error {
   return new Error(`E2EE MLS ${method} ${path} failed: ${status}`);
+}
+
+/**
+ * `wait`, unless `signal` aborts first: then an `AbortError`, as the
+ * transport's fetch rejects on its signal (already aborted: at once).
+ */
+function abortable(wait: Promise<void>, signal?: AbortSignal): Promise<void> {
+  if (!signal) return wait;
+  const aborted = () =>
+    new DOMException("This operation was aborted", "AbortError");
+  if (signal.aborted) return Promise.reject(aborted());
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = () => reject(aborted());
+    signal.addEventListener("abort", onAbort, { once: true });
+    void wait.then(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    });
+  });
 }
 
 // ---- The delivery service and each seat's native store ----------------------
@@ -330,6 +413,61 @@ export class SeatNative {
   readonly processed = new Set<string>();
   /** The keys the previous install answered with (`previous` of the next). */
   lastKeys: MlsFrameKey[] | null = null;
+  /**
+   * `mls_downgrade_confirmed`: the channels whose whole-call plaintext
+   * downgrade the user confirmed in the native dialog. Engine MEMORY, not a
+   * table, but the engine is the shell's, so it outlives every page: a
+   * Ctrl+R keeps it (W2-M3). Keyed by CHANNEL, so a successor group of the
+   * same call inherits it. A confirmed `callConfirmDowngrade` marks it;
+   * `callClearDowngrade` removes it, and so does the leave-clean of the
+   * channel's last group (`mod.rs` `mls_call_leave_cleanup`). `callAnnounce`
+   * is refused `mls_not_confirmed` without it.
+   */
+  readonly #downgradeConfirmed = new Set<string>();
+
+  /** Whether native holds the downgrade grant for `channelId`. */
+  downgradeConfirmed(channelId: string): boolean {
+    return this.#downgradeConfirmed.has(channelId);
+  }
+
+  /** `mls_call_mark_downgrade_confirmed`, by the group's channel. */
+  markDowngradeConfirmed(channelId: string): void {
+    this.#downgradeConfirmed.add(channelId);
+  }
+
+  /** `mls_call_clear_downgrade_confirmed`, by the group's channel. */
+  clearDowngradeConfirmed(channelId: string): void {
+    this.#downgradeConfirmed.delete(channelId);
+  }
+}
+
+/**
+ * The tab's `sessionStorage`, as the resume records use it: one per SEAT,
+ * because it survives a page reload (Ctrl+R keeps the tab's storage) while
+ * every page-memory structure dies.
+ */
+export class MemoryResumeStorage implements ResumeStorage {
+  #items = new Map<string, string>();
+
+  getItem(k: string): string | null {
+    return this.#items.get(k) ?? null;
+  }
+
+  setItem(k: string, v: string): void {
+    this.#items.set(k, String(v));
+  }
+
+  removeItem(k: string): void {
+    this.#items.delete(k);
+  }
+
+  key(i: number): string | null {
+    return [...this.#items.keys()][i] ?? null;
+  }
+
+  get length(): number {
+    return this.#items.size;
+  }
 }
 
 /** The SFU room: ONE per call, so every seat of a fleet shares it. */
@@ -386,11 +524,15 @@ const copyInfo = (info: MlsCommitInfo): MlsCommitInfo => ({
  * nothing, answers every submit `Won` and applies nothing, so a one-seat
  * spec runs exactly as it did before the DS existed.
  *
+ * Every pushed envelope is first queued in the recipient device's MAILBOX,
+ * as bonfire queues each MLS envelope before pushing it live, and stays
+ * there until that device acks it (`ackEnvelopes` → `ack`). A page's WS
+ * connect re-delivers the whole mailbox in order (`World.drainMailbox`), so
+ * an envelope a dead page never acked reaches the next page again.
+ *
  * Not modelled: the roster ceiling (`MAX_MLS_GROUP_MEMBERS`), join-intent
  * slowmode (`MIN_JOIN_INTENT_INTERVAL_SECONDS` — a seat may re-intent at any
- * pace), queue budgets, and the per-device mailbox: a pushed envelope reaches
- * the seat's sink (or its pre-sink buffer) once and is never re-drained, so
- * a seat that missed one catches up only through `fetchCommits`.
+ * pace), queue budgets and the drain's envelope cap.
  */
 export class Ds {
   readonly channelId: string;
@@ -402,6 +544,8 @@ export class Ds {
   #open = new Map<string, string>();
   #latest: string | null = null;
   #seats: World[] = [];
+  /** Each seat device's unacked envelopes (`user:device` → in queue order). */
+  #mailboxes = new Map<string, MlsEnvelope[]>();
   #minted = 0;
   #envelopes = 0;
 
@@ -436,6 +580,75 @@ export class Ds {
     return this.#open.get(channelId) ?? null;
   }
 
+  /** The channel of every `requestOpenGroup`, in order, held ones included. */
+  readonly openGroupRequests: string[] = [];
+  #openGroupFailure: { error: unknown } | null = null;
+  #openGroupGate: Promise<void> | null = null;
+
+  /**
+   * The same route as a device's bridge requests it (`mlsOpenGroup`), which
+   * the resume prefetch reads: `openGroup`'s answer, or `null` for none, as
+   * the bridge maps a 404. Recorded in `openGroupRequests` before it waits
+   * on `holdOpenGroup`; a scripted `failOpenGroupOnce` rejects it past the
+   * hold. With neither it settles as a bare `async` return does.
+   *
+   * `openGroup` itself stays a plain read of the DS's facts, for specs.
+   */
+  async requestOpenGroup(
+    channelId: string,
+    signal?: AbortSignal,
+  ): Promise<{ group_id: string } | null> {
+    this.openGroupRequests.push(channelId);
+    const gate = this.#openGroupGate;
+    if (gate) await abortable(gate, signal);
+    const failure = this.#openGroupFailure;
+    if (failure) {
+      this.#openGroupFailure = null;
+      throw failure.error;
+    }
+    const groupId = this.openGroup(channelId);
+    return groupId === null ? null : { group_id: groupId };
+  }
+
+  /**
+   * The next `requestOpenGroup` (any seat's) rejects with `error`, AFTER any
+   * open hold is released; later ones answer. The default is what the bridge
+   * throws for a non-2xx it does not map (`#apiMls`): `mlsOpenGroup` answers
+   * `null` only for a 404 or a 400 `FeatureDisabled` (W2-n3). Scripting a
+   * second one before the first is spent fails the spec.
+   */
+  failOpenGroupOnce(error?: unknown): void {
+    assert.equal(
+      this.#openGroupFailure,
+      null,
+      "an open_group failure is already scripted",
+    );
+    this.#openGroupFailure = {
+      error:
+        error ??
+        dsFailure("GET", `/mls/channels/${this.channelId}/open_group`, "500"),
+    };
+  }
+
+  /**
+   * Suspend every `requestOpenGroup` until the returned function runs: a DS
+   * that never answers (W2-n3). One release resumes them all, and each then
+   * reads the DS as it is at release; later requests run straight through.
+   * A held request whose `signal` aborts rejects with an `AbortError` at
+   * once, as the bridge's transport does, and is not resumed.
+   */
+  holdOpenGroup(): () => void {
+    assert.equal(this.#openGroupGate, null, "open_group is already held");
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    this.#openGroupGate = gate;
+    return () => {
+      // Idempotent, and never clears a LATER hold's gate.
+      if (this.#openGroupGate === gate) this.#openGroupGate = null;
+      release();
+    };
+  }
+
   /**
    * `GET /mls/groups/<id>/commits?from_epoch=`. `userId`, when given, is the
    * caller: the route needs GROUP membership, and answers 404 otherwise.
@@ -462,20 +675,121 @@ export class Ds {
     };
   }
 
+  /** Every `requestFetchCommits`, in order, held ones included. */
+  readonly fetchCommitsRequests: { groupId: string; fromEpoch: number }[] = [];
+  #fetchCommitsFailure: { error: unknown } | null = null;
+  #fetchCommitsGate: Promise<void> | null = null;
+
+  /**
+   * The same route as the resume PREFETCH requests it through a device's
+   * bridge (`mlsFetchCommits` on the prefetch's signal): `fetchCommits`'s
+   * answer for the caller `userId`, and its `not_found` thrown as the 404
+   * `#apiMls` throws (this route maps no outcome). Recorded in
+   * `fetchCommitsRequests` before it waits on `holdFetchCommits`; a
+   * scripted `failFetchCommitsOnce` rejects it past the hold. With neither
+   * it settles as a bare `async` return does.
+   *
+   * Only the prefetch takes this route: the session's own gap refetch still
+   * reads `fetchCommits` (through `World.fetchCommitsAnswer`), unchanged.
+   */
+  async requestFetchCommits(
+    groupId: string,
+    fromEpoch: number,
+    userId: string,
+    signal?: AbortSignal,
+  ): Promise<FetchCommitsResult> {
+    this.fetchCommitsRequests.push({ groupId, fromEpoch });
+    const gate = this.#fetchCommitsGate;
+    if (gate) await abortable(gate, signal);
+    const path = `/mls/groups/${groupId}/commits?from_epoch=${fromEpoch}`;
+    const failure = this.#fetchCommitsFailure;
+    if (failure) {
+      this.#fetchCommitsFailure = null;
+      throw failure.error === undefined
+        ? dsFailure("GET", path, "500")
+        : failure.error;
+    }
+    const result = this.fetchCommits(groupId, fromEpoch, userId);
+    if (result.kind !== "not_found") return result;
+    throw dsFailure("GET", path, "404");
+  }
+
+  /**
+   * The next `requestFetchCommits` (any seat's) rejects with `error`, AFTER
+   * any commits hold is released; later ones answer. The default is what
+   * the bridge throws for a non-2xx (`#apiMls`), built for the request it
+   * fails. The prefetch counts it a failure and deletes its candidate
+   * unless its own signal has aborted (W2R-M1). Scripting a second one
+   * before the first is spent fails the spec.
+   */
+  failFetchCommitsOnce(error?: unknown): void {
+    assert.equal(
+      this.#fetchCommitsFailure,
+      null,
+      "a commits fetch failure is already scripted",
+    );
+    this.#fetchCommitsFailure = { error };
+  }
+
+  /**
+   * Suspend every `requestFetchCommits` until the returned function runs: a
+   * DS that never answers the prefetch's last read (W2R-M1). One release
+   * resumes them all, and each then reads the DS as it is at release; later
+   * requests run straight through. A held request whose `signal` aborts
+   * rejects with an `AbortError` at once, as the bridge's transport does,
+   * and is not resumed.
+   */
+  holdFetchCommits(): () => void {
+    assert.equal(this.#fetchCommitsGate, null, "commits fetch is already held");
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    this.#fetchCommitsGate = gate;
+    return () => {
+      // Idempotent, and never clears a LATER hold's gate.
+      if (this.#fetchCommitsGate === gate) this.#fetchCommitsGate = null;
+      release();
+    };
+  }
+
   /**
    * Push one envelope to every seat (or only those in `to`), each copy
-   * addressed to that seat's device. A seat with no sink registered holds it
-   * in its pre-sink buffer until one is.
+   * addressed to that seat's device and queued in its mailbox first. A seat
+   * with no sink registered holds it in its pre-sink buffer until one is.
+   * An id already in a device's mailbox is not queued twice.
    */
   deliver(envelope: MlsEnvelope, to?: readonly MlsMemberDevice[]): void {
     for (const seat of this.#seats) {
       if (to && !to.some((m) => sameDevice(m, seat.me))) continue;
+      const key = identityOf(seat.me);
+      const queue = this.#mailboxes.get(key) ?? [];
+      if (!queue.some((e) => e.id === envelope.id)) {
+        queue.push({ ...envelope });
+      }
+      this.#mailboxes.set(key, queue);
       seat.receive({
         kind: "envelope",
         envelope: { ...envelope },
         recipientDeviceId: seat.me.device_id,
       });
     }
+  }
+
+  /** `device`'s unacked envelopes, in queue order (copies). */
+  mailbox(device: MlsMemberDevice): MlsEnvelope[] {
+    return (this.#mailboxes.get(identityOf(device)) ?? []).map((e) => ({
+      ...e,
+    }));
+  }
+
+  /** `E2EEAck` from `device`: its copies of `ids` leave its mailbox. */
+  ack(device: MlsMemberDevice, ids: readonly string[]): void {
+    const key = identityOf(device);
+    const queue = this.#mailboxes.get(key);
+    if (!queue) return;
+    this.#mailboxes.set(
+      key,
+      queue.filter((e) => !ids.includes(e.id)),
+    );
   }
 
   // ---- The routes a fleet seat's bridge calls ------------------------------
@@ -819,9 +1133,23 @@ export class World {
   get startupWipeTokens(): Set<string> {
     return this.#page.tokens;
   }
-  /** Envelopes the DS pushed while no sink was registered, in order. */
+  /**
+   * Envelopes the live page holds for a sink not yet registered, in order.
+   * `MlsInboundBuffer` has no peek, so this drains it and pushes every entry
+   * back: same order, same ids.
+   */
   get preSinkBuffer(): readonly MlsSinkEvent[] {
-    return [...this.#preSink];
+    const held = this.#page.buffer.drain();
+    for (const event of held) this.#page.buffer.push(event);
+    return held;
+  }
+  /** The live page's kept-group registry (`mlsResumeKeep.ts`). */
+  get kept(): KeptLocalGroups {
+    return this.#page.kept;
+  }
+  /** This device's DS mailbox: every envelope pushed to it and not yet acked. */
+  get mailbox(): readonly MlsEnvelope[] {
+    return this.ds.mailbox(this.me);
   }
   sink: MlsSessionSink | null = null;
   outcomes = new Map<string, MlsProcessOutcome>();
@@ -999,6 +1327,12 @@ export class World {
    * fails. Set by `failLeaveCleanupOnce`.
    */
   leaveCleanupFailure: { groupId: string; error: unknown } | null = null;
+  /**
+   * One scripted `callCommitWon` rejection, taken by the next call before it
+   * reads anything. Boxed like `callJoinIntentFailure`. Set by
+   * `failCommitWonOnce`.
+   */
+  commitWonFailure: { error: unknown } | null = null;
   /** Set by `createNextGroupOnce`: the next establish mints and creates it. */
   nextGroup: string | null = null;
   /**
@@ -1350,6 +1684,24 @@ export class World {
     this.leaveCleanupFailure = { groupId, error };
   }
   /**
+   * The next `callCommitWon` rejects with `error`, whatever the group and
+   * epoch, before it checks or merges anything: the staged commit, the row
+   * and the epoch are left exactly as they were. The call is still counted
+   * by `record` first. Later calls answer normally. Scripting a second one
+   * before the first is spent fails the spec.
+   *
+   * It stands for `mls_call_commit_won` refusing the merge; which native
+   * error it refused with is the spec's to choose.
+   */
+  failCommitWonOnce(error: unknown): void {
+    assert.equal(
+      this.commitWonFailure,
+      null,
+      "a callCommitWon failure is already scripted",
+    );
+    this.commitWonFailure = { error };
+  }
+  /**
    * The next establish mints `groupId` (`callCreate`) and the DS answers
    * `Created` for it (`mlsCreateGroup`), whatever the world's role: the DS
    * held no open group for the channel any more. The group then differs from
@@ -1510,14 +1862,39 @@ export class World {
   readonly ds: Ds;
   /** This device's native store, which outlives every page (`Fleet.reload`). */
   readonly native = new SeatNative();
+  /** The tab's `sessionStorage` (resume records), which outlives every page. */
+  readonly sessionStorage: ResumeStorage = new MemoryResumeStorage();
   /** Seated on a shared, arbitrating DS (`newFleet`). */
   readonly fleet: boolean;
   #room: SfuRoom;
   /** A one-seat world's GROUP view; null in a fleet, which reads its rows. */
   #single: NativeGroup | null;
-  #page: Page = { dead: false, tokens: new Set<string>() };
-  /** The bridge's pre-sink buffer: pushes that found no sink registered. */
-  #preSink: MlsSinkEvent[] = [];
+  #page: Page;
+  #bridge: E2EEBridge | null = null;
+  /** Claim tokens minted by every page of this seat, for unique tokens. */
+  #claims = 0;
+  /**
+   * The `resumePrefetch` dep the live page's session was built with
+   * (`undefined`: none). What the session does with it is its own business;
+   * this is what the host handed over.
+   */
+  resumePrefetch: ResumePrefetchDep | undefined = undefined;
+  /**
+   * The `abortResumePrefetch` dep the live page's session was built with
+   * (`undefined`: none), beside `resumePrefetch`. Calling it is what the
+   * session would do; a spec may call it to play that part.
+   */
+  abortResumePrefetch: AbortResumePrefetchDep | undefined = undefined;
+
+  /**
+   * The live page's bridge, for a spec playing the HOST (`state.tsx`): a
+   * keep, a claim, a prefetch, a discard. Calls through it are recorded in
+   * `bridgeCalls` like the session's.
+   */
+  get bridge(): E2EEBridge {
+    assert.ok(this.#bridge, `${identityOf(this.me)} has not booted a page`);
+    return this.#bridge;
+  }
 
   constructor(
     role: "creator" | "joiner",
@@ -1536,6 +1913,48 @@ export class World {
     this.#single = this.fleet
       ? null
       : { channelId, epoch: 0, leaves: [SELF, PEER], state: "active" };
+    this.#page = this.#newPage();
+  }
+
+  /**
+   * A fresh page: its tokens, its pre-sink hold and its kept-group registry.
+   * The registry runs on the mock clock through page-scoped timers (a page
+   * death cancels every one it armed; the mock clock is global), deletes
+   * through the seat's native leave-clean, and keeps its records in the
+   * seat's `sessionStorage`. A dead page's registry reaches native no more:
+   * a delete it starts after its death never lands.
+   */
+  #newPage(): Page {
+    const timers = new Set<unknown>();
+    const page: Page = {
+      dead: false,
+      tokens: new Set<string>(),
+      buffer: new MlsInboundBuffer(),
+      timers,
+      kept: new KeptLocalGroups({
+        now: () => Date.now(),
+        setTimer: (fn, ms) => {
+          if (page.dead) return null;
+          const handle = setTimeout(() => {
+            timers.delete(handle);
+            fn();
+          }, ms);
+          timers.add(handle);
+          return handle;
+        },
+        clearTimer: (handle) => {
+          if (!timers.delete(handle)) return;
+          clearTimeout(handle as ReturnType<typeof setTimeout>);
+        },
+        deleteLocal: (groupId) =>
+          page.dead
+            ? new Promise<never>(() => {})
+            : nativeLeaveCleanup(this, groupId),
+        storage: this.sessionStorage,
+        newToken: () => `claim-${this.me.device_id}-${++this.#claims}`,
+      }),
+    };
+    return page;
   }
 
   #view(): NativeGroup | undefined {
@@ -1558,16 +1977,47 @@ export class World {
    * with its own `startupWipeTokens`, bound to the media fakes. The native
    * store is the device's, so a page started after a page death finds every
    * row and pending commit the dead one left.
+   *
+   * The page's WS connects before any call does, so its mailbox drain lands
+   * first (`drainMailbox`) and waits in the pre-sink hold for the session's
+   * `start()`. Then the host's connect: `resumePrefetch` and
+   * `abortResumePrefetch` are handed to the session as its deps;
+   * `prefetchFromBridge` instead starts one on this page's bridge under a
+   * fresh `AbortController` and hands over an abort of THAT controller, as
+   * `state.tsx` does per connect attempt. With neither the session gets no
+   * dep, as before resume existed.
    */
-  boot(): void {
-    const page: Page = { dead: false, tokens: new Set<string>() };
+  boot({
+    resumePrefetch,
+    abortResumePrefetch,
+    prefetchFromBridge = false,
+  }: {
+    resumePrefetch?: ResumePrefetchDep;
+    abortResumePrefetch?: AbortResumePrefetchDep;
+    prefetchFromBridge?: boolean;
+  } = {}): void {
+    const page = this.#newPage();
     this.#page = page;
+    this.drainMailbox();
+    const bridge = bridgeFor(this, page);
+    this.#bridge = bridge;
+    let prefetch = resumePrefetch;
+    let abort = abortResumePrefetch;
+    if (prefetchFromBridge) {
+      const controller = new AbortController();
+      prefetch = bridge.prefetchResume(this.channelId, controller.signal);
+      abort = () => controller.abort();
+    }
+    this.resumePrefetch = prefetch;
+    this.abortResumePrefetch = abort;
     this.session = new Session({
-      bridge: bridgeFor(this, page),
+      bridge,
       userId: this.me.user_id,
       deviceId: this.me.device_id,
       channelId: this.channelId,
       startupWipeTokens: page.tokens,
+      ...(prefetch ? { resumePrefetch: prefetch } : {}),
+      ...(abort ? { abortResumePrefetch: abort } : {}),
     });
     this.session.bindMedia(fakeMedia(this, page));
   }
@@ -1577,37 +2027,70 @@ export class World {
    * disposed WITHOUT native teardown — its bridge is dead first, so its
    * leave-clean (and every continuation still in flight) reaches nothing —
    * and what lived in the page goes with it: the sink, the pre-sink buffer,
-   * the publish gate, the chip's latch journal and the local publications.
-   * The native store, the DS and the SFU room are untouched, and so are the
-   * append-only logs a spec reads (`states`, `events`, `bridgeCalls`, …).
+   * the kept-group registry and its timers, the publish gate, the chip's
+   * latch journal and the local publications. The native store, the tab's
+   * `sessionStorage`, the DS (and its mailboxes) and the SFU room are
+   * untouched, and so are the append-only logs a spec reads (`states`,
+   * `events`, `bridgeCalls`, …).
    */
   pageDeath(): void {
-    this.#page.dead = true;
+    const page = this.#page;
+    page.dead = true;
+    for (const handle of page.timers) {
+      clearTimeout(handle as ReturnType<typeof setTimeout>);
+    }
+    page.timers.clear();
     this.session.dispose();
     this.sink = null;
-    this.#preSink = [];
+    page.buffer.clear();
     this.gate = new Set<PublishGateReason>(["negotiating"]);
     this.journal = [];
     this.localPublications = [];
   }
 
   /**
-   * A DS push to this device, as the bridge takes it: straight to the
-   * session's sink, or into the pre-sink buffer when none is registered. A
-   * join request with no sink is dropped — it is broadcast-only, and a late
-   * replay could admit a device that has since left.
+   * A DS push to this device, as the bridge takes it. An envelope goes where
+   * the real `mlsHoldVerdict` sends it: the registered sink, the page's
+   * pre-sink hold, or nowhere (another device's copy). This bridge is never
+   * disabled. A join request with no sink is dropped — it is broadcast-only,
+   * and a late replay could admit a device that has since left.
    */
   receive(event: MlsSinkEvent): void {
-    if (this.sink) {
-      this.sink(event);
+    const sink = this.sink;
+    if (event.kind !== "envelope") {
+      sink?.(event);
       return;
     }
-    if (event.kind === "envelope") this.#preSink.push(event);
+    const verdict = mlsHoldVerdict({
+      sinkPresent: sink !== null,
+      enabled: true,
+      ownDeviceId: this.me.device_id,
+      recipientDeviceId: event.recipientDeviceId,
+    });
+    if (verdict === "sink") sink?.(event);
+    else if (verdict === "hold") this.#page.buffer.push(event);
+  }
+
+  /**
+   * The WS connect's claim result and mailbox drain, as bonfire sends them
+   * and the bridge takes them: the accepted claim clears the pre-sink hold,
+   * then every envelope still in this device's mailbox arrives again, in
+   * queue order (`receive`) — into the live sink if one is registered.
+   */
+  drainMailbox(): void {
+    this.#page.buffer.clear();
+    for (const envelope of this.ds.mailbox(this.me)) {
+      this.receive({
+        kind: "envelope",
+        envelope,
+        recipientDeviceId: this.me.device_id,
+      });
+    }
   }
 
   /** Empty the pre-sink buffer, in order (the flush at `registerMlsSink`). */
   takePreSink(): MlsSinkEvent[] {
-    return this.#preSink.splice(0);
+    return this.#page.buffer.drain();
   }
 
   /** Seat a third member: the bystander role a 2-party world cannot express. */
@@ -2160,31 +2643,13 @@ function bridgeFor(world: World, page: Page): E2EEBridge {
       },
     ),
     callLocalGroups: record("callLocalGroups", async () => []),
-    // The wipe takes the group's staged commit with it: a `callCommitWon`
-    // for that group afterwards is refused, as native's `load_group` is.
-    // Counted by `record` BEFORE it waits on `holdLeaveCleanup`. A scripted
-    // `failLeaveCleanupOnce` for this group rejects past the hold, having
-    // wiped nothing (native's transaction rolled back). In a fleet it also
-    // deletes the row and its join intent, as the one transaction does.
-    callLeaveCleanup: record("callLeaveCleanup", async (groupId) => {
-      if (world.leaveCleanupGate) await world.leaveCleanupGate;
-      const failure = world.leaveCleanupFailure;
-      if (failure && failure.groupId === groupId) {
-        world.leaveCleanupFailure = null;
-        world.failedLeaveCleanups.push(groupId);
-        throw failure.error;
-      }
-      world.evicted.delete(groupId);
-      world.leaveCleanups.push(groupId);
-      if (world.stagedCommits.has(groupId)) {
-        world.stagedCommits.set(groupId, "left");
-      }
-      if (world.fleet) {
-        world.native.localGroups.delete(groupId);
-        world.native.intents.delete(groupId);
-        if (world.native.current === groupId) world.native.current = null;
-      }
-    }),
+    // Through the page's registry, as the bridge's is (R-W2-2): the group is
+    // marked in flight, loses any keep entry and every recency record naming
+    // it, all before the native delete (`nativeLeaveCleanup`) is awaited.
+    // Counted by `record` BEFORE it waits on `holdLeaveCleanup`.
+    callLeaveCleanup: record("callLeaveCleanup", (groupId) =>
+      page.kept.cleanup(groupId),
+    ),
     callState: record("callState", async () => world.callState()),
     callFrameKeys: record("callFrameKeys", async () => world.frameKeys()),
     // Joiner pre-pin: no local group before the Welcome (the session
@@ -2261,7 +2726,9 @@ function bridgeFor(world: World, page: Page): E2EEBridge {
         return { kind: "processed", outcome, ack: true };
       },
     ),
-    ackEnvelopes: record("ackEnvelopes", () => {}),
+    // `E2EEAck`: the ids leave this device's DS mailbox, so no later drain
+    // re-delivers them.
+    ackEnvelopes: record("ackEnvelopes", (ids) => world.ds.ack(world.me, ids)),
     // `GET /mls/groups/<id>/commits?from_epoch=`, the gap refetch: answers
     // only what `receiverLag` scripted, for the range it scripted. In a
     // fleet, with nothing scripted, the DS answers — and a caller whose user
@@ -2435,9 +2902,16 @@ function bridgeFor(world: World, page: Page): E2EEBridge {
     // A fleet seat checks both, merges into its own row with the tree rules
     // (`applyToLeaves`), and fires keys-changed for the won epoch itself, as
     // native does.
+    //
+    // A scripted `failCommitWonOnce` rejects before any of it.
     callCommitWon: record(
       "callCommitWon",
       async (groupId, wonEpoch): Promise<MlsProcessOutcome> => {
+        const failure = world.commitWonFailure;
+        if (failure) {
+          world.commitWonFailure = null;
+          throw failure.error;
+        }
         const staged = world.stagedCommits.get(groupId);
         if (staged === "left") throw groupNotFound(groupId);
         if (staged === undefined) throw mlsCode("no-pending-commit");
@@ -2501,7 +2975,12 @@ function bridgeFor(world: World, page: Page): E2EEBridge {
     // cancel, and rejects with anything else when the dialog could not be
     // shown at all. Recorded (with its arguments) BEFORE the scripted
     // outcome is taken, so a declined or failed dialog still counts as one
-    // the session asked for. With nothing scripted it resolves: Ok.
+    // the session asked for. With nothing scripted it resolves: Ok, and
+    // marks the native grant for the group's channel (`SeatNative`), as
+    // `call_confirm_downgrade` does after the prompt. The group is loaded
+    // before the dialog (the native non-enrolled roster), so a group the
+    // store does not hold is `MlsGroupNotFound`, with no dialog outcome
+    // taken and nothing marked.
     callConfirmDowngrade: record(
       "callConfirmDowngrade",
       async (groupId, sfuParticipants, displayNames) => {
@@ -2510,18 +2989,24 @@ function bridgeFor(world: World, page: Page): E2EEBridge {
           sfuParticipants: [...sfuParticipants],
           displayNames: { ...displayNames },
         });
+        const { channel_id } = localCallState(world, groupId);
         const outcome = world.confirmDowngradeOutcome;
         if (outcome) {
           world.confirmDowngradeOutcome = null;
           throw outcome.kind === "declined" ? declined() : outcome.error;
         }
+        world.native.markDowngradeConfirmed(channel_id);
       },
     ),
     // `e2ee_call_clear_downgrade`: the T6 re-upgrade after a confirmed
     // interlude clears the native grant, best-effort (the session swallows a
-    // rejection). Resolves; recorded by group.
+    // rejection). Recorded by group, then the grant for the group's channel
+    // is removed; a group the store does not hold is `MlsGroupNotFound`
+    // (`load_group`) and clears nothing.
     callClearDowngrade: record("callClearDowngrade", async (groupId) => {
       world.clearDowngradeCalls.push(groupId);
+      const { channel_id } = localCallState(world, groupId);
+      world.native.clearDowngradeConfirmed(channel_id);
     }),
     // ---- The §3.4 mode announce (ME-4 / ME-12), best-effort ----
     //
@@ -2535,12 +3020,26 @@ function bridgeFor(world: World, page: Page): E2EEBridge {
     // reached the wire. Stubbing one without the other leaves it firing from
     // the other. The ciphertext is opaque to the session (never parsed on
     // the send side), so any string is a well-formed payload.
+    //
+    // CONFIRM-GATED as `mls_call_announce` is (fold ME-12): a group the store
+    // does not hold is `MlsGroupNotFound`, a channel without the native grant
+    // is `MlsNotConfirmed`, and a poisoned row is `MlsPoisonedEpoch`, each
+    // counted all the same (recorded first).
     callAnnounce: record(
       "callAnnounce",
-      async (groupId, _userId): Promise<CtlPayload> => ({
-        group_id: groupId,
-        ciphertext: "b3BhcXVlLWN0bC1hbm5vdW5jZQ",
-      }),
+      async (groupId, _userId): Promise<CtlPayload> => {
+        const state = localCallState(world, groupId);
+        if (!world.native.downgradeConfirmed(state.channel_id)) {
+          throw notConfirmed(groupId);
+        }
+        if (state.state !== "active") {
+          throw poisonedEpoch(groupId, state.epoch);
+        }
+        return {
+          group_id: groupId,
+          ciphertext: "b3BhcXVlLWN0bC1hbm5vdW5jZQ",
+        };
+      },
     ),
     mlsSendCtl: record(
       "mlsSendCtl",
@@ -2549,9 +3048,175 @@ function bridgeFor(world: World, page: Page): E2EEBridge {
         body: undefined,
       }),
     ),
+    // ---- The resume keep (plan R-W2-1): the REAL registry, per page ----
+    //
+    // Each is the bridge method's body over `mlsResumeKeep.ts`, with the
+    // page's registry and the seat's `sessionStorage`. This bridge is never
+    // disabled and never latched, so no keep is refused until
+    // `discardKeptLocalGroups` (sticky for the page, as for the bridge).
+    keepLocalGroup: record("keepLocalGroup", (groupId, channelId, ms) =>
+      page.kept.keep(groupId, channelId, ms),
+    ),
+    claimKeptLocalGroup: record("claimKeptLocalGroup", (channelId) =>
+      page.kept.claim(channelId),
+    ),
+    // The registry's answer: `false` while the group's cleanup is in flight
+    // (W2-m2), and the entry is dropped either way.
+    releaseKeptGroup: record("releaseKeptGroup", (groupId) =>
+      page.kept.release(groupId),
+    ),
+    touchResumeRecord: record(
+      "touchResumeRecord",
+      (channelId, groupId, epoch) =>
+        writeResumeRecord(world.sessionStorage, channelId, {
+          groupId,
+          epoch,
+          at: Date.now(),
+        }),
+    ),
+    clearResumeRecord: record("clearResumeRecord", (channelId) =>
+      clearResumeRecord(world.sessionStorage, channelId),
+    ),
+    discardKeptLocalGroups: record("discardKeptLocalGroups", () => {
+      page.kept.setKeepsRefused(true);
+      return page.kept.discardAll();
+    }),
+    // W2-m1: the channel's kept groups (claimed or not) and its record's
+    // group, deleted before a startup join. Keeps stay allowed.
+    discardKeptForChannel: record("discardKeptForChannel", (channelId) =>
+      page.kept.discardChannel(channelId),
+    ),
+    // `e2ee_call_pending_commit_epoch`: read-only, from the seat's store.
+    callPendingCommitEpoch: record("callPendingCommitEpoch", async (groupId) =>
+      pendingCommitEpoch(world, groupId),
+    ),
+    // The REAL `prefetchResume`, reading the seat's native store and the DS
+    // directly (the bridge's reads are not bridge methods either): recorded
+    // once, as the one call the host makes. Its open-group and commits
+    // reads are the DS routes (`requestOpenGroup`, `requestFetchCommits`),
+    // so `failOpenGroupOnce` / `holdOpenGroup` and `failFetchCommitsOnce` /
+    // `holdFetchCommits` reach it, and a held one rejects on the prefetch's
+    // own signal.
+    prefetchResume: record("prefetchResume", (channelId, signal) =>
+      prefetchResume(
+        {
+          kept: page.kept,
+          storage: world.sessionStorage,
+          now: () => Date.now(),
+          self: { userId: world.me.user_id, deviceId: world.me.device_id },
+          openGroup: (channel, s) => world.ds.requestOpenGroup(channel, s),
+          callState: async (groupId) => localCallState(world, groupId),
+          pendingCommitEpoch: async (groupId) =>
+            pendingCommitEpoch(world, groupId),
+          fetchCommits: (groupId, fromEpoch, s) =>
+            world.ds.requestFetchCommits(
+              groupId,
+              fromEpoch,
+              world.me.user_id,
+              s,
+            ),
+        },
+        channelId,
+        signal,
+      ),
+    ),
   };
   if (world.fleet) Object.assign(stubs, fleetStubs(world, record));
   return fakeBridge(stubs, page);
+}
+
+/**
+ * `mls_call_leave_cleanup` on the seat's native store: the raw delete the
+ * page's registry calls (`KeptGroupsDeps.deleteLocal`), for a bridge
+ * `callLeaveCleanup` and for a keep that expired alike.
+ *
+ * The wipe takes the group's staged commit with it: a `callCommitWon` for
+ * that group afterwards is refused, as native's `load_group` is. It waits on
+ * `holdLeaveCleanup`. A scripted `failLeaveCleanupOnce` for this group
+ * rejects past the hold, having wiped nothing (native's transaction rolled
+ * back). In a fleet it also deletes the row and its join intent, as the one
+ * transaction does.
+ *
+ * After the wipe the channel's downgrade grant goes too, iff no row of that
+ * channel is left (W2-M3): a successor created before this cleanup keeps it,
+ * a plain call end clears it. A one-seat world models GROUP as its channel's
+ * only row, so GROUP's leave-clean clears it and no other group's touches it.
+ */
+async function nativeLeaveCleanup(
+  world: World,
+  groupId: string,
+): Promise<void> {
+  if (world.leaveCleanupGate) await world.leaveCleanupGate;
+  const failure = world.leaveCleanupFailure;
+  if (failure && failure.groupId === groupId) {
+    world.leaveCleanupFailure = null;
+    world.failedLeaveCleanups.push(groupId);
+    throw failure.error;
+  }
+  // Resolved BEFORE the row goes, as native reads it.
+  const leavingChannel = world.fleet
+    ? (world.native.localGroups.get(groupId)?.channelId ?? null)
+    : groupId === GROUP
+      ? world.channelId
+      : null;
+  world.evicted.delete(groupId);
+  world.leaveCleanups.push(groupId);
+  if (world.stagedCommits.has(groupId)) {
+    world.stagedCommits.set(groupId, "left");
+  }
+  if (world.fleet) {
+    world.native.localGroups.delete(groupId);
+    world.native.intents.delete(groupId);
+    if (world.native.current === groupId) world.native.current = null;
+  }
+  if (
+    leavingChannel !== null &&
+    ![...world.native.localGroups.values()].some(
+      (group) => group.channelId === leavingChannel,
+    )
+  ) {
+    world.native.clearDowngradeConfirmed(leavingChannel);
+  }
+}
+
+/**
+ * `mls_call_state` for `groupId`, read without a bridge call: a fleet seat's
+ * row (`MlsGroupNotFound` without one); a one-seat world's GROUP view, the
+ * only group it models.
+ */
+function localCallState(world: World, groupId: string): MlsCallState {
+  if (!world.fleet) {
+    if (groupId !== GROUP) throw groupNotFound(groupId);
+    return world.callState();
+  }
+  const group = world.native.localGroups.get(groupId);
+  if (!group) throw groupNotFound(groupId);
+  return {
+    group_id: groupId,
+    channel_id: group.channelId,
+    epoch: group.epoch,
+    state: group.state,
+    members: membersOf(group.leaves).map((m) => ({
+      ...m,
+      user_verified: true,
+    })),
+  };
+}
+
+/**
+ * `mls_call_pending_commit_epoch`: `load_group` first (a group the store
+ * does not hold is `MlsGroupNotFound`), then the epoch the staged own commit
+ * would establish — the group's epoch + 1 — or `null` with none staged.
+ */
+function pendingCommitEpoch(world: World, groupId: string): number | null {
+  const staged = world.stagedCommits.get(groupId);
+  if (!world.fleet) {
+    if (groupId !== GROUP || staged === "left") throw groupNotFound(groupId);
+    return staged === undefined ? null : world.epoch + 1;
+  }
+  const group = world.native.localGroups.get(groupId);
+  if (!group) throw groupNotFound(groupId);
+  return staged === undefined || staged === "left" ? null : group.epoch + 1;
 }
 
 /**
@@ -2568,10 +3233,17 @@ function fleetStubs(world: World, record: Recorder): BridgeStubs {
   };
   return {
     // The bridge's pre-sink buffer drains into the new sink synchronously,
-    // in order, before registration returns.
+    // in order, before registration returns. As the bridge's flush, one
+    // envelope the session throws on does not cost it the rest.
     registerMlsSink: record("registerMlsSink", (sink) => {
       world.sink = sink;
-      for (const event of world.takePreSink()) sink(event);
+      for (const event of world.takePreSink()) {
+        try {
+          sink(event);
+        } catch (error) {
+          console.error("[mls] held envelope flush failed", error);
+        }
+      }
       return () => {
         if (world.sink === sink) world.sink = null;
       };
@@ -2614,19 +3286,10 @@ function fleetStubs(world: World, record: Recorder): BridgeStubs {
         .filter(([, group]) => group.channelId === channelId)
         .map(([groupId]) => groupId),
     ),
-    callState: record("callState", async (groupId): Promise<MlsCallState> => {
-      const group = row(groupId);
-      return {
-        group_id: groupId,
-        channel_id: group.channelId,
-        epoch: group.epoch,
-        state: group.state,
-        members: membersOf(group.leaves).map((m) => ({
-          ...m,
-          user_verified: true,
-        })),
-      };
-    }),
+    callState: record(
+      "callState",
+      async (groupId): Promise<MlsCallState> => localCallState(world, groupId),
+    ),
     callFrameKeys: record(
       "callFrameKeys",
       async (groupId): Promise<MlsFrameKeys> => {
@@ -2673,8 +3336,11 @@ function keysChanged(
  * `classifyEnvelopeError`). The ciphertext is opaque here, so what a commit
  * or Welcome CONTAINS is read from the DS's log for its group and epoch:
  *   - a Welcome needs an own join intent for its group (else
- *     `MlsUnsolicitedWelcome`), and seats the roster the DS held at its
- *     epoch, replacing any row the store still has for the group;
+ *     `MlsUnsolicitedWelcome`) and a group the store does NOT hold: over a
+ *     held row OpenMLS's `into_group` fails `GroupAlreadyExists`, which
+ *     native reports as `mls_err("welcome-join")` with its transaction
+ *     rolled back (row and intent kept). Accepted, it seats the roster the
+ *     DS held at its epoch;
  *   - a commit needs the row (else `MlsGroupNotFound`); a past epoch is a
  *     `duplicate`; a gap is `MlsEpochGap`, applying nothing; a commit that
  *     is not the DS's winner at its epoch, or one landing on the epoch this
@@ -2716,6 +3382,7 @@ function processNatively(
       if (!native.intents.has(groupId)) throw unsolicitedWelcome(groupId);
       const welcome = world.ds.welcomeAt(groupId, envelope.epoch);
       if (!welcome) throw mlsCode("welcome");
+      if (native.localGroups.has(groupId)) throw mlsCode("welcome-join");
       native.localGroups.set(groupId, {
         channelId: welcome.channelId,
         epoch: envelope.epoch,
@@ -2843,17 +3510,29 @@ export function installClock(t: TestContext): void {
 
 // ---- Scenario drivers --------------------------------------------------------
 
-/** A one-seat world for `SELF`, on a private DS that answers every submit `Won`. */
+/**
+ * A one-seat world for `SELF`, on a private DS that answers every submit
+ * `Won`. `opts.resumePrefetch` and `opts.abortResumePrefetch` are handed to
+ * the session as its deps, each only when given; absent, the session gets
+ * none, as before resume existed.
+ */
 export function newWorld(
   t: TestContext,
   role: "creator" | "joiner",
   channelId: string,
   seat?: (world: World) => void,
+  opts: {
+    resumePrefetch?: ResumePrefetchDep;
+    abortResumePrefetch?: AbortResumePrefetchDep;
+  } = {},
 ): World {
   installClock(t);
   const world = new World(role, channelId);
   seat?.(world); // seat extra members BEFORE the ladder reads the roster
-  world.boot();
+  world.boot({
+    resumePrefetch: opts.resumePrefetch,
+    abortResumePrefetch: opts.abortResumePrefetch,
+  });
   t.after(() => world.session.dispose());
   return world;
 }
@@ -2879,8 +3558,16 @@ export interface Fleet {
   bringUp(): Promise<void>;
   /**
    * PAGE DEATH and a new page on the SAME device (`World.pageDeath`, then
-   * `World.boot`), started: native rows and pending commits kept, bridge
-   * state, sink and pre-sink buffer lost, a fresh `startupWipeTokens` Set.
+   * `World.boot`), started: native rows, pending commits, the tab's
+   * `sessionStorage` and the DS mailbox kept; bridge state, sink, pre-sink
+   * buffer and kept-group registry (with its timers) lost; a fresh
+   * `startupWipeTokens` Set. The new page's WS connect clears its hold and
+   * re-delivers every unacked envelope in order into it, flushed when the
+   * session registers its sink. The host then starts a resume prefetch on
+   * the new page's bridge (`prefetchResume(channelId, signal)`, under a
+   * controller made for this reload) and hands it to the session as its
+   * `resumePrefetch` dep, with `abortResumePrefetch` aborting that
+   * controller and no other (W2R-M1).
    * The SFU room is left as it is: a spec modelling the Room's disconnect
    * and reconnect drives `onParticipantLeft` / `onParticipantJoined` itself.
    * Resolves once the new session's `start()` has run to its first await;
@@ -2888,13 +3575,22 @@ export interface Fleet {
    */
   reload(id: Identity | string): Promise<World>;
   /**
-   * Today's path for a device whose page restarts: the same page death and
-   * new page as `reload`, whose startup wipe (a fresh token) leave-cleans the
-   * surviving rows and whose ladder re-intents, flagged `rejoin` by the DS
-   * while the device's stale leaf is still in the roster. The two differ
-   * only once `reload` learns to resume; this one never will.
+   * Today's path for a device whose page restarts: the same page death,
+   * mailbox re-delivery and new page as `reload`, whose startup wipe (a
+   * fresh token) leave-cleans the surviving rows and whose ladder
+   * re-intents, flagged `rejoin` by the DS while the device's stale leaf is
+   * still in the roster. It hands the session NO `resumePrefetch` (and so no
+   * `abortResumePrefetch`), so it can never resume: the stagger proofs built
+   * on it keep their meaning whatever `reload` learns (W1-n4).
    */
   wipeRejoin(id: Identity | string): Promise<World>;
+  /**
+   * A WS reconnect WITHOUT a page death: the same page, session and sink.
+   * The accepted claim clears the pre-sink hold, and the mailbox drain
+   * re-delivers every unacked envelope in order — into the LIVE sink, which
+   * has seen some of them already. Resolves after a `flush`.
+   */
+  reconnect(id: Identity | string): Promise<World>;
 }
 
 /**
@@ -2936,10 +3632,13 @@ export function newFleet(
     assert.ok(world, `no seat ${key} in this fleet`);
     return world;
   };
-  const newPage = async (id: Identity | string): Promise<World> => {
+  const newPage = async (
+    id: Identity | string,
+    prefetchFromBridge: boolean,
+  ): Promise<World> => {
     const world = seat(id);
     world.pageDeath();
-    world.boot();
+    world.boot({ prefetchFromBridge });
     void world.session.start();
     await flush();
     return world;
@@ -2986,8 +3685,17 @@ export function newFleet(
         );
       }
     },
-    reload: newPage,
-    wipeRejoin: newPage,
+    reload: (id) => newPage(id, true),
+    // NO `resumePrefetch`, deliberately (W1-n4): this is the wipe-and-rejoin
+    // path the stagger proofs are written against, and a resume would change
+    // what they prove without failing any of them.
+    wipeRejoin: (id) => newPage(id, false),
+    async reconnect(id) {
+      const world = seat(id);
+      world.drainMailbox();
+      await flush();
+      return world;
+    },
   };
 }
 

@@ -248,6 +248,7 @@ import {
   plaintextReleaseAvailable,
 } from "./mlsCallModePolicy";
 import {
+  type MlsCallSessionDeps,
   type MlsMediaBinding,
   type MlsRosterMember,
   type MlsSessionState,
@@ -776,6 +777,24 @@ class Voice {
    * voice call), so this wiring is inert until 6.5 flips the flag.
    */
   #mlsSession: MlsCallSession | undefined;
+  /**
+   * Aborts the current connect attempt's resume prefetch (join-latency plan,
+   * R2-m2 / R-W2-7). There is no connect-generation signal — `#connectGen` is
+   * a counter — so each attempt that starts a prefetch makes its own
+   * controller. The abort is what hands a claimed kept group back to the
+   * bridge: `disconnect()` fires it before disposing the session, and an
+   * attempt that builds no session fires it on its way out, or the claim
+   * would hold the kept group's expiry off for the whole call.
+   */
+  #resumePrefetchAbort: AbortController | undefined;
+  /**
+   * The bridge the last session was built with. NOT cleared by a plain
+   * `disconnect()`: sign-out must reach it to discard every kept local group
+   * even when the call had already ended (plan M9 / R-W2-7). The sign-out
+   * disconnect (`discardMls`) clears it right after firing that discard, so
+   * the signed-out account's bridge is not retained (W2-n2).
+   */
+  #mlsSessionBridge: E2EEBridge | undefined;
   /** Unsubscribe for the native `e2ee:call-keys-changed` push (§3.5). */
   #unlistenCallKeys: (() => void) | undefined;
   /**
@@ -3487,7 +3506,29 @@ class Voice {
     // any other step in the try (joinRefusalPolicy classifies only the
     // former).
     let joinCallError: unknown;
+    // This attempt's resume prefetch and its abort. The local is cleared once
+    // a session owns the prefetch (from then on `disconnect()` aborts it);
+    // while it is set, the `finally` below aborts it on every way out.
+    let resumePrefetchAbort: AbortController | undefined;
+    let resumePrefetch: MlsCallSessionDeps["resumePrefetch"];
     try {
+      // Resume prefetch (join-latency plan, R2-m2 / R2-m3 / R-W2-7): the
+      // natively read-only reads a resume needs, started now so they overlap
+      // the listener registration, joinCall and room.connect below, and
+      // handed UNAWAITED to the session. Only where a session could follow:
+      // capable, a bridge, and not a device the server will not accept.
+      // Started inside the try, not where `readiness` is computed: nothing
+      // is awaited in between, and here the `finally` covers every exit —
+      // above this try, a synchronous throw would leave a claim held until
+      // the next `disconnect()`. The bridge never rejects it; `.catch` is
+      // the belt, and `null` is what the session reads as "join".
+      if (e2eeCapable && bridge && readiness !== "owned_elsewhere") {
+        resumePrefetchAbort = new AbortController();
+        this.#resumePrefetchAbort = resumePrefetchAbort;
+        resumePrefetch = bridge
+          .prefetchResume(channel.id, resumePrefetchAbort.signal)
+          .catch(() => null);
+      }
       // --- Media E2EE wiring (slice 6.3/6.4) --------------------------
       // The frame-key path + the media-plane observers are wired here; the
       // MLS control-plane session (constructed after room.connect, below) is
@@ -3886,6 +3927,12 @@ class Voice {
         selfUserId &&
         e2eeDeviceId
       ) {
+        // THIS attempt's controller, captured before the local is cleared
+        // below — never the field, which a newer attempt may already own.
+        // W2R-M1: inert until wave 3, whose session aborts it before any
+        // join path it takes, so an abandoned prefetch never cleans up the
+        // fallback's group.
+        const prefetchAbort = resumePrefetchAbort;
         const session = new MlsCallSession({
           bridge,
           userId: selfUserId,
@@ -3899,9 +3946,16 @@ class Voice {
           onStateChange: (state) => {
             if (this.#mlsSession === session) this.#setCallSessionState(state);
           },
+          resumePrefetch,
+          abortResumePrefetch: prefetchAbort
+            ? () => prefetchAbort.abort()
+            : undefined,
         });
         session.bindMedia(this.#buildMediaBinding(room, this.#mlsKeyProvider));
         this.#mlsSession = session;
+        this.#mlsSessionBridge = bridge;
+        // The session owns the prefetch now; `disconnect()` aborts it.
+        resumePrefetchAbort = undefined;
         this.#setCallSessionState(session.state());
         this.#armDecodeWitness(session);
         void session.start();
@@ -3974,11 +4028,18 @@ class Voice {
         /* not connected */
       }
       return false;
+    } finally {
+      // R-W2-7: no session was built (a `hold_loud` or plain-call arm, a
+      // superseded return, a throw), so nobody else will ever consume the
+      // prefetch: hand any claim back now. The LOCAL controller, never the
+      // field — a newer attempt may already own that. Idempotent after
+      // `disconnect()`'s own abort.
+      resumePrefetchAbort?.abort();
     }
     return true;
   }
 
-  disconnect() {
+  disconnect(opts?: { discardMls?: boolean }) {
     // [gate-trace] `disconnect.entry` (see `#gateTrace`), ABOVE the try so a
     // teardown that throws still leaves its witness. `connectGen` is the
     // PRE-bump value (`this.#connectGen++` is the try's first statement), so
@@ -4004,6 +4065,12 @@ class Voice {
       // join still supersedes cleanly: connect()'s own leading disconnect()
       // is followed by its own bump.)
       this.#connectGen++;
+      // With the doom, and so BEFORE the session is disposed below (R-W2-7):
+      // a kept group the attempt's resume prefetch claimed and no session
+      // consumed goes back to the bridge's keep timer, at its original
+      // deadline.
+      this.#resumePrefetchAbort?.abort();
+      this.#resumePrefetchAbort = undefined;
       // Whatever attempt was pending is over (doomed by the bump above): the
       // join affordances must come back, even after an attempt that hung.
       this.#setJoinPending();
@@ -4049,7 +4116,18 @@ class Voice {
       // key-deletion API — die WITH it, bounding the §7.2 blast radius to the
       // call), and drop the provider + observed status. Runs before the no-room
       // guard so a half-set-up call still tears down.
-      this.#mlsSession?.dispose();
+      //
+      // Sign-out (`discardMls`) also tells the bridge the last session was
+      // built with to delete every kept local group — ahead of the dispose,
+      // so its keep refusal is already standing (plan M9) — then drops the
+      // reference (W2-n2). Every other caller gets the session's default
+      // dispose.
+      const discardMls = opts?.discardMls === true;
+      if (discardMls) {
+        void this.#mlsSessionBridge?.discardKeptLocalGroups();
+        this.#mlsSessionBridge = undefined;
+      }
+      this.#mlsSession?.dispose({ discard: discardMls });
       this.#mlsSession = undefined;
       this.#setCallSessionState(undefined); // no session ⇒ no state (§4.5)
       // Tauri 2.11's injected unlisten reads `listeners[id].handlerId`
@@ -9697,11 +9775,14 @@ export function VoiceContext(props: { children: JSX.Element }) {
   // the user stayed in the call, floating card and all, on top of the login
   // page, holding a session the server had just revoked. disconnect() is the
   // one teardown choke point (native call service, screen legs, screen
-  // audio, MLS session, worker, room) and a no-op when idle.
+  // audio, MLS session, worker, room) and a no-op when idle. `discardMls`:
+  // nothing of this account's MLS state may be kept for a resume past its
+  // sign-out, including groups kept from a call that had already ended
+  // (plan M9).
   const { lifecycle } = useClientLifecycle();
   onCleanup(
     lifecycle.onSignOut(() => {
-      voice.disconnect();
+      voice.disconnect({ discardMls: true });
       // A join refusal is a verdict about the user who just signed out; it
       // must not answer for whoever signs in next (joinRefusalPolicy).
       voice.forgetJoinRefusals();

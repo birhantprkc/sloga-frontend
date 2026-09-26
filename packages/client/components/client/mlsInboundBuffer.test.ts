@@ -6,13 +6,18 @@
 // `MlsInboundBuffer` must hand them to the session later in delivery order,
 // once each, without ever evicting one (an evicted envelope is a gap the
 // session cannot see; an unheld one simply stays unacked server-side).
+// `mlsHoldVerdict` decides what happens to one envelope: the live sink gets
+// every copy; with no sink, a disabled bridge holds nothing and another
+// device's copy is dropped, so only this device's copies wait for a session.
 import assert from "node:assert/strict";
 import { type TestContext, test } from "node:test";
 
 import {
   type MlsBufferedEnvelope,
+  type MlsHoldVerdict,
   MlsInboundBuffer,
   inboundRoute,
+  mlsHoldVerdict,
 } from "./mlsInboundBuffer.ts";
 
 const env = (id: string, epoch = 1): MlsBufferedEnvelope => ({
@@ -167,4 +172,77 @@ test("default bound is 512", (t) => {
   assert.equal(buffer.push(env("e512")), "overflow");
   assert.equal(buffer.size, 512);
   assert.equal(warn.mock.callCount(), 1);
+});
+
+// The verdict table. Every call passes all four fields, as the bridge does.
+// The envelope is always addressed to "dev1"; `ownDeviceId` varies.
+const verdict = (
+  sinkPresent: boolean,
+  enabled: boolean | undefined,
+  ownDeviceId: string | null | undefined,
+): MlsHoldVerdict =>
+  mlsHoldVerdict({
+    sinkPresent,
+    enabled,
+    ownDeviceId,
+    recipientDeviceId: "dev1",
+  });
+
+const ENABLED_STATES = [true, false, undefined] as const;
+/** This device's id once known ("dev1"), another device's, and unknown. */
+const OWN_IDS = ["dev1", "dev2", null, undefined, ""] as const;
+const UNKNOWN_OWN_IDS = [null, undefined, ""] as const;
+
+test("verdict: a present sink gets every copy, even when disabled or addressed to another device", () => {
+  for (const enabled of ENABLED_STATES) {
+    for (const own of OWN_IDS) {
+      assert.equal(
+        verdict(true, enabled, own),
+        "sink",
+        `enabled=${enabled} own=${own}`,
+      );
+    }
+  }
+});
+
+test("verdict: disabled with no sink → drop, even this device's own copy and while its id is unknown", () => {
+  for (const own of OWN_IDS) {
+    assert.equal(verdict(false, false, own), "drop", `own=${own}`);
+  }
+});
+
+test("verdict: enabled not yet known (undefined) → hold this device's copy, drop another's", () => {
+  assert.equal(verdict(false, undefined, "dev1"), "hold");
+  assert.equal(verdict(false, undefined, "dev2"), "drop");
+  for (const own of UNKNOWN_OWN_IDS) {
+    assert.equal(verdict(false, undefined, own), "hold", `own=${own}`);
+  }
+});
+
+test("verdict: a copy addressed to another device → drop (exact id match only)", () => {
+  for (const enabled of [true, undefined] as const) {
+    for (const own of ["dev2", "DEV1", "dev1 ", "dev10"]) {
+      assert.equal(
+        verdict(false, enabled, own),
+        "drop",
+        `enabled=${enabled} own=${own}`,
+      );
+    }
+  }
+});
+
+test("verdict: this device's own copy → hold", () => {
+  assert.equal(verdict(false, true, "dev1"), "hold");
+});
+
+test("verdict: own device id unknown (null / undefined / empty) → hold, the session filters at flush", () => {
+  for (const enabled of [true, undefined] as const) {
+    for (const own of UNKNOWN_OWN_IDS) {
+      assert.equal(
+        verdict(false, enabled, own),
+        "hold",
+        `enabled=${enabled} own=${own}`,
+      );
+    }
+  }
 });
