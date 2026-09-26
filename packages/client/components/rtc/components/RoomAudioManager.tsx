@@ -57,10 +57,7 @@ export function RoomAudioManager() {
 
   // Subscribe to remote video tracks (camera + screen share) so they are received
   const videoTracks = useTracks(
-    [
-      Track.Source.Camera,
-      Track.Source.ScreenShare,
-    ],
+    [Track.Source.Camera, Track.Source.ScreenShare],
     {
       updateOnlyOn: [],
       onlySubscribed: false,
@@ -513,7 +510,8 @@ export function RoomAudioManager() {
   // unwatched: a mounted `VideoTrack` whose visibility observer calls
   // `setSubscribed(true)`, a future render surface, or an SDK default
   // change. Such a share would be sent to the SFU as subscribed on the next
-  // SyncState — downloaded, decrypted, recorded.
+  // SyncState — downloaded and decrypted. (The recorder applies the watch
+  // set itself, so it would still leave that share's audio out.)
   //
   // Runs on EVERY publication change, not only on watch transitions.
   // `tracks()` / `videoTracks()` are the trigger — `useTracks` recomputes on

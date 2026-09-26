@@ -7,10 +7,17 @@
  * toast, and an entry withheld where the server would allow it is a
  * moderator who cannot do their job.
  *
- * The three actions map to:
+ * The actions map to:
  *   - `mute`       → `can_publish: false` (server mute), MuteMembers
+ *                    (server level)
  *   - `deafen`     → `can_receive: false` (server deafen), DeafenMembers
- *   - `disconnect` → `remove: ["VoiceChannel"]`, MoveMembers
+ *                    (server level)
+ *   - `disconnect` → `remove: ["VoiceChannel"]`, MoveMembers (channel level,
+ *                    on the voice channel they are in)
+ *   - move         → `voice_channel: <id>`, MoveMembers (channel level, on
+ *                    the voice channel they are in) for someone else; see
+ *                    `canOfferMove`. The destination is checked separately
+ *                    by `moveTargets` in `voiceMovePolicy`.
  *
  * `disconnect` removes the member from the CALL. It is not a server kick and
  * does not stop them rejoining.
@@ -34,24 +41,34 @@ export type CallModerationSubject = {
    * Whether the acting user outranks the target.
    *
    * The API refuses ANY edit of a member ranked at or above the actor with
-   * `NotElevated`, whatever permissions the actor holds — so this gates all
-   * three actions, not just some.
+   * `NotElevated`, whatever permissions the actor holds — so this gates every
+   * action against someone else, not just some.
    */
   isInferiorToActor: boolean;
 };
 
 /**
- * The acting user's SERVER-level permissions.
+ * The acting user's permissions, each resolved at the level `member_edit`
+ * checks it. The two levels differ, and mixing them up offers entries the API
+ * then refuses (or withholds ones it would allow).
  *
- * Server-level on purpose: `member_edit` resolves the actor through
- * `calculate_server_permissions`, so a channel override that grants
- * MuteMembers on one voice channel does NOT let the actor mute there. A
- * channel-level check here would offer entries the API then refuses.
+ * `muteMembers` and `deafenMembers` are SERVER level: `member_edit` resolves
+ * them through `calculate_server_permissions`, so a channel override that
+ * grants MuteMembers on one voice channel does NOT let the actor mute there.
+ *
+ * `moveMembersInSource` is CHANNEL level, on the SOURCE voice channel (the one
+ * the target is in, i.e. the call's channel): `member_edit` checks MoveMembers
+ * against that channel for any disconnect or move of someone else, so a
+ * channel override can grant or revoke it there. Resolve it with
+ * `channel.havePermission("MoveMembers")`, never the server-level value.
+ * (The API falls back to server-level MoveMembers only when the target has no
+ * source channel: not in voice, or that channel was deleted. Neither is a
+ * participant this menu acts on.)
  */
 export type CallModerationPermissions = {
   muteMembers: boolean;
   deafenMembers: boolean;
-  moveMembers: boolean;
+  moveMembersInSource: boolean;
 };
 
 /** Which entries to render. */
@@ -96,8 +113,37 @@ export function callModerationActions(
     mute: permissions.muteMembers,
     deafen: permissions.deafenMembers,
     // Disconnecting someone who already left silently does nothing.
-    disconnect: permissions.moveMembers && subject.isConnected,
+    disconnect: permissions.moveMembersInSource && subject.isConnected,
   };
+}
+
+/**
+ * Whether the menu may offer "Move to…" for this participant at all.
+ *
+ * This is the SOURCE-side gate only. Which destinations to list is decided by
+ * `moveTargets` in `voiceMovePolicy`, which checks Connect and MoveMembers on
+ * each destination.
+ *
+ * Unlike the moderation entries, moving yourself IS offered: a self-move is
+ * an ordinary channel switch that `member_edit` allows with Connect on the
+ * destination alone, so no permission here is needed for it.
+ */
+export function canOfferMove(
+  subject: CallModerationSubject,
+  permissions?: CallModerationPermissions,
+): boolean {
+  // No server context (a DM or group call): there is no other voice channel
+  // to move to. Same "not loaded is not allowed" rule as above.
+  if (!permissions) return false;
+
+  // Moving someone who is not in voice is refused with `NotConnected`.
+  if (!subject.isConnected) return false;
+
+  if (subject.isSelf) return true;
+
+  // Moving someone else needs MoveMembers on the channel they are taken out
+  // of, and a strictly higher rank (`NotElevated` otherwise).
+  return subject.isInferiorToActor && permissions.moveMembersInSource;
 }
 
 /** Whether any entry is offered, i.e. whether to render the section at all. */

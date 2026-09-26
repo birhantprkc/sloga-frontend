@@ -5953,6 +5953,10 @@ class Voice {
           void this.#stopRecording("auto");
         },
         target,
+        // Record only the share audio the user chose to hear (plan decision
+        // A). A getter, read at each decision, so a Watch or Stop watching
+        // mid-recording applies at once rather than a set captured here.
+        () => untrack(this.watchedShares),
       );
 
       try {

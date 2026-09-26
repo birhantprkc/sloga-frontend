@@ -4,9 +4,13 @@
 // move (the event reaches idle devices and sibling windows too), a move
 // token is used only when it names exactly this attempt's identity and the
 // destination room, the refusal latch is bypassed for permission and
-// capacity refusals only, and the menu and drag gates mirror the server.
+// capacity refusals only, the menu and drag gates mirror the server, and a
+// move refused because the target cannot see the destination is recognized
+// in the shape the SDK actually rejects with.
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import { test } from "node:test";
+import { pathToFileURL } from "node:url";
 
 import { DisconnectReason } from "livekit-client";
 
@@ -15,6 +19,7 @@ import {
   type ObeyMoveInput,
   canDragParticipant,
   decodeMoveTokenClaims,
+  isTargetCannotViewError,
   MOVE_OBEY_WINDOW_MS,
   moveBypassesRefusalLatch,
   moveTargets,
@@ -616,4 +621,191 @@ test("MoveMembers without rank, or rank without MoveMembers, cannot drag others"
     }),
     true,
   );
+});
+
+// --- isTargetCannotViewError --------------------------------------------------
+
+/** The body member_edit sends when the target cannot see the destination. */
+const TARGET_CANNOT_VIEW = {
+  type: "MissingPermission",
+  permission: "ViewChannel",
+  location: "crates/core/permissions/src/models/mod.rs:79:28",
+};
+
+/** Every shape a refusal body is accepted in, keyed for the failure message. */
+function shapesOf(body: unknown): Record<string, unknown> {
+  return {
+    "JSON text (what stoat-api throws)": JSON.stringify(body),
+    "parsed body": body,
+    "axios response.data object": { response: { data: body } },
+    "axios response.data text": { response: { data: JSON.stringify(body) } },
+  };
+}
+
+interface PatchClient {
+  patch(path: string, params: unknown): Promise<unknown>;
+}
+
+/**
+ * What `ServerMember.edit()` rejects with when the server answers 403 with
+ * `body`: the REAL stoat-api `API.patch` (the call `edit` makes) against a
+ * stubbed `fetch`. stoat-api is resolved from stoat.js, the package that
+ * depends on it, so a stoat-api bump there is what this exercises.
+ */
+async function sdkRejection(body: unknown): Promise<unknown> {
+  const require = createRequire(
+    new URL("../../../stoat.js/package.json", import.meta.url),
+  );
+  const { API } = (await import(
+    pathToFileURL(require.resolve("stoat-api")).href
+  )) as {
+    API: new (options: { baseURL: string }) => PatchClient;
+  };
+
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify(body), {
+      status: 403,
+      headers: { "Content-Type": "application/json" },
+    })) as typeof fetch;
+  try {
+    await new API({ baseURL: "http://api.invalid" }).patch(
+      `/servers/01SERVER/members/${SELF}`,
+      { voice_channel: TO },
+    );
+  } catch (error) {
+    return error;
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.fail("the stubbed 403 resolved");
+}
+
+test("the SDK rejects a refused member edit with the body as JSON text, and it is recognized", async () => {
+  const refusal = await sdkRejection(TARGET_CANNOT_VIEW);
+  // The shape the doc comment names. If a stoat-api bump changes it, the
+  // doc is stale: update it (the object shape is already accepted).
+  assert.equal(typeof refusal, "string");
+  assert.equal(isTargetCannotViewError(refusal), true);
+
+  const moverRefusal = await sdkRejection({
+    type: "MissingPermission",
+    permission: "Connect",
+  });
+  assert.equal(isTargetCannotViewError(moverRefusal), false);
+});
+
+test("a target that cannot see the destination is recognized in every shape", () => {
+  for (const [shape, error] of Object.entries(shapesOf(TARGET_CANNOT_VIEW))) {
+    assert.equal(isTargetCannotViewError(error), true, shape);
+  }
+  // `location` is not required.
+  for (const [shape, error] of Object.entries(
+    shapesOf({ type: "MissingPermission", permission: "ViewChannel" }),
+  )) {
+    assert.equal(isTargetCannotViewError(error), true, shape);
+  }
+});
+
+test("MissingPermission for Connect is the mover's refusal, not the target's", () => {
+  for (const [shape, error] of Object.entries(
+    shapesOf({ type: "MissingPermission", permission: "Connect" }),
+  )) {
+    assert.equal(isTargetCannotViewError(error), false, shape);
+  }
+  for (const [shape, error] of Object.entries(
+    shapesOf({ type: "MissingPermission", permission: "MoveMembers" }),
+  )) {
+    assert.equal(isTargetCannotViewError(error), false, shape);
+  }
+});
+
+test("MissingPermission without a string ViewChannel permission is not recognized", () => {
+  for (const body of [
+    { type: "MissingPermission" },
+    { type: "MissingPermission", permission: null },
+    { type: "MissingPermission", permission: ["ViewChannel"] },
+    {
+      type: "MissingPermission",
+      permission: { toString: () => "ViewChannel" },
+    },
+    { type: "MissingPermission", permission: "viewchannel" },
+  ]) {
+    for (const [shape, error] of Object.entries(shapesOf(body))) {
+      assert.equal(
+        isTargetCannotViewError(error),
+        false,
+        `${shape}: ${JSON.stringify(body)}`,
+      );
+    }
+  }
+});
+
+test("other refusals are not recognized", () => {
+  for (const body of [
+    { type: "NotAVoiceChannel" },
+    { type: "InvalidOperation" },
+    { type: "NotConnected" },
+    { type: "CannotJoinCall" },
+    { type: "NotElevated" },
+    { type: "MissingUserPermission", permission: "ViewChannel" },
+    { permission: "ViewChannel" },
+  ]) {
+    for (const [shape, error] of Object.entries(shapesOf(body))) {
+      assert.equal(
+        isTargetCannotViewError(error),
+        false,
+        `${shape}: ${JSON.stringify(body)}`,
+      );
+    }
+  }
+});
+
+test("odd input is not recognized and never throws", () => {
+  const throwingGetter = Object.defineProperty({}, "type", {
+    get() {
+      throw new Error("boom");
+    },
+  });
+  const throwingProxy = new Proxy(
+    {},
+    {
+      get() {
+        throw new Error("boom");
+      },
+    },
+  );
+  const odd: unknown[] = [
+    null,
+    undefined,
+    "string",
+    "",
+    "<html><body>502 Bad Gateway</body></html>",
+    "null",
+    "42",
+    '"MissingPermission"',
+    JSON.stringify([TARGET_CANNOT_VIEW]),
+    42,
+    Number.NaN,
+    true,
+    [],
+    [TARGET_CANNOT_VIEW],
+    new Error(),
+    new TypeError("Failed to fetch"),
+    { response: null },
+    { response: { data: null } },
+    { response: { data: 42 } },
+    { response: [TARGET_CANNOT_VIEW] },
+    throwingGetter,
+    throwingProxy,
+    { response: throwingProxy },
+  ];
+  // Labelled by index: `String()` of the throwing proxy would itself throw.
+  odd.forEach((error, index) => {
+    let result: boolean | undefined;
+    assert.doesNotThrow(() => {
+      result = isTargetCannotViewError(error);
+    }, `odd input #${index}`);
+    assert.equal(result, false, `odd input #${index}`);
+  });
 });

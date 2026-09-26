@@ -1,4 +1,11 @@
-import { For, Show, createMemo, splitProps } from "solid-js";
+import {
+  For,
+  Show,
+  createMemo,
+  onCleanup,
+  splitProps,
+  untrack,
+} from "solid-js";
 import {
   TrackLoop,
   useEnsureParticipant,
@@ -15,9 +22,16 @@ import { styled } from "styled-system/jsx";
 
 import { UserContextMenu } from "@revolt/app";
 import { useClient } from "@revolt/client";
-import { CONFIGURATION } from "@revolt/common";
+import { CONFIGURATION, useDevice } from "@revolt/common";
 import { useUser } from "@revolt/markdown/users";
-import { InRoom } from "@revolt/rtc";
+import { InRoom, useVoice } from "@revolt/rtc";
+import {
+  type DraggedVoiceParticipant,
+  VOICE_MOVE_MIME,
+  draggedVoiceParticipant,
+  setDraggedVoiceParticipant,
+} from "@revolt/rtc/voiceMoveDrag";
+import { canDragParticipant } from "@revolt/rtc/voiceMovePolicy";
 
 import { Avatar, Ripple, livePill, typography } from "../../design";
 import { Row } from "../../layout";
@@ -27,6 +41,12 @@ import { isSlogaStaff } from "../legacy/Username";
 import { dropLegPlaceholders, participantUserId } from "./participantIdentity";
 
 import { VoiceStatefulUserIcons } from "./VoiceStatefulUserIcons";
+
+/**
+ * How long a row waits before asking for a member again after the last
+ * request for it failed, so pointing at it again does not hammer the API.
+ */
+const MEMBER_RETRY_MS = 30_000;
 
 /**
  * Render a preview of users (or the active participants) for a given channel
@@ -79,7 +99,7 @@ function VariantPreview(props: { channel: Channel }) {
           {(participant) => (
             <ParticipantPreview
               participant={participant}
-              serverId={props.channel.serverId}
+              channel={props.channel}
             />
           )}
         </For>
@@ -134,8 +154,11 @@ function ParticipantLive(props: { channel: Channel }) {
       sharingScreen={state()?.isScreenVideo() ?? false}
       // Flag-gated so a deliberately-dark shell never renders a hint for a
       // feature it cannot join (the release-gate posture).
-      watching={CONFIGURATION.ENABLE_WATCH_TOGETHER && (state()?.isWatching() ?? false)}
+      watching={
+        CONFIGURATION.ENABLE_WATCH_TOGETHER && (state()?.isWatching() ?? false)
+      }
       serverId={props.channel.serverId}
+      channel={props.channel}
       isLive
     />
   );
@@ -146,11 +169,12 @@ function ParticipantLive(props: { channel: Channel }) {
  */
 function ParticipantPreview(props: {
   participant: VoiceParticipant;
-  serverId?: string;
+  channel: Channel;
 }) {
   return (
     <CommonUser
-      serverId={props.serverId}
+      serverId={props.channel.serverId}
+      channel={props.channel}
       userId={props.participant.userId}
       speaking={false}
       muted={!props.participant.isPublishing()}
@@ -158,7 +182,9 @@ function ParticipantPreview(props: {
       camera={props.participant.isCamera()}
       screenshare={screenAudioOnly(props.participant)}
       sharingScreen={props.participant.isScreenVideo()}
-      watching={CONFIGURATION.ENABLE_WATCH_TOGETHER && props.participant.isWatching()}
+      watching={
+        CONFIGURATION.ENABLE_WATCH_TOGETHER && props.participant.isWatching()
+      }
     />
   );
 }
@@ -180,8 +206,11 @@ function CommonUser(props: {
   isLive?: boolean;
   /** Server owning the previewed channel, for the server-mute badge */
   serverId?: string;
+  /** The previewed voice channel: where a drag-to-move starts from */
+  channel: Channel;
 }) {
   const { t } = useLingui();
+  const { isMobile } = useDevice();
 
   const [iconProps, rest] = splitProps(props, [
     "muted",
@@ -192,6 +221,7 @@ function CommonUser(props: {
   ]);
 
   const client = useClient();
+  const voice = useVoice();
   const user = useUser(() => participantUserId(rest.userId));
 
   /**
@@ -206,9 +236,212 @@ function CommonUser(props: {
         })
       : undefined;
 
+  const isSelf = () => participantUserId(rest.userId) === client().user?.id;
+
+  /**
+   * Whether THIS device is in the previewed call: the same check as
+   * `inThisCall()` in `UserContextMenu`.
+   */
+  const inThisCall = () => {
+    const current = voice.channel();
+    return !!current && rest.channel.id === current.id;
+  };
+
+  /**
+   * Whether we outrank this participant in the channel's server.
+   *
+   * A member the collection only knows as a partial has no roles yet, so its
+   * `ranking` reads as the lowest possible and everyone would look superior
+   * to it; an uncached one is unknown. Both count as NOT outranked, the same
+   * caution as `moderation()` in `UserContextMenu`. This only decides whether
+   * the row offers a drag: the server re-checks rank on the move itself.
+   */
+  const outranksTarget = () => {
+    const serverId = rest.channel.serverId;
+    const target = member();
+    const actor = serverId ? client().servers.get(serverId)?.member : undefined;
+
+    return (
+      !!serverId &&
+      !!target &&
+      !!actor &&
+      !client().serverMembers.isPartialByKey({
+        server: serverId,
+        user: participantUserId(rest.userId),
+      }) &&
+      target.inferiorTo(actor)
+    );
+  };
+
+  /**
+   * Whether this row can be dragged onto another voice channel. Never on
+   * mobile (the menu covers it), and only for a server channel: a move is a
+   * server-member edit.
+   *
+   * Our own row only from the device that is in that call, as the menu does:
+   * a device-bound call can only be moved from that device's own session,
+   * so from any other session the API refuses it.
+   */
+  const canDrag = () =>
+    !!rest.channel.serverId &&
+    (!isSelf() || inThisCall()) &&
+    canDragParticipant({
+      isMobile,
+      isSelf: isSelf(),
+      canMoveMembersInSource: rest.channel.havePermission("MoveMembers"),
+      outranksTarget: outranksTarget(),
+    });
+
+  /** A member request this row has in flight */
+  let fetchingTarget = false;
+  /** When this row's last member request failed, from `performance.now()` */
+  let targetFailedAt: number | undefined;
+
+  /**
+   * Load an uncached (or partial) target when a moderator points at the row.
+   *
+   * Nothing in the voice path fills the member cache, so without this a
+   * participant nobody has looked up yet can never be dragged. Asked on hover
+   * rather than on render so a moderator browsing a busy server does not fire
+   * one request per participant; the row becomes draggable when it lands,
+   * because the collection is reactive. One request at a time, and none for
+   * `MEMBER_RETRY_MS` after one failed.
+   */
+  function loadTarget() {
+    const serverId = rest.channel.serverId;
+    if (isMobile || !serverId || isSelf()) return;
+    if (!rest.channel.havePermission("MoveMembers")) return;
+
+    const userId = participantUserId(rest.userId);
+    if (
+      member() &&
+      !client().serverMembers.isPartialByKey({ server: serverId, user: userId })
+    )
+      return;
+
+    if (fetchingTarget) return;
+    if (
+      targetFailedAt !== undefined &&
+      performance.now() - targetFailedAt < MEMBER_RETRY_MS
+    )
+      return;
+
+    fetchingTarget = true;
+    void client()
+      .serverMembers.fetch(serverId, userId)
+      .then(
+        () => {
+          targetFailedAt = undefined;
+        },
+        () => {
+          /* a member we cannot read is one we cannot move; no drag is offered */
+          targetFailedAt = performance.now();
+        },
+      )
+      .finally(() => {
+        fetchingTarget = false;
+      });
+  }
+
+  /** The drag this row started, while it is in flight */
+  let started: DraggedVoiceParticipant | undefined;
+
+  /**
+   * Start dragging this participant toward another voice channel.
+   *
+   * Stops propagation and NEVER calls `preventDefault()`: the channel row
+   * this sits in is a svelte-dnd-action item whose `ondragstart` returns
+   * false, which would cancel this drag the moment it reached it.
+   *
+   * Anything this row may not drag, such as an avatar image pulled by
+   * someone without MoveMembers, is left to bubble on to that handler, which
+   * cancels it exactly as it did before.
+   */
+  function onDragStart(event: DragEvent) {
+    const serverId = rest.channel.serverId;
+    if (!serverId || !event.dataTransfer || !canDrag()) return;
+
+    const userId = participantUserId(rest.userId);
+    event.dataTransfer.setData(VOICE_MOVE_MIME, userId);
+    event.dataTransfer.effectAllowed = "move";
+
+    started = { userId, fromChannelId: rest.channel.id, serverId };
+    setDraggedVoiceParticipant(started);
+
+    event.stopPropagation();
+  }
+
+  function onDragEnd() {
+    started = undefined;
+    setDraggedVoiceParticipant(undefined);
+  }
+
+  // `dragend` never reaches a row that unmounted mid-drag (the member left or
+  // was moved, or the preview swapped variants), so let go of our own drag
+  // here; a newer drag started by another row is not ours to clear.
+  onCleanup(() => {
+    if (started && untrack(draggedVoiceParticipant) === started) {
+      setDraggedVoiceParticipant(undefined);
+    }
+  });
+
+  /**
+   * Pressing a participant must never pick up the channel around it.
+   *
+   * svelte-dnd-action arms a channel drag from a `mousedown` listener on the
+   * channel row, an ancestor of this one, so the press has to stop here,
+   * for everyone, draggable or not. That also hides it from the listeners
+   * that close menus and popovers on an outside press (`FloatingManager` and
+   * friends listen on `document`/`window` in the bubble phase), so replay a
+   * bare press to them: the same trick as `dismissFloatingElements`, but
+   * bubbling, so the `window` listeners hear it too. The replay starts at
+   * `document` and so never reaches the channel row.
+   *
+   * Native `on:` because Solid's delegated `onMouseDown` runs from `document`,
+   * after the channel row's listener has already seen the press.
+   */
+  function onPress(event: MouseEvent) {
+    event.stopPropagation();
+    document.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+  }
+
+  /**
+   * The LIVE badge's hint: the steps left before this share is on screen.
+   * Screen shares are opt-in, so even inside the call nothing plays until
+   * Watch is pressed. None on our own row, and none once every share of
+   * theirs is being watched. The watch set belongs to the call we are in,
+   * so it is only consulted when this preview is of that call.
+   */
+  function liveTooltip() {
+    if (isSelf()) return undefined;
+    if (!rest.isLive) {
+      return {
+        placement: "top" as const,
+        content: t`Join the call, then press Watch to see their screen`,
+      };
+    }
+
+    const shares = voice.shareIdentitiesOf(participantUserId(rest.userId));
+    if (
+      shares.length > 0 &&
+      shares.every((identity) => voice.isWatchingShare(identity))
+    )
+      return undefined;
+
+    return {
+      placement: "top" as const,
+      content: t`Press Watch to see their screen`,
+    };
+  }
+
   return (
     <div
       class={previewUser({ speaking: rest.speaking })}
+      draggable={canDrag()}
+      on:mousedown={onPress}
+      on:dragstart={onDragStart}
+      on:dragend={onDragEnd}
+      onMouseEnter={loadTarget}
       use:floating={{
         userCard: {
           user: user().user!,
@@ -219,6 +452,7 @@ function CommonUser(props: {
             user={user().user!}
             member={user().member}
             inVoice={rest.isLive}
+            voiceChannel={rest.channel}
           />
         ),
       }}
@@ -242,16 +476,8 @@ function CommonUser(props: {
           {/* No thumbnail: call media is end-to-end encrypted, so nobody
               outside the call holds a key to the frames and the server never
               sees them at all. The badge says that video is live and what to
-              do about it; it does not pretend to show what. */}
-          <span
-            class={livePill()}
-            use:floating={{
-              tooltip: {
-                placement: "top",
-                content: t`Sharing their screen — join to watch`,
-              },
-            }}
-          >
+              do about it; it does not pretend to show what (`liveTooltip`). */}
+          <span class={livePill()} use:floating={{ tooltip: liveTooltip() }}>
             <Trans>LIVE</Trans>
           </span>
         </Show>

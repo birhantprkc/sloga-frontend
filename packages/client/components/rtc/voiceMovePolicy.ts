@@ -21,6 +21,8 @@
  *  - `moveTargets` / `canDragParticipant`: what the menu offers and what
  *    the sidebar lets you drag. These mirror the server's checks; the
  *    server stays the authority.
+ *  - `isTargetCannotViewError`: whether a refused move failed because the
+ *    member being moved cannot see the destination.
  */
 import type { DisconnectReason } from "livekit-client";
 
@@ -215,11 +217,12 @@ export function moveBypassesRefusalLatch(
  * other than the current one that the mover can Connect to, and, unless
  * the mover is moving themselves, where they hold MoveMembers.
  *
- * Only the DESTINATION is checked here. MoveMembers in the SOURCE channel
- * and outranking the target are the CALLER's gate (`callModerationActions`
- * for the menu, `canDragParticipant` for drag), not this function's: call it
- * only once those have passed, or it offers targets for a move the server
- * will refuse.
+ * Only the DESTINATION is checked here. MoveMembers on the SOURCE channel,
+ * resolved at CHANNEL level (never the server-level value), and outranking
+ * the target are the CALLER's gate: `canOfferMove` in
+ * `callModerationPolicy.ts` for the menu, `canDragParticipant` for drag.
+ * Call this only once that gate has passed, or it offers targets for a move
+ * the server will refuse.
  */
 export function moveTargets<C extends { id: string }>(
   channels: readonly C[],
@@ -255,4 +258,65 @@ export function canDragParticipant(input: {
   if (input.isMobile) return false;
   if (input.isSelf) return true;
   return input.canMoveMembersInSource && input.outranksTarget;
+}
+
+/** Parse a string error body as JSON; anything else passes through as is. */
+function parseErrorBody(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Whether an error body is exactly `MissingPermission` / `ViewChannel`. */
+function isViewChannelRefusal(body: unknown): boolean {
+  return (
+    isPlainObject(body) &&
+    body.type === "MissingPermission" &&
+    body.permission === "ViewChannel"
+  );
+}
+
+/**
+ * Whether a refused move failed because the TARGET cannot see the
+ * destination: the API error `MissingPermission` with
+ * `permission: "ViewChannel"`, and nothing else.
+ *
+ * The server raises that pair on a move only for the target. The mover's
+ * own ViewChannel on the destination is implied by the Connect check that
+ * runs first (`member_edit.rs`), so a mover who cannot see the channel is
+ * refused with `permission: "Connect"` instead. A self-move never runs the
+ * target check.
+ *
+ * The shapes accepted, each checked structurally:
+ *  - A string holding the JSON body. This is what `ServerMember.edit()`,
+ *    and so `moveToVoiceChannel()`, rejects with today: stoat-api 0.13.5's
+ *    `API.req` reads a JSON response as text and, on a non-2xx, throws that
+ *    text unparsed (`throw data`). A body that is not JSON, such as a
+ *    proxy's HTML error page, is not this refusal.
+ *  - The parsed body object, `{ type, permission }`. stoat.js's raw `fetch`
+ *    helpers (`Client.#apiReq`, `uploadFile`) throw this shape, and
+ *    `useError` turns the string into it. Accepted so a caller that parsed
+ *    first, or a stoat-api that starts parsing, still matches.
+ *  - `{ response: { data } }`, the axios shape of older revolt-api clients
+ *    that `isProfilePrivateError` (ProfileBio.tsx) still reads. stoat-api
+ *    0.13.5 never produces it; it is checked for parity with that reader.
+ *
+ * Returns false for anything else (null, a number, an `Error` with no
+ * response, a non-string `permission`). Never throws: it runs inside a
+ * rejection handler, where a throw would swallow the user-facing message.
+ */
+export function isTargetCannotViewError(error: unknown): boolean {
+  try {
+    if (isViewChannelRefusal(parseErrorBody(error))) return true;
+    return (
+      isPlainObject(error) &&
+      isPlainObject(error.response) &&
+      isViewChannelRefusal(parseErrorBody(error.response.data))
+    );
+  } catch {
+    return false;
+  }
 }

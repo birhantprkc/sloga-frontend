@@ -12,6 +12,7 @@ import {
   type CallModerationPermissions,
   type CallModerationSubject,
   callModerationActions,
+  canOfferMove,
   hasCallModerationActions,
 } from "./callModerationPolicy.ts";
 
@@ -30,9 +31,16 @@ const perms = (
 ): CallModerationPermissions => ({
   muteMembers: true,
   deafenMembers: true,
-  moveMembers: true,
+  moveMembersInSource: true,
   ...overrides,
 });
+
+/** Every permission withheld. */
+const NONE: CallModerationPermissions = {
+  muteMembers: false,
+  deafenMembers: false,
+  moveMembersInSource: false,
+};
 
 test("a moderator with every permission gets every entry", () => {
   const actions = callModerationActions(subject(), perms());
@@ -74,9 +82,31 @@ test("each permission gates only its own entry", () => {
     { mute: true, deafen: false, disconnect: true },
   );
   assert.deepEqual(
-    callModerationActions(subject(), perms({ moveMembers: false })),
+    callModerationActions(subject(), perms({ moveMembersInSource: false })),
     { mute: true, deafen: true, disconnect: false },
   );
+});
+
+test("server-level MoveMembers alone does not offer disconnect", () => {
+  // `member_edit` checks MoveMembers on the SOURCE voice channel, so an actor
+  // who holds it server-wide but has it overridden away on this channel is
+  // refused. The call site reports that as `moveMembersInSource: false`, and
+  // the entry must follow it rather than the server-level grant.
+  const actions = callModerationActions(
+    subject({ isConnected: true }),
+    perms({ moveMembersInSource: false }),
+  );
+  assert.equal(actions.disconnect, false);
+});
+
+test("MoveMembers on the source channel offers disconnect", () => {
+  // The reverse: a channel override granting MoveMembers on this voice channel
+  // is enough, whatever the server-level value.
+  const actions = callModerationActions(subject({ isConnected: true }), {
+    ...NONE,
+    moveMembersInSource: true,
+  });
+  assert.deepEqual(actions, { mute: false, deafen: false, disconnect: true });
 });
 
 test("disconnect needs someone actually in the call", () => {
@@ -102,9 +132,57 @@ test("an unresolved rank offers nothing", () => {
 });
 
 test("no permissions at all offers nothing", () => {
-  const actions = callModerationActions(
-    subject(),
-    perms({ muteMembers: false, deafenMembers: false, moveMembers: false }),
-  );
+  const actions = callModerationActions(subject(), NONE);
   assert.equal(hasCallModerationActions(actions), false);
+});
+
+test("move: no server context offers no move", () => {
+  // A DM or group call has no other voice channel to go to, and undefined
+  // must never read as "allowed".
+  assert.equal(canOfferMove(subject(), undefined), false);
+  assert.equal(canOfferMove(subject({ isSelf: true }), undefined), false);
+});
+
+test("move: someone not in voice is not movable", () => {
+  // `member_edit` refuses with NotConnected, for others and for ourselves.
+  assert.equal(canOfferMove(subject({ isConnected: false }), perms()), false);
+  assert.equal(
+    canOfferMove(subject({ isSelf: true, isConnected: false }), perms()),
+    false,
+  );
+});
+
+test("move: yourself needs no permission here", () => {
+  // A self-move is a plain channel switch: Connect on the destination only,
+  // no rank check. Rank is passed as false to prove it is not consulted.
+  assert.equal(
+    canOfferMove(
+      subject({ isSelf: true, isConnected: true, isInferiorToActor: false }),
+      NONE,
+    ),
+    true,
+  );
+});
+
+test("move: someone else needs rank and MoveMembers on the source", () => {
+  assert.equal(
+    canOfferMove(subject(), { ...NONE, moveMembersInSource: true }),
+    true,
+  );
+});
+
+test("move: someone else at or above you is not movable", () => {
+  // NotElevated, whatever permissions the actor holds.
+  assert.equal(
+    canOfferMove(subject({ isInferiorToActor: false }), perms()),
+    false,
+  );
+});
+
+test("move: someone else without MoveMembers on the source is not movable", () => {
+  // Mute and deafen are server-level and say nothing about moving.
+  assert.equal(
+    canOfferMove(subject(), perms({ moveMembersInSource: false })),
+    false,
+  );
 });
