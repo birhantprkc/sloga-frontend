@@ -187,6 +187,16 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //     live for EVERY app version since 2026-09-26 01:17-01:23Z (delta,
   //     crond, pushd on heart1). Both were found in code review; neither was
   //     reported or seen as a wrong badge in prod, so "could" and no numbers.
+  //     🔴 The deleted-channel bullet is iOS ICON BADGE ONLY and MENTIONS
+  //     ONLY. The orphaned row is visible only through pushd get_badge_count
+  //     (apn.rs), which sums mentions across every unread row without
+  //     checking the channel exists; web, desktop and Android ignore rows for
+  //     deleted channels. A read receipt recreates the row with no mentions,
+  //     which adds nothing, and a deleted channel has no badge of its own. Do
+  //     not widen it to "unread badges" or other platforms. "No way to clear
+  //     it" was never checked, so it stays out.
+  //     "Soon after getting back in" in the rejoin bullet is deliberate: the
+  //     re-removal came 12 s or more later, so never "right after".
   //     Badges already stuck before the deploy were NOT cleaned up, so never
   //     say they are gone. Deleting a channel already cleared its unreads, so
   //     never present that as new. Keep these apart from the "Notifications
@@ -294,11 +304,11 @@ export const CHANGELOGS: ChangelogResponse[] = [
 - **Mentioning yourself no longer notifies you.** That includes **@everyone** and a role you have.
 - **Scheduled messages now arrive like normal ones.** A message you scheduled used to go out without a push notification, without counting as a mention for anyone it @mentioned, and without marking the channel unread for people who were not online. It now goes out the same as a message you send yourself.
 - **Notifications no longer quietly stop after a problem on our servers.** Two rare problems could stop the part of Sloga that delivers mentions, unread badges and push notifications. One was an **@everyone** or role mention in a channel that was deleted a few seconds later. The other was a brief outage of the service that tracks who is online. Each could lose a batch of notifications, and if it happened enough times, delivery stopped until the server restarted. Sloga now handles both, and if that part of Sloga stops for any other reason, it restarts itself. If the online check has an outage now, the worst case is a push notification on a device where you already have Sloga open.
-- **A channel deleted at the wrong moment can no longer leave a badge behind.** A mention or read receipt that arrived just as a channel was being deleted could leave a stuck unread or mention badge for that channel.
+- **A channel deleted at the wrong moment can no longer leave a mention stuck on the app icon.** On iPhone and iPad, a mention that arrived just as its channel was being deleted could keep counting in the app icon's badge after the channel was gone.
 - **New messages can no longer slip past the unread marker.** When several parts of Sloga updated a channel's newest-message marker at nearly the same moment, it could be moved backwards, and a new message, including a scheduled one, might then not mark the channel unread. The marker now only moves forward.
 - **Signing a device out from somewhere else now takes it out of the call too.** If you remove a session in your settings, or sign out everywhere, a device that was in a voice call leaves it when its session ends. It used to stay connected, even behind the "You were logged out" screen.
-- **Encrypted calls no longer throw away what happened while you were disconnected.** If your connection dropped during an encrypted call, the encryption updates the rest of the call sent in the meantime were discarded when you reconnected, which could leave you out of step with everyone else. They are now kept and applied. Encryption messages meant for a different call can no longer disturb the one you are in, either.
-- **Coming back to a large encrypted call no longer gets you removed again.** In an encrypted call of 7 or more people, someone who left and rejoined within 10 seconds could be taken out of the call again right after getting back in.
+- **Encrypted calls no longer throw away encryption updates sent while you were disconnected.** If your connection dropped during an encrypted call, the encryption updates the rest of the call sent in the meantime were discarded when you reconnected, which could leave you out of step with everyone else. They are now kept and applied. Encryption messages meant for a different call can no longer disturb the one you are in, either.
+- **Coming back to a large encrypted call no longer gets you removed again.** In an encrypted call of 7 or more people, someone who left and rejoined within 10 seconds could be taken out of the call again soon after getting back in.
 - **Forgot your password before verifying your email? The reset email now arrives.** It used to say "check your email" and send nothing. Setting a new password from that email also verifies your address, so you can sign straight in.
 - **The disappearing-messages timer is no longer offered in encrypted chats.** It never deleted encrypted messages, so it showed a timer that did nothing there.
 - **Forum posts no longer show an empty Permissions page in their settings.** A post follows its forum's permissions, so there is nothing to set on the post itself.
