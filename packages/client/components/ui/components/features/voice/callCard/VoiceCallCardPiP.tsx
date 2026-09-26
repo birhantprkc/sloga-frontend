@@ -2,6 +2,7 @@ import { createMemo, Show } from "solid-js";
 import {
   TrackLoop,
   TrackReference,
+  TrackReferenceOrPlaceholder,
   useEnsureParticipant,
   useIsMuted,
   useIsSpeaking,
@@ -18,7 +19,12 @@ import { useVoice } from "@revolt/rtc";
 import { Avatar } from "@revolt/ui/components/design";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
-import { dropLegPlaceholders, participantUserId } from "../participantIdentity";
+import {
+  dropLegPlaceholders,
+  isScreenLeg,
+  participantUserId,
+  stripLeg,
+} from "../participantIdentity";
 
 import { VoiceCallCardActions } from "./VoiceCallCardActions";
 import { VoiceCallCardStatus } from "./VoiceCallCardStatus";
@@ -48,17 +54,38 @@ export function VoiceCallCardPiP() {
   const shownTracks = createMemo(() => audTracks().slice(0, PIP_ROSTER_LIMIT));
   const hiddenCount = () => audTracks().length - shownTracks().length;
 
+  /**
+   * Whether the viewer has chosen to receive this screen share (plan
+   * decision A). `MiniVideo` is a `manageSubscription` VideoTrack, which
+   * SUBSCRIBES the track the moment it is visible, so drawing an unwatched
+   * share here would bypass the Watch gate; it gets the roster instead.
+   *
+   * Exempt, as everywhere else in the watch policy: our own participant, and
+   * our own device's screen leg (compared by DEVICE, as `isSelfLeg` is in
+   * `ParticipantTile`; another of our devices' legs still needs a Watch).
+   */
+  const isWatchedOrOwnShare = (track: TrackReferenceOrPlaceholder) => {
+    const identity = track.participant.identity;
+    if (track.participant.isLocal) return true;
+    if (
+      isScreenLeg(identity) &&
+      stripLeg(identity) === voice.room()?.localParticipant.identity
+    )
+      return true;
+    return voice.isWatchingShare(identity);
+  };
+
   const hasFocusVideo = () => {
     const track = voice.focusTrack();
     if (!track) return false;
 
-    return (
-      track.source === Track.Source.ScreenShare ||
-      !useIsMuted({
-        participant: track.participant,
-        source: Track.Source.Camera,
-      })()
-    );
+    if (track.source === Track.Source.ScreenShare)
+      return isWatchedOrOwnShare(track);
+
+    return !useIsMuted({
+      participant: track.participant,
+      source: Track.Source.Camera,
+    })();
   };
 
   return (

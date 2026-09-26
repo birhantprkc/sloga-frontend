@@ -43,7 +43,7 @@ import {
 // (slice 6.2b) and violate the no-CDN policy everywhere else.
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import E2EEWorker from "livekit-client/e2ee-worker?worker";
-import { Channel, Message } from "stoat.js";
+import { type Events, type VoiceMoveRequest, Channel, Message } from "stoat.js";
 
 /** What the mic processor should be doing, read from settings. */
 interface MicPipelineWants {
@@ -100,9 +100,13 @@ import {
   Voice as VoiceSettings,
 } from "@revolt/state/stores/Voice";
 import { VoiceCallCardContext } from "@revolt/ui/components/features/voice/callCard/VoiceCallCard";
+// By file, never through the `@revolt/ui` barrel: a pure leaf with no
+// imports, and the barrel's import cycles blank the page (module-scope TDZ).
+import { liveVideoCount } from "@revolt/ui/components/features/voice/callCard/callTileSelection";
 import {
   dropLegPlaceholders,
   isScreenLeg,
+  participantUserId,
   stripLeg,
 } from "@revolt/ui/components/features/voice/participantIdentity";
 import { ReactiveMap } from "@solid-primitives/map";
@@ -150,6 +154,15 @@ import {
   applyRemoteControlEnded,
   EMPTY_REMOTE_CONTROL_SESSIONS,
 } from "./remoteControlVisibility";
+import {
+  type WatchPub,
+  liveShareIdentities,
+  nextWatchPruneAt,
+  pruneWatchedWithGrace,
+  WATCH_ABSENCE_GRACE_MS,
+  watchedAfterStop,
+  watchedAfterWatch,
+} from "./screenShareWatchPolicy";
 import { CallTranscriber } from "./transcription/callTranscriber";
 import {
   type TranscriptFormat,
@@ -179,6 +192,13 @@ import {
   VAD_TICK_MS,
 } from "./vadLevel";
 import { VoiceAudioPipeline } from "./voiceAudioPipeline";
+import {
+  type ObeyMoveInput,
+  type VoiceConnectionState,
+  moveBypassesRefusalLatch,
+  moveTokenUsable,
+  shouldObeyMove,
+} from "./voiceMovePolicy";
 import { voiceNodeForChannel } from "./voiceNode";
 import {
   MAX_REJOIN_ATTEMPTS,
@@ -420,6 +440,14 @@ const AUDIO_BLOCKED_HOLD_MS = 1_500;
 const SHARE_UNAVAILABLE_NOW =
   "You can't share your screen right now — the call is re-securing or paused. Try again in a moment.";
 
+/**
+ * The SDK event a moderator move (or our own move from another device)
+ * arrives as. The emitter accepts any string, so a misspelled name would
+ * register a listener that never fires; `satisfies` pins it to the SDK's
+ * declared events at compile time.
+ */
+const VOICE_MOVE_REQUESTED = "voiceMoveRequested" satisfies keyof Events;
+
 type State =
   | "READY"
   | "DISCONNECTED"
@@ -532,6 +560,46 @@ class Voice {
   #setRoom: Setter<Room | undefined>;
 
   vidTracks: Accessor<TrackReferenceOrPlaceholder[]>;
+
+  /**
+   * Click-to-watch screen shares (plan decision A): the REMOTE participant
+   * identities whose screen share this viewer has chosen to receive. Keyed
+   * by the device-qualified LiveKit identity (legs included), never the user
+   * id, so another of your own devices' shares needs its own Watch.
+   *
+   * A watch lasts for the current share only: it is pruned at once when an
+   * identity that never left the room stops publishing both ScreenShare and
+   * ScreenShareAudio. An identity that leaves the room (reconnect churn)
+   * keeps its watch for up to `WATCH_ABSENCE_GRACE_MS` from when it was
+   * first seen absent, whether it is still away or back in the room but not
+   * yet sharing; it is dropped at that deadline unless its share is live
+   * again, and a share that returns after the deadline is a new share
+   * (re-run by `#watchPruneTimer`). The set is cleared on connect and on
+   * every disconnect, so a re-share needs a new Watch. The local participant
+   * and our own device's screen leg can never be in it (`watchShare` accepts
+   * only a live remote share).
+   *
+   * Written only through `watchShare` / `stopWatchingShare` / the prune and
+   * the clears, each of which SKIPS a no-op write (the policy helpers always
+   * return a new Set), so subscribers never re-run on an unchanged set. No
+   * `equals` comparator on purpose: one that wrongly returns true would
+   * freeze the accessor on a stale set.
+   */
+  watchedShares: Accessor<ReadonlySet<string>>;
+  #setWatchedShares: Setter<ReadonlySet<string>>;
+  /**
+   * The watch prune's absence record (`pruneWatchedWithGrace`): when each
+   * watched identity was first seen absent from the room, on
+   * `performance.now()`. Not a signal: nothing renders it, and only the
+   * prune reads it. Cleared with the watch set.
+   */
+  #watchGoneSince: ReadonlyMap<string, number> = new Map();
+  /**
+   * The one pending re-prune, at the earliest absence deadline
+   * (`nextWatchPruneAt`), so a watch whose identity never comes back is
+   * dropped on time even if nothing else in the room changes.
+   */
+  #watchPruneTimer: ReturnType<typeof setTimeout> | undefined;
 
   state: Accessor<State>;
   #setState: Setter<State>;
@@ -801,6 +869,23 @@ class Voice {
   #rejoinConnectInFlight = false;
   /** Resolves the rejoin loop's pending backoff wait early (cancellation). */
   #cancelRejoinWait: (() => void) | undefined;
+  /**
+   * The last `disconnected` the CURRENT call's Room reported (the channel,
+   * LiveKit's reason and when), for the move rule (`shouldObeyMove`): the
+   * server removes us from the source room and sends the move event close
+   * together, and either can land first. Written only by a Room whose
+   * generation still owns the call; cleared when a move is followed. Holds
+   * nothing from the move event itself.
+   */
+  #lastDisconnect: ObeyMoveInput["lastDisconnect"];
+  /**
+   * One-shot "you were moved" notice for the UI to show as a snackbar, the
+   * `recordingNotice` shape: the Voice instance sits outside
+   * `SnackbarProvider`, so it cannot show one itself. `at` keys repeats.
+   * Only the destination's display name goes in, never the move event.
+   */
+  moveNotice: Accessor<{ message: string; at: number } | undefined>;
+  #setMoveNotice: Setter<{ message: string; at: number } | undefined>;
   /**
    * The mic id `connect()` pinned `{ exact }` into `audioCaptureDefaults` for
    * the CURRENT call; undefined when no pin is in force. Lets
@@ -1627,6 +1712,12 @@ class Voice {
 
     this.vidTracks = () => [];
 
+    const [watchedShares, setWatchedShares] = createSignal<ReadonlySet<string>>(
+      new Set<string>(),
+    );
+    this.watchedShares = watchedShares;
+    this.#setWatchedShares = setWatchedShares;
+
     const [state, setState] = createSignal<State>("READY");
     this.state = state;
     this.#setState = setState;
@@ -1822,6 +1913,13 @@ class Voice {
     }>();
     this.recordingNotice = recordingNotice;
     this.#setRecordingNotice = setRecordingNotice;
+
+    const [moveNotice, setMoveNotice] = createSignal<{
+      message: string;
+      at: number;
+    }>();
+    this.moveNotice = moveNotice;
+    this.#setMoveNotice = setMoveNotice;
 
     const [transcribing, setTranscribing] = createSignal(false);
     this.transcribing = transcribing;
@@ -2060,6 +2158,19 @@ class Voice {
         client.removeListener("channelUpdate", onChannelChanged);
         client.removeListener("voiceChannelLeave", onChannelChanged);
       });
+    });
+
+    // The server moved us to another voice channel (plan decision C, wave 3a
+    // obey contract). App-lifetime like the subscriptions above: the event
+    // lands on our private (or bound-session) topic whether or not this
+    // connection is in the call, and `#followMove` decides whether it is.
+    createEffect(() => {
+      const client = this.getClient();
+      if (!client) return;
+      const handler = (request: VoiceMoveRequest) =>
+        void this.#followMove(request);
+      client.addListener(VOICE_MOVE_REQUESTED, handler);
+      onCleanup(() => client.removeListener(VOICE_MOVE_REQUESTED, handler));
     });
 
     // Live captions relayed by the server. Same app-lifetime shape as the
@@ -2454,10 +2565,18 @@ class Voice {
    * (the user hung up while connecting, or a newer join superseded it).
    * Callers chaining capture toggles ("start a video call") must gate on it:
    * an ungated toggle after a doomed join lands in whatever call survived.
+   *
+   * `auth` is a pre-minted token (a move); `#connectAttempt` drops it unless
+   * it names exactly the identity and room this attempt would join (M3).
+   * `opts.moveLatchBypass` lets that token step past a latched refusal for
+   * `channel`, only for the reasons `moveBypassesRefusalLatch` allows
+   * (a moderator may move someone where they could not join themselves);
+   * the latch itself stays.
    */
   async connect(
     channel: Channel,
     auth?: { url: string; token: string },
+    opts?: { moveLatchBypass?: boolean },
   ): Promise<boolean> {
     // A terminal refusal the server already gave for this channel and that
     // a retry cannot change (joinRefusalPolicy): answer from the latch —
@@ -2471,7 +2590,15 @@ class Voice {
     // and the affordances disable on `joinPending` so a press cannot
     // reach it anyway.
     const refusal = this.#joinRefusals().get(channel.id);
-    if (refusal && this.joinBlocked(channel) === "refused") {
+    if (
+      refusal &&
+      this.joinBlocked(channel) === "refused" &&
+      !(
+        auth &&
+        opts?.moveLatchBypass &&
+        moveBypassesRefusalLatch(refusal.reason)
+      )
+    ) {
       this.onErr(new Error(this.#joinRefusalText(channel, refusal.reason)));
       return false;
     }
@@ -2722,6 +2849,27 @@ class Voice {
         ? bridge?.status.get("state")?.device_id
         : undefined;
 
+    // M3 (move plan, Rev 3): a pre-minted token is used only when it admits
+    // exactly the identity THIS attempt would request, for THIS attempt's
+    // channel. Anything else (another device, bare versus qualified, another
+    // room, a token that does not decode) joins the normal way instead, so a
+    // token can never make this device join as someone it is not. The claims
+    // are compared and dropped here, never logged. The identity assertion
+    // after `room.connect` stays as the backstop.
+    if (
+      auth &&
+      !moveTokenUsable({
+        token: auth.token,
+        expectedIdentity: !selfUserId
+          ? ""
+          : e2eeDeviceId
+            ? `${selfUserId}:${e2eeDeviceId}`
+            : selfUserId,
+        to: channel.id,
+      })
+    )
+      auth = undefined;
+
     // Resolved once so the Room option and the post-connect sink switch below
     // can never disagree about which audio path this call is on.
     const webAudioMix =
@@ -2871,6 +3019,10 @@ class Voice {
       this.#armAudioBlockedRecheck(room);
     });
 
+    // Click-to-watch: a new call starts with nothing watched. `connect()`'s
+    // leading `disconnect()` already cleared it; this also covers a connect
+    // that superseded one mid-flight.
+    this.#clearWatchedShares();
     this.disposeTrackRoot?.();
     this.disposeTrackRoot = createRoot((dispose) => {
       const allVidTracks = useTracks(
@@ -2891,6 +3043,11 @@ class Voice {
       // call and torn down with the track list on disconnect — the call card
       // unmounts whenever the user browses to another channel.
       this.#watchScreenShareFocus();
+      // Click-to-watch (plan decision A), same lifetime for the same reason:
+      // drop a watch whose share ended, and keep a remote-control session's
+      // feed watched.
+      this.#pruneWatchedShares();
+      this.#watchControlledShares();
       // Voice shaper, input gain and the noise filter apply LIVE: the mic
       // runs one processor and every stage of it is tunable in place. The
       // settings reads are tracked, the apply is not — nothing it writes
@@ -3022,14 +3179,9 @@ class Voice {
             }
           });
       if (isAfk) room.localParticipant.setCameraEnabled(false);
-      for (const p of room.remoteParticipants.values()) {
-        const screenShareTrack = p.getTrackPublication(
-          Track.Source.ScreenShare,
-        );
-        if (screenShareTrack) {
-          this.screenShareTracks.add(screenShareTrack.trackSid);
-        }
-      }
+      // Shares already live when we joined: seeded silently, so they get the
+      // end chime but no start chime.
+      this.#seedLiveRemoteShares(room);
       this.sound.playSound("userJoinVoice");
     });
 
@@ -3059,6 +3211,18 @@ class Voice {
         } catch {
           /* teardown must not be abortable by a chip-derivation throw */
         }
+        // Click-to-watch: every watch ends with the call, and the SFU drop
+        // does not run `disconnect()`. Same generation guard: a superseded
+        // room's late event must not clear the NEW call's watches.
+        this.#clearWatchedShares();
+        // For the move rule: a removal from this channel may be the first
+        // half of a move whose event is still on its way. Same guard, so a
+        // superseded room cannot claim the new call was removed.
+        this.#lastDisconnect = {
+          channelId: channel.id,
+          reason,
+          at: performance.now(),
+        };
       }
       nativeCallServiceStop();
       // Kick / `force_disconnect`: the server will remove the leg anyway
@@ -3123,7 +3287,7 @@ class Voice {
       if (kind === "videoinput") void this.reapplyCameraEffects();
     });
 
-    room.addListener("trackPublished", (pub, _participant) => {
+    room.addListener("trackPublished", (pub, participant) => {
       // Gate (b)'s quantification domain changed (R2-3): a trackless-then-
       // publishing REMOTE participant must drop the chip from green
       // immediately, not on the next unrelated join/leave.
@@ -3141,27 +3305,46 @@ class Voice {
       //    on sight, but the reconcile keeps the pause/banner state fresh
       //    rather than waiting up to a full tick.
       void this.#mlsSession?.reconcileNow();
-      if (pub.source === Track.Source.ScreenShare) {
-        pub.once("subscribed", (track) => {
-          // Play the sound once playback starts, which might be quite a bit after subscription
-          // as it starts paused for the screen share settings modal.
-          track.once("videoPlaybackStarted", () => {
-            this.sound.playSound("streamStart");
-            if (track.sid) {
-              this.screenShareTracks.add(track.sid);
-            }
-          });
-        });
-      }
+      // The share start chime, off the PUBLICATION rather than playback: with
+      // click-to-watch an unwatched share is never subscribed, so a
+      // playback-tied chime would never sound for it. See
+      // `#remoteShareStartChime` for why "published and unmuted" is the edge.
+      this.#remoteShareStartChime(room, pub, participant);
+    });
+
+    // The other half of that edge: a consent-held share is muted while its
+    // sharer answers the quality dialog, and this is it going live.
+    room.addListener("trackUnmuted", (pub, participant) => {
+      this.#remoteShareStartChime(room, pub, participant);
     });
 
     room.addListener("trackUnpublished", (unpub) => {
+      // Only a share whose start chime sounded (or that was already live when
+      // we joined or reconnected, `#seedLiveRemoteShares`) gets the end
+      // chime, so a share cancelled at its consent dialog, never unmuted,
+      // stays silent both ways.
       if (this.screenShareTracks.has(unpub.trackSid)) {
         this.sound.playSound("streamEnd");
         this.screenShareTracks.delete(unpub.trackSid);
       }
       // Gate (b)'s quantification domain changed (R2-3): re-derive the chip.
       this.#setCallParticipantsVersion((v) => v + 1);
+    });
+
+    // Our own FULL reconnect (livekit 2.15.13 `handleRestarting`) unwinds
+    // every remote participant, so the end chime above has already consumed
+    // every share's sid; the rejoined participants come back from the join
+    // response, whose publications never reach `trackPublished` (livekit
+    // builds them before it forwards participant events). Seed the shares
+    // live now, silently, like the `connected` seed, so their real end still
+    // chimes. `reconnected` fires before livekit flushes the events it
+    // buffered during the outage, so a buffered publish or unmute of a
+    // seeded share finds its sid already here and does not chime either. On
+    // a RESUME nothing was unwound, and every share already in the set makes
+    // this a no-op.
+    room.addListener("reconnected", () => {
+      if (this.room() !== room) return;
+      this.#seedLiveRemoteShares(room);
     });
 
     // Publish-gate hardening (R2-1): a NEW local publication, or any of
@@ -4163,6 +4346,9 @@ class Voice {
       // against a call that never got a room must not outlive it. The
       // `#stopPushToTalk()` below clears it too, but that is under the guard.
       this.#pttHeld = false;
+      // Click-to-watch: every watch ends with the call (plan decision A).
+      // Above the room guard for the same reason as the hold above.
+      this.#clearWatchedShares();
 
       const room = this.room();
       if (!room) {
@@ -4336,6 +4522,140 @@ class Voice {
       window.addEventListener("online", onOnline);
       this.#cancelRejoinWait = finish;
     });
+  }
+
+  /**
+   * Follow a server-side move to another voice channel (plan decision C, the
+   * wave 3a obey contract, whose step numbers the comments below carry).
+   *
+   * The event reaches every window of the target's session, and every device
+   * when the identity is bare, so most receivers ignore it: only the
+   * connection that holds the call in `from` follows. Following is always a
+   * full `connect()`: a fresh Room, worker, KeyProvider and MLS session for
+   * the destination, never anything carried over from the source.
+   *
+   * 🔴 The request carries a live SFU credential. Nothing from it (nor the
+   * token's decoded claims) is logged, put in a signal, stored, or written
+   * into an Error: the user-facing text names the destination by its cached
+   * channel name only.
+   */
+  async #followMove(request: VoiceMoveRequest): Promise<void> {
+    // (2) Locals only.
+    const { from, to, url, token } = request;
+
+    // (3) A rejoin attempt in flight is still the call we were in: its
+    // CONNECTING is a RECONNECTING, and a RECONNECTING connection holds the
+    // call's channel even between attempts, with no Room.
+    const raw = this.state();
+    const state: VoiceConnectionState =
+      raw === "CONNECTING" && this.#rejoinConnectInFlight
+        ? "RECONNECTING"
+        : raw;
+    const liveRoomChannelId =
+      (state === "CONNECTED" && this.room()) || state === "RECONNECTING"
+        ? this.channel()?.id
+        : undefined;
+
+    // (4)
+    if (
+      to === from ||
+      !shouldObeyMove({
+        from,
+        liveRoomChannelId,
+        state,
+        lastDisconnect: this.#lastDisconnect,
+        now: performance.now(),
+      })
+    )
+      return;
+
+    // (5) Explicitly, BEFORE connecting: `connect()` answers a latched
+    // refusal without calling `disconnect()`, and a rejoin attempt's own
+    // `disconnect()` never bumps the sequence, so without this the rejoin
+    // loop would keep pulling us back into `from`.
+    this.#lastDisconnect = undefined;
+    this.#rejoinSeq++;
+    this.#cancelRejoinWait?.();
+
+    // (6) No cached destination: we cannot join what we cannot see, and
+    // the server has already taken us out of `from`.
+    const dest = this.getClient()?.channels.get(to);
+    if (!dest) {
+      this.disconnect();
+      this.onErr(
+        new Error(
+          t`You were moved to a voice channel that isn't available here, so you have left the call.`,
+        ),
+      );
+      return;
+    }
+    const destName = dest.name;
+
+    // (7) Both parts, or no pre-minted join at all.
+    const auth =
+      typeof url === "string" && url && typeof token === "string" && token
+        ? { url, token }
+        : undefined;
+
+    // (8) Always the public path. M3 inside `#connectAttempt` may still drop
+    // `auth` and join normally.
+    // Undefined = every attempt threw.
+    let joined: boolean | undefined;
+    // Read immediately before the first `connect()`, for the false branch at
+    // the end: only a latched answer leaves the generation where it was.
+    const genBefore = this.#connectGen;
+    try {
+      joined = await this.connect(dest, auth, { moveLatchBypass: !!auth });
+    } catch {
+      // (10) One plain join if the pre-minted one failed. The error itself
+      // is not logged: a transport failure can quote the SFU address.
+      if (auth) {
+        console.warn("[rtc] move: pre-minted join failed; joining normally");
+        try {
+          joined = await this.connect(dest);
+        } catch {
+          /* reported below */
+        }
+      }
+    }
+
+    // (10)
+    if (joined === undefined) {
+      this.onErr(
+        new Error(
+          t`You were moved to #${destName}, but the call there couldn't be joined.`,
+        ),
+      );
+      return;
+    }
+    if (joined) {
+      this.#setMoveNotice({
+        message: t`Moved to #${destName}`,
+        at: Date.now(),
+      });
+      return;
+    }
+    // False: superseded (a newer join or a hang-up owns the call now, so
+    // stop), or answered from a latched refusal, which `connect()` has
+    // already put in front of the user. The latched answer is the one false
+    // that returns without tearing anything down, so the SOURCE call is
+    // still asserted, and step 5 has cancelled the rejoin loop that would
+    // otherwise have moved it on: leave it, rather than strand a
+    // "Reconnecting" card (or a rejoin attempt still in flight) on a channel
+    // the server has already taken us out of.
+    //
+    // Told apart by the generation, not by the channel alone: a latched
+    // answer returns before `connect()` reaches its `disconnect()` or
+    // `#connectAttempt`, the only two places `#connectGen` moves, while
+    // every other `connect()` (the user's own rejoin of `from` included)
+    // bumps it. So an unchanged generation means no join has started since,
+    // and a user who rejoined `from` meanwhile keeps that call.
+    if (
+      this.#connectGen === genBefore &&
+      this.channel()?.id === from &&
+      this.joinBlocked(dest) === "refused"
+    )
+      this.disconnect();
   }
 
   /**
@@ -8302,6 +8622,299 @@ class Voice {
   }
 
   /**
+   * Every REMOTE publication in the current call, shaped for the watch
+   * policy (`screenShareWatchPolicy.ts`). Reactive through `room()` and
+   * `callParticipantsVersion()`: the Room's participant and publication maps
+   * are not signals, and every remote publish, unpublish, join and leave
+   * bumps that version (the gate (b) domain uses it the same way).
+   *
+   * `isSelfLeg` is compared by DEVICE, as `#isSelfLegTrack` does: another of
+   * our devices' legs is a genuine remote share and is watchable.
+   */
+  #remoteSharePubs(): WatchPub[] {
+    void this.callParticipantsVersion();
+    const room = this.room();
+    if (!room) return [];
+    const local = room.localParticipant.identity;
+    const pubs: WatchPub[] = [];
+    for (const participant of room.remoteParticipants.values()) {
+      const identity = participant.identity;
+      const isSelfLeg = isScreenLeg(identity) && stripLeg(identity) === local;
+      for (const pub of participant.trackPublications.values())
+        pubs.push({ identity, source: pub.source, isLocal: false, isSelfLeg });
+    }
+    return pubs;
+  }
+
+  /** Reactive: whether the viewer is watching this identity's share. */
+  isWatchingShare(identity: string): boolean {
+    return this.watchedShares().has(identity);
+  }
+
+  /**
+   * Start receiving a remote screen share (the Watch button). A no-op unless
+   * `identity` is publishing ScreenShare or ScreenShareAudio right now and is
+   * neither us nor our own screen leg: a watch recorded for a share that has
+   * already ended would otherwise sit in the set and silently apply to that
+   * identity's NEXT share, which must need a new Watch.
+   */
+  watchShare(identity: string): void {
+    const current = untrack(this.watchedShares);
+    if (current.has(identity)) return;
+    const live = untrack(() => liveShareIdentities(this.#remoteSharePubs()));
+    if (!live.has(identity)) return;
+    this.#setWatchedShares(watchedAfterWatch(current, identity));
+  }
+
+  /**
+   * Stop receiving a remote screen share (Stop watching). A no-op when it is
+   * not watched.
+   *
+   * Remote control (plan decision A): if we are controlling this user's
+   * machine, the feed we drive against is going away, so capture is
+   * hard-paused through the same path as any other lost feed. Matched by
+   * USER, not device: `remoteControl.ts` keeps the controlled identity
+   * private, and pausing on another of the sharer's devices errs toward
+   * less control, never blind control.
+   */
+  stopWatchingShare(identity: string): void {
+    const current = untrack(this.watchedShares);
+    if (!current.has(identity)) return;
+    this.#setWatchedShares(watchedAfterStop(current, identity));
+    const controlling = untrack(this.remoteControl.controlling);
+    if (controlling && participantUserId(identity) === controlling.sharerId)
+      this.remoteControl.onFeedLost("unwatched");
+  }
+
+  /**
+   * Reactive: the REMOTE identities of `userId` that are sharing right now
+   * (ScreenShare or ScreenShareAudio), legs included (`u:d:screen`,
+   * `u::screen`), in room order. Never the local participant or our own
+   * device's screen leg, so for our own user id it lists only our OTHER
+   * devices' shares.
+   */
+  shareIdentitiesOf(userId: string): string[] {
+    return [...liveShareIdentities(this.#remoteSharePubs())].filter(
+      (identity) => participantUserId(identity) === userId,
+    );
+  }
+
+  /**
+   * Reactive: the identity of every REMOTE participant in the room, screen
+   * legs (`u:d:screen`) included, publishing or not. The watch prune's
+   * `present`. Same reactivity as `#remoteSharePubs`.
+   */
+  #remoteIdentities(): Set<string> {
+    void this.callParticipantsVersion();
+    const room = this.room();
+    const present = new Set<string>();
+    if (!room) return present;
+    for (const participant of room.remoteParticipants.values())
+      present.add(participant.identity);
+    return present;
+  }
+
+  /**
+   * Empty the watch set (the write is skipped when already empty), and drop
+   * its absence record and pending re-prune with it.
+   */
+  #clearWatchedShares() {
+    this.#cancelWatchPrune();
+    this.#watchGoneSince = new Map();
+    if (untrack(this.watchedShares).size > 0)
+      this.#setWatchedShares(new Set<string>());
+  }
+
+  #cancelWatchPrune() {
+    clearTimeout(this.#watchPruneTimer);
+    this.#watchPruneTimer = undefined;
+  }
+
+  /**
+   * Drop every watch whose share ended, so a re-share needs a new Watch:
+   * at once when an identity that never left the room shares nothing; for
+   * one that left, `WATCH_ABSENCE_GRACE_MS` after it was first seen absent,
+   * unless it is back AND sharing before then. Coming back without sharing
+   * neither restarts nor ends the grace. Reacts to the participant and
+   * publication domain only; the set is read untracked, so the effect never
+   * re-runs on its own write. The re-prune timer dies with the call's track
+   * root.
+   */
+  #pruneWatchedShares() {
+    createEffect(() => {
+      const live = liveShareIdentities(this.#remoteSharePubs());
+      const present = this.#remoteIdentities();
+      untrack(() => this.#applyWatchPrune(live, present));
+    });
+    onCleanup(() => this.#cancelWatchPrune());
+  }
+
+  /**
+   * One prune pass. The result is a subset of the current set, so an
+   * unchanged size means nothing was dropped and the write is skipped. Then
+   * exactly one re-prune is armed for the earliest absence deadline (any
+   * earlier one is replaced), and it runs this same pass on the room as it
+   * is then. Call untracked.
+   */
+  #applyWatchPrune(live: ReadonlySet<string>, present: ReadonlySet<string>) {
+    const current = this.watchedShares();
+    const next = pruneWatchedWithGrace({
+      watched: current,
+      live,
+      present,
+      goneSince: this.#watchGoneSince,
+      now: performance.now(),
+      graceMs: WATCH_ABSENCE_GRACE_MS,
+    });
+    this.#watchGoneSince = next.goneSince;
+    if (next.watched.size !== current.size)
+      this.#setWatchedShares(next.watched);
+    this.#cancelWatchPrune();
+    const at = nextWatchPruneAt(next.goneSince, WATCH_ABSENCE_GRACE_MS);
+    if (at === null) return;
+    this.#watchPruneTimer = setTimeout(
+      () => {
+        this.#watchPruneTimer = undefined;
+        untrack(() =>
+          this.#applyWatchPrune(
+            liveShareIdentities(this.#remoteSharePubs()),
+            this.#remoteIdentities(),
+          ),
+        );
+      },
+      Math.max(0, Math.ceil(at - performance.now())),
+    );
+  }
+
+  /**
+   * Remote control needs the sharer's feed (plan decision A): while we are
+   * controlling someone, watch every share identity of theirs.
+   *
+   * ONE chance per identity per session, the `#autoFocusedShares` shape: a
+   * controller who then presses Stop watching is not re-watched behind their
+   * back (that press has already paused capture, see `stopWatchingShare`).
+   * An identity is forgotten once its share ends, by the watch prune's own
+   * rule: at once if it never left and shares nothing; if it left, once
+   * `WATCH_ABSENCE_GRACE_MS` has passed since it was first seen absent
+   * without its share coming back live. So a re-share during the same
+   * session is a new share and is watched again, while reconnect churn is
+   * the same share and is not. No timer here: an absent identity has nothing
+   * to watch, and its expiry is applied when it comes back (a join or a
+   * publish re-runs this effect; an expired record forces a re-offer).
+   */
+  #watchControlledShares() {
+    let session: string | undefined;
+    let offered = new Set<string>();
+    let offeredGoneSince: ReadonlyMap<string, number> = new Map();
+    createEffect(() => {
+      const controlling = this.remoteControl.controlling();
+      if (!controlling) {
+        session = undefined;
+        offered = new Set<string>();
+        offeredGoneSince = new Map();
+        return;
+      }
+      if (controlling.rcSessionId !== session) {
+        session = controlling.rcSessionId;
+        offered = new Set<string>();
+        offeredGoneSince = new Map();
+      }
+      const identities = this.shareIdentitiesOf(controlling.sharerId);
+      const present = this.#remoteIdentities();
+      untrack(() => {
+        const kept = pruneWatchedWithGrace({
+          watched: offered,
+          live: new Set(identities),
+          present,
+          goneSince: offeredGoneSince,
+          now: performance.now(),
+          graceMs: WATCH_ABSENCE_GRACE_MS,
+        });
+        offered = kept.watched;
+        offeredGoneSince = kept.goneSince;
+        for (const identity of identities) {
+          if (offered.has(identity)) continue;
+          offered.add(identity);
+          this.watchShare(identity);
+        }
+      });
+    });
+  }
+
+  /**
+   * The remote screen-share START chime, on the publication edge "published
+   * and unmuted", once per publication (`screenShareTracks`, whose sids the
+   * `trackUnpublished` end chime consumes).
+   *
+   * Why this edge (plan decision A, "Chimes"). The chime used to wait for
+   * playback, which click-to-watch makes unreachable for a share nobody
+   * watches. And a share still waiting on its sharer's quality dialog is held
+   * with `pauseUpstream()` (`#consentHeld`), which livekit reports to the
+   * server as a MUTE (`onTrackUpstreamPaused -> onTrackMuted ->
+   * updateMuteStatus`), so peers see it muted until the sharer confirms and
+   * the resume unmutes it. Gate pauses (negotiating, mixed call) mute and
+   * unmute a live share the same way, hence once per publication.
+   *
+   * Not airtight: outside the held-gate (born-paused) path the consent pause
+   * lands only after an await or two past the publish (the shield attach,
+   * the screen-audio probe), so a peer can see the share published UNMUTED
+   * for that moment and chime at the dialog rather than at the confirm. The
+   * old playback chime had the same window whenever a frame got through.
+   *
+   * Local publications never get here through `trackPublished`, but
+   * `trackUnmuted` is emitted for them too; they and our own screen leg are
+   * chimed by the share paths themselves, never here.
+   */
+  #remoteShareStartChime(
+    room: Room,
+    pub: { source: Track.Source; trackSid: string; isMuted: boolean },
+    participant: { identity: string; isLocal: boolean },
+  ) {
+    if (!this.#isChimeableRemoteShare(room, pub, participant)) return;
+    if (this.screenShareTracks.has(pub.trackSid)) return;
+    this.screenShareTracks.add(pub.trackSid);
+    this.sound.playSound("streamStart");
+  }
+
+  /**
+   * Record every remote share that is live right now for the end chime,
+   * WITHOUT a start chime: at `connected` (shares already running when we
+   * joined) and at `reconnected` (shares our own full reconnect unwound).
+   * Only those `#remoteShareStartChime` would chime for (unmuted, not our own
+   * leg): one still held at its sharer's consent dialog chimes when it
+   * unmutes, and one cancelled there never chimes at all.
+   */
+  #seedLiveRemoteShares(room: Room) {
+    for (const p of room.remoteParticipants.values()) {
+      const pub = p.getTrackPublication(Track.Source.ScreenShare);
+      if (pub && this.#isChimeableRemoteShare(room, pub, p))
+        this.screenShareTracks.add(pub.trackSid);
+    }
+  }
+
+  /**
+   * Whether this publication is a remote ScreenShare on the chime edge:
+   * published, unmuted, and neither local nor our own device's screen leg.
+   * Shared by the start chime and `#seedLiveRemoteShares`, so a share the
+   * start chime would skip is never seeded for an end chime either.
+   */
+  #isChimeableRemoteShare(
+    room: Room,
+    pub: { source: Track.Source; isMuted: boolean },
+    participant: { identity: string; isLocal: boolean },
+  ): boolean {
+    if (pub.source !== Track.Source.ScreenShare) return false;
+    if (participant.isLocal) return false;
+    const identity = participant.identity;
+    if (
+      isScreenLeg(identity) &&
+      stripLeg(identity) === room.localParticipant.identity
+    )
+      return false;
+    return !pub.isMuted;
+  }
+
+  /**
    * Focus a screen share as soon as it appears, so the shared screen takes the
    * whole frame and everyone else drops into the side column.
    *
@@ -8359,6 +8972,15 @@ class Voice {
         // would leave an empty side column.
         if (this.vidTracks().length < 2) return;
         if (this.focusTrack()?.source === Track.Source.ScreenShare) return;
+        // "Hide participants without video" (plan decision B): with the
+        // filter on and 2+ live videos, the videos sit side by side at equal
+        // size instead. The share's one chance is still spent above, so
+        // turning the filter off later never yanks the view to it.
+        if (
+          this.#settings.hideNonVideoParticipants &&
+          liveVideoCount(this.vidTracks()) >= 2
+        )
+          return;
         this.#setFocus(this.trackId(fresh));
       });
     });

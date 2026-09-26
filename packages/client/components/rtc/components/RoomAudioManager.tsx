@@ -1,9 +1,10 @@
-import { createEffect, createMemo, onCleanup } from "solid-js";
+import { createEffect, createMemo, onCleanup, untrack } from "solid-js";
 import { AudioTrack, useTracks } from "solid-livekit-components";
 
 import { getTrackReferenceId, isLocal } from "@livekit/components-core";
 import { Key } from "@solid-primitives/keyed";
 import {
+  type Participant,
   RemoteAudioTrack,
   RemoteTrackPublication,
   Track,
@@ -22,6 +23,14 @@ import {
   cryptorDisarmIdentities,
   resolveCryptorControl,
 } from "../plaintextCryptorPolicy";
+import {
+  type ReconcilePub,
+  type WatchPub,
+  isShareSource,
+  reconcileShareSubscriptions,
+  sharesToUnsubscribe,
+  shouldSubscribeRemote,
+} from "../screenShareWatchPolicy";
 import { useVoice } from "../state";
 import { identityUserId, whisperTarget } from "../whisperPermissions";
 
@@ -58,8 +67,34 @@ export function RoomAudioManager() {
     },
   );
 
-  const filteredTracks = createMemo(() =>
-    tracks().filter((track) => {
+  /**
+   * A track reference as the click-to-watch policy sees it
+   * (`screenShareWatchPolicy.ts`). `isSelfLeg` is compared by DEVICE, the
+   * same rule as the video filter's self-leg exclusion below.
+   */
+  const watchPubOf = (ref: {
+    participant: Participant;
+    source: Track.Source;
+  }): WatchPub => {
+    const identity = ref.participant.identity;
+    return {
+      identity,
+      source: ref.source,
+      isLocal: isLocal(ref.participant),
+      isSelfLeg:
+        isScreenLeg(identity) &&
+        stripLeg(identity) === voice.room()?.localParticipant.identity,
+    };
+  };
+
+  // Click-to-watch (plan decision A): remote ScreenShareAudio is subscribed
+  // AND rendered only for a watched identity, so an unwatched share mounts no
+  // <AudioTrack>. Mic, whisper and unknown sources pass the policy untouched.
+  // Gated here and never in `tracks()`: the cryptor-disarm sweep below reads
+  // the UNFILTERED lists and must still see unwatched plaintext shares.
+  const filteredTracks = createMemo(() => {
+    const watched = voice.watchedShares();
+    return tracks().filter((track) => {
       if (isLocal(track.participant)) return false;
       if (track.publication.kind !== Track.Kind.Audio) return false;
       // Whisper tracks addressed to someone else: the SFU already refuses us
@@ -67,9 +102,10 @@ export function RoomAudioManager() {
       // become audible here, and the retry churn is pointless.
       const addressee = whisperTarget(track.publication.trackName);
       if (addressee && addressee !== myUserId()) return false;
+      if (!shouldSubscribeRemote(watchPubOf(track), watched)) return false;
       return true;
-    }),
-  );
+    });
+  });
 
   // Receiving-side whisper indicator: the first whisper track addressed to
   // us that is actually flowing. Cleared when it goes away. Skip entirely
@@ -387,10 +423,129 @@ export function RoomAudioManager() {
     }
   });
 
-  // Subscribe to remote video tracks so screen share and camera are received
+  // Subscribe to remote camera tracks so they are received. Screen shares are
+  // left to the watched-share effect below, so this effect keeps exactly
+  // today's reactivity and a Watch press never re-subscribes a camera that
+  // the `VideoTrack` visibility observer has turned off.
   createEffect(() => {
     for (const track of filteredVideoTracks()) {
+      if (isShareSource(track.source)) continue;
       (track.publication as RemoteTrackPublication).setSubscribed(true);
+    }
+  });
+
+  // Click-to-watch (plan decision A): remote ScreenShare video is subscribed
+  // only for a watched identity. Re-runs on the watch set AND the video
+  // publications, so a Watch press and a watched identity that publishes
+  // later are both picked up here. `reconcileShareSubscriptions` never
+  // subscribes video; this effect and the `VideoTrack` observer own that.
+  createEffect(() => {
+    const watched = voice.watchedShares();
+    for (const track of filteredVideoTracks()) {
+      if (!isShareSource(track.source)) continue;
+      if (!shouldSubscribeRemote(watchPubOf(track), watched)) continue;
+      (track.publication as RemoteTrackPublication).setSubscribed(true);
+    }
+  });
+
+  // Watch-set transitions (plan decision A). Stop watching unsubscribes BOTH
+  // share sources of that identity (an unmounting `VideoTrack` does not, so
+  // without this the stream keeps flowing), and a re-Watch re-requests audio
+  // a previous Stop set unsubscribed. Only the watch set is tracked; the
+  // publications are read untracked from the Room, so a publish or unpublish
+  // never re-runs this (the gated effects above own new publications).
+  let prevWatched: ReadonlySet<string> = untrack(voice.watchedShares);
+  createEffect(() => {
+    const next = voice.watchedShares();
+    const prev = prevWatched;
+    prevWatched = next;
+    if (prev === next) return;
+    untrack(() => {
+      const room = voice.room();
+      if (!room) return;
+      const local = room.localParticipant.identity;
+      const pubs: ReconcilePub[] = [];
+      const live: RemoteTrackPublication[] = [];
+      for (const participant of room.remoteParticipants.values()) {
+        const identity = participant.identity;
+        const isSelfLeg = isScreenLeg(identity) && stripLeg(identity) === local;
+        for (const publication of participant.trackPublications.values()) {
+          if (!isShareSource(publication.source)) continue;
+          pubs.push({
+            identity,
+            source: publication.source,
+            isLocal: false,
+            isSelfLeg,
+            isDesired: publication.isDesired,
+          });
+          live.push(publication);
+        }
+      }
+      for (const change of reconcileShareSubscriptions(prev, next, pubs)) {
+        pubs.forEach((pub, i) => {
+          if (pub.identity !== change.identity) return;
+          if (pub.source !== change.source) return;
+          const publication = live[i];
+          // Re-read the LIVE intent: another effect in this same flush (the
+          // gated audio subscribe) may already have requested it, and a
+          // redundant setSubscribed is a pointless SFU round trip.
+          if (publication.isDesired === change.subscribe) return;
+          publication.setSubscribed(change.subscribe);
+        });
+      }
+    });
+  });
+
+  // Explicit unsubscribe (plan "Wave 3 audit" MUST-FIX): every remote share
+  // publication of an unwatched identity, and every share publication of our
+  // own device's screen leg whatever the watch set says (plan §0.9), is set
+  // undesired.
+  // This is a cheap defense-in-depth backstop, and it normally finds
+  // nothing to do. livekit-client 2.15.13 constructs every
+  // RemoteTrackPublication with `subscribed = autoSubscribe`
+  // (`RemoteTrackPublication.ts:46`, fed from the signal client's
+  // `connectOptions.autoSubscribe` in `RemoteParticipant.ts:285-290`), and
+  // we connect with `autoSubscribe: false` (`state.tsx` `room.connect`). So
+  // a fresh publication, including every one a full restart re-creates, is
+  // already UNDESIRED (`isDesired` is `subscribed !== false`) and a signal
+  // resume's SyncState never requests it.
+  // What it guards against is a share made desired by some OTHER path while
+  // unwatched: a mounted `VideoTrack` whose visibility observer calls
+  // `setSubscribed(true)`, a future render surface, or an SDK default
+  // change. Such a share would be sent to the SFU as subscribed on the next
+  // SyncState — downloaded, decrypted, recorded.
+  //
+  // Runs on EVERY publication change, not only on watch transitions.
+  // `tracks()` / `videoTracks()` are the trigger — `useTracks` recomputes on
+  // TrackPublished/Unpublished, Participant(Dis)connected,
+  // ConnectionStateChanged and TrackSubscriptionStatusChanged — so a share
+  // turned desired while unwatched (which changes its subscription status)
+  // is set back to undesired on that same change. The
+  // publications are read from the Room, the map SyncState itself reads.
+  // Disjoint from the subscribe effects above, which only ever request a
+  // WATCHED share that is not our own leg.
+  createEffect(() => {
+    tracks();
+    videoTracks();
+    const watched = voice.watchedShares();
+    const room = voice.room();
+    if (!room) return;
+    const pubs: (ReconcilePub & { publication: RemoteTrackPublication })[] = [];
+    for (const participant of room.remoteParticipants.values()) {
+      for (const publication of participant.trackPublications.values()) {
+        if (!isShareSource(publication.source)) continue;
+        pubs.push({
+          ...watchPubOf({ participant, source: publication.source }),
+          isDesired: publication.isDesired,
+          publication,
+        });
+      }
+    }
+    for (const { publication } of sharesToUnsubscribe(pubs, watched)) {
+      // Re-read the LIVE intent at apply time: a redundant setSubscribed is
+      // a pointless SFU round trip.
+      if (!publication.isDesired) continue;
+      publication.setSubscribed(false);
     }
   });
 
