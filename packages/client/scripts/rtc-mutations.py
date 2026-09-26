@@ -4105,14 +4105,26 @@ MUTATIONS += [
         id="resume-keys-install-dropped",
         what="the resume no longer installs the current epoch's keys explicitly, so a catch-up that processed nothing (native fired no keys-changed) goes active with the new worker holding no frame key",
         file=SESSION,
-        search="""    void this.onLocalKeysChanged(groupId, prefetch.currentEpoch);
+        # Re-anchored 2026-09-26 (resume fix pass, FA-B1). The explicit
+        # install was an un-awaited `void this.onLocalKeysChanged(groupId,
+        # prefetch.currentEpoch);` AFTER `#toActive()`; that line is gone.
+        # The install is now awaited inside `#catchUp`, before anything goes
+        # active, through `#installCaughtUpKeys`, whose answer decides
+        # between active and the fallback. Same defect, expressed at the new
+        # site: the install is skipped and read as done. Distinct from
+        # `resume-install-fail-goes-active` below (there the install RUNS and
+        # its answer is ignored) and the resume twin of the late-drain
+        # branch's `catchup-activates-before-key-install` (whose anchor
+        # names `currentEpoch`, not `confirmed`, so the two never collide).
+        # Killed by 14 resume cases before the fix pass, (a) first: a resume
+        # that applied nothing never installs the current epoch's key, and
+        # the seat's mode never reaches `e2ee`.
+        # Re-measured at the re-anchor: killed by 18 of 49 resume cases, (a)
+        # first; the four new install cases ((u) ×2, (v) ×2) among them.
+        search="""      const installed = await this.#installCaughtUpKeys(groupId, confirmed);
 """,
-        replace="",
-        # Killed by 14 resume cases, (a) first: a resume that applied nothing
-        # never installs the current epoch's key, and the seat's mode never
-        # reaches `e2ee`. (b) is not among them: its catch-up APPLIES
-        # commits, and native's keys-changed for a processed commit installs
-        # the keys without the explicit call (the spec's (a) comment says so).
+        replace="""      const installed = true;
+""",
         specs=[RESUME_SPEC],
         must_red=[RESUME_SPEC],
     ),
@@ -4272,12 +4284,20 @@ MUTATIONS += [
       await this.#deps.bridge.callClearDowngrade(groupId);
     } catch (error) {
       console.warn("[mls] resume: downgrade grant clear failed", error);
-      return this.#joinWithoutResume(generation, groupId);
+      return this.#noResume(generation, groupId, {
+        cause: "grant_clear_failed",
+      });
     }
 """,
         replace="",
         # Killed by (q) (enabled on a live grant) and (a) (the clear's place
         # between the release and the key install).
+        # Re-anchored 2026-09-26 (resume fix pass, FA-m3): the failed clear
+        # no longer returns `#joinWithoutResume` directly but through
+        # `#noResume`, which logs the fallback cause first and then takes the
+        # same join path. Only the catch's return changed; the whole
+        # try/catch is still dropped, so the adopt still skips the clear.
+        # Re-measured at the re-anchor: killed by (a) and (q), 2 of 49.
         specs=[RESUME_SPEC],
         must_red=[RESUME_SPEC],
     ),
@@ -4437,6 +4457,167 @@ MUTATIONS += [
         # keep of that group expires normally"). Each pinned on its own.
         specs=[RESUME_SPEC, RESUME_KEEP_SPEC],
         must_red=[RESUME_SPEC, RESUME_KEEP_SPEC],
+    ),
+]
+
+
+# --- Rejoin resume, final-audit fix pass: install, tail, veto, fence ---------
+#
+# The final cross-cutting audit (2026-09-26) found the resume going active
+# BEFORE its keys installed (FA-B1: a keys-changed for an intermediate epoch
+# landing mid-catch-up turns the explicit install into an Add-grace one, and
+# the gate opens on a send key a member the catch-up removed still holds), and
+# a commit dropped as another group's between the prefetch GET and the adopt
+# never retried (FA-M1: the seat publishes one epoch behind). The fix: the
+# install is awaited under `#catchUp`'s lock and judged by
+# `#installCaughtUpKeys` (the install counter moved, the fence is ours, and
+# OUR send key is at the confirmed epoch) before anything goes active, and a
+# failed install falls back; a non-terminal foreign drop of the candidate is
+# recorded in `#resumeForeignDrops` and buys ONE tail fetch before the final
+# native check, whose failure falls back. The audit also found the W1-m1 veto
+# unpinned (FA-m2), and the fix pass fenced a stale keys-changed push of a
+# deleted candidate's old incarnation (`#staleKeysFence`, FAF-S2).
+#
+# Appended here, after the wave-3 block, on purpose: the late-drain branch's
+# block sits mid-file (ahead of the wave-1 block), so the end of the file
+# keeps these entries out of its merge window.
+#
+# Every entry is `must_red` on the resume spec, and the cases named are the
+# ones measured red under it.
+
+MUTATIONS += [
+    # ---- FA-B1: the install before active -----------------------------------
+    Mutation(
+        id="resume-active-before-install",
+        what="the resume goes active BEFORE the caught-up keys install (FA-B1): the install still runs, but while it is pending the session is green and a reconcile can empty the gate under the send key of an epoch a member the catch-up removed still holds (locked decision 3)",
+        file=SESSION,
+        # The resume twin of the late-drain branch's `catchup-install-reorder`
+        # (different anchor: `confirmed`, not `currentEpoch`).
+        # Measured 2026-09-26: killed by 4 of 49: both (u) FA-B1 cases (the
+        # interleave, whose sampled monitor sees the gate open on the older
+        # send key, and the LDA-M1 shape) and both (v) install failures.
+        search="""      const installed = await this.#installCaughtUpKeys(groupId, confirmed);
+""",
+        replace="""      this.#toActive();
+      const installed = await this.#installCaughtUpKeys(groupId, confirmed);
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-own-key-epoch-unchecked",
+        what="the resume's install is judged on the install counter and the fence alone, not on OUR send key's epoch (FA-B1, the LDA-M1 shape): an install that took Add-grace and left our send key on the older epoch still reads as installed, and the resume goes green publishing under a key a removed member holds",
+        file=SESSION,
+        # 🔴 MERGE NOTE. `#installCaughtUpKeys` is copied verbatim from the
+        # late-drain branch (`fix/mls-late-drain-guard`), whose table carries
+        # `own-send-key-epoch-unchecked` with this same search string (less
+        # the final newline) and the same replace, pinned to its drain spec.
+        # Once both branches merge there is one body, and these two entries
+        # anchor the same bytes: fold them into ONE entry
+        # with both specs (`specs`/`must_red` = drain spec + `RESUME_SPEC`)
+        # rather than keep two ids mutating one line. Kept distinct here
+        # because this branch has no drain spec.
+        # Measured 2026-09-26: killed by (u) "FA-B1, LDA-M1" alone (1 of 49);
+        # the fix pass's own probes let it survive, which is why that case
+        # exists.
+        search="""      this.#installEpoch === epoch &&
+      this.#ownSendKeyEpoch === epoch
+    );
+""",
+        replace="""      this.#installEpoch === epoch
+    );
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-install-fail-goes-active",
+        what="a caught-up install that failed its checks is ignored and the resume goes active anyway, instead of falling back to the join ladder: green on a group whose frame key is missing or older than the confirmed epoch",
+        file=SESSION,
+        # Measured 2026-09-26: killed by 3 of 49: (u) "FA-B1, LDA-M1" and
+        # both (v) install failures.
+        search="""      if (!installed) {
+""",
+        replace="""      if (!installed && false) {
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- FA-M1: a commit dropped between the prefetch GET and the adopt -----
+    Mutation(
+        id="resume-foreign-drop-unrecorded",
+        what="a non-terminal foreign drop of the startup's candidate is not recorded (FA-M1), so a commit that landed between the prefetch GET and the adopt is never fetched: the resume confirms at the prefetch's epoch and the seat publishes one epoch behind the group until something else heals it",
+        file=SESSION,
+        # Measured 2026-09-26: killed by 4 of 49: (w) FA-M1 (one tail GET
+        # catches the seat up), both (w) tail failures (non-ok, short) and
+        # (w) F1. The same four as `resume-tail-skipped` below: the record is
+        # read only by the tail's condition, so the two are behaviourally
+        # equivalent today. Both are kept, one per half (the write, the read),
+        # so a later second reader of the record cannot leave either unpinned.
+        search="""        if (!foreign.ack && this.#startupEstablish) {
+          this.#resumeForeignDrops.add(envelope.group_id);
+        }
+""",
+        replace="",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-tail-skipped",
+        what="the recorded foreign drop never triggers the tail fetch (FA-M1): the record is kept and cleared but nothing reads it, so the resume confirms at the prefetch's epoch with the dropped commit missing",
+        file=SESSION,
+        # Measured 2026-09-26: killed by the same 4 of 49 as
+        # `resume-foreign-drop-unrecorded` above.
+        search="""      if (this.#resumeForeignDrops.has(groupId)) {
+        const tail = await this.#catchUpTail(p, stale);
+""",
+        replace="""      if (this.#resumeForeignDrops.has(groupId) && false) {
+        const tail = await this.#catchUpTail(p, stale);
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-tail-failure-kept",
+        what="a tail fetch that failed (a throw, a non-ok answer, a 404, a short or lagging page) is ignored and the resume goes on at the prefetch's epoch, instead of falling back: active behind the DS on exactly the path that knows it missed a commit",
+        file=SESSION,
+        # Measured 2026-09-26: killed by 3 of 49: both (w) tail failures
+        # (non-ok, short) and (w) F1.
+        search="""        if ("cause" in tail) return tail;
+        confirmed = tail.epoch;
+""",
+        replace="""        if (!("cause" in tail)) confirmed = tail.epoch;
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- FA-m2: the W1-m1 veto ----------------------------------------------
+    Mutation(
+        id="w1m1-veto-disabled",
+        what="the resume no longer vetoes on a LOUD foreign drop of its candidate (W1-m1): an envelope of the group the drain destroyed is gone for good, and the resume goes active on a group state that is missing it",
+        file=SESSION,
+        # Unpinned until the fix pass: the final audit disabled this veto and
+        # every spec stayed green (FA-m2).
+        # Measured 2026-09-26: killed by (x) W1-m1 alone (1 of 49).
+        search="""      if (this.#loudForeignDrops.has(groupId)) {
+""",
+        replace="""      if (this.#loudForeignDrops.has(groupId) && false) {
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- FAF-S2: the stale keys-changed fence --------------------------------
+    Mutation(
+        id="resume-stale-push-unfenced",
+        what="a keys-changed push of a deleted resume candidate's old incarnation, landing after the fallback re-entered the same group id, is acted on: `#installEpoch` was reset, so it passes the epoch check, reads frame keys from the deleted row, and the fallback's clean rejoin ends in re-securing and loud (pre-existing on the `catch_up_stopped` fallback; fenced by FAF-S2)",
+        file=SESSION,
+        # Measured 2026-09-26: killed by 3 of 49: (w) F1, F2 and F3.
+        search="""    if (fence !== null && fence.groupId === groupId && epoch <= fence.epoch) {
+""",
+        replace="""    if (false) {
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
     ),
 ]
 

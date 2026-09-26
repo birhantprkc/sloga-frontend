@@ -27,12 +27,13 @@
 import assert from "node:assert/strict";
 import { type TestContext, test } from "node:test";
 
-import type { MlsCommitInfo } from "@revolt/client";
+import type { MlsCommitInfo, MlsFrameKeys } from "@revolt/client";
 
 import {
   readResumeRecord,
   writeResumeRecord,
 } from "../client/mlsResumeKeep.ts";
+import { MissingLocalFrameKeyError } from "./mlsCallKeys.ts";
 import {
   type Fleet,
   type Identity,
@@ -41,6 +42,7 @@ import {
   advance,
   flush,
   GROUP,
+  groupNotFound,
   identityOf,
   newFleet,
   newWorld,
@@ -51,6 +53,7 @@ import {
   THIRD,
   THIRD_ID,
 } from "./mlsCallSession.harness.ts";
+import type { KeyInstaller } from "./mlsCallSession.ts";
 import {
   LOCAL_GROUP_KEEP_MS,
   REJOIN_SERVE_SUPPRESS_MS,
@@ -1999,4 +2002,846 @@ test("(t) the resume candidate's delete is already in flight when the session ad
     0,
   );
   assertNoPlaintext(watches.values());
+});
+
+// ---- (u)–(y) The final audit's fix pass: FA-B1, FA-M1, FA-m2, FA-m3 --------
+
+/**
+ * One macrotask. The real installer posts each key to the media worker and
+ * awaits its `importKey`, which answers by message: a switch of the send key
+ * is never a same-tick microtask.
+ */
+function macrotask(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+/**
+ * The LOCAL send key a seat's media plane holds (`bindSendKey`): `epoch` is
+ * the one frames go out under, `history` every switch in order, `remotes`
+ * every remote-only install (the Add-grace path's first half). `failAt`
+ * makes the next local switch at that epoch reject instead, as an import of
+ * our own key failing after the call returned. `onSend` runs after a switch.
+ */
+interface SendKey {
+  epoch: number | null;
+  history: number[];
+  remotes: number[];
+  failAt: number | null;
+  onSend: ((epoch: number) => void) | null;
+}
+
+/**
+ * Rebind `world`'s session (booted, not started) to a media binding whose
+ * installer records the send key (`SendKey`), and is the harness's
+ * `fakeMedia` in every other respect: the same gate, gate log, mode labels
+ * and chip journal, so `watch`, `publishing()` and `terminalLoud()` read
+ * what they read on the harness's own binding.
+ *
+ * `state.tsx` reconciles on every participant and track event, and one can
+ * land while a key import is in flight: each install reconciles an active
+ * session between its two awaits, as such an event would.
+ */
+function bindSendKey(world: World): SendKey {
+  const key: SendKey = {
+    epoch: null,
+    history: [],
+    remotes: [],
+    failAt: null,
+    onSend: null,
+  };
+  const eventDuringImport = () => {
+    if (world.session.state() === "active") void world.session.reconcileNow();
+  };
+  const importLocal = async (frameKeys: MlsFrameKeys): Promise<void> => {
+    await macrotask();
+    eventDuringImport();
+    await macrotask();
+    if (key.failAt === frameKeys.epoch) {
+      key.failAt = null;
+      throw new Error(
+        `InvalidKey: local key import failed (${frameKeys.epoch})`,
+      );
+    }
+    key.epoch = frameKeys.epoch;
+    key.history.push(frameKeys.epoch);
+    key.onSend?.(frameKeys.epoch);
+  };
+  const installer: KeyInstaller = {
+    applyKeys: importLocal,
+    applyLocalKey: importLocal,
+    applyRemoteKeys: async (frameKeys) => {
+      await macrotask();
+      eventDuringImport();
+      await macrotask();
+      key.remotes.push(frameKeys.epoch);
+    },
+    resetForGroup: () => {},
+  };
+  world.session.bindMedia({
+    installer,
+    localIdentity: () => identityOf(world.me),
+    sfuParticipants: () => [...world.sfu],
+    participantTrackSids: (identity) => world.sids.get(identity) ?? [],
+    sfuConnected: () => world.connected,
+    localPublications: () => [...world.localPublications],
+    republishLocalPublications: async () => {},
+    pausePublishing: async (reason) => {
+      world.gate.add(reason);
+      world.gateLog.push(`+${reason}`);
+    },
+    resumePublishing: async (reason) => {
+      world.gate.delete(reason);
+      world.gateLog.push(`-${reason}`);
+    },
+    onEncryptionState: (state, error, meta) => {
+      const call =
+        meta === undefined ? { state, error } : { state, error, meta };
+      world.states.push(call);
+      world.events.push(`state:${state}`);
+      world.journal.push({ kind: "state", ...call });
+    },
+    onMediaHold: (active) => {
+      world.holds.push(active);
+      world.events.push(`hold:${active}`);
+      world.journal.push({ kind: "hold", active });
+    },
+    onCallModeChanged: (mode) => {
+      world.modes.push(mode.kind);
+    },
+    setEncryptionEnabled: async () => {},
+  });
+  return key;
+}
+
+/**
+ * A second invariant on one seat, sampled as `watch` samples no-plaintext:
+ * on every publish-gate edge and on every step of `run` (it is a `Watch`,
+ * so `run` and `untilActive` drive it). `fault` names what is wrong now, or
+ * null. A closed session is skipped, as `watch` skips it.
+ */
+function guard(world: World, fault: () => string | null): Watch {
+  const g: Watch = {
+    world,
+    trace: [],
+    violations: [],
+    samples: 0,
+    check(where: string): void {
+      g.samples++;
+      if (world.session.state() === "closed") return;
+      const what = fault();
+      if (what !== null) g.violations.push(`at "${where}": ${what}`);
+    },
+  };
+  tap(world.gateLog, (edge) => g.check(`gate ${edge}`));
+  return g;
+}
+
+/** `g` looked, and never saw its fault. */
+function assertNever(g: Watch, message: string): void {
+  assert.ok(g.samples > 0, "the guard never looked");
+  assert.deepEqual(g.violations, [], message);
+}
+
+/** Publishing while native is behind the DS's epoch (FA-M1). */
+function behindTheDs(fleet: Fleet, world: World): Watch {
+  return guard(world, () =>
+    world.publishing() && world.localEpoch < fleet.ds.epoch
+      ? `published at native epoch ${world.localEpoch}, the DS at ${fleet.ds.epoch}`
+      : null,
+  );
+}
+
+/** The `cause` of each `[mls] startup establish: no resume` line. */
+function noResumeCauses(logs: Captured, from = 0): string[] {
+  return noResumeLines(logs, from).map((detail) => String(detail.cause));
+}
+
+/** The detail of each `[mls] startup establish: no resume` line. */
+function noResumeLines(logs: Captured, from = 0): Record<string, unknown>[] {
+  return lines(logs, "info", "[mls] startup establish: no resume", from).map(
+    (args) => args[1] as Record<string, unknown>,
+  );
+}
+
+/**
+ * The session states `world` is in at each of its bridge calls from now
+ * until its ladder's first request. A resume that goes active reaches the
+ * bridge before any fallback could (the recency touch, the reconcile and
+ * the enrolment proof `#toActive` starts), so `active` here is a resume
+ * that went active.
+ */
+function statesBeforeLadder(world: World): Set<string> {
+  const states = new Set<string>();
+  let ladder = false;
+  tap(world.bridgeCalls, (name) => {
+    if (LADDER.includes(`call:${name}`)) ladder = true;
+    if (!ladder) states.add(world.session.state());
+  });
+  return states;
+}
+
+/**
+ * FA-B1's catch-up, [Add, Remove THIRD, Add]. SELF, PEER and THIRD up;
+ * THIRD drops off the SFU and SELF's leave-grace for it runs; PEER's page
+ * dies inside it; DAVE joins (an Add), the grace removes THIRD (a Remove),
+ * ERIN joins (an Add). Only the fetch delivers the three to PEER. PEER's new
+ * page is booted with a prefetch on its bridge (read now, well inside the
+ * record's grace), its media bound to `bindSendKey`, and not started.
+ */
+async function removeBetweenAdds(t: TestContext, channel: string) {
+  const fleet = newFleet(t, [SELF, PEER, THIRD, DAVE, ERIN], channel);
+  const watches = watchFleet(fleet);
+  const peer = fleet.seat(PEER);
+  for (const id of [SELF, PEER, THIRD]) {
+    await joinSeat(t, fleet, fleet.seat(id), watches.values());
+  }
+  await run(t, 3_000, watches.values());
+  const base = fleet.ds.epoch;
+  const leftAt = Date.now();
+  sfuLeave(fleet, THIRD);
+  await run(t, 7_000, watches.values());
+  peer.pageDeath();
+  const diedAt = Date.now();
+  await joinSeat(t, fleet, fleet.seat(DAVE), watches.values());
+  assert.equal(fleet.ds.epoch, base + 1, "the Remove came before the Add");
+  for (let w = 0; fleet.ds.epoch < base + 2 && w < 5_000; w += 250) {
+    await run(t, 250, watches.values());
+  }
+  const removeEpoch = base + 2;
+  assert.deepEqual(
+    fleet.ds.log[removeEpoch - 1]?.removed.map(identityOf),
+    [THIRD_ID],
+    "no Remove of THIRD",
+  );
+  await joinSeat(t, fleet, fleet.seat(ERIN), watches.values());
+  const current = fleet.ds.epoch;
+  assert.equal(current, base + 3);
+  fleet.ds.ack(
+    PEER,
+    peer.mailbox.map((e) => e.id),
+  );
+  assert.ok(Date.now() - leftAt > LOCAL_GROUP_KEEP_MS, "THIRD's grace ran");
+  assert.ok(Date.now() - diedAt < LOCAL_GROUP_KEEP_MS - 3_000, "a slow reload");
+
+  peer.boot({ prefetchFromBridge: true });
+  const key = bindSendKey(peer);
+  const prefetch = await peer.resumePrefetch;
+  assert.deepEqual(
+    prefetch?.commits.map((c) => c.epoch),
+    [base + 1, removeEpoch, current],
+    "the record went stale before the reload",
+  );
+  return {
+    fleet,
+    watches,
+    peer,
+    w: watches.get(PEER_ID)!,
+    key,
+    base,
+    removeEpoch,
+    current,
+  };
+}
+
+/**
+ * Native's keys-changed for `epoch` (the catch-up's first commit) lands
+ * while the catch-up applies the next one, as a Tauri event can land before
+ * the next invoke's reply: at the second `processEnvelope` from now the
+ * push is delivered, and that apply is held until the pushed send key is
+ * in, so the catch-up resumes on a seat holding `epoch`'s send key.
+ */
+function pushMidCatchUp(world: World, key: SendKey, epoch: number): void {
+  let applies = 0;
+  tap(world.bridgeCalls, (name) => {
+    if (name !== "processEnvelope" || ++applies !== 2) return;
+    const release = world.holdProcessEnvelope();
+    key.onSend = (switched) => {
+      if (switched !== epoch) return;
+      key.onSend = null;
+      setImmediate(release);
+    };
+    void world.session.onLocalKeysChanged(GROUP, epoch);
+  });
+}
+
+/** The send key is older than the Remove: the removed member holds it. */
+function staleSendKey(world: World, key: SendKey, removeEpoch: number): Watch {
+  return guard(world, () =>
+    world.publishing() && (key.epoch === null || key.epoch < removeEpoch)
+      ? `published on the send key of epoch ${key.epoch}`
+      : null,
+  );
+}
+
+test("(u) FA-B1: a keys-changed push for an intermediate epoch lands mid-catch-up over [Add, Remove THIRD, Add] — the final key is installed before the seat goes active, and the gate never opens on a send key THIRD holds", async (t) => {
+  const logs = captureConsole(t);
+  const { fleet, watches, peer, w, key, base, removeEpoch, current } =
+    await removeBetweenAdds(t, "ch-resume-u1");
+  const stale = staleSendKey(peer, key, removeEpoch);
+  pushMidCatchUp(peer, key, base + 1);
+  const mark = w.trace.length;
+
+  void peer.session.start();
+  await flush();
+  await run(t, 5_000, [...watches.values(), stale]);
+
+  // The interleave happened: the pushed send key went in mid-catch-up.
+  assert.equal(key.history[0], base + 1, "the push never installed");
+  assertNever(stale, "the gate opened on a send key the removed THIRD holds");
+  assertResumed(fleet, peer);
+  assert.equal(key.epoch, current, "not on the final send key");
+  assert.ok(
+    at(since(w, mark), `keys:${current}`) <
+      at(since(w, mark), "gate:-negotiating"),
+  );
+  assert.deepEqual(ladderCalls(since(w, mark)), []);
+  assert.deepEqual(noResumeCauses(logs), []);
+  assert.equal(
+    lines(logs, "info", "[mls] resumed the held call group").length,
+    1,
+  );
+  assertNoPlaintext(watches.values());
+});
+
+test("(u) FA-B1, LDA-M1: our install's local half fails while native's keys-changed for the same epoch installs the remotes on the Add-grace path — counter moved, fence held, but OUR send key is the old one: no resume, and the gate never opens on it", async (t) => {
+  const logs = captureConsole(t);
+  const { fleet, watches, peer, w, key, base, removeEpoch, current } =
+    await removeBetweenAdds(t, "ch-resume-u2");
+  const stale = staleSendKey(peer, key, removeEpoch);
+  pushMidCatchUp(peer, key, base + 1);
+  // Native's keys-changed for the last commit (an Add) lands before the
+  // reply to the catch-up's final native check: classified by the Add memo
+  // still recorded, it installs the remote keys and defers our send key.
+  let applies = 0;
+  let pushed = false;
+  tap(peer.bridgeCalls, (name) => {
+    if (name === "processEnvelope") applies++;
+    if (name !== "callState" || applies < 3 || pushed) return;
+    pushed = true;
+    void peer.session.onLocalKeysChanged(GROUP, current);
+  });
+  key.failAt = current;
+  const early = statesBeforeLadder(peer);
+  const mark = w.trace.length;
+
+  void peer.session.start();
+  await flush();
+  await run(t, 30_000, [...watches.values(), stale]);
+
+  // The race ran as scripted: the push's remote-only install, our failed
+  // local switch, and the intermediate send key still in place.
+  assert.ok(pushed, "the final check never ran");
+  assert.equal(key.failAt, null, "our install never ran");
+  assert.ok(key.remotes.includes(current), "no Add-grace install ran");
+  assert.equal(key.history[0], base + 1);
+  assertNever(stale, "the gate opened on a send key the removed THIRD holds");
+  assert.equal(early.has("active"), false, "active on the resume path");
+  assert.deepEqual(noResumeCauses(logs), ["install_check_failed"]);
+  const [detail] = noResumeLines(logs);
+  assert.equal(detail.installEpoch, current, "the fence moved");
+  assert.equal(detail.ownSendKeyEpoch, base + 1);
+  assert.equal(
+    lines(logs, "info", "[mls] resumed the held call group").length,
+    0,
+  );
+  const trace = since(w, mark);
+  assert.ok(at(trace, `wiped:${GROUP}`) < at(trace, "call:callCreate"));
+  assert.ok(fleet.ds.epoch > current, "the fallback never rejoined");
+  assertNoPlaintext(watches.values());
+});
+
+// ---- (v) The resume's own install fails ----------------------------------
+
+for (const [channel, label, failure] of [
+  [
+    "ch-resume-v1",
+    "an import error",
+    () => new Error("InvalidKey: local key import failed"),
+  ],
+  [
+    "ch-resume-v2",
+    "no local frame key",
+    () => new MissingLocalFrameKeyError(GROUP, 0),
+  ],
+] as const) {
+  test(`(v) the resume's install of its own key fails (${label}): install_check_failed, never active on the resume path, the held group deleted before today's ladder`, async (t) => {
+    const logs = captureConsole(t);
+    const { fleet, watches, peer, w } = await pairUp(t, channel);
+    const mark = w.trace.length;
+    const from = fleet.ds.submits.length;
+    const early = statesBeforeLadder(peer);
+
+    peer.failLocalKeyOnce(failure());
+    await fleet.reload(PEER);
+    await run(t, 1, watches.values());
+    assert.equal(peer.localKeyFailure, null, "the install never ran");
+    assert.equal(early.has("active"), false, "active on the resume path");
+    assert.deepEqual(noResumeCauses(logs), ["install_check_failed"]);
+
+    await assertCleanJoin(t, fleet, w, mark, from, watches.values());
+    assert.equal(
+      lines(logs, "info", "[mls] resumed the held call group").length,
+      0,
+    );
+    // Whatever the failed install latched went with the fallback's reset:
+    // the rejoined seat is not left under a red of the abandoned group's.
+    assert.equal(peer.terminalLoud(), false, "a stale red outlived the join");
+    assertNoPlaintext(watches.values());
+  });
+}
+
+// ---- (w) FA-M1: a commit between the prefetch's GET and the adoption ------
+
+/**
+ * FA-M1's window. SELF, PEER and THIRD up. With `drop`, THIRD drops off the
+ * SFU and SELF's leave-grace for it runs. PEER's page dies inside it; DAVE
+ * joins (an Add PEER misses, delivered only by the fetch). PEER's new page
+ * starts its prefetch (the spec holds it, as a slow room connect would),
+ * which reads the DS now: one commit missing. Started, the session waits on
+ * it. With `drop`, SELF's Remove of THIRD lands meanwhile and reaches PEER
+ * as ANOTHER group's envelope before the adoption, a gap native applies
+ * nothing of; without, as long passes with nothing landing. The prefetch
+ * is then handed over (`handOver`).
+ */
+async function behindWindow(t: TestContext, channel: string, drop: boolean) {
+  const logs = captureConsole(t);
+  const fleet = newFleet(t, [SELF, PEER, THIRD, DAVE], channel);
+  const watches = watchFleet(fleet);
+  const peer = fleet.seat(PEER);
+  for (const id of [SELF, PEER, THIRD]) {
+    await joinSeat(t, fleet, fleet.seat(id), watches.values());
+  }
+  await run(t, 3_000, watches.values());
+  const base = fleet.ds.epoch;
+  if (drop) sfuLeave(fleet, THIRD);
+  await run(t, 7_500, watches.values());
+  peer.pageDeath();
+  await joinSeat(t, fleet, fleet.seat(DAVE), watches.values());
+  assert.equal(fleet.ds.epoch, base + 1, "the Remove came before the Add");
+  fleet.ds.ack(
+    PEER,
+    peer.mailbox.map((e) => e.id),
+  );
+
+  const dep = deferred<Prefetch | null>();
+  const controller = new AbortController();
+  peer.boot({
+    resumePrefetch: dep.promise,
+    abortResumePrefetch: () => controller.abort(),
+  });
+  const prefetch = await peer.bridge.prefetchResume(channel, controller.signal);
+  assert.equal(prefetch?.localEpoch, base, "the record went stale");
+  assert.equal(prefetch?.currentEpoch, base + 1);
+  const w = watches.get(PEER_ID)!;
+  const mark = w.trace.length;
+  const behind = behindTheDs(fleet, peer);
+  void peer.session.start();
+  await flush();
+  for (let waited = 0; waited < 2_000; waited += 250) {
+    if (drop && fleet.ds.epoch === base + 2) break;
+    await run(t, 250, [...watches.values(), behind]);
+  }
+  assert.equal(fleet.ds.epoch, drop ? base + 2 : base + 1);
+  assert.equal(peer.session.groupId(), null, "adopted before the hand-over");
+  assert.equal(peer.localEpoch, base, "native applied the dropped commit");
+  const tailFetches = () =>
+    since(w, mark).filter((e) => e === "call:mlsFetchCommits").length;
+  return {
+    logs,
+    fleet,
+    watches,
+    peer,
+    w,
+    mark,
+    base,
+    behind,
+    tailFetches,
+    handOver: () => dep.resolve(prefetch),
+  };
+}
+
+test("(w) FA-M1: a commit dropped as another group's between the GET and the adoption — ONE tail fetch catches the seat up, and it never publishes behind the DS", async (t) => {
+  const {
+    logs,
+    fleet,
+    watches,
+    peer,
+    w,
+    mark,
+    base,
+    behind,
+    tailFetches,
+    handOver,
+  } = await behindWindow(t, "ch-resume-w1", true);
+  handOver();
+  await run(t, 10_000, [...watches.values(), behind]);
+
+  assertNever(behind, "published behind the DS");
+  assertResumed(fleet, peer);
+  assert.equal(peer.localEpoch, base + 2);
+  assert.equal(tailFetches(), 1, "not exactly one tail fetch");
+  const [tail, ...more] = lines(logs, "info", "[mls] resume tail applied");
+  assert.deepEqual(more, []);
+  assert.deepEqual(tail?.[1], {
+    groupId: GROUP,
+    from: base + 1,
+    epoch: base + 2,
+  });
+  assert.deepEqual(ladderCalls(since(w, mark)), []);
+  assert.deepEqual(noResumeCauses(logs), []);
+  assertNoPlaintext(watches.values());
+});
+
+test("(w) FA-M1: nothing dropped in the window — no tail fetch, and the resume is unchanged", async (t) => {
+  const {
+    logs,
+    fleet,
+    watches,
+    peer,
+    w,
+    mark,
+    base,
+    behind,
+    tailFetches,
+    handOver,
+  } = await behindWindow(t, "ch-resume-w2", false);
+  handOver();
+  await run(t, 10_000, [...watches.values(), behind]);
+
+  assertResumed(fleet, peer);
+  assert.equal(peer.localEpoch, base + 1);
+  assert.equal(tailFetches(), 0, "a tail fetch with nothing dropped");
+  assert.equal(lines(logs, "info", "[mls] resume tail applied").length, 0);
+  assert.deepEqual(ladderCalls(since(w, mark)), []);
+  assert.deepEqual(noResumeCauses(logs), []);
+  assertNever(behind, "published behind the DS");
+  assertNoPlaintext(watches.values());
+});
+
+for (const [label, reason, answer] of [
+  ["non-ok", "feature_disabled", () => ({ kind: "feature_disabled" as const })],
+  [
+    "short",
+    "short",
+    (current: number) => ({
+      kind: "ok" as const,
+      body: { commits: [], current_epoch: current },
+    }),
+  ],
+] as const) {
+  test(`(w) FA-M1: the tail fetch fails (${label}) — tail_failed, never active behind, the held group deleted before today's ladder`, async (t) => {
+    const {
+      logs,
+      fleet,
+      watches,
+      peer,
+      w,
+      mark,
+      base,
+      behind,
+      tailFetches,
+      handOver,
+    } = await behindWindow(t, `ch-resume-w3-${reason}`, true);
+    peer.fetchCommitsAnswer = {
+      groupId: GROUP,
+      fromEpoch: base + 2,
+      result: answer(base + 2),
+    };
+    const early = statesBeforeLadder(peer);
+    handOver();
+    await run(t, 1_000, [...watches.values(), behind]);
+
+    assert.equal(peer.fetchCommitsAnswer, null, "the tail never asked");
+    assert.equal(tailFetches(), 1);
+    assertNever(behind, "published behind the DS");
+    assert.equal(early.has("active"), false, "active on the resume path");
+    assert.deepEqual(noResumeCauses(logs), ["tail_failed"]);
+    assert.equal(noResumeLines(logs)[0].reason, reason);
+    const trace = since(w, mark);
+    assert.ok(at(trace, `wiped:${GROUP}`) < at(trace, "call:callCreate"));
+    await untilActive(t, peer, 40_000, [...watches.values(), behind]);
+    assert.equal(peer.localEpoch, fleet.ds.epoch);
+    assert.equal(
+      lines(logs, "info", "[mls] resumed the held call group").length,
+      0,
+    );
+    assertNever(behind, "published behind the DS");
+    assertNoPlaintext(watches.values());
+  });
+}
+
+/** The detail of each `[mls] keys-changed dropped: the deleted group's` line. */
+function staleKeysDropped(logs: Captured, from = 0): unknown[] {
+  return lines(
+    logs,
+    "info",
+    "[mls] keys-changed dropped: the deleted group's",
+    from,
+  ).map((args) => args[1]);
+}
+
+/**
+ * A fallback that re-entered the held group's id left no trace of the old
+ * incarnation: no frame-key read of the deleted row, no re-securing or loud
+ * state, no red, and the seat publishes in `e2ee` on the DS's epoch.
+ */
+function assertCleanReentry(logs: Captured, fleet: Fleet, world: World): void {
+  assert.deepEqual(
+    lines(logs, "error", "[mls] rotation key path failed"),
+    [],
+    "a keys-changed of the deleted incarnation reached the key path",
+  );
+  assert.deepEqual(
+    world.states.map((s) => s.state),
+    [],
+    "re-securing or loud",
+  );
+  assert.equal(world.terminalLoud(), false, "a red after the re-entry");
+  assert.equal(world.session.state(), "active");
+  assert.equal(world.session.groupId(), GROUP);
+  assert.equal(world.session.callMode().kind, "e2ee");
+  assert.equal(world.publishing(), true, "the gate is still held");
+  assert.equal(world.localEpoch, fleet.ds.epoch);
+}
+
+test("(w) F1: after a tail-failure fallback into the SAME group id, native's keys-changed for the commit the catch-up applied lands after the delete and is dropped by the stale-keys fence — the seat reaches e2ee and never goes loud", async (t) => {
+  // FAF-T characterized this loud: the harness's DS answers the tail at once,
+  // so the fallback's delete and the ladder's re-point to GROUP (the same DS
+  // group id) ran before native's keys-changed for the catch-up's commit (a
+  // macrotask) was delivered; the group-id and epoch checks both passed
+  // (`#installEpoch` reset), and the frame-key read found the row deleted:
+  // re-securing, then loud for good. FAF-S2's `#staleKeysFence` (set in
+  // `#joinWithoutResume` at the highest epoch this page applied for the
+  // candidate) drops such a push; DS epochs of one group id only rise, so
+  // the Welcome back lands above the floor and is installed.
+  const { logs, fleet, watches, peer, base, behind, handOver } =
+    await behindWindow(t, "ch-resume-f1", true);
+  peer.fetchCommitsAnswer = {
+    groupId: GROUP,
+    fromEpoch: base + 2,
+    result: { kind: "feature_disabled" },
+  };
+  handOver();
+  await run(t, 60_000, [...watches.values(), behind]);
+
+  assert.deepEqual(noResumeCauses(logs), ["tail_failed"]);
+  assertCleanReentry(logs, fleet, peer);
+  assert.deepEqual(staleKeysDropped(logs), [
+    { groupId: GROUP, epoch: base + 1, floor: base + 1 },
+  ]);
+  assert.ok(fleet.ds.members.map(identityOf).includes(PEER_ID));
+  assertNever(behind, "published behind the DS");
+  assertNoPlaintext(watches.values());
+});
+
+test("(w) F2: the PRE-EXISTING path — a catch-up that stops after applying a commit falls back into the SAME group id; the applied commit's keys-changed is dropped, and the seat reaches e2ee without ever going loud", async (t) => {
+  const logs = captureConsole(t);
+  const { fleet, watches, peer, w } = await threeMissed(t, "ch-resume-f2");
+  fleet.ds.ack(
+    PEER,
+    peer.mailbox.map((e) => e.id),
+  );
+  // Native refuses the catch-up's second commit, a quiet terminal drop: the
+  // catch-up stops with the first (epoch 2) applied, and native has fired
+  // its keys-changed for it.
+  peer.rejections.set(`mls-synth:${GROUP}:3`, groupNotFound(GROUP));
+  const mark = w.trace.length;
+  const from = fleet.ds.submits.length;
+
+  await fleet.reload(PEER);
+  const prefetch = await peer.resumePrefetch;
+  assert.deepEqual(
+    prefetch?.commits.map((c) => c.epoch),
+    [2, 3, 4],
+  );
+  await assertCleanJoin(t, fleet, w, mark, from, watches.values(), FIVE);
+
+  assert.deepEqual(noResumeCauses(logs), ["catch_up_stopped"]);
+  assert.equal(noResumeLines(logs)[0].epoch, 3);
+  assertCleanReentry(logs, fleet, peer);
+  assert.deepEqual(staleKeysDropped(logs), [
+    { groupId: GROUP, epoch: 2, floor: 2 },
+  ]);
+  assert.equal(
+    lines(logs, "info", "[mls] resumed the held call group").length,
+    0,
+  );
+  assertNoPlaintext(watches.values());
+});
+
+test("(w) F3: the fence never over-drops — the floor itself is dropped and the next epoch (the Welcome back) installed; a fallback that applied nothing fences nothing", async (t) => {
+  const logs = captureConsole(t);
+  // The catch-up applies epoch 1 and stops at 2: the floor is 1.
+  const stopped = oneSeat(t, "joiner", "ch-resume-f3a", (world) => {
+    applyFetched(world, [1]);
+    world.rejections.set(`mls-synth:${GROUP}:2`, groupNotFound(GROUP));
+    return handPrefetch(world, {
+      currentEpoch: 2,
+      commits: [fetched(1), fetched(2)],
+    });
+  });
+  await startSession(t, stopped.w);
+  assert.deepEqual(noResumeCauses(logs), ["catch_up_stopped"]);
+  await untilIntent(t, stopped.w);
+  assert.equal(stopped.world.session.groupId(), GROUP, "not the same id");
+  // The old incarnation's push at the floor, after the re-entry: dropped.
+  await stopped.world.session.onLocalKeysChanged(GROUP, 1);
+  assert.deepEqual(staleKeysDropped(logs), [
+    { groupId: GROUP, epoch: 1, floor: 1 },
+  ]);
+  // The new incarnation's first push, one above the floor: installed.
+  const mark = stopped.w.trace.length;
+  await welcomeBack(t, stopped.w, 2);
+  assert.equal(staleKeysDropped(logs).length, 1, "the Welcome's key dropped");
+  assert.ok(since(stopped.w, mark).includes("keys:2"), "never installed");
+  assert.equal(stopped.world.session.callMode().kind, "e2ee");
+  assert.equal(stopped.world.publishing(), true);
+
+  // Nothing applied (an own commit pending): no fence, whatever lands.
+  const from = logs.info.mock.calls.length;
+  const pending = oneSeat(t, "creator", "ch-resume-f3b", (world) =>
+    handPrefetch(world, { pendingCommit: 1 }),
+  );
+  await startSession(t, pending.w);
+  await run(t, 2_000, [pending.w]);
+  assert.deepEqual(noResumeCauses(logs, from), ["own_commit_pending"]);
+  await pending.world.session.onLocalKeysChanged(GROUP, 0);
+  await run(t, 1_000, [pending.w]);
+  assert.deepEqual(staleKeysDropped(logs, from), []);
+  assert.equal(pending.world.session.callMode().kind, "e2ee");
+  assert.equal(pending.world.publishing(), true);
+  assertNoPlaintext([stopped.w, pending.w]);
+});
+
+// ---- (x) FA-m2: the W1-m1 veto ---------------------------------------------
+
+test("(x) W1-m1: an envelope of the held group destroyed by a loud drop before the adoption vetoes the resume — loud_foreign_drop, then today's ladder", async (t) => {
+  const logs = captureConsole(t);
+  const { fleet, watches, peer, w } = await pairUp(t, "ch-resume-x");
+  const mark = w.trace.length;
+  const from = fleet.ds.submits.length;
+  const early = statesBeforeLadder(peer);
+
+  // The new page's WS delivers an envelope of GROUP into the pre-sink hold,
+  // and native refuses it as structurally malformed: a terminal, LOUD drop
+  // that consumes it. Nothing is missed, so the resume would pass without
+  // the veto.
+  peer.pageDeath();
+  peer.boot({ prefetchFromBridge: true });
+  const id = "env-destroyed";
+  peer.rejections.set(
+    id,
+    Object.assign(new Error("mls: malformed"), {
+      type: "mls",
+      code: "malformed",
+    }),
+  );
+  peer.receive({
+    kind: "envelope",
+    envelope: {
+      id,
+      content_type: "mls_commit",
+      group_id: GROUP,
+      epoch: fleet.ds.epoch,
+      ciphertext: "",
+    },
+    recipientDeviceId: PEER.device_id,
+  });
+  void peer.session.start();
+  await flush();
+  await run(t, 1, watches.values());
+
+  assert.equal(
+    lines(logs, "error", "[mls] loud drop for another group").length,
+    1,
+    "the envelope was not destroyed before the adoption",
+  );
+  assert.equal(early.has("active"), false, "active on the resume path");
+  assert.equal(
+    lines(logs, "warn", "[mls] resume vetoed: a loud drop destroyed").length,
+    1,
+  );
+  assert.deepEqual(noResumeCauses(logs), ["loud_foreign_drop"]);
+  await assertCleanJoin(t, fleet, w, mark, from, watches.values());
+  assert.equal(
+    lines(logs, "info", "[mls] resumed the held call group").length,
+    0,
+  );
+  assertNoPlaintext(watches.values());
+});
+
+// ---- (y) FA-m3: the fallback-cause line ------------------------------------
+
+test("(y) FA-m3: every startup establish that does not resume logs ONE cause line, naming the rule, with numbers and no key material; a resume logs none", async (t) => {
+  const logs = captureConsole(t);
+  const cases: [string, (world: World) => Prefetch | null, string][] = [
+    ["ch-resume-y0", () => null, "prefetch_none"],
+    [
+      "ch-resume-y1",
+      (world) => handPrefetch(world, { openGroupId: "group-successor" }),
+      "open_group_mismatch",
+    ],
+    [
+      "ch-resume-y2",
+      (world) => handPrefetch(world, { pendingCommit: 1 }),
+      "own_commit_pending",
+    ],
+    [
+      "ch-resume-y3",
+      (world) =>
+        handPrefetch(world, {
+          currentEpoch: RESUME_MAX_LAG,
+          commits: range(1, RESUME_MAX_LAG).map((e) => fetched(e)),
+        }),
+      "lag_out_of_range",
+    ],
+  ];
+  const watched: Watch[] = [];
+  for (const [channel, prefetch, cause] of cases) {
+    const from = logs.info.mock.calls.length;
+    const { world, w } = oneSeat(t, "creator", channel, prefetch);
+    watched.push(w);
+    await startSession(t, w);
+    await run(t, 2_000, [w]);
+    const found = noResumeLines(logs, from);
+    assert.deepEqual(
+      found.map((d) => d.cause),
+      [cause],
+      channel,
+    );
+    const [detail] = found;
+    for (const [field, value] of Object.entries(detail)) {
+      assert.ok(
+        value === null ||
+          ["string", "number", "boolean"].includes(typeof value),
+        `${channel}: ${field} is not a number or an id`,
+      );
+      assert.equal(
+        String(value).includes("key-"),
+        false,
+        `${channel}: ${field} carries key material`,
+      );
+    }
+    assert.equal(detail.candidate, cause === "prefetch_none" ? null : GROUP);
+    if (cause === "lag_out_of_range") {
+      assert.equal(detail.lag, RESUME_MAX_LAG);
+      assert.equal(detail.localEpoch, 0);
+      assert.equal(detail.dsEpoch, RESUME_MAX_LAG);
+    }
+    assert.equal(world.session.callMode().kind, "e2ee");
+  }
+
+  const from = logs.info.mock.calls.length;
+  const resumed = oneSeat(t, "creator", "ch-resume-y4", (world) =>
+    handPrefetch(world),
+  );
+  watched.push(resumed.w);
+  await startSession(t, resumed.w);
+  await run(t, 2_000, [resumed.w]);
+  assert.deepEqual(noResumeLines(logs, from), []);
+  assert.equal(
+    lines(logs, "info", "[mls] resumed the held call group", from).length,
+    1,
+  );
+  assertNoPlaintext(watched);
 });

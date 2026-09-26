@@ -1142,6 +1142,117 @@ export interface MlsCallSessionDeps {
 type SessionResumePrefetch = ResumePrefetch<MlsCommitInfo & ResumeCommitRef>;
 
 /**
+ * Why a startup establish did not resume, named by its one
+ * `[mls] startup establish: no resume` line (FA-m3). `superseded`: the
+ * session closed or a newer establish took over; every other cause falls
+ * back to the join ladder (`#joinWithoutResume`).
+ */
+type ResumeMissCause =
+  | "superseded"
+  | "prefetch_none"
+  | "prefetch_failed"
+  | "prefetch_timeout"
+  | "not_startup"
+  | "prefetch_stale"
+  | "open_group_mismatch"
+  | "channel_mismatch"
+  | "held_group_unusable"
+  | "own_commit_pending"
+  | "own_commit_fetched"
+  | "lag_out_of_range"
+  | "commits_mismatch"
+  | "policy_join"
+  | "candidate_being_deleted"
+  | "grant_clear_failed"
+  | "catch_up_stopped"
+  | "loud_foreign_drop"
+  | "native_unconfirmed"
+  | "catch_up_threw"
+  | "tail_failed"
+  | "install_check_failed";
+
+/** A resume that did not happen: the cause, with numbers and ids only. */
+type ResumeMiss = {
+  cause: ResumeMissCause;
+  detail?: Record<string, string | number | boolean | null>;
+};
+
+/**
+ * The first `resumeDecision` rule `p` fails, for the fallback-cause line
+ * (FA-m3). A log reader only: the decision stays `resumeDecision`'s, and
+ * this walks its rules in the same order so the line names the one that
+ * decided. `policy_join` means no mirrored rule failed, so the policy
+ * gained a rule this mirror lacks.
+ */
+function resumeJoinCause(
+  p: SessionResumePrefetch,
+  intendedChannelId: string,
+  isStartup: boolean,
+  nowMs: number,
+): ResumeMiss {
+  const ageMs = nowMs - p.fetchedAtMs;
+  const lag = p.currentEpoch - p.localEpoch;
+  const numbers = {
+    ageMs,
+    localEpoch: p.localEpoch,
+    dsEpoch: p.currentEpoch,
+    fetched: p.commits.length,
+  };
+  if (!isStartup) return { cause: "not_startup", detail: numbers };
+  if (!(ageMs >= 0 && ageMs <= LOCAL_GROUP_KEEP_MS)) {
+    return { cause: "prefetch_stale", detail: numbers };
+  }
+  if (!(p.openGroupId !== null && p.openGroupId === p.groupId)) {
+    return {
+      cause: "open_group_mismatch",
+      detail: { ...numbers, openGroupId: p.openGroupId },
+    };
+  }
+  if (
+    p.queriedChannelId !== intendedChannelId ||
+    p.localChannelId !== intendedChannelId
+  ) {
+    return {
+      cause: "channel_mismatch",
+      detail: {
+        ...numbers,
+        queriedChannelId: p.queriedChannelId,
+        localChannelId: p.localChannelId,
+      },
+    };
+  }
+  if (!(p.localState === "active" && p.selfInLocalRoster)) {
+    return {
+      cause: "held_group_unusable",
+      detail: {
+        ...numbers,
+        localState: p.localState,
+        selfInLocalRoster: p.selfInLocalRoster,
+      },
+    };
+  }
+  if (p.pendingCommit !== null) {
+    return {
+      cause: "own_commit_pending",
+      detail: { ...numbers, pendingCommit: p.pendingCommit },
+    };
+  }
+  if (p.commits.some((c) => c.committerIsSelf)) {
+    return { cause: "own_commit_fetched", detail: numbers };
+  }
+  if (!(lag >= 0 && lag < RESUME_MAX_LAG)) {
+    return { cause: "lag_out_of_range", detail: { ...numbers, lag } };
+  }
+  if (
+    p.commits.length !== lag ||
+    p.commits.some((c, i) => c.epoch !== p.localEpoch + 1 + i)
+  ) {
+    return { cause: "commits_mismatch", detail: { ...numbers, lag } };
+  }
+  return { cause: "policy_join", detail: numbers };
+}
+
+/**
  * What `#consume` did with one envelope. Only the resume catch-up reads it
  * (audit M4); every other caller awaits and ignores it. `applied` and
  * `duplicate` are the clean outcomes. `seen` is the in-session dedup skip,
@@ -1299,6 +1410,38 @@ export class MlsCallSession {
    */
   #loudForeignDrops = new Set<string>();
   /**
+   * Groups an envelope of which took a NON-terminal foreign disposition (a
+   * gap, an identity fetch, a transient error) during the startup window
+   * (FA-M1). Such an envelope stays unacked in the mailbox and nothing
+   * redelivers it before a reconnect, so for the resume candidate it is a
+   * commit the prefetch may have missed: its catch-up then fetches once
+   * more from native's epoch (`#catchUpTail`). Cleared on every exit of the
+   * resume path and with the window.
+   */
+  #resumeForeignDrops = new Set<string>();
+  /**
+   * The highest epoch native applied for each group during the startup
+   * window, read from every processed outcome `#consume` sees (another
+   * group's included): the epochs native can still push keys-changed for on
+   * this page. Read only when `#joinWithoutResume` deletes a candidate;
+   * cleared with the window.
+   */
+  #startupAppliedEpochs = new Map<string, number>();
+  /**
+   * Keys-changed pushes of a DELETED resume candidate (FA-S2). The fallback
+   * deletes the held group and the ladder may re-enter the SAME DS group id,
+   * while native's pushes for commits the old incarnation applied are still
+   * in flight: with `#installEpoch` reset, the group-id and epoch checks both
+   * pass, and the frame-key read hits the deleted row (re-securing, then
+   * loud). Pushes for this group at or below `epoch` (the old incarnation's
+   * highest applied epoch) are dropped. A push of the new incarnation is
+   * always above it, because the DS's epochs for one group id only rise, and
+   * a Welcome into it comes after everything this device applied there.
+   * Cleared by the new incarnation's first install, which moves
+   * `#installEpoch` past the floor so the monotonic check covers the rest.
+   */
+  #staleKeysFence: { groupId: string; epoch: number } | null = null;
+  /**
    * `start()`'s KeyPackage enrolment when it runs beside a resume (R2-m4):
    * the resume needs none, and a startup that joins awaits this before its
    * first intent. Null when `start()` awaited enrolment itself.
@@ -1355,6 +1498,15 @@ export class MlsCallSession {
   #hasLocalKey = false;
   /** Outstanding epoch-fenced Add-grace local-install timer (NEW-1). */
   #graceTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * The epoch of the LOCAL send key actually installed for the current group
+   * (-1: none). Set only once an install that switches it resolved — the
+   * immediate path's `applyKeys`, the Add-grace fire's `applyLocalKey` — and
+   * only while that epoch is still `#installEpoch`, so a group reset or a
+   * newer push during the await leaves it lower, never higher. A fact, where
+   * `#graceTimer` is only an intent (LDA-M1).
+   */
+  #ownSendKeyEpoch = -1;
   /** True while a rotation is "known" for the §4.4 loud-state debounce. */
   #rotationWindow = false;
   #rotationWindowTimer: ReturnType<typeof setTimeout> | null = null;
@@ -2203,6 +2355,8 @@ export class MlsCallSession {
       if (startup) {
         this.#startupEstablish = false;
         this.#loudForeignDrops.clear();
+        this.#resumeForeignDrops.clear();
+        this.#startupAppliedEpochs.clear();
       }
     }
   }
@@ -2402,13 +2556,19 @@ export class MlsCallSession {
    *     adopted only if its delete is not already running (W2-m2); its
    *     native downgrade grant is cleared before anything can enable (W2-M3:
    *     a reload never ran `dispose`, and native outlived the page).
-   *  3. The fetched commits are applied and native confirms (`#catchUp`).
-   *  5. Caught up: enrolment is proven for this generation (F2), the session
-   *     goes active, the current epoch's keys are installed explicitly into
-   *     the new worker (Gap D) and recency is refreshed. From here the
-   *     unchanged fail-closed path enables: `rosterConsistent`, then
+   *  3. The fetched commits are applied, once more from native's epoch if
+   *     an envelope of the group was dropped as another group's meanwhile
+   *     (FA-M1), native confirms, and the confirmed epoch's keys, our send
+   *     key included, are installed before anything can go active (FA-B1,
+   *     `#catchUp`).
+   *  5. Caught up and installed: enrolment is proven for this generation
+   *     (F2), the session goes active and recency is refreshed. From here
+   *     the unchanged fail-closed path enables: `rosterConsistent`, then
    *     `#evaluateEnable`, then `#enable`.
    *  6. Anything else abandons the candidate and joins.
+   *
+   * Every exit other than a resume logs its cause once (FA-m3, `#noResume`,
+   * `#resumeStopped`).
    *
    * No join intent, no create and no commit on this branch, ever: a resume
    * that cannot be completed is abandoned, never repaired.
@@ -2416,23 +2576,35 @@ export class MlsCallSession {
   async #startupResume(
     generation: number,
   ): Promise<"resumed" | "join" | "stop"> {
-    const prefetch = await this.#awaitResumePrefetch();
+    const waited = await this.#awaitResumePrefetch();
     this.#joinTimeline?.stamp("prefetchDone");
     if (this.#terminal() || generation !== this.#establishGeneration) {
       this.#deps.abortResumePrefetch?.();
-      return "stop";
+      return this.#resumeStopped(null);
     }
+    const prefetch = "cause" in waited ? null : waited;
+    const nowMs = Date.now();
     const decision = resumeDecision(
       prefetch,
       this.#deps.channelId,
       this.#startupEstablish,
-      Date.now(),
+      nowMs,
     );
     if (prefetch === null || decision !== "resume") {
-      console.info("[mls] startup establish: no resume", {
-        candidate: prefetch?.groupId ?? null,
-      });
-      return this.#joinWithoutResume(generation, prefetch?.groupId ?? null);
+      return this.#noResume(
+        generation,
+        prefetch?.groupId ?? null,
+        prefetch === null
+          ? "cause" in waited
+            ? waited
+            : { cause: "prefetch_none" }
+          : resumeJoinCause(
+              prefetch,
+              this.#deps.channelId,
+              this.#startupEstablish,
+              nowMs,
+            ),
+      );
     }
     const groupId = prefetch.groupId;
     // The GET named this group for the chosen channel: a DS answer exactly
@@ -2441,73 +2613,126 @@ export class MlsCallSession {
     await this.#startupWipe(null, groupId);
     if (this.#terminal() || generation !== this.#establishGeneration) {
       this.#deps.abortResumePrefetch?.();
-      return "stop";
+      return this.#resumeStopped(groupId);
     }
     // No await between the release and the adoption: once released, no
     // bridge timer can touch the group, and from the adoption on a close
     // deletes it (`dispose` keeps only a joined group).
     if (!this.#deps.bridge.releaseKeptGroup(groupId)) {
       console.warn("[mls] resume candidate is being deleted", { groupId });
-      return this.#joinWithoutResume(generation, groupId);
+      return this.#noResume(generation, groupId, {
+        cause: "candidate_being_deleted",
+      });
     }
+    // FA-n1: the one `#groupId` change that skips `#resetGroupBuffers`, and
+    // safe only here. This session has held no group before (the startup
+    // establish), so the reset has no previous group's state to clear: the
+    // rotation state is untouched (`onLocalKeysChanged` ignores a group that
+    // is not `#groupId`), nothing staged, no admits or identity fetches of a
+    // group. What the buffers do hold was gathered while no group was live
+    // and must survive: `#inbound` can carry this group's queued live
+    // envelopes, and `#seen` only acked foreign ULIDs.
     this.#groupId = groupId;
     try {
       await this.#deps.bridge.callClearDowngrade(groupId);
     } catch (error) {
       console.warn("[mls] resume: downgrade grant clear failed", error);
-      return this.#joinWithoutResume(generation, groupId);
+      return this.#noResume(generation, groupId, {
+        cause: "grant_clear_failed",
+      });
     }
     if (this.#terminal() || generation !== this.#establishGeneration) {
-      return "stop";
+      return this.#resumeStopped(groupId);
     }
     const outcome = await this.#catchUp(prefetch, generation);
     this.#joinTimeline?.stamp("catchUpDone");
     if (this.#terminal() || generation !== this.#establishGeneration) {
-      return "stop";
+      return this.#resumeStopped(groupId);
     }
-    if (outcome !== "caught_up") {
-      return this.#joinWithoutResume(generation, groupId);
+    if ("cause" in outcome) {
+      return this.#noResume(generation, groupId, outcome);
     }
+    const epoch = outcome.epoch;
     this.#joinedGeneration = generation; // enrolment proof, as a Welcome's
-    this.#joinTimeline?.stamp("resumed");
     this.#toActive();
-    void this.onLocalKeysChanged(groupId, prefetch.currentEpoch);
-    this.#touchResumeRecord(groupId, prefetch.currentEpoch);
+    // The keys installed before `active`, so the reconcile their install
+    // kicked was refused by `#evaluateEnable` (not active).
+    if (this.#hasLocalKey && !this.#e2eeEnabled) void this.reconcileNow();
+    this.#resumeForeignDrops.clear();
+    this.#touchResumeRecord(groupId, epoch);
     console.info("[mls] resumed the held call group", {
       groupId,
       fromEpoch: prefetch.localEpoch,
-      epoch: prefetch.currentEpoch,
+      epoch,
     });
     return "resumed";
   }
 
   /**
-   * The host's prefetch, or `null` once `RESUME_PREFETCH_WAIT_MS` passes (or
-   * the session closes) first. Whatever it resolves to after that is never
-   * read: the join path aborts it (W2S-n1).
+   * A startup establish that falls back to the join ladder: its one cause
+   * line (FA-m3; numbers and ids only, never key material), then
+   * `#joinWithoutResume`.
    */
-  async #awaitResumePrefetch(): Promise<SessionResumePrefetch | null> {
+  #noResume(
+    generation: number,
+    candidate: string | null,
+    miss: ResumeMiss,
+  ): Promise<"join" | "stop"> {
+    console.info("[mls] startup establish: no resume", {
+      cause: miss.cause,
+      candidate,
+      ...miss.detail,
+    });
+    this.#resumeForeignDrops.clear();
+    return this.#joinWithoutResume(generation, candidate);
+  }
+
+  /** A startup resume the session's close or a newer establish ended. */
+  #resumeStopped(candidate: string | null): "stop" {
+    console.info("[mls] startup establish: no resume", {
+      cause: "superseded" satisfies ResumeMissCause,
+      candidate,
+    });
+    this.#resumeForeignDrops.clear();
+    return "stop";
+  }
+
+  /**
+   * The host's prefetch, or why there is none (FA-m3): it resolved null (no
+   * candidate, or the host's prefetch gave up and logged why), it rejected,
+   * `RESUME_PREFETCH_WAIT_MS` passed first, or the session closed first.
+   * Whatever it resolves to after that is never read: the join path aborts
+   * it (W2S-n1).
+   */
+  async #awaitResumePrefetch(): Promise<SessionResumePrefetch | ResumeMiss> {
     const prefetch = this.#deps.resumePrefetch;
-    if (prefetch === undefined) return null;
+    if (prefetch === undefined) return { cause: "prefetch_none" };
     let timer: ReturnType<typeof setTimeout> | undefined;
     let onAbort: (() => void) | undefined;
-    const bound = new Promise<null>((resolve) => {
+    const bound = new Promise<ResumeMiss>((resolve) => {
       timer = setTimeout(() => {
         console.warn("[mls] resume prefetch not back in time — joining", {
           waitedMs: RESUME_PREFETCH_WAIT_MS,
         });
-        resolve(null);
+        resolve({
+          cause: "prefetch_timeout",
+          detail: { waitedMs: RESUME_PREFETCH_WAIT_MS },
+        });
       }, RESUME_PREFETCH_WAIT_MS);
       this.#timers.add(timer);
-      onAbort = () => resolve(null);
+      onAbort = () => resolve({ cause: "superseded" });
       this.#abort.signal.addEventListener("abort", onAbort, { once: true });
     });
     try {
       return await Promise.race([
-        prefetch.catch((error: unknown) => {
-          console.warn("[mls] resume prefetch failed", error);
-          return null;
-        }),
+        prefetch.then(
+          (p): SessionResumePrefetch | ResumeMiss =>
+            p ?? { cause: "prefetch_none" },
+          (error: unknown): ResumeMiss => {
+            console.warn("[mls] resume prefetch failed", error);
+            return { cause: "prefetch_failed" };
+          },
+        ),
         bound,
       ]);
     } finally {
@@ -2527,22 +2752,39 @@ export class MlsCallSession {
    * destroyed by a loud drop before its adoption (W1-m1), and native must
    * show this device in the group, active, at the DS's current epoch — the
    * check that catches a removal applied before the adoption, when the
-   * drained `removed_self` was still "another group" and only acked. A throw
-   * anywhere is a failure.
+   * drained `removed_self` was still "another group" and only acked. If an
+   * envelope of the group took a non-terminal drop as another group's before
+   * the adoption, one tail fetch from native's epoch runs first and the DS
+   * epoch to confirm is the tail's (FA-M1, `#catchUpTail`). A throw anywhere
+   * is a failure.
+   *
+   * Then, still under the lock, the confirmed epoch's keys are installed,
+   * our send key included, IMMEDIATELY (FA-B1): a keys-changed push for an
+   * intermediate epoch may already have installed an older send key, and
+   * the explicit install would otherwise classify as the last commit's
+   * Add-grace and leave that key in place, held by a member a Remove in the
+   * catch-up took out. Resolves to the confirmed epoch only once that
+   * install is a fact (`#installCaughtUpKeys`); the caller goes active only
+   * then. `catchUpDone` and `resumed` are stamped before the install, as the
+   * join timeline's order has them.
    */
   async #catchUp(
     p: SessionResumePrefetch,
     generation: number,
-  ): Promise<"caught_up" | "failed"> {
+  ): Promise<{ epoch: number } | ResumeMiss> {
     const groupId = p.groupId;
     const stale = () =>
       this.#terminal() ||
       generation !== this.#establishGeneration ||
       this.#groupId !== groupId;
+    const stopped: ResumeMiss = {
+      cause: "catch_up_stopped",
+      detail: { stale: true },
+    };
     const release = await this.#lock.acquire();
     try {
       for (const info of p.commits) {
-        if (stale()) return "failed";
+        if (stale()) return stopped;
         const result = await this.#consume(this.#synthEnvelope(info));
         if (result !== "applied" && result !== "duplicate") {
           console.warn("[mls] resume catch-up stopped", {
@@ -2550,16 +2792,25 @@ export class MlsCallSession {
             epoch: info.epoch,
             result,
           });
-          return "failed";
+          return {
+            cause: "catch_up_stopped",
+            detail: { epoch: info.epoch, result },
+          };
         }
       }
-      if (stale()) return "failed";
+      if (stale()) return stopped;
       if (this.#loudForeignDrops.has(groupId)) {
         console.warn(
           "[mls] resume vetoed: a loud drop destroyed an envelope of the group",
           { groupId },
         );
-        return "failed";
+        return { cause: "loud_foreign_drop" };
+      }
+      let confirmed = p.currentEpoch;
+      if (this.#resumeForeignDrops.has(groupId)) {
+        const tail = await this.#catchUpTail(p, stale);
+        if ("cause" in tail) return tail;
+        confirmed = tail.epoch;
       }
       const state = await this.#deps.bridge.callState(groupId);
       const selfPresent = state.members.some(
@@ -2569,25 +2820,165 @@ export class MlsCallSession {
       );
       if (
         !selfPresent ||
-        state.epoch !== p.currentEpoch ||
+        state.epoch !== confirmed ||
         state.state !== "active"
       ) {
         console.warn("[mls] resume catch-up not confirmed by native state", {
           groupId,
           selfPresent,
           epoch: state.epoch,
-          dsEpoch: p.currentEpoch,
+          dsEpoch: confirmed,
           state: state.state,
         });
-        return "failed";
+        return {
+          cause: "native_unconfirmed",
+          detail: {
+            selfPresent,
+            epoch: state.epoch,
+            dsEpoch: confirmed,
+            state: state.state,
+          },
+        };
       }
-      return "caught_up";
+      if (stale()) return stopped;
+      this.#joinTimeline?.stamp("catchUpDone");
+      this.#joinTimeline?.stamp("resumed");
+      const installed = await this.#installCaughtUpKeys(groupId, confirmed);
+      if (stale()) return stopped;
+      if (!installed) {
+        console.warn("[mls] resume: the caught-up keys did not install", {
+          groupId,
+          epoch: confirmed,
+          installEpoch: this.#installEpoch,
+          ownSendKeyEpoch: this.#ownSendKeyEpoch,
+        });
+        return {
+          cause: "install_check_failed",
+          detail: {
+            epoch: confirmed,
+            installEpoch: this.#installEpoch,
+            ownSendKeyEpoch: this.#ownSendKeyEpoch,
+          },
+        };
+      }
+      return { epoch: confirmed };
     } catch (error) {
       console.warn("[mls] resume catch-up failed", error);
-      return "failed";
+      return { cause: "catch_up_threw" };
     } finally {
       release();
     }
+  }
+
+  /**
+   * FA-M1: the tail of a resume catch-up, run under `#catchUp`'s lock when
+   * an envelope of the candidate took a non-terminal foreign drop before the
+   * adoption. Such a commit is not in the prefetch when it landed after the
+   * GET, and it is never redelivered before a reconnect, so without this the
+   * seat would go active an epoch behind the DS. ONE fetch from native's
+   * epoch, held to the rules the prefetch's own commits were (lag within
+   * `RESUME_MAX_LAG` of the held epoch, exactly the missing epochs in order,
+   * none of them ours), then applied through the same `#consume` path.
+   * Resolves to the tail's `current_epoch`, which native must then show.
+   * Any failure falls back to the join: never active behind.
+   */
+  async #catchUpTail(
+    p: SessionResumePrefetch,
+    stale: () => boolean,
+  ): Promise<{ epoch: number } | ResumeMiss> {
+    const groupId = p.groupId;
+    const failed = (
+      reason: string,
+      numbers: Record<string, number> = {},
+    ): ResumeMiss => {
+      console.warn("[mls] resume tail fetch failed", {
+        groupId,
+        reason,
+        ...numbers,
+      });
+      return { cause: "tail_failed", detail: { reason, ...numbers } };
+    };
+    const stopped: ResumeMiss = {
+      cause: "catch_up_stopped",
+      detail: { stale: true },
+    };
+    let from: number;
+    let res: Awaited<ReturnType<E2EEBridge["mlsFetchCommits"]>>;
+    try {
+      from = (await this.#deps.bridge.callState(groupId)).epoch;
+      if (stale()) return stopped;
+      res = await this.#deps.bridge.mlsFetchCommits(groupId, from + 1);
+    } catch (error) {
+      console.warn("[mls] resume tail fetch threw", error);
+      return { cause: "tail_failed", detail: { reason: "threw" } };
+    }
+    if (stale()) return stopped;
+    if (res.kind !== "ok") return failed(res.kind, { from });
+    const { commits, current_epoch: current } = res.body;
+    const lag = current - from;
+    if (!(lag >= 0 && current - p.localEpoch < RESUME_MAX_LAG)) {
+      return failed("lag", { from, current });
+    }
+    if (
+      commits.length !== lag ||
+      commits.some((c, i) => c.epoch !== from + 1 + i)
+    ) {
+      return failed("short", { from, current, fetched: commits.length });
+    }
+    if (
+      commits.some(
+        (c) =>
+          c.committer.user_id === this.#deps.userId &&
+          c.committer.device_id === this.#deps.deviceId,
+      )
+    ) {
+      return failed("own_commit", { from, current });
+    }
+    for (const info of commits) {
+      const result = await this.#consume(this.#synthEnvelope(info));
+      if (stale()) return stopped;
+      if (result !== "applied" && result !== "duplicate") {
+        return failed("not_applied", { from, current, epoch: info.epoch });
+      }
+    }
+    console.info("[mls] resume tail applied", {
+      groupId,
+      from,
+      epoch: current,
+    });
+    return { epoch: current };
+  }
+
+  /**
+   * Install `epoch`'s keys, the LOCAL send key included, now. Safe to await
+   * under the lock: `onLocalKeysChanged` never takes it and never waits on
+   * the pump. `#lastInbound` names only the last commit the catch-up applied,
+   * not the jump from the installed key, which spans the whole catch-up and
+   * may span a Remove; cleared, the classifier falls to its fail-safe (C1):
+   * Remove-immediate, never an Add-grace that keeps the old send key.
+   * `#lastOwnWon` is left alone: the resume branch stages and wins no commit
+   * of its own, and the `#ownSendKeyEpoch` check below refuses a deferred
+   * install whatever classified it.
+   *
+   * True when nothing can publish under an older key: the install landed (the
+   * counter moved, the fence is still `epoch`, and OUR send key is `epoch`'s
+   * — `#ownSendKeyEpoch`, a fact), or no key was ever installed and none can
+   * be yet. Not "no Add-grace timer pending" (LDA-M1): native's keys-changed
+   * push for the same epoch can land after the catch-up's last commit (an
+   * Add) and schedule a grace AFTER this install, which already put `epoch`'s
+   * send key in place. The counter alone is no proof either: that push's
+   * remote-only install moves it while our local half may have failed.
+   */
+  async #installCaughtUpKeys(groupId: string, epoch: number): Promise<boolean> {
+    if (!this.#media?.localIdentity()) return !this.#hasLocalKey;
+    const before = this.#installSeq;
+    this.#lastInbound = null;
+    await this.onLocalKeysChanged(groupId, epoch);
+    return (
+      this.#installSeq > before &&
+      this.#installEpoch === epoch &&
+      this.#ownSendKeyEpoch === epoch
+    );
   }
 
   /**
@@ -2619,6 +3010,12 @@ export class MlsCallSession {
       if (this.#groupId === candidate) {
         this.#groupId = null;
         this.#resetGroupBuffers();
+      }
+      // FA-S2: after the reset (which zeroes `#installEpoch`), so the old
+      // incarnation's in-flight keys-changed cannot reach the new one.
+      const applied = this.#startupAppliedEpochs.get(candidate);
+      if (applied !== undefined) {
+        this.#staleKeysFence = { groupId: candidate, epoch: applied };
       }
       this.#deps.bridge.clearResumeRecord(this.#deps.channelId);
       this.#forgetRemovedSelf(candidate);
@@ -3921,6 +4318,7 @@ export class MlsCallSession {
         envelope,
         this.#deps.userId,
       );
+      if (foreign.kind === "processed") this.#noteStartupApplied(foreign);
       if (foreign.kind === "drop" && foreign.loud) {
         // A loud-classified drop consumed an unrepeatable envelope; it says
         // nothing about OUR group, so it latches nothing, but it is never
@@ -3946,6 +4344,12 @@ export class MlsCallSession {
           disposition: foreign.kind,
           acked: foreign.ack,
         });
+        // FA-M1: a non-terminal drop stays unacked and is not redelivered
+        // before a reconnect. For the startup's resume candidate that can be
+        // a commit its prefetch missed, so its catch-up fetches once more.
+        if (!foreign.ack && this.#startupEstablish) {
+          this.#resumeForeignDrops.add(envelope.group_id);
+        }
       }
       if (foreign.ack) {
         this.#seen.add(envelope.id);
@@ -3971,6 +4375,7 @@ export class MlsCallSession {
       envelope,
       this.#deps.userId,
     );
+    if (disp.kind === "processed") this.#noteStartupApplied(disp);
     const action = drainAction(
       disp,
       this.#retries.get(envelope.id) ?? 0,
@@ -4188,6 +4593,15 @@ export class MlsCallSession {
     for (const info of res.body.commits) {
       if (this.#terminal()) return;
       await this.#consume(this.#synthEnvelope(info)); // INLINE (we hold the lock)
+    }
+  }
+
+  /** Record an epoch native applied during the startup window (FA-S2). */
+  #noteStartupApplied({ outcome }: { outcome: MlsProcessOutcome }): void {
+    if (!this.#startupEstablish) return;
+    const prior = this.#startupAppliedEpochs.get(outcome.group_id);
+    if (prior === undefined || outcome.epoch > prior) {
+      this.#startupAppliedEpochs.set(outcome.group_id, outcome.epoch);
     }
   }
 
@@ -4577,6 +4991,18 @@ export class MlsCallSession {
     // L5: suppress keys-changed for a group we've left (removed_self cleared
     // #groupId); and ignore an unrelated group.
     if (this.#terminal() || groupId !== this.#groupId) return;
+    // FA-S2: a push of a deleted resume candidate's old incarnation, landing
+    // after the ladder re-entered the same group id. Before anything below:
+    // it must not even retire the new incarnation's pending grace.
+    const fence = this.#staleKeysFence;
+    if (fence !== null && fence.groupId === groupId && epoch <= fence.epoch) {
+      console.info("[mls] keys-changed dropped: the deleted group's", {
+        groupId,
+        epoch,
+        floor: fence.epoch,
+      });
+      return;
+    }
     // Native epochs are monotonic per group; ignore a stale/reordered lower one
     // (an equal epoch is an idempotent reconnect re-assert, allowed).
     if (epoch < this.#installEpoch) return;
@@ -4602,6 +5028,8 @@ export class MlsCallSession {
       this.#hasLocalKey,
     );
     this.#installEpoch = epoch;
+    // Past the floor (checked above): the monotonic check now covers it.
+    if (this.#staleKeysFence?.groupId === groupId) this.#staleKeysFence = null;
     this.#openRotationWindow(timing);
 
     let frameKeys: MlsFrameKeys;
@@ -4645,6 +5073,7 @@ export class MlsCallSession {
     try {
       if (timing === "immediate") {
         await media.installer.applyKeys(frameKeys, identity);
+        if (this.#installEpoch === epoch) this.#ownSendKeyEpoch = epoch;
         this.#onEpochKeysApplied(
           installRef,
           installEntries(frameKeys, identity, true),
@@ -4795,6 +5224,7 @@ export class MlsCallSession {
       if (this.#terminal() || this.#installEpoch !== epoch) return;
       try {
         await this.#media?.installer.applyLocalKey(frameKeys, identity);
+        if (this.#installEpoch === epoch) this.#ownSendKeyEpoch = epoch;
         this.#onLocalKeyInstalled();
       } catch (error) {
         this.#onRotationError(error);
@@ -5780,6 +6210,7 @@ export class MlsCallSession {
     // publish gate stands in front of that; not holding the key is stronger.
     this.#media?.installer.resetForGroup();
     this.#installEpoch = -1;
+    this.#ownSendKeyEpoch = -1;
     this.#hasLocalKey = false;
     this.#lastOwnWon = null;
     this.#lastInbound = null;
