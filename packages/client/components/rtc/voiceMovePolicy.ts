@@ -139,6 +139,12 @@ export interface ObeyMoveInput {
  * other one's `force_disconnect` inside the window still follows. Neither
  * this rule nor the server fix closes that; live-leg C5 and item 12 (a
  * sibling window on the same session) cover it.
+ *
+ * RESIDUAL, accepted: a session a moderator disconnected under 15 s ago
+ * that rejoins on its old token becomes the recorded owner again, so a
+ * moderator move in that window pulls it into the destination. It is the
+ * session the server itself admitted to that channel, so nothing is gained
+ * that it was not already given.
  */
 export function shouldObeyMove(input: ObeyMoveInput): boolean {
   if (!input.from) return false;
