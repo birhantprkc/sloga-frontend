@@ -89,6 +89,7 @@ import type {
   MlsMediaBinding,
   PublishGateReason,
 } from "./mlsCallSession.ts";
+import { welcomeVerdict } from "./mlsRejoinPolicy.ts";
 
 // The session imports its siblings without extensions (Vite resolves them);
 // Node's ESM loader does not, so a bare relative specifier gets `.ts`
@@ -335,6 +336,27 @@ function abortable(wait: Promise<void>, signal?: AbortSignal): Promise<void> {
       resolve();
     });
   });
+}
+
+/**
+ * A stub assertion that fails the RUNNING spec even when the session catches
+ * what the stub throws. The stubs used to `assert` inside the session's own
+ * promise chain, which failed a spec only because the rejection escaped the
+ * drain (`#pump`); once the drain catches a step's throw, that assertion
+ * would go silent and an unscripted call would read as a handled one.
+ *
+ * So the failure is ALSO raised as a detached `Promise.reject`: an unhandled
+ * rejection node:test charges to the test that is running (`fail` > 0). A
+ * `queueMicrotask` throw does NOT do that (measured, node 24.18): the test
+ * passes and the file gets its own "asynchronous activity after the test
+ * ended" failure, an extra test in the counts, which the mutation runner
+ * scores as a PROBLEM rather than a red. The stub still throws the same error,
+ * so the session sees the failed call it always saw.
+ */
+function specFailure(message: string): Error {
+  const error = new assert.AssertionError({ message });
+  void Promise.reject(error);
+  return error;
 }
 
 // ---- The delivery service and each seat's native store ----------------------
@@ -709,8 +731,14 @@ export class Ds {
    * scripted `failFetchCommitsOnce` rejects it past the hold. With neither
    * it settles as a bare `async` return does.
    *
-   * Only the prefetch takes this route: the session's own gap refetch still
-   * reads `fetchCommits` (through `World.fetchCommitsAnswer`), unchanged.
+   * The PREFETCH family (`failFetchCommitsOnce` / `holdFetchCommits` /
+   * `fetchCommitsRequests`). Only the prefetch takes this route. Every
+   * commits fetch the SESSION makes — the gap refetch, the Welcome currency
+   * check and the resume tail — goes through the bridge's `mlsFetchCommits`
+   * stub instead, the `World` family (`fetchCommitsAnswer`,
+   * `holdGapRefetch`, `failGapRefetchOnce`, the currency default), and in a
+   * fleet reads `fetchCommits` there. Neither family reaches the other's
+   * fetches.
    */
   async requestFetchCommits(
     groupId: string,
@@ -1305,15 +1333,86 @@ export class World {
    */
   submitAnswer: SubmitCommitResult | null = null;
   /**
-   * One scripted DS answer to the gap refetch (`mlsFetchCommits`), for the
-   * group and from-epoch it was written for; `receiverLag` sets it. With
-   * none scripted the stub fails the spec, as the unstubbed method did.
+   * One scripted DS answer to the session's commits fetch
+   * (`mlsFetchCommits`), for the group and from-epoch it was written for;
+   * `receiverLag` sets it. It answers the FIRST session fetch of exactly
+   * that range, whichever it is — gap refetch, Welcome currency check or
+   * resume tail — ahead of the fleet's DS and the currency default. A
+   * one-seat world with none scripted answers only the Welcome currency
+   * check (`welcomeCurrencyEpoch`); any other fetch fails the spec, as the
+   * unstubbed method did. The resume prefetch never reads it
+   * (`Ds.requestFetchCommits`).
+   *
+   * With `gapRefetchGate`, `gapRefetchFailure` and `welcomeCurrencyEpoch`
+   * this is the SESSION-fetch family; the prefetch has its own on `Ds`.
    */
   fetchCommitsAnswer: {
     groupId: string;
     fromEpoch: number;
     result: FetchCommitsResult;
   } | null = null;
+  /**
+   * A one-seat world's pending Welcome currency check: the epoch of the last
+   * GROUP Welcome the SESSION adopted, until the session asks for it. Armed
+   * by the `processEnvelope` stub as it answers a scripted `welcome_joined`
+   * outcome, and only when the real `welcomeVerdict` adopts it against the
+   * session's live group (`groupId()`): a Welcome the session refuses runs
+   * no check, so arming it would leave a default answer waiting for some
+   * later, unscripted fetch of the same range. The session's first
+   * `mlsFetchCommits` after the adopt, of GROUP from `epoch + 1`, is that
+   * check; with no scripted answer for exactly that range, the stub answers
+   * it with the pinned default, `{ commits: [], current_epoch: world.epoch }`
+   * (the DS is where the Welcome put us). Any fetch the stub ANSWERS clears
+   * it, so a later refetch of the same range is unscripted again; any fetch
+   * of another range clears it too, as the first fetch after the adopt was
+   * then not the check. So does the next `processEnvelope`: the drain runs
+   * the check under its lock before it takes another envelope, so a Welcome
+   * whose check has not been asked for by then never will be. So does a
+   * `callState`, unless a fetch that entered with it armed is still held
+   * (`holdGapRefetch`): the check asks the DS before any native read, and
+   * the resume tail reads native's epoch first, then asks for the very
+   * range a Welcome at that epoch arms here — never answered by this
+   * default. A
+   * `failGapRefetchOnce` failure leaves it set: the retry is the same check.
+   * A fleet never sets it (the shared DS answers every refetch), and a
+   * foreign group's Welcome does not (this world models GROUP only).
+   */
+  welcomeCurrencyEpoch: number | null = null;
+  /**
+   * The same window as `processGate` for the `mlsFetchCommits` stub: the gap
+   * refetch (or the Welcome currency check, or the resume tail) suspended on
+   * the DS round trip. Set by `holdGapRefetch`.
+   */
+  gapRefetchGate: Promise<void> | null = null;
+  /**
+   * One scripted rejection, taken by the first `mlsFetchCommits` to get PAST
+   * its hold (or to enter, when none is open), in a one-seat world or a
+   * fleet alike. Boxed like `callJoinIntentFailure`. Set by
+   * `failGapRefetchOnce`.
+   */
+  gapRefetchFailure: { error: unknown } | null = null;
+  /**
+   * The same window for the fake installer: a key install (`applyKeys`,
+   * `applyRemoteKeys`, `applyLocalKey`) suspended BEFORE it posts its first
+   * entry, the old key still the one installed. Set by `holdKeyInstall`.
+   */
+  keyInstallGate: Promise<void> | null = null;
+  /**
+   * Every key install a live page's installer ENTERED, in order, held ones
+   * included: the installer method and the epoch of the frame keys it was
+   * handed. A spec holding an install reads it to know the install is
+   * actually pending, not yet to come.
+   */
+  keyInstalls: {
+    method: "applyKeys" | "applyRemoteKeys" | "applyLocalKey";
+    epoch: number;
+  }[] = [];
+  /**
+   * One-shot hooks by bridge method, run as that method's next call ENTERS
+   * (after `record` counts it, before its stub answers). Set by
+   * `beforeNextCall`.
+   */
+  nextCallHooks = new Map<string, (...args: unknown[]) => void>();
   /**
    * The same window for the `processEnvelope` stub: the drain suspended in
    * native processing, HOLDING the per-group lock. A `#stageAndSubmit` that
@@ -1458,6 +1557,103 @@ export class World {
   holdLeaveCleanup(): () => void {
     return this.#openGate("leaveCleanupGate");
   }
+  /**
+   * `holdJoinIntent`, for the `mlsFetchCommits` stub: every gap refetch,
+   * Welcome currency check and resume tail waits, still holding whatever
+   * lock its caller holds (the drain's, the submit's for `#rebaseInline`,
+   * or `#catchUp`'s). The resume prefetch is not held (`holdFetchCommits`
+   * on `Ds` is its hold). A held call is
+   * counted in `bridgeCalls` before it waits; what answers it (a scripted
+   * failure or answer, the fleet's DS, the currency default) is decided only
+   * once released.
+   */
+  holdGapRefetch(): () => void {
+    return this.#openGate("gapRefetchGate");
+  }
+  /**
+   * The next `mlsFetchCommits` rejects with `error`, AFTER any open hold is
+   * released, in a one-seat world or a fleet alike — whichever session fetch
+   * that is (gap refetch, currency check or resume tail; never the
+   * prefetch, which `failFetchCommitsOnce` on `Ds` fails). The call is still
+   * counted by `record` first. It spends no scripted `fetchCommitsAnswer`
+   * and leaves a pending Welcome currency check pending, so a retry of the
+   * same request is answered as it would have been. Later calls answer
+   * normally. Scripting a second one before the first is spent fails the
+   * spec.
+   *
+   * What the real bridge throws here (`mlsFetchCommits` passes no route
+   * options, so every non-2xx but a 400 `FeatureDisabled` throws from
+   * `#apiMls`): a plain `Error` in `dsFailure`'s shape
+   * (`E2EE MLS GET <path> failed: <status>`) for a 404, 403 or 5xx; the
+   * transport's `E2EERateLimitError` past the 429 bound or
+   * `E2EERequestTimeoutError` at its deadline; or the call's abort.
+   */
+  failGapRefetchOnce(error: unknown): void {
+    assert.equal(
+      this.gapRefetchFailure,
+      null,
+      "an mlsFetchCommits failure is already scripted",
+    );
+    this.gapRefetchFailure = { error };
+  }
+  /**
+   * `holdJoinIntent`, for the fake installer: every key install a live page
+   * starts while held waits before it posts anything, so the key installed
+   * before it is still the one media is sent under. Each is recorded in
+   * `keyInstalls` before it waits. A scripted `failLocalKeyOnce` still
+   * throws at entry, without waiting, as the real installer throws before
+   * its first await. A dead page's install neither waits nor is recorded.
+   *
+   * The Welcome currency check's catch-up install (`#installCaughtUpKeys`)
+   * is `applyKeys`: held, the order "the install is pending, the session is
+   * still not active, the gate is still held" is observable.
+   *
+   *   const release = world.holdKeyInstall();
+   *   // … drive the catch-up …
+   *   assert.deepEqual(world.keyInstalls.at(-1), { method: "applyKeys", epoch: 4 });
+   *   assert.notEqual(world.session.state(), "active");
+   *   assert.equal(world.publishing(), false);
+   *   release();
+   */
+  holdKeyInstall(): () => void {
+    return this.#openGate("keyInstallGate");
+  }
+  /**
+   * Native's keys-changed push for `epoch`, delivered NOW: the session's
+   * rotation seam (`onLocalKeysChanged`) runs synchronously up to its first
+   * await, and its promise is returned, as `state.tsx` drives it
+   * fire-and-forget. A dead page receives none. The fleet's native fires
+   * the same push itself one `setImmediate` after the call that caused it
+   * (`keysChanged`); this is that push at a moment the spec picks, e.g.
+   * from a `beforeNextCall` hook, or while `holdKeyInstall` is open.
+   */
+  pushKeysChanged(epoch: number, groupId: string = GROUP): Promise<void> {
+    if (this.#page.dead) return Promise.resolve();
+    return this.session.onLocalKeysChanged(groupId, epoch);
+  }
+  /**
+   * Run `hook` once, as the next call to bridge method `name` ENTERS: after
+   * `record` counts it, before its stub (or its hold) answers, with the
+   * call's arguments. Later calls run as before. A hook that throws fails
+   * the spec (`specFailure`) and the call goes on unchanged. Arming a second
+   * hook for `name` before the first ran fails the spec.
+   *
+   * The moment right after the Welcome currency check's catch-up applied its
+   * LAST commit is the native state read that follows it, `callState`:
+   *
+   *   world.beforeNextCall("callState", () => void world.pushKeysChanged(4));
+   */
+  beforeNextCall(
+    name: keyof E2EEBridge,
+    hook: (...args: unknown[]) => void,
+  ): void {
+    assert.equal(
+      this.nextCallHooks.has(name),
+      false,
+      `a beforeNextCall hook for ${name} is already armed`,
+    );
+    this.nextCallHooks.set(name, hook);
+  }
   #openGate(
     field:
       | "joinIntentGate"
@@ -1466,7 +1662,9 @@ export class World {
       | "reconcileRosterGate"
       | "submitGate"
       | "processGate"
-      | "leaveCleanupGate",
+      | "leaveCleanupGate"
+      | "gapRefetchGate"
+      | "keyInstallGate",
   ): () => void {
     assert.equal(this[field], null, `${field} is already held`);
     let release!: () => void;
@@ -1570,11 +1768,11 @@ export class World {
    * LIVE `#groupId` (not the submitted group), feeds `winning` to
    * `processEnvelope` (id `mls-synth:<group>:<epoch>`) and gap-refetches
    * the LIVE group from `winning.epoch + 1`. Neither of those two has a
-   * default answer here, and each stub's assertion is a rejection the
-   * post-submit catch may swallow, so a spec in which the arm can run
-   * scripts both as native and the DS would answer. For a submit whose
-   * GROUP was leave-cleaned and replaced by the `createNextGroupOnce` group
-   * (live at epoch 0):
+   * default answer here, and each stub fails the spec unscripted even where
+   * the post-submit catch swallows its throw (`specFailure`), so a spec in
+   * which the arm can run scripts both as native and the DS would answer.
+   * For a submit whose GROUP was leave-cleaned and replaced by the
+   * `createNextGroupOnce` group (live at epoch 0):
    *
    *   world.rejections.set(`mls-synth:${GROUP}:1`, groupNotFound(GROUP));
    *   world.fetchCommitsAnswer = {
@@ -2591,8 +2789,20 @@ export class World {
  * failure must be reachable from the immediate path as well as the grace.
  * Only `applyRemoteKeys` bypasses the check — it installs no local key.
  * A dead page's install raises nothing (its worker is gone).
+ *
+ * A live page's install is recorded in `keyInstalls` as it enters (after
+ * the scripted-failure check) and, only while `holdKeyInstall` is open,
+ * waits there before posting anything. With no hold open it adds no await:
+ * every install settles on exactly the microtask it always did.
  */
 function fakeInstaller(world: World, page: Page): KeyInstaller {
+  type Method = World["keyInstalls"][number]["method"];
+  /** Record the entry; the open hold, if any (a dead page: neither). */
+  const enter = (method: Method, frameKeys: MlsFrameKeys) => {
+    if (page.dead) return null;
+    world.keyInstalls.push({ method, epoch: frameKeys.epoch });
+    return world.keyInstallGate;
+  };
   const install = async () => {
     await Promise.resolve(); // first entry posted, awaiting importKey
     const error = world.midInstallError;
@@ -2602,18 +2812,23 @@ function fakeInstaller(world: World, page: Page): KeyInstaller {
     }
     await Promise.resolve(); // second entry
   };
-  const applyLocalKey = async () => {
+  const local = (method: Method) => async (frameKeys: MlsFrameKeys) => {
     const failure = world.localKeyFailure;
     if (failure && !page.dead) {
       world.localKeyFailure = null;
       throw failure;
     }
+    const held = enter(method, frameKeys);
+    if (held) await held;
     await install();
   };
   return {
-    applyKeys: applyLocalKey,
-    applyRemoteKeys: install,
-    applyLocalKey,
+    applyKeys: local("applyKeys"),
+    applyRemoteKeys: (frameKeys) => {
+      const held = enter("applyRemoteKeys", frameKeys);
+      return held ? held.then(install) : install();
+    },
+    applyLocalKey: local("applyLocalKey"),
     resetForGroup: () => {},
   };
 }
@@ -2692,8 +2907,22 @@ function bridgeFor(world: World, page: Page): E2EEBridge {
     <A extends unknown[], R>(name: string, fn: (...args: A) => R) =>
     (...args: A): R => {
       world.bridgeCalls.push(name);
+      const hook = world.nextCallHooks.get(name);
+      if (hook) {
+        world.nextCallHooks.delete(name);
+        try {
+          hook(...args);
+        } catch (error) {
+          specFailure(`the beforeNextCall hook for ${name} threw: ${error}`);
+        }
+      }
       return fn(...args);
     };
+  // Session fetches that ENTERED with a Welcome currency default armed and
+  // are still held (`holdGapRefetch`): the check itself, in flight. A
+  // `callState` meanwhile (a reconcile under the hold) must not take the
+  // default from it. Page memory, as a dead page's held fetch never ends.
+  let heldCurrencyFetches = 0;
   const stubs: BridgeStubs = {
     registerMlsSink: record("registerMlsSink", (sink) => {
       world.sink = sink;
@@ -2750,7 +2979,16 @@ function bridgeFor(world: World, page: Page): E2EEBridge {
     callLeaveCleanup: record("callLeaveCleanup", (groupId) =>
       page.kept.cleanup(groupId),
     ),
-    callState: record("callState", async () => world.callState()),
+    // A native state read also expires a pending Welcome currency default
+    // (`welcomeCurrencyEpoch`) that no held fetch entered with: the check's
+    // fetch is the first DS call after the adopting envelope, while the
+    // resume tail (`#catchUpTail`) reads native's epoch here first and then
+    // asks exactly the range a Welcome at that epoch would arm, so a default
+    // still armed would answer the tail.
+    callState: record("callState", async () => {
+      if (heldCurrencyFetches === 0) world.welcomeCurrencyEpoch = null;
+      return world.callState();
+    }),
     callFrameKeys: record("callFrameKeys", async () => world.frameKeys()),
     // Joiner pre-pin: no local group before the Welcome (the session
     // tolerates the throw and pins from the SFU set).
@@ -2809,10 +3047,14 @@ function bridgeFor(world: World, page: Page): E2EEBridge {
     // Counted by `record` BEFORE it waits on `holdProcessEnvelope`. A native
     // rejection answers as the bridge's `processEnvelope` does. A scripted
     // rejection or outcome wins in a fleet too; with neither, the seat's
-    // native store processes the envelope (`processNatively`).
+    // native store processes the envelope (`processNatively`). A one-seat
+    // world with neither fails the spec (`specFailure`). A GROUP Welcome the
+    // session adopts arms the currency check's default answer; any envelope
+    // taken after it expires one still armed (see `welcomeCurrencyEpoch`).
     processEnvelope: record(
       "processEnvelope",
       async (envelope): Promise<EnvelopeDisposition> => {
+        world.welcomeCurrencyEpoch = null;
         if (world.processGate) await world.processGate;
         if (world.rejections.has(envelope.id)) {
           return classifyEnvelopeError(world.rejections.get(envelope.id));
@@ -2821,22 +3063,77 @@ function bridgeFor(world: World, page: Page): E2EEBridge {
         if (!outcome && world.fleet) {
           return processNatively(world, page, envelope);
         }
-        assert.ok(outcome, `no scripted outcome for envelope ${envelope.id}`);
+        if (!outcome) {
+          throw specFailure(`no scripted outcome for envelope ${envelope.id}`);
+        }
         if (outcome.removed_self) world.evicted.add(outcome.group_id);
+        // The session's own adopt rule, against its live group as it stands
+        // now: a Welcome it will refuse must not arm a default answer.
+        if (
+          !world.fleet &&
+          outcome.kind === "welcome_joined" &&
+          outcome.group_id === GROUP &&
+          welcomeVerdict({
+            welcomeGroupId: outcome.group_id,
+            liveGroupId: world.session.groupId(),
+            waitGeneration: null,
+            liveGeneration: 0,
+          }).adopt
+        ) {
+          world.welcomeCurrencyEpoch = outcome.epoch;
+        }
         return { kind: "processed", outcome, ack: true };
       },
     ),
     // `E2EEAck`: the ids leave this device's DS mailbox, so no later drain
     // re-delivers them.
     ackEnvelopes: record("ackEnvelopes", (ids) => world.ds.ack(world.me, ids)),
-    // `GET /mls/groups/<id>/commits?from_epoch=`, the gap refetch: answers
-    // only what `receiverLag` scripted, for the range it scripted. In a
-    // fleet, with nothing scripted, the DS answers — and a caller whose user
-    // is not a member gets the route's 404, which the bridge throws.
+    // `GET /mls/groups/<id>/commits?from_epoch=` as the SESSION asks it: the
+    // gap refetch (`#gapRefetchInline`), the Welcome currency check
+    // (`#fetchWelcomeCurrency`) and the resume tail (`#catchUpTail`) alike —
+    // the stub cannot tell them apart, so every injector below reaches all
+    // three. The resume PREFETCH never comes here: it reads the DS route
+    // (`Ds.requestFetchCommits`, the `failFetchCommitsOnce` /
+    // `holdFetchCommits` family), and nothing here reaches it.
+    //
+    // Counted by `record` BEFORE it waits on `holdGapRefetch`; past the hold
+    // a `failGapRefetchOnce` rejects first. Then it answers what
+    // `receiverLag` (or a spec) scripted in `fetchCommitsAnswer`, for the
+    // range it scripted. In a fleet, with nothing scripted, the DS answers —
+    // and a caller whose user is not a member gets the route's 404, which the
+    // bridge throws. A one-seat world answers the pending currency check
+    // (`welcomeCurrencyEpoch`) with the pinned default, and only after any
+    // scripted answer had its turn; any other fetch fails the spec
+    // (`specFailure`).
     mlsFetchCommits: record(
       "mlsFetchCommits",
       async (groupId, fromEpoch): Promise<FetchCommitsResult> => {
+        const gate = world.gapRefetchGate;
+        if (gate) {
+          const check = world.welcomeCurrencyEpoch !== null;
+          if (check) heldCurrencyFetches++;
+          try {
+            await gate;
+          } finally {
+            if (check) heldCurrencyFetches--;
+          }
+        }
+        const failure = world.gapRefetchFailure;
+        if (failure) {
+          world.gapRefetchFailure = null;
+          throw failure.error;
+        }
+        const currency = world.welcomeCurrencyEpoch;
+        world.welcomeCurrencyEpoch = null;
         const answer = world.fetchCommitsAnswer;
+        if (
+          answer &&
+          answer.groupId === groupId &&
+          answer.fromEpoch === fromEpoch
+        ) {
+          world.fetchCommitsAnswer = null;
+          return answer.result;
+        }
         if (!answer && world.fleet) {
           const result = world.ds.fetchCommits(
             groupId,
@@ -2850,14 +3147,23 @@ function bridgeFor(world: World, page: Page): E2EEBridge {
             "404",
           );
         }
-        assert.ok(answer, `no scripted gap refetch of ${groupId}`);
-        assert.deepEqual(
-          [groupId, fromEpoch],
-          [answer.groupId, answer.fromEpoch],
-          "the gap refetch asked for another range",
+        if (
+          !world.fleet &&
+          currency !== null &&
+          groupId === GROUP &&
+          fromEpoch === currency + 1
+        ) {
+          return {
+            kind: "ok",
+            body: { commits: [], current_epoch: world.epoch },
+          };
+        }
+        throw specFailure(
+          answer
+            ? `the gap refetch asked for another range: ${groupId} from ` +
+                `${fromEpoch}, scripted ${answer.groupId} from ${answer.fromEpoch}`
+            : `no scripted gap refetch of ${groupId} from ${fromEpoch}`,
         );
-        world.fetchCommitsAnswer = null;
-        return answer.result;
       },
     ),
     // The ghost-divergence timer fires 30 s after a member is seen in the MLS
