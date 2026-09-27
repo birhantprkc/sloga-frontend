@@ -1094,8 +1094,12 @@ MUTATIONS += [
         # named promise with its own two catches, so the old
         # `await publication.pauseUpstream();` line no longer exists. Same
         # site, same defect — `detaching` is now fed by a RESUME.
-        search="""        detaching = publication.pauseUpstream();""",
-        replace="""        detaching = publication.resumeUpstream();""",
+        # Indentation corrected 2026-09-27 (merge fix pass, MFG): the line
+        # sits at 10 spaces, so the 8-space search matched a substring of
+        # it. The mutated file is byte-identical either way; the search now
+        # names the whole line.
+        search="""          detaching = publication.pauseUpstream();""",
+        replace="""          detaching = publication.resumeUpstream();""",
         specs=[GATE_SPEC],
     ),
     Mutation(
@@ -2139,10 +2143,25 @@ MUTATIONS += [
         # the re-anchor above; the line still occurs once, in the adopt
         # block, and MS2's `#resumeAdopting` guard (below the currency
         # record) does not reach it. Re-measured: resecure 3 and 5b (2 of 23).
-        search="""      this.#joinedGeneration = this.#establishGeneration;
+        # Re-anchored at the merge fix pass (2026-09-27, MFG). MWA-m1 moved
+        # the `#joinedGeneration` write inside `if (this.#resumeAdopting !==
+        # outcome.group_id)`, so the line is 8-space indented and the old
+        # 6-space search still matched once, but as a SUBSTRING of it, and
+        # inserted a mis-indented line. The insertion stays right after the
+        # write, now inside the guard: that is where an ordinary Welcome,
+        # the late one included, is adopted as a join, while a Welcome in a
+        # resume's adopt window joins nothing and is the resume's to judge.
+        # The stamp line above the write is taken too, so the search starts
+        # at a line start and occurs once. Re-measured: resecure 3 and 5b (2
+        # of 23), the same as the 6-space substring and as an unconditional
+        # insertion after the `#groupId` write, so the guard does not change
+        # what this entry measures.
+        search="""        this.#joinTimeline?.stamp("welcomeAdopted");
+        this.#joinedGeneration = this.#establishGeneration;
 """,
-        replace="""      this.#joinedGeneration = this.#establishGeneration;
-      this.#resetRotationState();
+        replace="""        this.#joinTimeline?.stamp("welcomeAdopted");
+        this.#joinedGeneration = this.#establishGeneration;
+        this.#resetRotationState();
 """,
         specs=[RESECURE_SPEC],
     ),
@@ -3515,12 +3534,20 @@ MUTATIONS += [
         # Re-measured 2026-09-26 (fix pass 1): killed by 24 of 33: B3, C1,
         # C1b, C1r, C2, C2b, C3, C3b, C4, C6, C7, C7b, C8, C9, D1, and all
         # nine fix-pass cases (R1a, R1b, R1c, C1r+, E1, E2, E3, E4, N1).
-        search="""      this.#welcomeCurrency = {
-        groupId: outcome.group_id,
-        epoch: outcome.epoch,
-        generation: this.#establishGeneration,
-      };""",
-        replace="""      this.#toActive();""",
+        # Re-anchored at the merge fix pass (2026-09-27, MFG). MWA-m1 moved
+        # the currency record, with the `welcomeAdopted` stamp and the
+        # `#joinedGeneration` write, inside `if (this.#resumeAdopting !==
+        # outcome.group_id)`, so the block is 8-space indented and the old
+        # search matched nothing. Same edit, same site: an ordinary Welcome
+        # (the only kind that records the check) goes active instead.
+        # Re-measured: killed by the same 24 of 33, and by 4 of 68 resume
+        # cases ((w) tail non-ok and short, (z18), (z19)).
+        search="""        this.#welcomeCurrency = {
+          groupId: outcome.group_id,
+          epoch: outcome.epoch,
+          generation: this.#establishGeneration,
+        };""",
+        replace="""        this.#toActive();""",
         specs=[DRAINFAIL_SPEC],
         must_red=[DRAINFAIL_SPEC],
     ),
@@ -3530,17 +3557,24 @@ MUTATIONS += [
         file=SESSION,
         # Re-measured 2026-09-26 (fix pass 1): killed by 17 of 33: C1, C1r, C3,
         # C3b, C4, C6, C7, C8, C9, R1a, R1b, R1c, C1r+, E1, E2, E3 and E4.
-        search="""      this.#welcomeCurrency = {
-        groupId: outcome.group_id,
-        epoch: outcome.epoch,
-        generation: this.#establishGeneration,
-      };""",
-        replace="""      this.#toActive();
-      this.#welcomeCurrency = {
-        groupId: outcome.group_id,
-        epoch: outcome.epoch,
-        generation: this.#establishGeneration,
-      };""",
+        # Re-anchored at the merge fix pass (2026-09-27, MFG), for the reason
+        # on `welcome-currency-skipped` above: the block is now 8-space
+        # indented inside the `#resumeAdopting` guard. Same edit, same site.
+        # Re-measured: killed by 23 of 33, not the 17 above: A1, A2, A3, B3,
+        # C1, C1r, C2, C2b, C3, C3b, C4, C6, C7, C8, C9, R1a, R1b, R1c, C1r+,
+        # E1, E2, E3 and E4. Also red in escape, heal, joinrace, resecure,
+        # resume (13 of 68), serveguard and timeline.
+        search="""        this.#welcomeCurrency = {
+          groupId: outcome.group_id,
+          epoch: outcome.epoch,
+          generation: this.#establishGeneration,
+        };""",
+        replace="""        this.#toActive();
+        this.#welcomeCurrency = {
+          groupId: outcome.group_id,
+          epoch: outcome.epoch,
+          generation: this.#establishGeneration,
+        };""",
         specs=[DRAINFAIL_SPEC],
         must_red=[DRAINFAIL_SPEC],
     ),
@@ -5112,7 +5146,7 @@ MUTATIONS += [
     # ---- FAF-S2: the stale keys-changed fence --------------------------------
     Mutation(
         id="resume-stale-push-unfenced",
-        what="a keys-changed push of a deleted resume candidate's old incarnation, landing after the fallback re-entered the same group id, is acted on: `#installEpoch` was reset, so it passes the epoch check, reads frame keys from the deleted row, and the fallback's clean rejoin ends in re-securing and loud (pre-existing on the `catch_up_stopped` fallback; fenced by FAF-S2)",
+        what="a keys-changed push of a startup-deleted group's old incarnation, landing after the join ladder re-entered the same group id, is acted on: `#installEpoch` was reset, so it passes the epoch check, reads frame keys from the deleted row, and the clean rejoin ends in re-securing and loud. Every startup delete is fenced: the resume candidate its fallback deleted (pre-existing on the `catch_up_stopped` fallback; FAF-S2), the kept groups the join path's discard deletes, and the groups the NON-resume startup's `#startupWipe` deletes (FAR-m2)",
         file=SESSION,
         # Measured 2026-09-26: killed by 3 of 49: (w) F1, F2 and F3.
         # Re-anchored at the merge wave (2026-09-27). MS2 item 5 (FAR-m2)
@@ -5123,6 +5157,10 @@ MUTATIONS += [
         # and the old line matches nothing. Same defect: the fence never
         # drops a push. Re-measured: killed by 9 of 63: (w) F1, F2 and F3,
         # (z1), and (z9)–(z13).
+        # `what` widened at the merge fix pass (2026-09-27, MFG; MWA-n3): it
+        # named only the resume candidate, while the line guards every
+        # fenced group. Re-measured: the same 9 of 68, (z10) and (z11) being
+        # the `#startupWipe` cases.
         search="""    if (floor !== undefined && epoch <= floor) {
 """,
         replace="""    if (false) {
@@ -5154,7 +5192,10 @@ MUTATIONS += [
 # different line (the flag's write and its read), so a second reader of either
 # flag cannot leave one of them unpinned: `resume-adopt-welcome-arms-currency`
 # / `resume-adopting-never-set` (z6), and `catch-up-synthetic-requeued` /
-# `resume-catching-up-never-set` (z8).
+# `resume-catching-up-never-set` (z8). The first pair was split at the merge
+# fix pass (MWA-m1 widened the guard `#resumeAdopting` is read by);
+# `resume-adopting-never-set` now pairs with
+# `resume-adopt-welcome-guard-bypassed` in the fix-pass block below.
 #
 # 🔴 Two entries pin a CLASSIFICATION, not a fail-open:
 # `catch-up-refetch-failure-uncounted` and `resume-tail-refetch-reason-lost`.
@@ -5230,22 +5271,40 @@ MUTATIONS += [
         id="resume-adopt-welcome-arms-currency",
         what="a Welcome for the candidate adopted INSIDE the resume's adopt window records a Welcome currency check (MS2 item 2): `#pump` runs it beside the resume, and its `#toActive()` can go active on a verdict the resume has not reached",
         file=SESSION,
-        # Measured 2026-09-27: killed by (z6) alone (1 of 63). Equivalent
-        # today to `resume-adopting-never-set` (the block note).
-        search="""      if (this.#resumeAdopting === outcome.group_id) {
-        this.#welcomeCurrency = null;
-      }
+        # Measured 2026-09-27: killed by (z6) alone (1 of 63).
+        # Re-anchored at the merge fix pass (2026-09-27, MFG). MWA-m1 removed
+        # the set-then-null guard this entry deleted: the record is now
+        # written only inside `if (this.#resumeAdopting !==
+        # outcome.group_id)`. Same defect, re-introduced as an insertion: the
+        # record is written for EVERY adopted Welcome, just before the wait
+        # resolves, so an adopt-window Welcome arms the check (an ordinary
+        # one writes the same record twice). The stamp and `#joinedGeneration`
+        # stay guarded; those are the MWA-m1 entries' to pin. Re-measured:
+        # killed by (z6) alone (1 of 68). No longer equivalent to
+        # `resume-adopting-never-set` (the block note).
+        search="""      if (verdict.resolveWait) this.#welcomeWait?.resolve(true);
 """,
-        replace="",
+        replace="""      this.#welcomeCurrency = {
+        groupId: outcome.group_id,
+        epoch: outcome.epoch,
+        generation: this.#establishGeneration,
+      };
+      if (verdict.resolveWait) this.#welcomeWait?.resolve(true);
+""",
         specs=[RESUME_SPEC],
         must_red=[RESUME_SPEC],
     ),
     Mutation(
         id="resume-adopting-never-set",
-        what="`#resumeAdopting` is never set at the adopt, so the Welcome arm's guard never matches and a Welcome adopted inside the adopt window arms a currency check beside the resume (MS2 item 2)",
+        what="`#resumeAdopting` is never set at the adopt, so the Welcome arm's guard never matches and a Welcome adopted inside the adopt window arms a currency check beside the resume (MS2 item 2), and stamps `welcomeAdopted` and writes `#joinedGeneration`, which outlive a fallback (MWA-m1)",
         file=SESSION,
         # Measured 2026-09-27: killed by (z6) alone (1 of 63). Equivalent
         # today to `resume-adopt-welcome-arms-currency` (the block note).
+        # Re-measured at the merge fix pass (2026-09-27, MFG): killed by
+        # (z6), (z15) and (z16) (3 of 68), since MWA-m1's guard now covers
+        # the stamp and `#joinedGeneration` as well. Equivalent today to
+        # `resume-adopt-welcome-guard-bypassed`, no longer to
+        # `resume-adopt-welcome-arms-currency` (the block note).
         search="""    this.#groupId = groupId;
     this.#resumeAdopting = groupId;
 """,
@@ -5389,6 +5448,160 @@ MUTATIONS += [
 """,
             ),
         ],
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+]
+
+
+# --- Rejoin resume, merge fix pass: the adopt window (MWA-m1, n1, n2) --------
+#
+# The merge-wave audit found what the resume's adopt window leaves behind for
+# the join ladder and for a later Welcome. MWA-m1: a Welcome adopted inside
+# the window wrote `#joinedGeneration` (and stamped `welcomeAdopted`), so on a
+# fallback the ladder read itself joined and stopped before its first intent,
+# a silent amber wedge; all three writes, the currency record included, now
+# sit inside `if (this.#resumeAdopting !== outcome.group_id)`. MWA-n1: the
+# veto now fires on `failed` or the loud latch, ahead of the re-secure check,
+# and STOPS (`#resumeStopped`, `loud_during_adopt`) rather than falling back,
+# because the fallback's reset clears the latch. MWA-n2: the three resets
+# that close the window (success, `#noResume`, `#resumeStopped`) were
+# unpinned or pinned only incidentally.
+#
+# Every entry is `must_red` on the resume spec, whose (z15)–(z19) were written
+# for these rules; each count is measured, with the full suite loaded, against
+# the 68-case spec. `resume-adopt-welcome-guard-bypassed` is equivalent today
+# to `resume-adopting-never-set` (z6, z15, z16): the guard's read and the
+# flag's write, both kept for the reason in the merge-wave block's note.
+#
+# 🔴 KNOWN NON-ENTRY, recorded rather than silently absent:
+# `resume-veto-ignores-failed` — the veto reading only the latch
+# (`if (this.#loudLatched)`, dropping `this.#state === "failed" ||`). Measured
+# green in every session spec. It cannot redden: the only writer of `failed`
+# is `#onLoud`, which latches in the same step, so inside the adopt window
+# `failed` never comes without the latch. The term stays as defence against
+# a future writer of `failed` that does not latch.
+
+MUTATIONS += [
+    # ---- MWA-m1: an adopt-window Welcome leaves nothing for the ladder ------
+    Mutation(
+        id="resume-adopt-welcome-marks-joined",
+        what="a Welcome adopted inside the resume's adopt window writes `#joinedGeneration` (MWA-m1): on a fallback the join ladder reads itself joined at its loop head and stops before its first intent, amber with no owner and nothing loud, a silent wedge",
+        file=SESSION,
+        # Measured 2026-09-27 (merge fix pass): killed by (z15) and (z16) (2
+        # of 68).
+        search="""      if (this.#resumeAdopting !== outcome.group_id) {
+""",
+        replace="""      this.#joinedGeneration = this.#establishGeneration;
+      if (this.#resumeAdopting !== outcome.group_id) {
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-adopt-welcome-stamps-adopted",
+        what="a Welcome adopted inside the resume's adopt window stamps `welcomeAdopted` (MWA-m1): the first stamp wins, so after a fallback the join timeline reports the adopt-window Welcome, ahead of the fallback's own create, instead of the Welcome that joined (telemetry, not a fail-open)",
+        file=SESSION,
+        # Measured 2026-09-27 (merge fix pass): killed by (z16) alone (1 of
+        # 68), whose `createRouted < welcomeAdopted` is the check.
+        search="""      if (this.#resumeAdopting !== outcome.group_id) {
+""",
+        replace="""      this.#joinTimeline?.stamp("welcomeAdopted");
+      if (this.#resumeAdopting !== outcome.group_id) {
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-adopt-welcome-guard-bypassed",
+        what="the adopt-window guard always passes, so a Welcome for the candidate adopted inside the resume's adopt window stamps, writes `#joinedGeneration` and records a currency check: MWA-m1's wedge and MS2 item 2's second path to active, together",
+        file=SESSION,
+        # Measured 2026-09-27 (merge fix pass): killed by (z6), (z15) and
+        # (z16) (3 of 68). Equivalent today to `resume-adopting-never-set`
+        # (the block note).
+        search="""      if (this.#resumeAdopting !== outcome.group_id) {
+""",
+        replace="""      if (true) {
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- MWA-n1: a loud verdict inside the window vetoes, and stays loud ----
+    Mutation(
+        id="resume-veto-ignores-loud-latch",
+        what="the adopt-window veto reads only `failed`, not the loud latch (MWA-n1): a `#latchLoud` raised inside the window vetoes nothing, and the resume goes `#toActive` over it, active while the latch holds",
+        file=SESSION,
+        # Measured 2026-09-27 (merge fix pass): killed by (z17) and (z19) (2
+        # of 68). Its twin on the `failed` term is the non-entry in the
+        # block note.
+        search="""    if (this.#state === "failed" || this.#loudLatched) {
+""",
+        replace="""    if (this.#state === "failed") {
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-loud-veto-falls-back",
+        what="a loud veto inside the adopt window falls back to the join ladder (`#noResume`) instead of stopping (MWA-n1): the fallback's `#resetGroupBuffers` clears the latch, so the loud verdict is dropped and the ladder runs as if it never happened",
+        file=SESSION,
+        # Measured 2026-09-27 (merge fix pass): killed by (z17) and (z19) (2
+        # of 68). The cause stays `loud_during_adopt`, so only the path is
+        # mutated, not the log line.
+        search="""      return this.#resumeStopped(groupId, {
+        cause: "loud_during_adopt",
+""",
+        replace="""      return this.#noResume(generation, groupId, {
+        cause: "loud_during_adopt",
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- MWA-n2: every way out of the resume closes the adopt window -------
+    Mutation(
+        id="resume-success-keeps-adopt-window",
+        what="a resume that went active leaves `#resumeAdopting` set (MWA-n2): its adopt window never closes, so a later Welcome of the same group (a dead page's intent served after the resume) is read as an adopt-window Welcome and runs no currency check",
+        file=SESSION,
+        # Measured 2026-09-27 (merge fix pass): killed by (h′) and (z18) (2
+        # of 68). The audit found this reset pinned only incidentally (1 of
+        # 63); (z18) now pins it directly.
+        search="""    this.#resumeForeignDrops.clear();
+    this.#resumeAdopting = null;
+    this.#touchResumeRecord(groupId, epoch);
+""",
+        replace="""    this.#resumeForeignDrops.clear();
+    this.#touchResumeRecord(groupId, epoch);
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-fallback-keeps-adopt-window",
+        what="a resume that falls back (`#noResume`) leaves `#resumeAdopting` set (MWA-n2): the fallback's own Welcome back into the same group id is read as an adopt-window Welcome, so it writes no `#joinedGeneration` and runs no currency check, and the ladder never proves its join",
+        file=SESSION,
+        # Measured 2026-09-27 (merge fix pass): killed by 17 of 68: (e, e″),
+        # (e′, e″), (h), both (v), both (w) tail failures, (w) F1–F3, (x),
+        # (z1)–(z3), (z9), (z14) and (z16).
+        search="""    this.#resumeAdopting = null;
+    return this.#joinWithoutResume(generation, candidate);
+""",
+        replace="""    return this.#joinWithoutResume(generation, candidate);
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-stop-keeps-adopt-window",
+        what="a resume that stops (`#resumeStopped`: superseded, or `loud_during_adopt`) leaves `#resumeAdopting` set (MWA-n2): a later rejoin into the same group id has its Welcome back read as an adopt-window Welcome, never checked current, and it never reaches e2ee",
+        file=SESSION,
+        # Measured 2026-09-27 (merge fix pass): killed by (z19) alone (1 of
+        # 68). Unreachable before MWA-n1 gave `#resumeStopped` its
+        # `loud_during_adopt` caller; (z19) reaches it through that stop.
+        search="""    this.#resumeAdopting = null;
+    return "stop";
+""",
+        replace="""    return "stop";
+""",
         specs=[RESUME_SPEC],
         must_red=[RESUME_SPEC],
     ),

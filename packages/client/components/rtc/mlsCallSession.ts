@@ -1161,8 +1161,10 @@ type SessionResumePrefetch = ResumePrefetch<MlsCommitInfo & ResumeCommitRef>;
 /**
  * Why a startup establish did not resume, named by its one
  * `[mls] startup establish: no resume` line (FA-m3). `superseded`: the
- * session closed or a newer establish took over; every other cause falls
- * back to the join ladder (`#joinWithoutResume`).
+ * session closed or a newer establish took over. `loud_during_adopt`: the
+ * session went `failed` or latched loud inside the adopt window, and stays
+ * loud (MWA-n1). Both stop; every other cause falls back to the join ladder
+ * (`#joinWithoutResume`).
  */
 type ResumeMissCause =
   | "superseded"
@@ -1187,7 +1189,8 @@ type ResumeMissCause =
   | "catch_up_threw"
   | "tail_failed"
   | "install_check_failed"
-  | "resecure_during_adopt";
+  | "resecure_during_adopt"
+  | "loud_during_adopt";
 
 /** A resume that did not happen: the cause, with numbers and ids only. */
 type ResumeMiss = {
@@ -2745,6 +2748,23 @@ export class MlsCallSession {
     if ("cause" in outcome) {
       return this.#noResume(generation, groupId, outcome);
     }
+    // MWA-n1: a loud verdict raised inside the window, `failed` (`#onLoud`)
+    // or any latch (`#latchLoud`), vetoes too, and ahead of the re-secure
+    // check below. It stops instead of falling back: `#noResume`'s fallback
+    // resets the group (`#resetGroupBuffers`), and that reset clears the
+    // latch. So the session stays where the verdict put it, loud with the
+    // gate held, and never `#toActive`. The candidate stays adopted but not
+    // joined, so a close deletes it.
+    if (this.#state === "failed" || this.#loudLatched) {
+      console.warn("[mls] resume vetoed: went loud during the adoption", {
+        groupId,
+        state: this.#state,
+      });
+      return this.#resumeStopped(groupId, {
+        cause: "loud_during_adopt",
+        detail: { state: this.#state },
+      });
+    }
     // LDA-n3: the drain shares this window. A DS 404 on a gap refetch of
     // the adopted group re-secures the session and asks for a fresh rejoin
     // (`#resecureAndRejoin`), which the single-flight drops while this
@@ -2800,11 +2820,19 @@ export class MlsCallSession {
     return this.#joinWithoutResume(generation, candidate);
   }
 
-  /** A startup resume the session's close or a newer establish ended. */
-  #resumeStopped(candidate: string | null): "stop" {
+  /**
+   * A startup resume that ends without the join ladder: the session's close
+   * or a newer establish ended it (`superseded`), or it went loud inside the
+   * adopt window (`loud_during_adopt`, MWA-n1).
+   */
+  #resumeStopped(
+    candidate: string | null,
+    miss: ResumeMiss = { cause: "superseded" },
+  ): "stop" {
     console.info("[mls] startup establish: no resume", {
-      cause: "superseded" satisfies ResumeMissCause,
+      cause: miss.cause,
       candidate,
+      ...miss.detail,
     });
     this.#resumeForeignDrops.clear();
     this.#resumeAdopting = null;
@@ -3172,8 +3200,9 @@ export class MlsCallSession {
   /**
    * Whether `generation`'s join already completed. Sound as a stop condition
    * because `#joinedGeneration` is written only by a natively processed
-   * Welcome for the live group (`#onEpochAdvanced`) or by our own DS-`Created`
-   * group.
+   * Welcome for the live group (`#onEpochAdvanced`), by our own DS-`Created`
+   * group, or by a startup resume as it goes active. A Welcome processed
+   * inside the resume's adopt window writes nothing (MWA-m1).
    */
   #joinedIn(generation: number): boolean {
     return this.#joinedGeneration === generation;
@@ -5417,22 +5446,26 @@ export class MlsCallSession {
         generation: this.#establishGeneration,
         waitInstalled: verdict.resolveWait,
       });
-      this.#joinTimeline?.stamp("welcomeAdopted");
       this.#groupId = outcome.group_id;
-      this.#joinedGeneration = this.#establishGeneration;
-      // W2-M2: NOT `#toActive` yet. Native accepts a Welcome sealed to any
-      // held KeyPackage for any intent on the group, so a late-drained one
-      // can adopt a stale epoch. `#pump` asks the DS right after this
-      // envelope, under the lock, and only its answer goes active.
-      this.#welcomeCurrency = {
-        groupId: outcome.group_id,
-        epoch: outcome.epoch,
-        generation: this.#establishGeneration,
-      };
       // Not while a startup resume adopts this group: its own verdict
-      // decides, and a check here could go active beside it (MS2 item 2).
-      if (this.#resumeAdopting === outcome.group_id) {
-        this.#welcomeCurrency = null;
+      // decides, and it writes `#joinedGeneration` itself when it goes
+      // active. A currency check here could go active beside it (MS2 item
+      // 2). A `#joinedGeneration` here would outlive a fallback: its ladder
+      // would read itself joined at the loop head and stop before its first
+      // intent, amber with no owner (MWA-m1). A `welcomeAdopted` stamp here
+      // would win over the fallback's own (first stamp wins).
+      if (this.#resumeAdopting !== outcome.group_id) {
+        this.#joinTimeline?.stamp("welcomeAdopted");
+        this.#joinedGeneration = this.#establishGeneration;
+        // W2-M2: NOT `#toActive` yet. Native accepts a Welcome sealed to any
+        // held KeyPackage for any intent on the group, so a late-drained one
+        // can adopt a stale epoch. `#pump` asks the DS right after this
+        // envelope, under the lock, and only its answer goes active.
+        this.#welcomeCurrency = {
+          groupId: outcome.group_id,
+          epoch: outcome.epoch,
+          generation: this.#establishGeneration,
+        };
       }
       if (verdict.resolveWait) this.#welcomeWait?.resolve(true);
     }

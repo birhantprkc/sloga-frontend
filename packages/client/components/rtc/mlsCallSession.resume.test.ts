@@ -3468,3 +3468,189 @@ test("(z14) MS2 item 6, FAR-n1: a resume stamps `resumed` after `keysInstalled`;
   assert.equal(fallback.includes("resumed"), false, JSON.stringify(fallback));
   assertNoPlaintext([ok.w, failed.w]);
 });
+
+// ---- (z) The merge fix pass: MWA-m1, MWA-n1, MWA-n2 -----------------------
+
+/**
+ * As the adoption clears the grant (GROUP is live and adopting), GROUP's
+ * Welcome at epoch 0 lands and the drain adopts it inside the window. Native
+ * accepts a Welcome sealed to any held KeyPackage, so an intent a dead page
+ * sent can be answered now (MWA-m1).
+ */
+function welcomeInAdoptWindow(world: World, id: string): void {
+  world.beforeNextCall("callClearDowngrade", () => {
+    world.outcomes.set(id, {
+      group_id: GROUP,
+      kind: "welcome_joined",
+      epoch: 0,
+      removed_self: false,
+      removed: [],
+    });
+    deliver(world, {
+      id,
+      content_type: "mls_welcome",
+      group_id: GROUP,
+      epoch: 0,
+      ciphertext: "",
+    });
+  });
+}
+
+/**
+ * As the adoption clears the grant, a Welcome native refuses as another
+ * context's (a hostile DS's cross-group relay) lands: a loud terminal drop,
+ * which latches the session loud inside the window (MWA-n1).
+ */
+function loudInAdoptWindow(world: World, id: string): void {
+  world.beforeNextCall("callClearDowngrade", () => {
+    world.rejections.set(id, { type: "mls_welcome_context_mismatch" });
+    deliver(world, {
+      id,
+      content_type: "mls_welcome",
+      group_id: GROUP,
+      epoch: 0,
+      ciphertext: "",
+    });
+  });
+}
+
+/** The catch-up stops on GROUP's commit at 1 (native no longer has GROUP). */
+function stoppedCatchUp(world: World): Prefetch {
+  world.rejections.set(`mls-synth:${GROUP}:1`, groupNotFound(GROUP));
+  return handPrefetch(world, { currentEpoch: 1, commits: [fetched(1)] });
+}
+
+test("(z15) MWA-m1: a Welcome adopted inside the adopt window, then the resume falls back — the ladder still sends its intent, never reads itself joined, and with no Welcome back ends loud, never a silent amber", async (t) => {
+  const logs = captureConsole(t);
+  const s = pendingSeat(t, "joiner", "ch-resume-z15");
+  welcomeInAdoptWindow(s.world, "env-z15-welcome");
+  s.handOver(stoppedCatchUp(s.world));
+  await startSession(t, s.w);
+  await run(t, 60_000, [s.w]);
+
+  assert.equal(
+    lines(logs, "info", "[mls] welcome adopted").length,
+    1,
+    "the Welcome never landed in the window",
+  );
+  assert.deepEqual(noResumeCauses(logs), ["catch_up_stopped"]);
+  assert.ok(s.world.joinIntents() > 0, "the fallback ladder sent no intent");
+  assert.deepEqual(
+    lines(logs, "info", "[mls] join ladder: joined in generation"),
+    [],
+    "the fallback ladder read itself joined",
+  );
+  // Nobody answers the intents: the ladder runs out, and says so.
+  assert.ok(s.world.terminalLoud(), "a silent amber wedge");
+  assert.notEqual(s.world.session.state(), "active");
+  assert.equal(s.world.publishing(), false);
+  assert.equal(resumes(logs), 0);
+  assertNoPlaintext([s.w]);
+});
+
+test("(z16) MWA-m1: the adopt-window Welcome stamps nothing — the fallback's own Welcome back is the timeline's welcomeAdopted, after its create, and it reaches e2ee", async (t) => {
+  const logs = captureConsole(t);
+  const s = pendingSeat(t, "joiner", "ch-resume-z16");
+  welcomeInAdoptWindow(s.world, "env-z16-welcome");
+  s.handOver(stoppedCatchUp(s.world));
+  await startSession(t, s.w);
+  assert.deepEqual(noResumeCauses(logs), ["catch_up_stopped"]);
+  await welcomeBack(t, s.w, 2);
+
+  assert.equal(lines(logs, "info", "[mls] welcome adopted").length, 2);
+  const [timeline, ...more] = joinTimelines(logs);
+  assert.ok(timeline, "the fallback never logged a timeline");
+  assert.deepEqual(more, [], "more than one join timeline");
+  assert.ok(
+    at(timeline, "createRouted") < at(timeline, "welcomeAdopted"),
+    `the adopt-window Welcome stamped the timeline: ${JSON.stringify(timeline)}`,
+  );
+  assert.equal(s.world.terminalLoud(), false);
+  assert.equal(resumes(logs), 0);
+  assertNoPlaintext([s.w]);
+});
+
+test("(z17) MWA-n1: a loud latch raised inside the adopt window vetoes the resume — loud_during_adopt, never active, still loud, no ladder, nothing published", async (t) => {
+  const logs = captureConsole(t);
+  const s = pendingSeat(t, "joiner", "ch-resume-z17");
+  const states = new Set<string>();
+  tap(s.world.bridgeCalls, () => states.add(s.world.session.state()));
+  loudInAdoptWindow(s.world, "env-z17-loud");
+  s.handOver(handPrefetch(s.world));
+  await startSession(t, s.w);
+  await run(t, 60_000, [s.w]);
+
+  assert.equal(
+    lines(logs, "error", "[mls] loud terminal envelope drop").length,
+    1,
+    "the latch never fired inside the window",
+  );
+  assert.equal(states.has("active"), false, "active over the loud latch");
+  assert.notEqual(s.world.session.state(), "active");
+  assert.ok(s.world.terminalLoud(), "the veto cleared the latch");
+  assert.deepEqual(ladderCalls(s.w.trace), []);
+  assert.equal(
+    lines(logs, "warn", "[mls] resume vetoed: went loud during the adoption")
+      .length,
+    1,
+  );
+  assert.deepEqual(noResumeCauses(logs), ["loud_during_adopt"]);
+  assert.equal(s.world.publishing(), false);
+  assert.equal(resumes(logs), 0);
+  assertNoPlaintext([s.w]);
+});
+
+test("(z18) MWA-n2: a resume that went active closes its adopt window — a later Welcome of GROUP (a dead page's intent served after the resume) is an ordinary Welcome, and the currency check runs", async (t) => {
+  const logs = captureConsole(t);
+  const { world, w } = oneSeat(t, "joiner", "ch-resume-z18", (wd) =>
+    handPrefetch(wd),
+  );
+  await startSession(t, w);
+  await run(t, 2_000, [w]);
+  assert.equal(resumes(logs), 1);
+  assert.equal(world.session.callMode().kind, "e2ee");
+  const mark = w.trace.length;
+
+  await world.welcome(1);
+  await run(t, 1_000, [w]);
+  assert.equal(lines(logs, "info", "[mls] welcome adopted").length, 1);
+  assert.ok(
+    since(w, mark).includes("call:mlsFetchCommits"),
+    "the Welcome ran no currency check",
+  );
+  assert.equal(
+    lines(logs, "info", "[mls] welcome confirmed current").length,
+    1,
+  );
+  assert.equal(world.session.state(), "active");
+  assert.equal(world.session.callMode().kind, "e2ee");
+  assertNoPlaintext([w]);
+});
+
+test("(z19) MWA-n2: the loud stop closes its adopt window too — a receiver-lag rejoin afterwards re-enters GROUP, and its Welcome back is checked current and reaches e2ee", async (t) => {
+  const logs = captureConsole(t);
+  const s = pendingSeat(t, "joiner", "ch-resume-z19");
+  loudInAdoptWindow(s.world, "env-z19-loud");
+  s.handOver(handPrefetch(s.world));
+  await startSession(t, s.w);
+  await run(t, 1_000, [s.w]);
+  assert.deepEqual(noResumeCauses(logs), ["loud_during_adopt"]);
+  assert.ok(s.world.terminalLoud());
+  assert.equal(s.world.session.groupId(), GROUP, "the candidate is not live");
+  const mark = s.w.trace.length;
+
+  // The DS moved on without this device (to 1 + LAG_DESYNC_THRESHOLD, 13):
+  // the drain's desync rejoins fresh, the ladder re-enters GROUP, and the
+  // admitter's Add of it is epoch 14.
+  await s.world.receiverLag();
+  await welcomeBack(t, s.w, 14);
+  const trace = since(s.w, mark);
+  assert.ok(at(trace, `wiped:${GROUP}`) < at(trace, "call:callJoinIntent"));
+  assert.equal(
+    lines(logs, "info", "[mls] welcome confirmed current").length,
+    1,
+  );
+  assert.equal(s.world.terminalLoud(), false);
+  assert.equal(resumes(logs), 0);
+  assertNoPlaintext([s.w]);
+});
