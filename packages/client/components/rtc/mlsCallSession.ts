@@ -1186,7 +1186,8 @@ type ResumeMissCause =
   | "native_unconfirmed"
   | "catch_up_threw"
   | "tail_failed"
-  | "install_check_failed";
+  | "install_check_failed"
+  | "resecure_during_adopt";
 
 /** A resume that did not happen: the cause, with numbers and ids only. */
 type ResumeMiss = {
@@ -1459,24 +1460,52 @@ export class MlsCallSession {
    * The highest epoch native applied for each group during the startup
    * window, read from every processed outcome `#consume` sees (another
    * group's included): the epochs native can still push keys-changed for on
-   * this page. Read only when `#joinWithoutResume` deletes a candidate;
-   * cleared with the window.
+   * this page. The stale-keys fence's floor, read when a push lands
+   * (`#staleKeysFence`), so a fenced group's entry outlives the window;
+   * every other entry is cleared with it.
    */
   #startupAppliedEpochs = new Map<string, number>();
   /**
-   * Keys-changed pushes of a DELETED resume candidate (FA-S2). The fallback
-   * deletes the held group and the ladder may re-enter the SAME DS group id,
-   * while native's pushes for commits the old incarnation applied are still
-   * in flight: with `#installEpoch` reset, the group-id and epoch checks both
-   * pass, and the frame-key read hits the deleted row (re-securing, then
-   * loud). Pushes for this group at or below `epoch` (the old incarnation's
-   * highest applied epoch) are dropped. A push of the new incarnation is
-   * always above it, because the DS's epochs for one group id only rise, and
-   * a Welcome into it comes after everything this device applied there.
-   * Cleared by the new incarnation's first install, which moves
-   * `#installEpoch` past the floor so the monotonic check covers the rest.
+   * Groups a startup delete removed (FA-S2, FAR-m2): every group
+   * `#startupWipe` sweeps, fenced before its delete is awaited, and, on the
+   * resume's fallback (`#joinWithoutResume`), every group this page applied
+   * commits to (the candidate and the kept groups the discard deletes),
+   * fenced before the ladder runs. The ladder may re-enter the SAME DS group
+   * id while native's pushes for commits the old incarnation applied are
+   * still in flight: with `#installEpoch` reset, the group-id and epoch
+   * checks both pass, and the frame-key read hits the deleted row
+   * (re-securing, then loud). A push for a fenced group at or below its
+   * floor, `#startupAppliedEpochs` read when the push lands (an envelope
+   * native applied during the delete await raises it), is dropped. A push
+   * of the new incarnation is always above it: the DS's epochs for one group
+   * id only rise, a Welcome into it comes after everything this device
+   * applied there, and nothing native applies for the group once it is live
+   * again raises the floor
+   * (`#noteStartupApplied`). Unfenced by the new incarnation's first
+   * install, which moves `#installEpoch` past the floor so the monotonic
+   * check covers the rest.
    */
-  #staleKeysFence: { groupId: string; epoch: number } | null = null;
+  #staleKeysFence = new Set<string>();
+  /**
+   * Set while `#catchUp` holds the lock: every `#consume` then is the resume
+   * catch-up's, or nested under it. Read by the drain's `retry` arm, which
+   * never re-queues such a synthetic (LD note 8).
+   */
+  #resumeCatchingUp = false;
+  /**
+   * Every gap refetch that failed (`#gapRefetchFailed`), counted before a
+   * synthetic's failure is rethrown: the resume catch-up tells a failed
+   * refetch under one of its commits from any other throw by it.
+   */
+  #gapRefetchFailures = 0;
+  /**
+   * The group a startup resume has adopted and not yet finished with (set
+   * with the adoption, cleared on every exit of `#startupResume` after it).
+   * A Welcome for it arms no currency check: the resume confirms currency
+   * itself (the prefetch's DS epoch, then native's) and only its verdict may
+   * go active (MS2 item 2).
+   */
+  #resumeAdopting: string | null = null;
   /**
    * `start()`'s KeyPackage enrolment when it runs beside a resume (R2-m4):
    * the resume needs none, and a startup that joins awaits this before its
@@ -2410,7 +2439,12 @@ export class MlsCallSession {
         this.#startupEstablish = false;
         this.#loudForeignDrops.clear();
         this.#resumeForeignDrops.clear();
-        this.#startupAppliedEpochs.clear();
+        // A fenced group's floor outlives the window (FAR-m2).
+        for (const groupId of this.#startupAppliedEpochs.keys()) {
+          if (!this.#staleKeysFence.has(groupId)) {
+            this.#startupAppliedEpochs.delete(groupId);
+          }
+        }
       }
     }
   }
@@ -2577,6 +2611,10 @@ export class MlsCallSession {
     try {
       for (const groupId of targets) {
         this.#forgetRemovedSelf(groupId);
+        // FAR-m2: the ladder may re-enter this group id. Fenced before the
+        // delete is awaited; an envelope of it native applies meanwhile
+        // still raises the floor (`#noteStartupApplied`).
+        this.#staleKeysFence.add(groupId);
         // Direct — NOT `#safeLeave` (M6: a swallowed wipe failure would spend
         // nothing but also tell nobody; this path must degrade loudly).
         await this.#deps.bridge.callLeaveCleanup(groupId);
@@ -2687,6 +2725,7 @@ export class MlsCallSession {
     // and must survive: `#inbound` can carry this group's queued live
     // envelopes, and `#seen` only acked foreign ULIDs.
     this.#groupId = groupId;
+    this.#resumeAdopting = groupId;
     try {
       await this.#deps.bridge.callClearDowngrade(groupId);
     } catch (error) {
@@ -2706,6 +2745,24 @@ export class MlsCallSession {
     if ("cause" in outcome) {
       return this.#noResume(generation, groupId, outcome);
     }
+    // LDA-n3: the drain shares this window. A DS 404 on a gap refetch of
+    // the adopted group re-secures the session and asks for a fresh rejoin
+    // (`#resecureAndRejoin`), which the single-flight drops while this
+    // establish runs; anything else that leaves the session re-securing is
+    // as unresolved. `#toActive` over it would enable a group the DS may no
+    // longer list this device in: vetoed, and the join path runs.
+    if (this.#state === "resecuring") {
+      console.warn("[mls] resume vetoed: re-secured during the adoption", {
+        groupId,
+      });
+      return this.#noResume(generation, groupId, {
+        cause: "resecure_during_adopt",
+      });
+    }
+    // FAR-n1: only now, the install check and the veto passed, so a
+    // `resumed` stamp is a resume that happened and its time includes the
+    // install.
+    this.#joinTimeline?.stamp("resumed");
     const epoch = outcome.epoch;
     this.#joinedGeneration = generation; // enrolment proof, as a Welcome's
     this.#toActive();
@@ -2713,6 +2770,7 @@ export class MlsCallSession {
     // kicked was refused by `#evaluateEnable` (not active).
     if (this.#hasLocalKey && !this.#e2eeEnabled) void this.reconcileNow();
     this.#resumeForeignDrops.clear();
+    this.#resumeAdopting = null;
     this.#touchResumeRecord(groupId, epoch);
     console.info("[mls] resumed the held call group", {
       groupId,
@@ -2738,6 +2796,7 @@ export class MlsCallSession {
       ...miss.detail,
     });
     this.#resumeForeignDrops.clear();
+    this.#resumeAdopting = null;
     return this.#joinWithoutResume(generation, candidate);
   }
 
@@ -2748,6 +2807,7 @@ export class MlsCallSession {
       candidate,
     });
     this.#resumeForeignDrops.clear();
+    this.#resumeAdopting = null;
     return "stop";
   }
 
@@ -2809,8 +2869,9 @@ export class MlsCallSession {
    * drained `removed_self` was still "another group" and only acked. If an
    * envelope of the group took a non-terminal drop as another group's before
    * the adoption, one tail fetch from native's epoch runs first and the DS
-   * epoch to confirm is the tail's (FA-M1, `#catchUpTail`). A throw anywhere
-   * is a failure.
+   * epoch to confirm is the tail's (FA-M1, `#catchUpTail`). A gap refetch
+   * that failed under a fetched commit stops the catch-up like any other
+   * unclean result (`#consumeCatchUp`); any other throw is a failure too.
    *
    * Then, still under the lock, the confirmed epoch's keys are installed,
    * our send key included, IMMEDIATELY (FA-B1): a keys-changed push for an
@@ -2819,8 +2880,8 @@ export class MlsCallSession {
    * Add-grace and leave that key in place, held by a member a Remove in the
    * catch-up took out. Resolves to the confirmed epoch only once that
    * install is a fact (`#installCaughtUpKeys`); the caller goes active only
-   * then. `catchUpDone` and `resumed` are stamped before the install, as the
-   * join timeline's order has them.
+   * then. `catchUpDone` is stamped before the install; `resumed` only once
+   * the resume stands (`#startupResume`, FAR-n1).
    */
   async #catchUp(
     p: SessionResumePrefetch,
@@ -2836,10 +2897,11 @@ export class MlsCallSession {
       detail: { stale: true },
     };
     const release = await this.#lock.acquire();
+    this.#resumeCatchingUp = true;
     try {
       for (const info of p.commits) {
         if (stale()) return stopped;
-        const result = await this.#consume(this.#synthEnvelope(info));
+        const result = await this.#consumeCatchUp(info);
         if (result !== "applied" && result !== "duplicate") {
           console.warn("[mls] resume catch-up stopped", {
             groupId,
@@ -2896,7 +2958,6 @@ export class MlsCallSession {
       }
       if (stale()) return stopped;
       this.#joinTimeline?.stamp("catchUpDone");
-      this.#joinTimeline?.stamp("resumed");
       const installed = await this.#installCaughtUpKeys(groupId, confirmed);
       if (stale()) return stopped;
       if (!installed) {
@@ -2920,7 +2981,29 @@ export class MlsCallSession {
       console.warn("[mls] resume catch-up failed", error);
       return { cause: "catch_up_threw" };
     } finally {
+      this.#resumeCatchingUp = false;
       release();
+    }
+  }
+
+  /**
+   * One fetched commit of a resume catch-up (`#catchUp`, `#catchUpTail`),
+   * through `#consume`. A gap refetch that failed under it is a RESULT,
+   * `gap_refetch_failed`, never counted clean: `#gapRefetchFailed` rethrows
+   * a synthetic's failure to its inline caller, and this caller turns it
+   * into the stop the catch-up's rules already make of every result but
+   * `applied` and `duplicate` (LDA-n3). Any other throw propagates.
+   */
+  async #consumeCatchUp(
+    info: MlsCommitInfo,
+  ): Promise<ConsumeResult | "gap_refetch_failed"> {
+    const failures = this.#gapRefetchFailures;
+    try {
+      return await this.#consume(this.#synthEnvelope(info));
+    } catch (error) {
+      if (this.#gapRefetchFailures === failures) throw error;
+      console.warn("[mls] resume catch-up: a gap refetch failed", error);
+      return "gap_refetch_failed";
     }
   }
 
@@ -2989,10 +3072,13 @@ export class MlsCallSession {
       return failed("own_commit", { from, current });
     }
     for (const info of commits) {
-      const result = await this.#consume(this.#synthEnvelope(info));
+      const result = await this.#consumeCatchUp(info);
       if (stale()) return stopped;
       if (result !== "applied" && result !== "duplicate") {
-        return failed("not_applied", { from, current, epoch: info.epoch });
+        return failed(
+          result === "gap_refetch_failed" ? result : "not_applied",
+          { from, current, epoch: info.epoch },
+        );
       }
     }
     console.info("[mls] resume tail applied", {
@@ -3033,12 +3119,6 @@ export class MlsCallSession {
         this.#groupId = null;
         this.#resetGroupBuffers();
       }
-      // FA-S2: after the reset (which zeroes `#installEpoch`), so the old
-      // incarnation's in-flight keys-changed cannot reach the new one.
-      const applied = this.#startupAppliedEpochs.get(candidate);
-      if (applied !== undefined) {
-        this.#staleKeysFence = { groupId: candidate, epoch: applied };
-      }
       this.#deps.bridge.clearResumeRecord(this.#deps.channelId);
       this.#forgetRemovedSelf(candidate);
       await this.#awaitJoinPathDelete(
@@ -3052,6 +3132,14 @@ export class MlsCallSession {
         this.#identityFetchGen++;
       }
       if (!live()) return "stop";
+    }
+    // FA-S2 / FAR-m2: after the reset (which zeroes `#installEpoch`), every
+    // group this page applied commits to is fenced, so no old incarnation's
+    // in-flight keys-changed reaches a new one: the candidate deleted above
+    // and the channel's kept groups the discard deletes, whose ids only the
+    // bridge knows. None is live here, and no floor is frozen here.
+    for (const groupId of this.#startupAppliedEpochs.keys()) {
+      this.#staleKeysFence.add(groupId);
     }
     await this.#awaitJoinPathDelete(
       this.#deps.bridge.discardKeptForChannel(this.#deps.channelId),
@@ -4570,7 +4658,13 @@ export class MlsCallSession {
           envelope.id,
           (this.#retries.get(envelope.id) ?? 0) + 1,
         );
-        this.#scheduleRetry(envelope);
+        // LD note 8: never a resume catch-up's synthetic. The catch-up stops
+        // on this result and falls back, possibly into the SAME group id,
+        // where the re-queued old commit would drain into the new
+        // incarnation. Any other inline caller's synthetic is still re-queued:
+        // its refetch has no other retry.
+        if (!(this.#resumeCatchingUp && envelope.id.startsWith("mls-synth:")))
+          this.#scheduleRetry(envelope);
         return "retry";
       }
       case "ack_drop_poison": {
@@ -4683,6 +4777,7 @@ export class MlsCallSession {
       await this.#gapRefetchInline(fromEpoch);
       return false;
     } catch (error) {
+      this.#gapRefetchFailures++;
       if (envelope.id.startsWith("mls-synth:")) throw error;
       console.warn(
         "[mls] gap refetch failed — the envelope stays unacked and is retried",
@@ -4993,9 +5088,18 @@ export class MlsCallSession {
     this.#latchLoud(new Error(ENCRYPTION_UNCONFIRMED), "control");
   }
 
-  /** Record an epoch native applied during the startup window (FA-S2). */
+  /**
+   * Record an epoch native applied during the startup window (FA-S2). A
+   * fenced group counts only while it is not the live group: until the
+   * ladder re-enters it, what native applies for it is the deleted
+   * incarnation's (an apply the delete raced); from the re-entry on it is
+   * the new incarnation's, which must never raise the floor its own
+   * keys-changed is checked against (FAR-m2).
+   */
   #noteStartupApplied({ outcome }: { outcome: MlsProcessOutcome }): void {
     if (!this.#startupEstablish) return;
+    const fenced = this.#staleKeysFence.has(outcome.group_id);
+    if (fenced && outcome.group_id === this.#groupId) return;
     const prior = this.#startupAppliedEpochs.get(outcome.group_id);
     if (prior === undefined || outcome.epoch > prior) {
       this.#startupAppliedEpochs.set(outcome.group_id, outcome.epoch);
@@ -5325,6 +5429,11 @@ export class MlsCallSession {
         epoch: outcome.epoch,
         generation: this.#establishGeneration,
       };
+      // Not while a startup resume adopts this group: its own verdict
+      // decides, and a check here could go active beside it (MS2 item 2).
+      if (this.#resumeAdopting === outcome.group_id) {
+        this.#welcomeCurrency = null;
+      }
       if (verdict.resolveWait) this.#welcomeWait?.resolve(true);
     }
     // Every applied commit of OUR group reaches here: live pushes, the 409
@@ -5396,15 +5505,20 @@ export class MlsCallSession {
     // L5: suppress keys-changed for a group we've left (removed_self cleared
     // #groupId); and ignore an unrelated group.
     if (this.#terminal() || groupId !== this.#groupId) return;
-    // FA-S2: a push of a deleted resume candidate's old incarnation, landing
-    // after the ladder re-entered the same group id. Before anything below:
-    // it must not even retire the new incarnation's pending grace.
-    const fence = this.#staleKeysFence;
-    if (fence !== null && fence.groupId === groupId && epoch <= fence.epoch) {
+    // FA-S2: a push of a deleted startup group's old incarnation, landing
+    // after the ladder re-entered the same group id. The floor is read now,
+    // not when the delete began (FAR-m2). Checked before `#cancelGrace` for
+    // order only, not protection (FAR-n2): while this group is fenced
+    // nothing of it has installed since its reset, so no grace timer is
+    // pending and the two placements are equivalent.
+    const floor = this.#staleKeysFence.has(groupId)
+      ? this.#startupAppliedEpochs.get(groupId)
+      : undefined;
+    if (floor !== undefined && epoch <= floor) {
       console.info("[mls] keys-changed dropped: the deleted group's", {
         groupId,
         epoch,
-        floor: fence.epoch,
+        floor,
       });
       return;
     }
@@ -5434,7 +5548,7 @@ export class MlsCallSession {
     );
     this.#installEpoch = epoch;
     // Past the floor (checked above): the monotonic check now covers it.
-    if (this.#staleKeysFence?.groupId === groupId) this.#staleKeysFence = null;
+    this.#staleKeysFence.delete(groupId);
     this.#openRotationWindow(timing);
 
     let frameKeys: MlsFrameKeys;

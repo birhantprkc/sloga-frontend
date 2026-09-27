@@ -34,8 +34,8 @@
 //     send key is still an older epoch's (E2), on a session that already
 //     failed (E3), or past a synthetic commit it could not apply (E4). A
 //     dispose during the check's backoff lets the check finish (N1).
-//   - D1: the L14c fleet scenario itself, with the mailbox the late drain
-//     delivers captured and re-injected by the spec.
+//   - D1: the L14c fleet scenario itself, the late drain being the DS
+//     mailbox's own re-delivery on the WS connect (`drainMailbox`).
 //
 // "Never green at a stale epoch" is SAMPLED over the whole run, not read off
 // the end state: a gate monitor records every moment the publish gate
@@ -50,7 +50,6 @@ import type {
   MlsEnvelope,
   MlsMemberDevice,
   MlsProcessOutcome,
-  MlsSinkEvent,
 } from "@revolt/client";
 
 import {
@@ -1165,7 +1164,11 @@ test("C5 — the creator path asks the DS nothing and reaches green in the same 
   const world = newWorld(t, "creator", "ch-drainfail-c5");
   const native = scriptNative(world);
   await bringUpCreator(t, world); // active and `e2ee` within one advance
-  // The same calls, in the same order, as before the check existed.
+  // The same calls, in the same order, as before the check existed — no
+  // `mlsFetchCommits` among them. The one addition since is the resume
+  // branch's `touchResumeRecord` (D7: the channel's recency record, refreshed
+  // after every key install), a synchronous write to the tab's
+  // `sessionStorage` that asks the DS nothing.
   assert.deepEqual(
     [...world.bridgeCalls],
     [
@@ -1177,6 +1180,7 @@ test("C5 — the creator path asks the DS nothing and reaches green in the same 
       "callState",
       "callFrameKeys",
       "callState",
+      "touchResumeRecord",
     ],
   );
   native.applies("env-c5-commit", 1);
@@ -1875,23 +1879,17 @@ test("D1 — L14c: a restarted page whose mailbox drains late, a stale Welcome f
     },
     [PEER],
   );
-  // The harness's pre-sink buffer dies with the page; the spec keeps the
-  // mailbox itself, as the DS does.
-  const mailbox: MlsSinkEvent[] = peer.preSinkBuffer.filter(
-    (e) => e.kind === "envelope",
-  );
-  assert.deepEqual(
-    mailbox.map((e) => (e.kind === "envelope" ? e.envelope.epoch : -1)),
-    [3, 1],
-  );
+  // The pre-sink buffer dies with the page; the DS keeps PEER's mailbox,
+  // since the dead page acked neither.
+  const inMailbox = () =>
+    peer.mailbox.map((e) => `${e.content_type}@${e.epoch}`);
+  assert.deepEqual(inMailbox(), ["mls_commit@3", "mls_welcome@1"]);
 
   // A new page starts, and its WebSocket is not up yet: it wipes, re-intents
-  // (flagged `rejoin`), and SELF removes PEER's stale leaf (epoch 4) — every
-  // push to PEER meanwhile goes to the mailbox, not the page.
-  const offline: MlsSinkEvent[] = [];
-  const down = t.mock.method(peer, "receive", (event: MlsSinkEvent) => {
-    if (event.kind === "envelope") offline.push(event);
-  });
+  // (flagged `rejoin`), and SELF removes PEER's stale leaf (epoch 4). Nothing
+  // reaches the page meanwhile, neither the page start's mailbox drain nor a
+  // live push; every envelope stays in the DS mailbox.
+  const down = t.mock.method(peer, "receive", () => {});
   await fleet.wipeRejoin(PEER);
   const watch = monitor(peer, () => fleet.ds.epoch);
   for (let waited = 0; fleet.ds.epoch < 4 && waited < 5_000; ) {
@@ -1902,17 +1900,22 @@ test("D1 — L14c: a restarted page whose mailbox drains late, a stale Welcome f
   assert.equal(fleet.ds.epoch, 4, "SELF never removed PEER's stale leaf");
   assert.deepEqual(fleet.ds.members.map(identityOf), [SELF_ID]);
   assert.equal(peer.session.state(), "starting");
-
-  // The socket comes up: the mailbox drains, oldest first — the Remove of
-  // THIRD, the stale Welcome, the Remove of PEER.
-  down.mock.restore();
-  const drained = [...mailbox, ...offline];
-  assert.deepEqual(
-    drained.map((e) => (e.kind === "envelope" ? e.envelope.epoch : -1)),
-    [3, 1, 4],
+  assert.equal(
+    count(log.infos(), "[mls] welcome adopted"),
+    0,
+    "the mailbox reached the page before its socket was up",
   );
-  for (const event of drained) peer.receive(event);
-  await flush();
+
+  // The socket comes up: the WS connect's drain (`drainMailbox`) re-delivers
+  // the mailbox, oldest first and each once, into the live sink: the Remove
+  // of THIRD, the stale Welcome, the Remove of PEER.
+  down.mock.restore();
+  assert.deepEqual(inMailbox(), [
+    "mls_commit@3",
+    "mls_welcome@1",
+    "mls_commit@4",
+  ]);
+  await fleet.reconnect(PEER);
   // The stale Welcome WAS adopted natively (the scenario is live), and the
   // check refused it.
   assert.equal(count(log.infos(), "[mls] welcome adopted"), 1);

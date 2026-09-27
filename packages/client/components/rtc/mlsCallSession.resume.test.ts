@@ -27,7 +27,7 @@
 import assert from "node:assert/strict";
 import { type TestContext, test } from "node:test";
 
-import type { MlsCommitInfo, MlsFrameKeys } from "@revolt/client";
+import type { MlsCommitInfo, MlsEnvelope, MlsFrameKeys } from "@revolt/client";
 
 import {
   readResumeRecord,
@@ -205,6 +205,12 @@ const LADDER = [
 
 function ladderCalls(trace: readonly string[]): string[] {
   return trace.filter((e) => LADDER.includes(e));
+}
+
+/** `trace` up to the ladder's first request (all of it, if none was made). */
+function beforeLadder(trace: readonly string[]): readonly string[] {
+  const first = trace.findIndex((e) => LADDER.includes(e));
+  return first < 0 ? trace : trace.slice(0, first);
 }
 
 // ---- Console and timeline ----------------------------------------------------
@@ -485,14 +491,19 @@ test("(a) Ctrl+R inside the grace, nothing missed: the held group resumes to e2e
     [`keys:${epoch}`],
     "keys read at another epoch",
   );
-  // Stamped in execution order, and nothing of the ladder's.
+  // Stamped in execution order, and nothing of the ladder's. FAR-n1:
+  // `resumed` is stamped only once the resume stands, after the install
+  // check and the re-secure veto, so it follows `keysInstalled` and the
+  // resume's time includes the install. Stamped before it (as it was), the
+  // first-stamp-wins timeline recorded a resume that could still fail its
+  // install, and never timed the install.
   const [timeline, ...more] = joinTimelines(logs, infos);
   assert.deepEqual(more, [], "more than one join timeline");
   const stamp = (name: string) => at(timeline, name);
   assert.ok(stamp("prefetchDone") < stamp("catchUpDone"));
-  assert.ok(stamp("catchUpDone") < stamp("resumed"));
-  assert.ok(stamp("resumed") < stamp("keysInstalled"));
-  assert.ok(stamp("keysInstalled") < stamp("modeE2ee"));
+  assert.ok(stamp("catchUpDone") < stamp("keysInstalled"));
+  assert.ok(stamp("keysInstalled") < stamp("resumed"));
+  assert.ok(stamp("resumed") < stamp("modeE2ee"));
   for (const ladder of ["createRouted", "intentAccepted", "welcomeAdopted"]) {
     assert.equal(timeline.includes(ladder), false, `stamped ${ladder}`);
   }
@@ -2444,8 +2455,16 @@ async function behindWindow(t: TestContext, channel: string, drop: boolean) {
   assert.equal(fleet.ds.epoch, drop ? base + 2 : base + 1);
   assert.equal(peer.session.groupId(), null, "adopted before the hand-over");
   assert.equal(peer.localEpoch, base, "native applied the dropped commit");
-  const tailFetches = () =>
+  // Every session commits GET from `mark` on, and the TAIL-shaped ones: those
+  // on the resume path, before the fallback ladder's first request. The stub
+  // cannot tell the tail from a Welcome's currency check (the same GET of
+  // the same group), but the fallback's Welcome needs its intent first, so
+  // its check can never land before the ladder and is never counted.
+  const fetches = () =>
     since(w, mark).filter((e) => e === "call:mlsFetchCommits").length;
+  const tailFetches = () =>
+    beforeLadder(since(w, mark)).filter((e) => e === "call:mlsFetchCommits")
+      .length;
   return {
     logs,
     fleet,
@@ -2455,6 +2474,7 @@ async function behindWindow(t: TestContext, channel: string, drop: boolean) {
     mark,
     base,
     behind,
+    fetches,
     tailFetches,
     handOver: () => dep.resolve(prefetch),
   };
@@ -2539,6 +2559,7 @@ for (const [label, reason, answer] of [
       mark,
       base,
       behind,
+      fetches,
       tailFetches,
       handOver,
     } = await behindWindow(t, `ch-resume-w3-${reason}`, true);
@@ -2561,6 +2582,10 @@ for (const [label, reason, answer] of [
     assert.ok(at(trace, `wiped:${GROUP}`) < at(trace, "call:callCreate"));
     await untilActive(t, peer, 40_000, [...watches.values(), behind]);
     assert.equal(peer.localEpoch, fleet.ds.epoch);
+    // Still ONE tail: the fallback's Welcome ran its currency check (a GET
+    // the stub counts like the tail's), and it is not counted as one.
+    assert.equal(tailFetches(), 1, "the fallback's GET counted as a tail");
+    assert.ok(fetches() > 1, "no fallback GET: the count proves nothing");
     assert.equal(
       lines(logs, "info", "[mls] resumed the held call group").length,
       0,
@@ -2844,4 +2869,602 @@ test("(y) FA-m3: every startup establish that does not resume logs ONE cause lin
     1,
   );
   assertNoPlaintext(watched);
+});
+
+// ---- (z) The merge wave: FAR-m3's three rules, MS2 items 1–6 ---------------
+
+/**
+ * A one-seat world whose host hands its session the prefetch only when the
+ * spec calls `handOver`, so envelopes can land between `start()` and the
+ * adoption. The session's aborts are traced as `abort`, as in `oneSeat`.
+ */
+function pendingSeat(
+  t: TestContext,
+  role: "creator" | "joiner",
+  channel: string,
+): { world: World; w: Watch; handOver: (p: Prefetch | null) => void } {
+  const dep = deferred<Prefetch | null>();
+  const trace: string[] = [];
+  const world = newWorld(t, role, channel, undefined, {
+    resumePrefetch: dep.promise,
+    abortResumePrefetch: () => {
+      trace.push("abort");
+    },
+  });
+  const w = watch(world);
+  tap(trace, (entry) => w.trace.push(entry));
+  return { world, w, handOver: (p) => dep.resolve(p) };
+}
+
+/** Native's `MlsEpochGap` for GROUP: it applies nothing (invariant 10). */
+function epochGap(expected: number, got: number): Error {
+  return Object.assign(new Error("mls_epoch_gap"), {
+    type: "mls_epoch_gap",
+    group_id: GROUP,
+    expected,
+    got,
+  });
+}
+
+/** What the bridge throws for a failed session commits GET of GROUP. */
+function commitsGetFailed(from: number, status: string): Error {
+  return new Error(
+    `E2EE MLS GET /mls/groups/${GROUP}/commits?from_epoch=${from} failed: ${status}`,
+  );
+}
+
+function commitEnvelope(id: string, epoch: number): MlsEnvelope {
+  return {
+    id,
+    content_type: "mls_commit",
+    group_id: GROUP,
+    epoch,
+    ciphertext: "",
+  };
+}
+
+/** `envelope`, pushed to `world` as its WS would push it. */
+function deliver(world: World, envelope: MlsEnvelope): void {
+  world.receive({
+    kind: "envelope",
+    envelope,
+    recipientDeviceId: world.me.device_id,
+  });
+}
+
+/**
+ * GROUP's commit `id` at `epoch` lands and native applies it, moving its
+ * epoch there (as the harness's own `#deliver` does).
+ */
+function appliedCommit(world: World, id: string, epoch: number): void {
+  world.outcomes.set(id, {
+    group_id: GROUP,
+    kind: "commit_applied",
+    epoch,
+    removed_self: false,
+    removed: [],
+  });
+  world.epoch = epoch;
+  deliver(world, commitEnvelope(id, epoch));
+}
+
+/**
+ * GROUP's commit at `epoch` lands before the adoption and native cannot
+ * apply it (a gap, `expected` next): a non-terminal drop as ANOTHER group's,
+ * left unacked, so the catch-up runs its tail (FA-M1).
+ */
+async function droppedBeforeAdoption(
+  world: World,
+  id: string,
+  expected: number,
+  epoch: number,
+): Promise<void> {
+  world.rejections.set(id, epochGap(expected, epoch));
+  deliver(world, commitEnvelope(id, epoch));
+  await flush();
+  assert.equal(world.session.groupId(), null, "adopted before the drop");
+}
+
+/** The DS's answer to the tail's GET from `from`: `commits`, at `current`. */
+function answerTail(
+  world: World,
+  from: number,
+  commits: MlsCommitInfo[],
+  current: number,
+): void {
+  world.fetchCommitsAnswer = {
+    groupId: GROUP,
+    fromEpoch: from,
+    result: { kind: "ok", body: { commits, current_epoch: current } },
+  };
+}
+
+const resumes = (logs: Captured, from = 0) =>
+  lines(logs, "info", "[mls] resumed the held call group", from).length;
+
+/** Envelopes native processed on the resume path, before any ladder call. */
+const processedBeforeLadder = (w: Watch) =>
+  beforeLadder(w.trace).filter((e) => e === "call:processEnvelope").length;
+
+test("(z1) FAR-m3: a commit after the GET, applied as ANOTHER group's before the adoption (lag 0 at C) — native_unconfirmed, and the fallback fences GROUP at C+1, the foreign apply's epoch", async (t) => {
+  const logs = captureConsole(t);
+  const held = 2;
+  const s = pendingSeat(t, "joiner", "ch-resume-z1");
+  s.world.epoch = held;
+  await startSession(t, s.w);
+  const early = statesBeforeLadder(s.world);
+  // No group is live yet, so GROUP's commit is another group's: native
+  // applies it, and only the foreign arm records its epoch.
+  appliedCommit(s.world, "env-z1-late", held + 1);
+  await flush();
+  assert.equal(s.world.session.groupId(), null, "adopted before the commit");
+  s.handOver(handPrefetch(s.world, { localEpoch: held, currentEpoch: held }));
+  await run(t, 1, [s.w]);
+
+  assert.deepEqual(noResumeCauses(logs), ["native_unconfirmed"]);
+  const [detail] = noResumeLines(logs);
+  assert.equal(detail.epoch, held + 1);
+  assert.equal(detail.dsEpoch, held);
+  assert.equal(early.has("active"), false, "active on the resume path");
+  await untilIntent(t, s.w);
+  assert.equal(s.world.session.groupId(), GROUP, "not the same group id");
+  // The deleted incarnation's keys-changed for C+1, after the re-entry: a
+  // floor of C, or none, passes it to the key path of a deleted row.
+  await s.world.session.onLocalKeysChanged(GROUP, held + 1);
+  assert.deepEqual(staleKeysDropped(logs), [
+    { groupId: GROUP, epoch: held + 1, floor: held + 1 },
+  ]);
+  const mark = s.w.trace.length;
+  await welcomeBack(t, s.w, held + 2);
+  assert.equal(staleKeysDropped(logs).length, 1, "the Welcome's key dropped");
+  assert.ok(since(s.w, mark).includes(`keys:${held + 2}`), "never installed");
+  assert.equal(resumes(logs), 0);
+  assertNoPlaintext([s.w]);
+});
+
+test(`(z2) FAR-m3: the tail is held to RESUME_MAX_LAG from the HELD epoch — one commit past a catch-up of ${RESUME_MAX_LAG - 1} is tail_failed (lag) and never applied, though the tail's own lag is 1`, async (t) => {
+  const logs = captureConsole(t);
+  const caught = RESUME_MAX_LAG - 1;
+  const s = pendingSeat(t, "joiner", "ch-resume-z2");
+  applyFetched(s.world, range(1, RESUME_MAX_LAG));
+  await startSession(t, s.w);
+  const early = statesBeforeLadder(s.world);
+  // RESUME_MAX_LAG's commit lands after the GET: a gap for native at 0.
+  await droppedBeforeAdoption(s.world, "env-z2-drop", 1, RESUME_MAX_LAG);
+  answerTail(s.world, caught + 1, [fetched(RESUME_MAX_LAG)], RESUME_MAX_LAG);
+  s.handOver(
+    handPrefetch(s.world, {
+      currentEpoch: caught,
+      commits: range(1, caught).map((e) => fetched(e)),
+    }),
+  );
+  await run(t, 1, [s.w]);
+
+  assert.equal(s.world.fetchCommitsAnswer, null, "the tail never asked");
+  assert.deepEqual(noResumeCauses(logs), ["tail_failed"]);
+  const [detail] = noResumeLines(logs);
+  assert.equal(detail.reason, "lag");
+  assert.equal(detail.from, caught, "not from native's epoch");
+  assert.equal(detail.current, RESUME_MAX_LAG);
+  // The drop, then the catch-up's commits: the tail's was never applied.
+  assert.equal(processedBeforeLadder(s.w), 1 + caught);
+  assert.equal(early.has("active"), false, "active on the resume path");
+  await welcomeBack(t, s.w, RESUME_MAX_LAG + 1);
+  assert.equal(resumes(logs), 0);
+  assertNoPlaintext([s.w]);
+});
+
+test("(z3) FAR-m3: a tail carrying a commit of this device's own is tail_failed (own_commit) and never applied — the prefetch's own-commit rule holds for the tail", async (t) => {
+  const logs = captureConsole(t);
+  const s = pendingSeat(t, "joiner", "ch-resume-z3");
+  applyFetched(s.world, [1, 2]);
+  await startSession(t, s.w);
+  const early = statesBeforeLadder(s.world);
+  await droppedBeforeAdoption(s.world, "env-z3-drop", 1, 2);
+  answerTail(s.world, 2, [fetched(2, { committer: s.world.me })], 2);
+  s.handOver(handPrefetch(s.world, { currentEpoch: 1, commits: [fetched(1)] }));
+  await run(t, 1, [s.w]);
+
+  assert.equal(s.world.fetchCommitsAnswer, null, "the tail never asked");
+  assert.deepEqual(noResumeCauses(logs), ["tail_failed"]);
+  const [detail] = noResumeLines(logs);
+  assert.equal(detail.reason, "own_commit");
+  assert.equal(detail.from, 1);
+  assert.equal(detail.current, 2);
+  assert.equal(processedBeforeLadder(s.w), 2, "the own commit was applied");
+  assert.equal(early.has("active"), false, "active on the resume path");
+  await welcomeBack(t, s.w, 3);
+  assert.equal(resumes(logs), 0);
+  assertNoPlaintext([s.w]);
+});
+
+test("(z4) MS2 item 1: a gap refetch failing under a fetched commit stops the catch-up — catch_up_stopped (gap_refetch_failed), never counted clean, never active", async (t) => {
+  const logs = captureConsole(t);
+  const { world, w } = oneSeat(t, "joiner", "ch-resume-z4", (wd) => {
+    applyFetched(wd, [1]);
+    // Native answers the second commit with a gap; its refetch fails.
+    wd.rejections.set(`mls-synth:${GROUP}:2`, epochGap(2, 2));
+    wd.failGapRefetchOnce(commitsGetFailed(2, "500"));
+    return handPrefetch(wd, {
+      currentEpoch: 2,
+      commits: [fetched(1), fetched(2)],
+    });
+  });
+  const early = statesBeforeLadder(world);
+  await startSession(t, w);
+  await run(t, 1_000, [w]);
+
+  assert.equal(world.gapRefetchFailure, null, "the refetch never ran");
+  assert.deepEqual(noResumeCauses(logs), ["catch_up_stopped"]);
+  const [detail] = noResumeLines(logs);
+  assert.equal(detail.result, "gap_refetch_failed");
+  assert.equal(detail.epoch, 2);
+  assert.equal(early.has("active"), false, "active on the resume path");
+  assert.ok(at(w.trace, `wiped:${GROUP}`) < at(w.trace, "call:callCreate"));
+  assert.equal(resumes(logs), 0);
+  assertNoPlaintext([w]);
+});
+
+test("(z5) MS2 item 1: a gap refetch failing under a TAIL commit — tail_failed (gap_refetch_failed), never active", async (t) => {
+  const logs = captureConsole(t);
+  const s = pendingSeat(t, "joiner", "ch-resume-z5");
+  await startSession(t, s.w);
+  const early = statesBeforeLadder(s.world);
+  await droppedBeforeAdoption(s.world, "env-z5-drop", 1, 1);
+  answerTail(s.world, 1, [fetched(1)], 1);
+  s.world.rejections.set(`mls-synth:${GROUP}:1`, epochGap(1, 1));
+  // Scripted as the tail's commit is processed, after the tail's own GET
+  // was answered: the gap refetch under that commit is the GET that fails.
+  s.world.beforeNextCall("processEnvelope", () =>
+    s.world.failGapRefetchOnce(commitsGetFailed(1, "500")),
+  );
+  s.handOver(handPrefetch(s.world));
+  await run(t, 1_000, [s.w]);
+
+  assert.equal(s.world.fetchCommitsAnswer, null, "the tail never asked");
+  assert.equal(s.world.gapRefetchFailure, null, "the refetch never ran");
+  assert.deepEqual(noResumeCauses(logs), ["tail_failed"]);
+  assert.equal(noResumeLines(logs)[0].reason, "gap_refetch_failed");
+  assert.equal(early.has("active"), false, "active on the resume path");
+  assert.ok(at(s.w.trace, `wiped:${GROUP}`) < at(s.w.trace, "call:callCreate"));
+  assert.equal(resumes(logs), 0);
+  assertNoPlaintext([s.w]);
+});
+
+test("(z6) MS2 item 2: a Welcome for the candidate adopted INSIDE the adopt window runs no Welcome currency check — the resume's own verdict alone takes the seat to e2ee", async (t) => {
+  const logs = captureConsole(t);
+  const s = pendingSeat(t, "joiner", "ch-resume-z6");
+  // As the adoption clears the grant (GROUP is live), a Welcome of GROUP
+  // lands, and the drain takes it before the catch-up takes the lock.
+  s.world.beforeNextCall("callClearDowngrade", () => {
+    s.world.outcomes.set("env-z6-welcome", {
+      group_id: GROUP,
+      kind: "welcome_joined",
+      epoch: 0,
+      removed_self: false,
+      removed: [],
+    });
+    deliver(s.world, {
+      id: "env-z6-welcome",
+      content_type: "mls_welcome",
+      group_id: GROUP,
+      epoch: 0,
+      ciphertext: "",
+    });
+  });
+  s.handOver(handPrefetch(s.world));
+  await startSession(t, s.w);
+  await run(t, 2_000, [s.w]);
+
+  const trace = s.w.trace;
+  // The Welcome was processed inside the window: after the adoption, and
+  // before the catch-up's native check.
+  const welcome = at(trace, "call:processEnvelope");
+  assert.ok(at(trace, "call:callClearDowngrade") < welcome);
+  assert.ok(welcome < at(trace, "call:callState"));
+  // A currency check is a commits GET, and the resume had none to make.
+  assert.equal(
+    trace.includes("call:mlsFetchCommits"),
+    false,
+    "a Welcome currency check ran inside the resume",
+  );
+  for (const level of ["info", "warn", "error"] as const) {
+    assert.deepEqual(lines(logs, level, "[mls] welcome currency"), []);
+  }
+  assert.equal(resumes(logs), 1);
+  assert.deepEqual(noResumeCauses(logs), []);
+  assert.deepEqual(ladderCalls(trace), []);
+  assert.equal(s.world.session.state(), "active");
+  assert.equal(s.world.session.callMode().kind, "e2ee");
+  assert.equal(s.world.publishing(), true);
+  assertNoPlaintext([s.w]);
+});
+
+test("(z7) MS2 item 3: a DS 404 on a gap refetch the drain runs inside the adopt window vetoes the resume — resecure_during_adopt, never active over the re-secure", async (t) => {
+  const logs = captureConsole(t);
+  const s = pendingSeat(t, "joiner", "ch-resume-z7");
+  const early = statesBeforeLadder(s.world);
+  s.world.beforeNextCall("callClearDowngrade", () => {
+    s.world.rejections.set("env-z7-gap", epochGap(1, 2));
+    s.world.failGapRefetchOnce(commitsGetFailed(1, "404"));
+    deliver(s.world, commitEnvelope("env-z7-gap", 2));
+  });
+  s.handOver(handPrefetch(s.world));
+  await startSession(t, s.w);
+  await run(t, 1_000, [s.w]);
+
+  assert.equal(
+    lines(logs, "warn", "[mls] gap refetch: not a member").length,
+    1,
+    "the 404 never reached the drain inside the window",
+  );
+  assert.equal(
+    lines(logs, "warn", "[mls] resume vetoed: re-secured during the adoption")
+      .length,
+    1,
+  );
+  assert.deepEqual(noResumeCauses(logs), ["resecure_during_adopt"]);
+  assert.equal(early.has("active"), false, "active over the re-secure");
+  assert.equal(resumes(logs), 0);
+  assertNoPlaintext([s.w]);
+});
+
+test("(z8) MS2 item 4: a catch-up synthetic answered `retry` is never re-queued — nothing of it is drained into the fallback's SAME group id, nor poison-acked", async (t) => {
+  const logs = captureConsole(t);
+  // Every envelope id native is asked about, in order, and every wipe.
+  const order: string[] = [];
+  class Spy extends Map<string, unknown> {
+    override has(id: string): boolean {
+      order.push(id);
+      return super.has(id);
+    }
+  }
+  const { world, w } = oneSeat(t, "joiner", "ch-resume-z8", (wd) => {
+    wd.rejections = new Spy(wd.rejections);
+    applyFetched(wd, [1]);
+    // Transient: `retry`, whose arm schedules a re-queue.
+    wd.rejections.set(`mls-synth:${GROUP}:2`, new Error("storage busy"));
+    return handPrefetch(wd, {
+      currentEpoch: 2,
+      commits: [fetched(1), fetched(2)],
+    });
+  });
+  tap(world.leaveCleanups, (groupId) => order.push(`wiped:${groupId}`));
+  const acked: string[] = [];
+  const ack = world.ds.ack.bind(world.ds);
+  world.ds.ack = (device, ids) => {
+    acked.push(...ids);
+    ack(device, ids);
+  };
+  await startSession(t, w);
+  await run(t, 6_000, [w]);
+
+  assert.deepEqual(noResumeCauses(logs), ["catch_up_stopped"]);
+  assert.equal(noResumeLines(logs)[0].result, "retry");
+  const wiped = order.indexOf(`wiped:${GROUP}`);
+  assert.ok(wiped >= 0, "the fallback never deleted the candidate");
+  assert.equal(world.session.groupId(), GROUP, "not the same group id");
+  assert.deepEqual(
+    order.slice(wiped).filter((id) => id.startsWith("mls-synth:")),
+    [],
+    "a catch-up synthetic was drained after the fallback",
+  );
+  assert.equal(acked.includes(`mls-synth:${GROUP}:2`), false, "poison-acked");
+  assertNoPlaintext([w]);
+});
+
+test("(z9) MS2 item 5, FAR-m2: a commit applied DURING the candidate's delete await raises the floor it is fenced at — its keys-changed after the re-entry is dropped, and the Welcome back's (the new incarnation's) installs", async (t) => {
+  const logs = captureConsole(t);
+  const s = pendingSeat(t, "joiner", "ch-resume-z9");
+  applyFetched(s.world, [1]);
+  s.world.rejections.set(`mls-synth:${GROUP}:2`, groupNotFound(GROUP));
+  const release = s.world.holdLeaveCleanup();
+  s.handOver(
+    handPrefetch(s.world, {
+      currentEpoch: 2,
+      commits: [fetched(1), fetched(2)],
+    }),
+  );
+  await startSession(t, s.w);
+  assert.deepEqual(noResumeCauses(logs), ["catch_up_stopped"]);
+  assert.ok(s.world.bridgeCalls.includes("callLeaveCleanup"), "no delete");
+  assert.equal(s.world.leaveCleanups.includes(GROUP), false, "not held");
+  assert.equal(s.world.session.groupId(), null);
+  // Native applies GROUP's commit at 2 while GROUP's delete is still running.
+  appliedCommit(s.world, "env-z9-late", 2);
+  await flush();
+  release();
+  await untilIntent(t, s.w);
+  assert.equal(s.world.session.groupId(), GROUP, "not the same group id");
+  await s.world.session.onLocalKeysChanged(GROUP, 2);
+  assert.deepEqual(staleKeysDropped(logs), [
+    { groupId: GROUP, epoch: 2, floor: 2 },
+  ]);
+  const mark = s.w.trace.length;
+  await welcomeBack(t, s.w, 3);
+  assert.equal(staleKeysDropped(logs).length, 1, "the Welcome's key dropped");
+  assert.ok(since(s.w, mark).includes("keys:3"), "never installed");
+  assertNoPlaintext([s.w]);
+});
+
+/**
+ * SELF and PEER up; PEER's page dies and THIRD joins meanwhile (an Add in
+ * PEER's mailbox). `more` seats stay out, for the spec to seat.
+ */
+async function oneMissed(t: TestContext, channel: string, more: Identity[]) {
+  const fleet = newFleet(t, [SELF, PEER, THIRD, ...more], channel);
+  const watches = watchFleet(fleet);
+  const peer = fleet.seat(PEER);
+  await joinSeat(t, fleet, fleet.seat(SELF), watches.values());
+  await joinSeat(t, fleet, peer, watches.values());
+  await run(t, 3_000, watches.values());
+  peer.pageDeath();
+  await joinSeat(t, fleet, fleet.seat(THIRD), watches.values());
+  const missed = fleet.ds.epoch;
+  assert.ok(
+    peer.mailbox.some((e) => e.epoch === missed),
+    "nothing missed",
+  );
+  return { fleet, watches, peer, missed };
+}
+
+/** Advance until `world` is active in e2ee on the DS's epoch (40 s bound). */
+async function untilCaughtUp(
+  t: TestContext,
+  fleet: Fleet,
+  world: World,
+  watches: Iterable<Watch>,
+): Promise<void> {
+  const list = [...watches];
+  for (let waited = 0; waited < 40_000; waited += 250) {
+    if (
+      world.session.state() === "active" &&
+      world.session.callMode().kind === "e2ee" &&
+      world.localEpoch === fleet.ds.epoch
+    ) {
+      return;
+    }
+    await run(t, 250, list);
+  }
+}
+
+test("(z10) MS2 item 5, FAR-m2: the NON-resume startup's #startupWipe fences the group it deletes — native's keys-changed for the Add it applied before the wipe is dropped after the ladder re-enters GROUP, and the seat never goes loud", async (t) => {
+  const logs = captureConsole(t);
+  const { fleet, watches, peer, missed } = await oneMissed(
+    t,
+    "ch-resume-z10",
+    [],
+  );
+  peer.boot(); // no prefetch: today's startup and its wipe, never a resume
+  // Once the ladder re-entered GROUP: native's keys-changed for the Add
+  // its drain applied as another group's, before the wipe.
+  peer.beforeNextCall("callJoinIntent", () => {
+    void peer.pushKeysChanged(missed);
+  });
+  void peer.session.start();
+  await flush();
+  await untilCaughtUp(t, fleet, peer, watches.values());
+
+  assert.ok(peer.leaveCleanups.includes(GROUP), "the wipe never deleted GROUP");
+  assert.deepEqual(staleKeysDropped(logs), [
+    { groupId: GROUP, epoch: missed, floor: missed },
+  ]);
+  assert.equal(peer.terminalLoud(), false, "loud after the re-entry");
+  assert.equal(peer.session.state(), "active");
+  assert.equal(peer.session.callMode().kind, "e2ee");
+  assert.equal(peer.localEpoch, fleet.ds.epoch);
+  assertNoPlaintext(watches.values());
+});
+
+test("(z11) MS2 item 5, FAR-m2: a commit applied DURING the #startupWipe delete await raises the floor (read live), so both old-incarnation pushes are dropped and the seat converges", async (t) => {
+  const logs = captureConsole(t);
+  const { fleet, watches, peer, missed } = await oneMissed(t, "ch-resume-z11", [
+    DAVE,
+  ]);
+  peer.boot();
+  let release: (() => void) | null = null;
+  peer.beforeNextCall("callLocalGroups", () => {
+    release = peer.holdLeaveCleanup();
+  });
+  peer.beforeNextCall("callJoinIntent", () => {
+    void peer.pushKeysChanged(missed);
+    void peer.pushKeysChanged(missed + 1);
+  });
+  void peer.session.start();
+  await flush();
+  for (let w = 0; w < 5_000 && release === null; w += 250) {
+    await run(t, 250, watches.values());
+  }
+  assert.ok(release, "the wipe never started");
+  // DAVE's Add reaches PEER, and native applies it, while the wipe's delete
+  // of GROUP is still running.
+  await joinSeat(t, fleet, fleet.seat(DAVE), watches.values());
+  assert.equal(fleet.ds.epoch, missed + 1, "DAVE's Add is not the next epoch");
+  (release as () => void)();
+  await untilCaughtUp(t, fleet, peer, watches.values());
+
+  assert.ok(peer.leaveCleanups.includes(GROUP), "the wipe never deleted GROUP");
+  assert.deepEqual(staleKeysDropped(logs), [
+    { groupId: GROUP, epoch: missed, floor: missed + 1 },
+    { groupId: GROUP, epoch: missed + 1, floor: missed + 1 },
+  ]);
+  assert.equal(peer.terminalLoud(), false, "loud after the re-entry");
+  assert.equal(peer.session.state(), "active");
+  assert.equal(peer.session.callMode().kind, "e2ee");
+  assert.equal(peer.localEpoch, fleet.ds.epoch);
+  assertNoPlaintext(watches.values());
+});
+
+test("(z12) MS2 item 5, FAR-m2: a group the join path's DISCARD deletes (a null prefetch) is fenced too; the Welcome back's key installs", async (t) => {
+  const logs = captureConsole(t);
+  const s = pendingSeat(t, "joiner", "ch-resume-z12");
+  await startSession(t, s.w);
+  appliedCommit(s.world, "env-z12-kept", 1);
+  await flush();
+  s.handOver(null);
+  await untilIntent(t, s.w);
+  assert.deepEqual(noResumeCauses(logs), ["prefetch_none"]);
+  assert.equal(s.world.session.groupId(), GROUP);
+  await s.world.session.onLocalKeysChanged(GROUP, 1);
+  assert.deepEqual(staleKeysDropped(logs), [
+    { groupId: GROUP, epoch: 1, floor: 1 },
+  ]);
+  const mark = s.w.trace.length;
+  await welcomeBack(t, s.w, 2);
+  assert.equal(staleKeysDropped(logs).length, 1, "the Welcome's key dropped");
+  assert.ok(since(s.w, mark).includes("keys:2"), "never installed");
+  assertNoPlaintext([s.w]);
+});
+
+test("(z13) MS2 item 5, FAR-m2: a fenced group's floor outlives the startup window — an old push landing after the establish returned is still dropped, and the new incarnation's installs", async (t) => {
+  const logs = captureConsole(t);
+  const s = pendingSeat(t, "joiner", "ch-resume-z13");
+  await startSession(t, s.w);
+  appliedCommit(s.world, "env-z13-kept", 1);
+  await flush();
+  s.handOver(null);
+  await untilIntent(t, s.w);
+  await s.world.welcome(2);
+  await run(t, 1, [s.w]);
+  // The establish returned (the window closed) before the old push landed.
+  assert.equal(s.world.session.state(), "active");
+  await s.world.session.onLocalKeysChanged(GROUP, 1);
+  assert.deepEqual(staleKeysDropped(logs), [
+    { groupId: GROUP, epoch: 1, floor: 1 },
+  ]);
+  const mark = s.w.trace.length;
+  await s.world.session.onLocalKeysChanged(GROUP, 2);
+  await run(t, 1_000, [s.w]);
+  assert.equal(staleKeysDropped(logs).length, 1, "the new push was dropped");
+  assert.ok(since(s.w, mark).includes("keys:2"), "never installed");
+  assert.equal(s.world.session.callMode().kind, "e2ee");
+  assertNoPlaintext([s.w]);
+});
+
+test("(z14) MS2 item 6, FAR-n1: a resume stamps `resumed` after `keysInstalled`; one that fails its install check never stamps it, so the fallback's timeline carries none", async (t) => {
+  const logs = captureConsole(t);
+  const ok = oneSeat(t, "joiner", "ch-resume-z14a", (wd) => handPrefetch(wd));
+  await startSession(t, ok.w);
+  await run(t, 2_000, [ok.w]);
+  assert.equal(resumes(logs), 1);
+  const [resumed, ...more] = joinTimelines(logs);
+  assert.deepEqual(more, [], "more than one join timeline");
+  assert.ok(at(resumed, "keysInstalled") < at(resumed, "resumed"));
+  assert.ok(at(resumed, "resumed") < at(resumed, "modeE2ee"));
+
+  const from = logs.info.mock.calls.length;
+  const failed = oneSeat(t, "joiner", "ch-resume-z14b", (wd) => {
+    wd.failLocalKeyOnce(new Error("InvalidKey: local key import failed"));
+    return handPrefetch(wd);
+  });
+  await startSession(t, failed.w);
+  assert.equal(failed.world.localKeyFailure, null, "the install never ran");
+  assert.deepEqual(noResumeCauses(logs, from), ["install_check_failed"]);
+  await welcomeBack(t, failed.w, 1);
+  const [fallback, ...others] = joinTimelines(logs, from);
+  assert.ok(fallback, "the fallback never logged a timeline");
+  assert.deepEqual(others, [], "more than one join timeline");
+  assert.ok(fallback.includes("welcomeAdopted"), JSON.stringify(fallback));
+  assert.equal(fallback.includes("resumed"), false, JSON.stringify(fallback));
+  assertNoPlaintext([ok.w, failed.w]);
 });

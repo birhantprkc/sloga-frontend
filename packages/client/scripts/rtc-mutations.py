@@ -2135,6 +2135,10 @@ MUTATIONS += [
         # `#toActive()` that now follows the currency check runs on every
         # honest Welcome join as well. Same defect, same one-line insertion.
         # Measured after the re-anchor: resecure 5b and 3 go red (2 of 23).
+        # Checked at the merge wave (2026-09-27): NOT moved. The merge took
+        # the re-anchor above; the line still occurs once, in the adopt
+        # block, and MS2's `#resumeAdopting` guard (below the currency
+        # record) does not reach it. Re-measured: resecure 3 and 5b (2 of 23).
         search="""      this.#joinedGeneration = this.#establishGeneration;
 """,
         replace="""      this.#joinedGeneration = this.#establishGeneration;
@@ -3681,16 +3685,24 @@ MUTATIONS += [
     ),
     Mutation(
         id="own-send-key-epoch-unchecked",
-        what="the caught-up install is judged on the install counter and the fence alone, not on OUR send key's epoch (LDA-M1): an install that left our send key on the older epoch still reads as installed, and the session goes green publishing under a key a removed member holds",
+        what="the caught-up install is judged on the install counter and the fence alone, not on OUR send key's epoch (LDA-M1, FA-B1): an install that left our send key on the older epoch still reads as installed, and the session — a late-drained Welcome's catch-up, or a resume — goes green publishing under a key a removed member holds",
         file=SESSION,
         # Measured 2026-09-26 (fix pass 1): killed by E2 alone (1 of 33).
+        # 🔴 FOLDED at the merge wave (2026-09-27). The rejoin-resume branch
+        # carried `resume-own-key-epoch-unchecked`, the same search (plus a
+        # final newline) and the same replace against its verbatim copy of
+        # `#installCaughtUpKeys`. The merge kept ONE body with two callers
+        # (`#confirmWelcomeCurrency` and the resume's `#catchUp`), so the
+        # two ids mutated one line; they are one entry now, pinned on both
+        # specs, and each spec was measured to kill it ON ITS OWN: drainfail
+        # E2 (1 of 33), resume (u) "FA-B1, LDA-M1" (1 of 63).
         search="""      this.#installEpoch === epoch &&
       this.#ownSendKeyEpoch === epoch
     );""",
         replace="""      this.#installEpoch === epoch
     );""",
-        specs=[DRAINFAIL_SPEC],
-        must_red=[DRAINFAIL_SPEC],
+        specs=[DRAINFAIL_SPEC, RESUME_SPEC],
+        must_red=[DRAINFAIL_SPEC, RESUME_SPEC],
     ),
     Mutation(
         id="currency-expired-flag-dropped",
@@ -4590,12 +4602,15 @@ MUTATIONS += [
         file=SESSION,
         search="""    if (prefetch === null || decision !== "resume") {""",
         replace="""    if (true) {""",
-        # Killed by 18 of the resume spec's 36 cases: every case that expects
-        # a resume ((a), (a′, i′), (b), (b′), (d)'s lag-11 half, (e′) moot,
-        # (f), (g), the (i′) re-keep and racing connects, (i″), (q)), every
-        # one whose setup resumes first ((h′), (m)), and the ones that assert
-        # the step-6 order against a candidate that now never reaches
-        # adoption ((e, e″), (e′, e″), (h), (t)).
+        # Killed by 41 of the resume spec's 63 cases (re-measured at the
+        # merge wave, 2026-09-27; 18 of 36 at wave 3). The wave-3 eighteen:
+        # every case that expects a resume ((a), (a′, i′), (b), (b′), (d)'s
+        # lag-11 half, (e′) moot, (f), (g), the (i′) re-keep and racing
+        # connects, (i″), (q)), every one whose setup resumes first ((h′),
+        # (m)), and the ones that assert the step-6 order against a candidate
+        # that now never reaches adoption ((e, e″), (e′, e″), (h), (t)). Since
+        # then: both (u), both (v), all seven (w), (x), (y), (z1)–(z9) and
+        # (z14), each of which drives a candidate through the adopt.
         specs=[RESUME_SPEC],
         must_red=[RESUME_SPEC],
     ),
@@ -5002,41 +5017,31 @@ MUTATIONS += [
         specs=[RESUME_SPEC],
         must_red=[RESUME_SPEC],
     ),
-    Mutation(
-        id="resume-own-key-epoch-unchecked",
-        what="the resume's install is judged on the install counter and the fence alone, not on OUR send key's epoch (FA-B1, the LDA-M1 shape): an install that took Add-grace and left our send key on the older epoch still reads as installed, and the resume goes green publishing under a key a removed member holds",
-        file=SESSION,
-        # 🔴 MERGE NOTE. `#installCaughtUpKeys` is copied verbatim from the
-        # late-drain branch (`fix/mls-late-drain-guard`), whose table carries
-        # `own-send-key-epoch-unchecked` with this same search string (less
-        # the final newline) and the same replace, pinned to its drain spec.
-        # Once both branches merge there is one body, and these two entries
-        # anchor the same bytes: fold them into ONE entry
-        # with both specs (`specs`/`must_red` = drain spec + `RESUME_SPEC`)
-        # rather than keep two ids mutating one line. Kept distinct here
-        # because this branch has no drain spec.
-        # Measured 2026-09-26: killed by (u) "FA-B1, LDA-M1" alone (1 of 49);
-        # the fix pass's own probes let it survive, which is why that case
-        # exists.
-        search="""      this.#installEpoch === epoch &&
-      this.#ownSendKeyEpoch === epoch
-    );
-""",
-        replace="""      this.#installEpoch === epoch
-    );
-""",
-        specs=[RESUME_SPEC],
-        must_red=[RESUME_SPEC],
-    ),
+    # `resume-own-key-epoch-unchecked` was here. FOLDED at the merge wave
+    # (2026-09-27) into the late-drain block's `own-send-key-epoch-unchecked`,
+    # which now pins BOTH `DRAINFAIL_SPEC` and `RESUME_SPEC`: after the merge
+    # there is one `#installCaughtUpKeys`, and the two entries mutated the
+    # same bytes with the same replace. The resume half of it — (u) "FA-B1,
+    # LDA-M1" kills it on its own — is recorded on that entry.
     Mutation(
         id="resume-install-fail-goes-active",
         what="a caught-up install that failed its checks is ignored and the resume goes active anyway, instead of falling back to the join ladder: green on a group whose frame key is missing or older than the confirmed epoch",
         file=SESSION,
         # Measured 2026-09-26: killed by 3 of 49: (u) "FA-B1, LDA-M1" and
         # both (v) install failures.
+        # Re-anchored at the merge wave (2026-09-27). The merge brought the
+        # late-drain branch's `#confirmWelcomeCurrency`, the second caller of
+        # the one `#installCaughtUpKeys`, and it opens its own check with the
+        # same `if (!installed) {` line, so the bare line matched TWICE. The
+        # search now takes the resume-only warn line that follows it. Same
+        # edit, same site. Re-measured: killed by 4 of 63: (u) "FA-B1,
+        # LDA-M1", both (v), and (z14) (a failed install never stamps
+        # `resumed`, which this mutant lets the resume reach).
         search="""      if (!installed) {
+        console.warn("[mls] resume: the caught-up keys did not install", {
 """,
         replace="""      if (!installed && false) {
+        console.warn("[mls] resume: the caught-up keys did not install", {
 """,
         specs=[RESUME_SPEC],
         must_red=[RESUME_SPEC],
@@ -5110,10 +5115,280 @@ MUTATIONS += [
         what="a keys-changed push of a deleted resume candidate's old incarnation, landing after the fallback re-entered the same group id, is acted on: `#installEpoch` was reset, so it passes the epoch check, reads frame keys from the deleted row, and the fallback's clean rejoin ends in re-securing and loud (pre-existing on the `catch_up_stopped` fallback; fenced by FAF-S2)",
         file=SESSION,
         # Measured 2026-09-26: killed by 3 of 49: (w) F1, F2 and F3.
-        search="""    if (fence !== null && fence.groupId === groupId && epoch <= fence.epoch) {
+        # Re-anchored at the merge wave (2026-09-27). MS2 item 5 (FAR-m2)
+        # turned `#staleKeysFence` from one `{ groupId, epoch }` record, its
+        # floor frozen when the delete began, into a Set of fenced group ids
+        # whose floor is read from `#startupAppliedEpochs` when the push
+        # lands, so the check is now `floor !== undefined && epoch <= floor`
+        # and the old line matches nothing. Same defect: the fence never
+        # drops a push. Re-measured: killed by 9 of 63: (w) F1, F2 and F3,
+        # (z1), and (z9)–(z13).
+        search="""    if (floor !== undefined && epoch <= floor) {
 """,
         replace="""    if (false) {
 """,
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+]
+
+
+# --- Rejoin resume, merge wave: MS2 items and FAR-m3 --------------------------
+#
+# The merge with main (the late-drain guard, `b1c39d6e`) put the resume and
+# the late drain in one session, and MS2 closed where they meet: a failed gap
+# refetch under a catch-up commit is a stop, never clean (item 1); a Welcome
+# adopted inside the resume's adopt window arms no currency check (item 2); a
+# re-secure raised by the drain inside that window vetoes the resume (item 3,
+# LDA-n3); the `retry` arm never re-queues a catch-up's synthetic (item 4, LD
+# note 8); the stale-keys fence reads its floor live and covers every startup
+# delete, `#startupWipe` included (item 5, FAR-m2); `resumed` is stamped only
+# once the resume stands (item 6, FAR-n1). FAR-m3 pinned three rules the resume
+# already had and no entry reached: the foreign-apply floor, the tail's lag
+# bound from the HELD epoch, and the tail's own-commit rule.
+#
+# Every entry is `must_red` on the resume spec, whose (z1)–(z14) cases were
+# written for these rules; each count below is measured, with the full suite
+# loaded, against the 63-case spec. Two PAIRS are equivalent today — the same
+# kill for the same reason — and both halves are kept because each guards a
+# different line (the flag's write and its read), so a second reader of either
+# flag cannot leave one of them unpinned: `resume-adopt-welcome-arms-currency`
+# / `resume-adopting-never-set` (z6), and `catch-up-synthetic-requeued` /
+# `resume-catching-up-never-set` (z8).
+#
+# 🔴 Two entries pin a CLASSIFICATION, not a fail-open:
+# `catch-up-refetch-failure-uncounted` and `resume-tail-refetch-reason-lost`.
+# Under either the resume still falls back (a rethrow ends it
+# `catch_up_threw`, a mislabel `tail_failed`/`not_applied`); what they break is
+# the cause the fallback's log line and `resumeJoinCause` report, which MS2
+# item 1 made part of the contract.
+
+MUTATIONS += [
+    # ---- FAR-m3: the three resume rules no entry reached --------------------
+    Mutation(
+        id="resume-foreign-apply-floor-unrecorded",
+        what="a commit of a startup group applied as ANOTHER group's (a post-GET commit drained before the adopt, or one native applied while the group's delete ran) is not recorded in `#startupAppliedEpochs` (FAR-m3): the fence floor misses that epoch, and after the fallback re-enters the same group id, native's keys-changed for it passes the fence and reads frame keys from the deleted row",
+        file=SESSION,
+        # Measured 2026-09-27: killed by 6 of 63: (z1) (the lag-0 foreign
+        # apply must fence at C+1) and (z9)–(z13) (every floor an apply
+        # raised during a delete).
+        search="""      if (foreign.kind === "processed") this.#noteStartupApplied(foreign);
+""",
+        replace="",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-tail-held-lag-unbounded",
+        what="the resume tail is held only to `lag >= 0` from native's epoch, not to `RESUME_MAX_LAG` from the HELD epoch (FAR-m3): a tail that carries the group past the lag the live session calls desync is applied, so a resume catches up further than the prefetch itself was allowed to",
+        file=SESSION,
+        # Measured 2026-09-27: killed by (z2) alone (1 of 63).
+        search="""    if (!(lag >= 0 && current - p.localEpoch < RESUME_MAX_LAG)) {
+""",
+        replace="""    if (!(lag >= 0)) {
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-tail-own-commit-applied",
+        what="a tail page carrying a commit of this device's own is applied (FAR-m3): the prefetch's own-commit rule does not hold for the tail, and the resume re-applies a commit native already staged as ours",
+        file=SESSION,
+        # Measured 2026-09-27: killed by (z3) alone (1 of 63).
+        search="""      return failed("own_commit", { from, current });
+""",
+        replace="",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- MS2 item 1: a failed gap refetch is not clean ----------------------
+    Mutation(
+        id="catch-up-refetch-failure-uncounted",
+        what="a gap refetch that failed under a resume catch-up commit is not counted, so `#consumeCatchUp` cannot tell it from any other throw and rethrows it: the resume ends `catch_up_threw` instead of `catch_up_stopped` / `tail_failed` (`gap_refetch_failed`) (MS2 item 1; fail-closed, the cause is what breaks)",
+        file=SESSION,
+        # Measured 2026-09-27: killed by (z4) and (z5) (2 of 63).
+        search="""      this.#gapRefetchFailures++;
+""",
+        replace="",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-tail-refetch-reason-lost",
+        what="the resume tail reports a failed gap refetch under one of its commits as `not_applied` (MS2 item 1; fail-closed, the reason is what breaks)",
+        file=SESSION,
+        # Measured 2026-09-27: killed by (z5) alone (1 of 63).
+        search="""          result === "gap_refetch_failed" ? result : "not_applied",
+""",
+        replace="""          "not_applied",
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- MS2 item 2: the resume's adopt arms no currency check --------------
+    Mutation(
+        id="resume-adopt-welcome-arms-currency",
+        what="a Welcome for the candidate adopted INSIDE the resume's adopt window records a Welcome currency check (MS2 item 2): `#pump` runs it beside the resume, and its `#toActive()` can go active on a verdict the resume has not reached",
+        file=SESSION,
+        # Measured 2026-09-27: killed by (z6) alone (1 of 63). Equivalent
+        # today to `resume-adopting-never-set` (the block note).
+        search="""      if (this.#resumeAdopting === outcome.group_id) {
+        this.#welcomeCurrency = null;
+      }
+""",
+        replace="",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-adopting-never-set",
+        what="`#resumeAdopting` is never set at the adopt, so the Welcome arm's guard never matches and a Welcome adopted inside the adopt window arms a currency check beside the resume (MS2 item 2)",
+        file=SESSION,
+        # Measured 2026-09-27: killed by (z6) alone (1 of 63). Equivalent
+        # today to `resume-adopt-welcome-arms-currency` (the block note).
+        search="""    this.#groupId = groupId;
+    this.#resumeAdopting = groupId;
+""",
+        replace="""    this.#groupId = groupId;
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- MS2 item 3: a re-secure inside the adopt window vetoes (LDA-n3) ----
+    Mutation(
+        id="resume-active-over-resecure",
+        what="a re-secure raised inside the adopt window (a DS 404 on a gap refetch the drain ran) no longer vetoes the resume — only a terminal session does — so it goes active over `resecuring`, and the fresh rejoin the 404 asked for, dropped by the single-flight, never runs: green on a group the DS may no longer list this device in (MS2 item 3, LDA-n3)",
+        file=SESSION,
+        # Measured 2026-09-27: killed by (z7) alone (1 of 63).
+        search="""    if (this.#state === "resecuring") {
+      console.warn("[mls] resume vetoed""",
+        replace="""    if (this.#terminal()) {
+      console.warn("[mls] resume vetoed""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- MS2 item 4: a catch-up synthetic is never re-queued (LD note 8) ----
+    Mutation(
+        id="catch-up-synthetic-requeued",
+        what="the drain's `retry` arm re-queues a resume catch-up's synthetic (LD note 8): the catch-up already stopped on it and fell back, possibly into the SAME group id, and the re-queued old commit drains into the new incarnation (MS2 item 4)",
+        file=SESSION,
+        # Measured 2026-09-27: killed by (z8) alone (1 of 63). Equivalent
+        # today to `resume-catching-up-never-set` (the block note).
+        search="""        if (!(this.#resumeCatchingUp && envelope.id.startsWith("mls-synth:")))
+          this.#scheduleRetry(envelope);
+""",
+        replace="""        this.#scheduleRetry(envelope);
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-catching-up-never-set",
+        what="`#resumeCatchingUp` is never set under `#catchUp`'s lock, so the `retry` arm's guard never recognises a catch-up's synthetic and re-queues it into the fallback (MS2 item 4)",
+        file=SESSION,
+        # Measured 2026-09-27: killed by (z8) alone (1 of 63). Equivalent
+        # today to `catch-up-synthetic-requeued` (the block note).
+        search="""    this.#resumeCatchingUp = true;
+""",
+        replace="",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- MS2 item 5 (FAR-m2): the stale-keys fence --------------------------
+    Mutation(
+        id="stale-fence-floor-frozen-at-delete",
+        what="a fenced group's applies never raise its floor, not even one the delete raced (the deleted incarnation's), so the floor stays where the fence found it and that apply's keys-changed passes the fence after the ladder re-enters the group id (MS2 item 5, FAR-m2: the floor is read live)",
+        file=SESSION,
+        # Measured 2026-09-27: killed by (z11) alone (1 of 63). Only
+        # `#startupWipe` fences a group BEFORE its delete is awaited; the
+        # resume fallback fences after the candidate's delete, so (z9)'s
+        # raced apply still counts under this mutant.
+        search="""    if (fenced && outcome.group_id === this.#groupId) return;
+""",
+        replace="""    if (fenced) return;
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="stale-fence-counts-new-incarnation",
+        what="once the ladder re-enters a fenced group id, the NEW incarnation's applies still raise the floor its own keys-changed is checked against, so the fence drops the new incarnation's legitimate pushes (MS2 item 5, FAR-m2: never drop a new incarnation's push)",
+        file=SESSION,
+        # Measured 2026-09-27: killed by 14 of 63 resume cases ((e, e″),
+        # (e′, e″), (h), (w) F1–F3, (z1)–(z3), (z9)–(z13)) and by the mailbox
+        # spec's W1 (1 of 13). Each pinned on its own.
+        search="""    if (fenced && outcome.group_id === this.#groupId) return;
+""",
+        replace="",
+        specs=[RESUME_SPEC, MAILBOX_SPEC],
+        must_red=[RESUME_SPEC, MAILBOX_SPEC],
+    ),
+    Mutation(
+        id="startup-wipe-unfenced",
+        what="the NON-resume startup's `#startupWipe` no longer fences the groups it deletes, so native's keys-changed for a commit the old incarnation applied, landing after the ladder re-enters the same group id, reads frame keys from the deleted row: re-securing, then loud (MS2 item 5, FAR-m2)",
+        file=SESSION,
+        # Measured 2026-09-27: killed by (z10) and (z11) (2 of 63).
+        search="""        // still raises the floor (`#noteStartupApplied`).
+        this.#staleKeysFence.add(groupId);
+""",
+        replace="""        // still raises the floor (`#noteStartupApplied`).
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-fallback-discard-unfenced",
+        what="the resume's fallback (`#joinWithoutResume`) fences nothing — neither the candidate it deleted nor the kept groups the discard deletes — so an old incarnation's in-flight keys-changed reaches the new one after the ladder re-enters the same group id (MS2 item 5, FAR-m2)",
+        file=SESSION,
+        # Measured 2026-09-27: killed by 7 of 63: (w) F1, F2 and F3, (z1),
+        # (z9), (z12) and (z13).
+        search="""    for (const groupId of this.#startupAppliedEpochs.keys()) {
+      this.#staleKeysFence.add(groupId);
+    }
+""",
+        replace="",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="stale-fence-floor-pruned-at-window",
+        what="the startup window's close clears a FENCED group's floor with every other entry, so an old push landing after the establish returned finds no floor and passes the fence (MS2 item 5, FAR-m2: a fenced floor outlives the window)",
+        file=SESSION,
+        # Measured 2026-09-27: killed by (z13) alone (1 of 63).
+        search="""          if (!this.#staleKeysFence.has(groupId)) {
+            this.#startupAppliedEpochs.delete(groupId);
+          }
+""",
+        replace="""          this.#startupAppliedEpochs.delete(groupId);
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- MS2 item 6 (FAR-n1): `resumed` only once the resume stands ---------
+    Mutation(
+        id="resume-stamped-before-install",
+        what="`resumed` is stamped before the caught-up keys install again (FAR-n1, the pre-fix order): a resume that fails its install check still leaves a `resumed` stamp on the fallback's timeline, and a resume's `resumed` time excludes the install",
+        file=SESSION,
+        # Both halves of the move: the stamp leaves `#startupResume` (after
+        # the install check and the veto) and returns ahead of the install in
+        # `#catchUp`. Measured 2026-09-27: killed by (a) (the stamp chain
+        # `keysInstalled < resumed`) and (z14) (2 of 63).
+        search="""    this.#joinTimeline?.stamp("resumed");
+    const epoch = outcome.epoch;
+""",
+        replace="""    const epoch = outcome.epoch;
+""",
+        also=[
+            (
+                """      this.#joinTimeline?.stamp("catchUpDone");
+      const installed = await this.#installCaughtUpKeys(groupId, confirmed);
+""",
+                """      this.#joinTimeline?.stamp("catchUpDone");
+      this.#joinTimeline?.stamp("resumed");
+      const installed = await this.#installCaughtUpKeys(groupId, confirmed);
+""",
+            ),
+        ],
         specs=[RESUME_SPEC],
         must_red=[RESUME_SPEC],
     ),
