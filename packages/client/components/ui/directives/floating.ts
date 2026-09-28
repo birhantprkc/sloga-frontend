@@ -186,6 +186,11 @@ export function floating(element: HTMLElement, accessor: Accessor<Props>) {
               ? tooltip.content
               : tooltip!.aria!;
 
+          // A showing tooltip renders the config it opened with. Swap in the
+          // new one so changed content updates while hovered, rather than on
+          // the next mouseenter.
+          if (show()?.tooltip) setShow({ tooltip });
+
           element.addEventListener("mouseenter", onMouseEnter);
           element.addEventListener("mouseleave", onMouseLeave);
           element.addEventListener("touchstart", onTouch);
