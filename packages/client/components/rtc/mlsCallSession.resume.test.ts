@@ -3654,3 +3654,219 @@ test("(z19) MWA-n2: the loud stop closes its adopt window too — a receiver-lag
   assert.equal(resumes(logs), 0);
   assertNoPlaintext([s.w]);
 });
+
+// ---- (z) The MFR-m1 fix pass: a latch beats a miss; the window always closes
+
+/**
+ * A resume vetoed loud over a miss (MFR-m1): one `loud_during_adopt` line
+ * naming the miss it overrode, still loud, the ladder never ran, never
+ * active or publishing. `states` holds the session's state at each bridge
+ * call since the seat started.
+ */
+function assertLoudOverMiss(
+  logs: Captured,
+  s: { world: World; w: Watch },
+  states: Set<string>,
+  miss: string,
+): void {
+  assert.deepEqual(noResumeCauses(logs), ["loud_during_adopt"]);
+  assert.equal(noResumeLines(logs)[0].miss, miss);
+  assert.ok(s.world.terminalLoud(), "the fallback's reset cleared the latch");
+  assert.deepEqual(ladderCalls(s.w.trace), [], "the ladder ran");
+  assert.equal(s.world.joinIntents(), 0);
+  assert.equal(states.has("active"), false, "active over the loud latch");
+  assert.notEqual(s.world.session.state(), "active");
+  assert.equal(s.world.publishing(), false);
+  assert.equal(resumes(logs), 0);
+  assertNoPlaintext([s.w]);
+}
+
+/** The session's state at each of `world`'s bridge calls from now on. */
+function statesAtCalls(world: World): Set<string> {
+  const states = new Set<string>();
+  tap(world.bridgeCalls, () => states.add(world.session.state()));
+  return states;
+}
+
+/** One loud terminal drop, the latch the case raises, fired. */
+function assertLatched(logs: Captured): void {
+  assert.equal(
+    lines(logs, "error", "[mls] loud terminal envelope drop").length,
+    1,
+    "the latch never fired",
+  );
+}
+
+test("(z20) MFR-m1: a loud latch raised inside the adopt window, then a catch-up miss — the latch wins: loud_during_adopt over catch_up_stopped, still loud, no ladder, nothing published", async (t) => {
+  const logs = captureConsole(t);
+  const s = pendingSeat(t, "joiner", "ch-resume-z20");
+  const states = statesAtCalls(s.world);
+  loudInAdoptWindow(s.world, "env-z20-loud");
+  s.handOver(stoppedCatchUp(s.world));
+  await startSession(t, s.w);
+  await run(t, 60_000, [s.w]);
+
+  assertLatched(logs);
+  assert.ok(
+    lines(logs, "warn", "[mls] resume catch-up stopped").length >= 1,
+    "the catch-up never missed",
+  );
+  assertLoudOverMiss(logs, s, states, "catch_up_stopped");
+});
+
+test("(z21) MFR-m1: a loud latch raised inside the adopt window, then a tail miss (own_commit) — loud_during_adopt over tail_failed, still loud, no ladder, nothing published", async (t) => {
+  const logs = captureConsole(t);
+  const s = pendingSeat(t, "joiner", "ch-resume-z21");
+  applyFetched(s.world, [1, 2]);
+  await startSession(t, s.w);
+  await droppedBeforeAdoption(s.world, "env-z21-drop", 1, 2);
+  answerTail(s.world, 2, [fetched(2, { committer: s.world.me })], 2);
+  const states = statesAtCalls(s.world);
+  loudInAdoptWindow(s.world, "env-z21-loud");
+  s.handOver(handPrefetch(s.world, { currentEpoch: 1, commits: [fetched(1)] }));
+  await run(t, 60_000, [s.w]);
+
+  assert.equal(s.world.fetchCommitsAnswer, null, "the tail never asked");
+  assertLatched(logs);
+  assertLoudOverMiss(logs, s, states, "tail_failed");
+});
+
+test("(z22) MFR-m1: a loud latch raised inside the adopt window, then an install miss (an import error) — loud_during_adopt over install_check_failed, still loud, no ladder, nothing published", async (t) => {
+  const logs = captureConsole(t);
+  const s = pendingSeat(t, "joiner", "ch-resume-z22");
+  s.world.failLocalKeyOnce(new Error("InvalidKey: local key import failed"));
+  const states = statesAtCalls(s.world);
+  loudInAdoptWindow(s.world, "env-z22-loud");
+  s.handOver(handPrefetch(s.world));
+  await startSession(t, s.w);
+  await run(t, 60_000, [s.w]);
+
+  assert.equal(s.world.localKeyFailure, null, "the install never ran");
+  assertLatched(logs);
+  assertLoudOverMiss(logs, s, states, "install_check_failed");
+});
+
+/**
+ * The one latch that does not veto is the install's own (`ownLatch`): no
+ * local frame key latches loud as the install fails, and the fallback's
+ * fresh join is that failure's recovery (as (v)). "Own" is by sequence: a
+ * latch standing BEFORE the install vetoes, though the install then raises
+ * the same kind of latch itself.
+ */
+test("(z23) MFR-m1: ownLatch is by sequence — a latch raised before the install, then the install's missing frame key, vetoes loud; the install's latch alone falls back and reaches e2ee", async (t) => {
+  const logs = captureConsole(t);
+  const s = pendingSeat(t, "joiner", "ch-resume-z23a");
+  s.world.failLocalKeyOnce(new MissingLocalFrameKeyError(GROUP, 0));
+  const states = statesAtCalls(s.world);
+  loudInAdoptWindow(s.world, "env-z23-loud");
+  s.handOver(handPrefetch(s.world));
+  await startSession(t, s.w);
+  await run(t, 60_000, [s.w]);
+
+  assert.equal(s.world.localKeyFailure, null, "the install never ran");
+  assertLatched(logs);
+  assertLoudOverMiss(logs, s, states, "install_check_failed");
+
+  const from = logs.info.mock.calls.length;
+  const own = pendingSeat(t, "joiner", "ch-resume-z23b");
+  own.world.failLocalKeyOnce(new MissingLocalFrameKeyError(GROUP, 0));
+  own.handOver(handPrefetch(own.world));
+  await startSession(t, own.w);
+  assert.equal(own.world.localKeyFailure, null, "the install never ran");
+  assert.deepEqual(noResumeCauses(logs, from), ["install_check_failed"]);
+  await welcomeBack(t, own.w, 1);
+  assert.equal(own.world.terminalLoud(), false, "the install's latch stuck");
+  assert.equal(resumes(logs, from), 0);
+  assertNoPlaintext([own.w]);
+});
+
+test("(z24) MFR-m1: a loud latch standing when the downgrade grant clear fails — loud_during_adopt over grant_clear_failed, still loud, no ladder, nothing published", async (t) => {
+  const logs = captureConsole(t);
+  const s = pendingSeat(t, "joiner", "ch-resume-z24");
+  const states = statesAtCalls(s.world);
+  await startSession(t, s.w);
+  // Latched before the clear rejects: a drop inside the window lands only
+  // after the rejection is read, so it cannot express this exit.
+  s.world.rejections.set("env-z24-loud", {
+    type: "mls_welcome_context_mismatch",
+  });
+  deliver(s.world, {
+    id: "env-z24-loud",
+    content_type: "mls_welcome",
+    group_id: GROUP,
+    epoch: 0,
+    ciphertext: "",
+  });
+  await flush();
+  assert.ok(s.world.terminalLoud(), "the latch never fired before the clear");
+  // One-shot: the clear's stub reads `callState`, so the clear rejects.
+  let armed = true;
+  const real = s.world.callState.bind(s.world);
+  s.world.callState = () => {
+    if (!armed) return real();
+    armed = false;
+    throw new Error("z24: grant clear failed");
+  };
+  s.handOver(handPrefetch(s.world));
+  await run(t, 60_000, [s.w]);
+
+  assert.equal(armed, false, "the grant clear never ran");
+  assert.equal(
+    lines(logs, "warn", "[mls] resume: downgrade grant clear failed").length,
+    1,
+  );
+  assertLatched(logs);
+  assertLoudOverMiss(logs, s, states, "grant_clear_failed");
+});
+
+test("(z25) MFR-m1, unchanged: a catch-up miss with NO latch still falls back — catch_up_stopped, the ladder runs and the seat reaches e2ee", async (t) => {
+  const logs = captureConsole(t);
+  const s = pendingSeat(t, "joiner", "ch-resume-z25");
+  s.handOver(stoppedCatchUp(s.world));
+  await startSession(t, s.w);
+  assert.deepEqual(noResumeCauses(logs), ["catch_up_stopped"]);
+  await welcomeBack(t, s.w, 2);
+  assert.ok(s.world.joinIntents() > 0, "the fallback ladder sent no intent");
+  assert.equal(s.world.terminalLoud(), false);
+  assert.equal(resumes(logs), 0);
+  assertNoPlaintext([s.w]);
+});
+
+/**
+ * MFR-n2: a throw out of the adopt window. The `[mls] startup establish: no
+ * resume` line throws once; `#resumeStopped` writes it BEFORE its own flag
+ * reset, so only the `finally` around the window closes it on this exit.
+ */
+test("(z26) MFR-n2: a throw out of the adopt window still closes it — a receiver-lag rejoin re-enters GROUP, and its Welcome back is checked current", async (t) => {
+  const logs = captureConsole(t);
+  let armed = true;
+  logs.info.mock.mockImplementation((...args: unknown[]) => {
+    const line = String(args[0]);
+    if (armed && line.startsWith("[mls] startup establish: no resume")) {
+      armed = false;
+      throw new Error("z26 injected throw");
+    }
+  });
+  const s = pendingSeat(t, "joiner", "ch-resume-z26");
+  loudInAdoptWindow(s.world, "env-z26-loud");
+  s.handOver(handPrefetch(s.world));
+  await startSession(t, s.w);
+  await run(t, 1_000, [s.w]);
+  assert.equal(armed, false, "the throw never fired");
+  assert.ok(
+    lines(logs, "error", "[mls] loud failure").length >= 1,
+    "the throw never reached the group action's catch",
+  );
+  const mark = s.w.trace.length;
+
+  await s.world.receiverLag();
+  await welcomeBack(t, s.w, 14);
+  const trace = since(s.w, mark);
+  assert.ok(at(trace, "call:callJoinIntent") >= 0, "no rejoin intent");
+  assert.equal(
+    lines(logs, "info", "[mls] welcome confirmed current").length,
+    1,
+    "the Welcome back ran no currency check: the adopt window stayed open",
+  );
+  assertNoPlaintext([s.w]);
+});

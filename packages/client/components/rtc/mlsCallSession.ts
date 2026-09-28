@@ -1196,6 +1196,13 @@ type ResumeMissCause =
 type ResumeMiss = {
   cause: ResumeMissCause;
   detail?: Record<string, string | number | boolean | null>;
+  /**
+   * The loud latch was first raised by this miss's own work: the resume's
+   * key install (`#catchUp`), e.g. a removed leaf's missing frame key
+   * (`#onRotationError`). That latch is the abandoned candidate's, so the
+   * fallback's fresh join may clear it; every other latch vetoes (MFR-m1).
+   */
+  ownLatch?: boolean;
 };
 
 /**
@@ -2730,12 +2737,42 @@ export class MlsCallSession {
     this.#groupId = groupId;
     this.#resumeAdopting = groupId;
     try {
+      return await this.#resumeAdopt(generation, prefetch);
+    } finally {
+      // MFR-n2: every exit closes the adopt window, a throw included. The
+      // exits keep their own resets, which run first; a throw skips them.
+      this.#resumeAdopting = null;
+    }
+  }
+
+  /**
+   * The adopt window of `#startupResume` (steps 2–6 from the adoption on):
+   * `#resumeAdopting` names the candidate throughout, and the caller's
+   * `finally` clears it on every exit (MFR-n2).
+   *
+   * MFR-m1: a loud verdict raised inside the window wins over every miss.
+   * Each miss out of it (the grant clear, the catch-up, its tail, the
+   * install check) asks `#loudVeto` first and falls back only when it
+   * declines, because the fallback's reset would clear the latch. The one
+   * latch that does not veto is a miss's own (`ResumeMiss.ownLatch`): the
+   * resume's key install raising it is that install failing, and the
+   * fallback's fresh join is its recovery. The install runs under the
+   * catch-up's lock, so no envelope's verdict can land inside it.
+   */
+  async #resumeAdopt(
+    generation: number,
+    prefetch: SessionResumePrefetch,
+  ): Promise<"resumed" | "join" | "stop"> {
+    const groupId = prefetch.groupId;
+    try {
       await this.#deps.bridge.callClearDowngrade(groupId);
     } catch (error) {
       console.warn("[mls] resume: downgrade grant clear failed", error);
-      return this.#noResume(generation, groupId, {
-        cause: "grant_clear_failed",
-      });
+      const miss: ResumeMiss = { cause: "grant_clear_failed" };
+      return (
+        this.#loudVeto(groupId, miss) ??
+        this.#noResume(generation, groupId, miss)
+      );
     }
     if (this.#terminal() || generation !== this.#establishGeneration) {
       return this.#resumeStopped(groupId);
@@ -2746,25 +2783,12 @@ export class MlsCallSession {
       return this.#resumeStopped(groupId);
     }
     if ("cause" in outcome) {
-      return this.#noResume(generation, groupId, outcome);
+      const vetoed = outcome.ownLatch ? null : this.#loudVeto(groupId, outcome);
+      return vetoed ?? this.#noResume(generation, groupId, outcome);
     }
-    // MWA-n1: a loud verdict raised inside the window, `failed` (`#onLoud`)
-    // or any latch (`#latchLoud`), vetoes too, and ahead of the re-secure
-    // check below. It stops instead of falling back: `#noResume`'s fallback
-    // resets the group (`#resetGroupBuffers`), and that reset clears the
-    // latch. So the session stays where the verdict put it, loud with the
-    // gate held, and never `#toActive`. The candidate stays adopted but not
-    // joined, so a close deletes it.
-    if (this.#state === "failed" || this.#loudLatched) {
-      console.warn("[mls] resume vetoed: went loud during the adoption", {
-        groupId,
-        state: this.#state,
-      });
-      return this.#resumeStopped(groupId, {
-        cause: "loud_during_adopt",
-        detail: { state: this.#state },
-      });
-    }
+    // MWA-n1: a clean catch-up is vetoed too, ahead of the re-secure check.
+    const vetoed = this.#loudVeto(groupId, null);
+    if (vetoed !== null) return vetoed;
     // LDA-n3: the drain shares this window. A DS 404 on a gap refetch of
     // the adopted group re-secures the session and asks for a fresh rejoin
     // (`#resecureAndRejoin`), which the single-flight drops while this
@@ -2798,6 +2822,26 @@ export class MlsCallSession {
       epoch,
     });
     return "resumed";
+  }
+
+  /**
+   * MWA-n1, MFR-m1: a loud verdict raised inside the adopt window, `failed`
+   * (`#onLoud`) or any latch (`#latchLoud`), vetoes the resume, whether the
+   * catch-up was clean or `miss` names why it was not. It stops instead of
+   * falling back: `#noResume`'s fallback resets the group
+   * (`#resetGroupBuffers`), and that reset clears the latch. So the session
+   * stays where the verdict put it, loud with the gate held, and never
+   * `#toActive`. The candidate stays adopted but not joined, so a close
+   * deletes it. Null when nothing is loud: the caller goes on.
+   */
+  #loudVeto(groupId: string, miss: ResumeMiss | null): "stop" | null {
+    if (this.#state !== "failed" && !this.#loudLatched) return null;
+    const detail = { state: this.#state, miss: miss?.cause ?? null };
+    console.warn("[mls] resume vetoed: went loud during the adoption", {
+      groupId,
+      ...detail,
+    });
+    return this.#resumeStopped(groupId, { cause: "loud_during_adopt", detail });
   }
 
   /**
@@ -2986,6 +3030,7 @@ export class MlsCallSession {
       }
       if (stale()) return stopped;
       this.#joinTimeline?.stamp("catchUpDone");
+      const latchedBefore = this.#loudLatched;
       const installed = await this.#installCaughtUpKeys(groupId, confirmed);
       if (stale()) return stopped;
       if (!installed) {
@@ -3002,6 +3047,7 @@ export class MlsCallSession {
             installEpoch: this.#installEpoch,
             ownSendKeyEpoch: this.#ownSendKeyEpoch,
           },
+          ownLatch: !latchedBefore && this.#loudLatched,
         };
       }
       return { epoch: confirmed };

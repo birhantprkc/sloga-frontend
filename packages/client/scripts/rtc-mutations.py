@@ -756,6 +756,26 @@ def apply(mutation: Mutation) -> str:
                 f"MUTATION {mutation.id}: search string is ambiguous "
                 f"({count} matches) in {mutation.file} — refusing to guess."
             )
+        # 🔴 MFR-n3 (2026-09-27): every search begins at the START of a line.
+        # "Exactly once" is not enough on its own: a search written for a line
+        # at one indentation also matches, once, as the tail of a line nested
+        # one level deeper, and then mutates a substring of a line it does not
+        # name. Measured twice on this branch before it was a rule here: the
+        # merge fix pass found `late-welcome-resets-latch` inserting a
+        # mis-indented line and `repause-order-inverted` matching an 8-space
+        # search inside a 10-space line, both through a check that lived
+        # only in a scratch script. A search that needs only part of a line
+        # carries the whole line's leading text instead.
+        at = mutated.index(search)
+        if at > 0 and mutated[at - 1] != "\n":
+            line = mutated.count("\n", 0, at) + 1
+            raise SystemExit(
+                f"MUTATION {mutation.id}: search string starts mid-line "
+                f"(line {line} of {mutation.file}, column "
+                f"{at - mutated.rfind(chr(10), 0, at)}) — anchor it at the "
+                f"start of its line; refusing to mutate a substring.\n"
+                f"  looked for: {search!r}"
+            )
         mutated = mutated.replace(search, replace)
     path.write_text(mutated, encoding="utf-8")
     return original
@@ -3898,8 +3918,15 @@ MUTATIONS += [
         id="wipe-token-dep-ignored",
         what="the session spends the module-level startup-wipe token instead of its page's own, so a reloaded page shares one Set with every other session and skips the wipe its fresh page owes",
         file=SESSION,
-        search="""const tokens = this.#deps.startupWipeTokens ?? startupWipedChannels;""",
-        replace="""const tokens = startupWipedChannels;""",
+        # Re-anchored 2026-09-27 (MFR-m1 fix pass, MRG): the search now
+        # carries its line's indentation, the one entry the start-of-line
+        # rule in `apply` refused. Same line, same edit; re-measured killed
+        # by the same 2 of 31 fleet cases ("each page has its own
+        # startup-wipe token", "no lockout").
+        search="""    const tokens = this.#deps.startupWipeTokens ?? startupWipedChannels;
+""",
+        replace="""    const tokens = startupWipedChannels;
+""",
         specs=[FLEET_SPEC],
         must_red=[FLEET_SPEC],
     ),
@@ -4831,9 +4858,11 @@ MUTATIONS += [
       await this.#deps.bridge.callClearDowngrade(groupId);
     } catch (error) {
       console.warn("[mls] resume: downgrade grant clear failed", error);
-      return this.#noResume(generation, groupId, {
-        cause: "grant_clear_failed",
-      });
+      const miss: ResumeMiss = { cause: "grant_clear_failed" };
+      return (
+        this.#loudVeto(groupId, miss) ??
+        this.#noResume(generation, groupId, miss)
+      );
     }
 """,
         replace="",
@@ -4845,6 +4874,12 @@ MUTATIONS += [
         # same join path. Only the catch's return changed; the whole
         # try/catch is still dropped, so the adopt still skips the clear.
         # Re-measured at the re-anchor: killed by (a) and (q), 2 of 49.
+        # Re-anchored 2026-09-27 (MFR-m1 fix pass, MRG): the catch now asks
+        # `#loudVeto` before `#noResume`, and the try/catch moved into
+        # `#resumeAdopt` at the same indentation. The whole try/catch is
+        # still dropped. Re-measured: killed by 14 of 75, (a), (q), (z6),
+        # (z7), (z15)–(z17), (z19)–(z24) and (z26): the cases that drive
+        # their verdict from inside the clear lose that await with it.
         specs=[RESUME_SPEC],
         must_red=[RESUME_SPEC],
     ),
@@ -5432,6 +5467,11 @@ MUTATIONS += [
         # the install check and the veto) and returns ahead of the install in
         # `#catchUp`. Measured 2026-09-27: killed by (a) (the stamp chain
         # `keysInstalled < resumed`) and (z14) (2 of 63).
+        # Re-anchored 2026-09-27 (MFR-m1 fix pass, MRG): MFR-m1 put the
+        # `latchedBefore` read (`ownLatch`) between the `catchUpDone` stamp
+        # and the install, so the second edit carries that line and still
+        # stamps `resumed` right after `catchUpDone`, ahead of the install.
+        # Re-measured: killed by (a) and (z14), 2 of 75.
         search="""    this.#joinTimeline?.stamp("resumed");
     const epoch = outcome.epoch;
 """,
@@ -5440,11 +5480,11 @@ MUTATIONS += [
         also=[
             (
                 """      this.#joinTimeline?.stamp("catchUpDone");
-      const installed = await this.#installCaughtUpKeys(groupId, confirmed);
+      const latchedBefore = this.#loudLatched;
 """,
                 """      this.#joinTimeline?.stamp("catchUpDone");
       this.#joinTimeline?.stamp("resumed");
-      const installed = await this.#installCaughtUpKeys(groupId, confirmed);
+      const latchedBefore = this.#loudLatched;
 """,
             ),
         ],
@@ -5480,7 +5520,27 @@ MUTATIONS += [
 # green in every session spec. It cannot redden: the only writer of `failed`
 # is `#onLoud`, which latches in the same step, so inside the adopt window
 # `failed` never comes without the latch. The term stays as defence against
-# a future writer of `failed` that does not latch.
+# a future writer of `failed` that does not latch. Re-measured 2026-09-27
+# (MFR-m1 fix pass, MRG) on the veto's new home, `#loudVeto`'s
+# `if (!this.#loudLatched) return null;`: green in all 12 session specs.
+#
+# 🔴 THREE MORE KNOWN NON-ENTRIES since the MFR-m1 fix pass (MFR-n2):
+# `resume-success-keeps-adopt-window`, `resume-fallback-keeps-adopt-window`
+# and `resume-stop-keeps-adopt-window`, each dropping one of the three resets
+# listed above. Retired, not lost: `#startupResume` now runs the whole window
+# (`#resumeAdopt`) inside a `try/finally` that clears `#resumeAdopting` on
+# every exit, so each dropped reset is re-done by the `finally` before
+# `#startupResume` returns. Measured 2026-09-27 against the 75-case resume
+# spec and the 11 other session specs: all three green everywhere. The
+# success and stop resets are followed only by synchronous code, then the
+# `await`'s own resumption into the `finally`. The fallback's reset leaves
+# the flag set for longer, across
+# `#joinWithoutResume`'s bounded delete of that same candidate; the ladder's
+# create, intent and Welcome back all run in `#establishWithGeneration`
+# after `#startupResume` has returned, so none of them sees it. What pins
+# the window closing now is the `finally` itself:
+# `resume-adopt-window-finally-reset-dropped` below. The three resets stay in
+# the session as the exits' own bookkeeping; the `finally` is the guarantee.
 
 MUTATIONS += [
     # ---- MWA-m1: an adopt-window Welcome leaves nothing for the ladder ------
@@ -5534,9 +5594,14 @@ MUTATIONS += [
         # Measured 2026-09-27 (merge fix pass): killed by (z17) and (z19) (2
         # of 68). Its twin on the `failed` term is the non-entry in the
         # block note.
-        search="""    if (this.#state === "failed" || this.#loudLatched) {
+        # Re-anchored 2026-09-27 (MFR-m1 fix pass, MRG): the veto moved into
+        # `#loudVeto` as an early `return null`, so the mutant drops the
+        # latch term there. Same meaning, and wider reach, since every miss
+        # out of the window now asks the same veto. Re-measured: killed by 8
+        # of 75, (z17), (z19)–(z24) and (z26).
+        search="""    if (this.#state !== "failed" && !this.#loudLatched) return null;
 """,
-        replace="""    if (this.#state === "failed") {
+        replace="""    if (this.#state !== "failed") return null;
 """,
         specs=[RESUME_SPEC],
         must_red=[RESUME_SPEC],
@@ -5548,59 +5613,121 @@ MUTATIONS += [
         # Measured 2026-09-27 (merge fix pass): killed by (z17) and (z19) (2
         # of 68). The cause stays `loud_during_adopt`, so only the path is
         # mutated, not the log line.
-        search="""      return this.#resumeStopped(groupId, {
-        cause: "loud_during_adopt",
+        # Re-anchored 2026-09-27 (MFR-m1 fix pass, MRG): the stop is now
+        # `#loudVeto`'s one return. `#loudVeto` has no `generation`, so the
+        # mutant passes `#establishGeneration`, which is the resume's own
+        # while the veto can run (a superseded resume stops before it). The
+        # promise it returns is non-null, so every caller takes it as the
+        # veto's answer and awaits the fallback. Re-measured: killed by 7 of
+        # 75, (z17) and (z19)–(z24).
+        search="""    return this.#resumeStopped(groupId, { cause: "loud_during_adopt", detail });
 """,
-        replace="""      return this.#noResume(generation, groupId, {
-        cause: "loud_during_adopt",
-""",
-        specs=[RESUME_SPEC],
-        must_red=[RESUME_SPEC],
-    ),
-    # ---- MWA-n2: every way out of the resume closes the adopt window -------
-    Mutation(
-        id="resume-success-keeps-adopt-window",
-        what="a resume that went active leaves `#resumeAdopting` set (MWA-n2): its adopt window never closes, so a later Welcome of the same group (a dead page's intent served after the resume) is read as an adopt-window Welcome and runs no currency check",
-        file=SESSION,
-        # Measured 2026-09-27 (merge fix pass): killed by (h′) and (z18) (2
-        # of 68). The audit found this reset pinned only incidentally (1 of
-        # 63); (z18) now pins it directly.
-        search="""    this.#resumeForeignDrops.clear();
-    this.#resumeAdopting = null;
-    this.#touchResumeRecord(groupId, epoch);
-""",
-        replace="""    this.#resumeForeignDrops.clear();
-    this.#touchResumeRecord(groupId, epoch);
+        replace="""    return this.#noResume(this.#establishGeneration, groupId, {
+      cause: "loud_during_adopt",
+      detail,
+    }) as never;
 """,
         specs=[RESUME_SPEC],
         must_red=[RESUME_SPEC],
     ),
+]
+
+
+# --- Rejoin resume, MFR-m1 fix pass: a loud latch wins over a miss ----------
+#
+# The merge-fix re-audit (MFR-m1) found the loud veto consulted only after a
+# CLEAN catch-up: a latch raised inside the adopt window followed by a
+# catch-up, tail or install miss took `#noResume`, whose fallback reset
+# CLEARS the latch, so a hostile-DS signal went red to amber and the ladder
+# ran over it. Now every miss out of the window (the grant clear, the
+# catch-up, its tail, the install check) asks `#loudVeto` first, except a
+# latch the miss raised itself: `ResumeMiss.ownLatch`, set when the resume's
+# own key install first raises the latch (a missing local frame key, spec
+# (v)), which the fallback's fresh join is the recovery for. MFR-n2 put the
+# window in a `try/finally`, so a throw out of it closes it too; that retired
+# the three per-exit reset mutants (the previous block's note).
+#
+# Every entry is `must_red` on the resume spec, whose (z20)–(z26) were
+# written for these rules ((z25), a miss with no latch still falls back,
+# passes on the pre-fix session by design and is pinned by the older
+# fallback entries). Each count is measured, with the full suite loaded,
+# against the 75-case spec.
+
+MUTATIONS += [
+    # ---- MFR-m1: the loud veto runs before any miss's fallback -------------
     Mutation(
-        id="resume-fallback-keeps-adopt-window",
-        what="a resume that falls back (`#noResume`) leaves `#resumeAdopting` set (MWA-n2): the fallback's own Welcome back into the same group id is read as an adopt-window Welcome, so it writes no `#joinedGeneration` and runs no currency check, and the ladder never proves its join",
+        id="resume-miss-falls-back-over-loud-latch",
+        what="a catch-up, tail or install miss out of the adopt window falls back without asking the loud veto (MFR-m1, the pre-fix precedence): the fallback's reset clears a latch raised inside the window, so the seat goes red to amber and the ladder runs over a hostile-DS signal",
         file=SESSION,
-        # Measured 2026-09-27 (merge fix pass): killed by 17 of 68: (e, e″),
-        # (e′, e″), (h), both (v), both (w) tail failures, (w) F1–F3, (x),
-        # (z1)–(z3), (z9), (z14) and (z16).
-        search="""    this.#resumeAdopting = null;
-    return this.#joinWithoutResume(generation, candidate);
+        # Measured 2026-09-27 (MFR-m1 fix pass, MRG): killed by (z20),
+        # (z21), (z22) and (z23), 4 of 75.
+        search="""      const vetoed = outcome.ownLatch ? null : this.#loudVeto(groupId, outcome);
+      return vetoed ?? this.#noResume(generation, groupId, outcome);
 """,
-        replace="""    return this.#joinWithoutResume(generation, candidate);
+        replace="""      return this.#noResume(generation, groupId, outcome);
 """,
         specs=[RESUME_SPEC],
         must_red=[RESUME_SPEC],
     ),
     Mutation(
-        id="resume-stop-keeps-adopt-window",
-        what="a resume that stops (`#resumeStopped`: superseded, or `loud_during_adopt`) leaves `#resumeAdopting` set (MWA-n2): a later rejoin into the same group id has its Welcome back read as an adopt-window Welcome, never checked current, and it never reaches e2ee",
+        id="resume-grant-clear-miss-falls-back-over-loud-latch",
+        what="a failed downgrade-grant clear falls back without asking the loud veto (MFR-m1): a latch standing when the clear fails is cleared by the fallback's reset instead of stopping loud",
         file=SESSION,
-        # Measured 2026-09-27 (merge fix pass): killed by (z19) alone (1 of
-        # 68). Unreachable before MWA-n1 gave `#resumeStopped` its
-        # `loud_during_adopt` caller; (z19) reaches it through that stop.
-        search="""    this.#resumeAdopting = null;
-    return "stop";
+        # Measured 2026-09-27 (MFR-m1 fix pass, MRG): killed by (z24) alone,
+        # 1 of 75. (z24)'s latch fires just before the adoption, so it pins
+        # the grant-clear path's precedence, not a latch raised mid-clear.
+        search="""      return (
+        this.#loudVeto(groupId, miss) ??
+        this.#noResume(generation, groupId, miss)
+      );
 """,
-        replace="""    return "stop";
+        replace="""      return this.#noResume(generation, groupId, miss);
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- MFR-m1: only the install's own latch may fall back ----------------
+    Mutation(
+        id="resume-own-latch-vetoes",
+        what="`ownLatch` is ignored, so the latch the resume's own key install raises (a missing local frame key) vetoes too: the seat stops loud where the fallback's fresh join was its recovery, a permanent red for a local fault",
+        file=SESSION,
+        # Measured 2026-09-27 (MFR-m1 fix pass, MRG): killed by (v) (the
+        # install's missing frame key) and (z23) (its second half: the
+        # install's latch alone falls back and reaches e2ee), 2 of 75.
+        search="""      const vetoed = outcome.ownLatch ? null : this.#loudVeto(groupId, outcome);
+""",
+        replace="""      const vetoed = this.#loudVeto(groupId, outcome);
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-own-latch-claims-any-latch",
+        what="`ownLatch` is set by any latch standing after the install, not only one the install raised: a latch raised inside the window before the install, then an install miss, falls back and the reset clears it (MFR-m1 through the exception)",
+        file=SESSION,
+        # Measured 2026-09-27 (MFR-m1 fix pass, MRG): killed by (z22) and
+        # (z23), 2 of 75.
+        search="""          ownLatch: !latchedBefore && this.#loudLatched,
+""",
+        replace="""          ownLatch: this.#loudLatched,
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- MFR-n2: every exit, a throw included, closes the adopt window -----
+    Mutation(
+        id="resume-adopt-window-finally-reset-dropped",
+        what="the adopt window's `finally` no longer clears `#resumeAdopting` (MFR-n2): a throw out of the window skips every exit's own reset, so a later Welcome back into the same group id is read as an adopt-window Welcome and never checked current",
+        file=SESSION,
+        # Measured 2026-09-27 (MFR-m1 fix pass, MRG): killed by (z26) alone,
+        # 1 of 75. (z26) reddens inside its `welcomeBack` step (the seat is
+        # `resecuring`), before its named assertion; the count is the same.
+        search="""      // exits keep their own resets, which run first; a throw skips them.
+      this.#resumeAdopting = null;
+    }
+""",
+        replace="""      // exits keep their own resets, which run first; a throw skips them.
+    }
 """,
         specs=[RESUME_SPEC],
         must_red=[RESUME_SPEC],
