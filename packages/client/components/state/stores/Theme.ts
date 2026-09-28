@@ -228,12 +228,18 @@ export class Theme extends AbstractStore<"theme", TypeTheme> {
     }
 
     // Anchored, unlike the m3 check below: this one was never loose, so there
-    // is no stored value to grandfather.
+    // is no stored value to grandfather. Stored as six-digit hex, the only
+    // form `<input type="color">` accepts (anything else opens it at black);
+    // eight digits are refused because the scheme generator reads them as
+    // AARRGGBB, so an opaque #RRGGBBFF would come out a different colour.
     if (
       typeof input.slogaAccent === "string" &&
-      RAIL_ACCENT_PATTERN.test(input.slogaAccent)
+      /^#(?:[0-9a-fA-F]{3}){1,2}$/.test(input.slogaAccent)
     ) {
-      data.slogaAccent = input.slogaAccent;
+      data.slogaAccent =
+        input.slogaAccent.length === 4
+          ? "#" + [...input.slogaAccent.slice(1)].map((c) => c + c).join("")
+          : input.slogaAccent;
     }
 
     if (
