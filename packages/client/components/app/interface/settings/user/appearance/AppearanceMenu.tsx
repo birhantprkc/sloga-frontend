@@ -25,7 +25,9 @@ import {
   Row,
   Slider,
   Text,
+  isSlogaStaff,
 } from "@revolt/ui";
+import { DisplayName } from "@revolt/ui/components/features/DisplayName";
 import {
   FONT_KEYS,
   Fonts,
@@ -402,7 +404,14 @@ export function AppearanceMenu() {
                 />
               }
               timestamp={new Date()}
-              username={user()?.displayName}
+              username={
+                <DisplayName
+                  user={user()}
+                  name={user()?.displayName ?? ""}
+                  brand={isSlogaStaff(user())}
+                  animate
+                />
+              }
               compact={compact()}
               tail={compact()}
               isLink="hide"
@@ -448,6 +457,18 @@ export function AppearanceMenu() {
           }
         >
           <Trans>Show usernames</Trans>
+        </Checkbox>
+
+        <Checkbox
+          checked={state.settings.getValue("appearance:name_effects")}
+          onChange={(event) =>
+            state.settings.setValue(
+              "appearance:name_effects",
+              event.currentTarget.checked,
+            )
+          }
+        >
+          <Trans>Show animated name effects</Trans>
         </Checkbox>
 
         <Checkbox

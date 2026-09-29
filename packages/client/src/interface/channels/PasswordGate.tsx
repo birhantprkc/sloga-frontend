@@ -10,6 +10,7 @@ import MdLock from "@material-design-icons/svg/round/lock.svg?component-solid";
 
 import { iconSize } from "@revolt/ui";
 import { hashPassword } from "../../lib/channelPassword";
+import { passwordGateKey } from "./channelGates";
 
 /**
  * Password gate for password-protected channels.
@@ -22,7 +23,7 @@ export function PasswordGate(props: {
   children: JSXElement;
 }) {
   const state = useState();
-  const storageKey = () => `${props.channelId}-pw`;
+  const storageKey = () => passwordGateKey(props.channelId);
   const unlocked = () => state.layout.getSectionState(storageKey(), false);
 
   const [input, setInput] = createSignal("");

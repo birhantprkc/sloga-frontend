@@ -50,6 +50,11 @@ import {
   settleCallRosterReconcile,
 } from "./e2eeRatelimitPolicy";
 import { classifyEnvelopeError } from "./mlsEnvelopeClassify";
+import {
+  type MlsBufferedEnvelope,
+  inboundRoute,
+  MlsInboundBuffer,
+} from "./mlsInboundBuffer";
 import { IS_OVERLAY_WINDOW, IS_POPOUT_WINDOW } from "./popout";
 
 /** Author id used for locally-injected system/marker messages */
@@ -504,10 +509,15 @@ export type MlsHttpResult<T> =
  * An event handed to the active call session's sink (registered via
  * `registerMlsSink`). The bridge normalizes the raw `Mls*` bonfire events into
  * the domain shapes the session works with — wire parsing stays in the bridge.
- * With no session registered the events are dropped and their envelopes stay
- * queued + UNACKED server-side, so a later call re-drains them (never ack what
- * no call consumes; the session, not the bridge, acks after durable
- * processing — §3.3).
+ * An MLS envelope arrives either as a live `MlsCommit` / `MlsWelcome` /
+ * `MlsCtl` push or inside the per-connection mailbox drain, which bonfire
+ * sends as `E2EEMessage` whatever the type; both routes build the same
+ * `envelope` event. With no session registered, envelopes are HELD in the
+ * bridge's `MlsInboundBuffer` and handed over in order when the next session
+ * registers; a held envelope is still queued + UNACKED server-side (never ack
+ * what no call consumes; the session, not the bridge, acks after durable
+ * processing — §3.3). `join_request` is never held: it is broadcast-only, and
+ * a late replay could admit a joiner who has already left.
  */
 export type MlsSinkEvent =
   // `rejoin` rides BESIDE the request (not inside it — `MlsJoinRequest` is
@@ -518,6 +528,41 @@ export type MlsSinkEvent =
 
 /** The active call session's inbound MLS event sink. */
 export type MlsSessionSink = (event: MlsSinkEvent) => void;
+
+/**
+ * The sink `envelope` event for one inbound MLS envelope, or null when it is
+ * malformed — the ONE builder for the live `Mls*` pushes and the mailbox
+ * drain's `E2EEMessage`, so both hand the session the same shape.
+ * `contentType` is the envelope's MLS type: the event's own `content_type`
+ * wins, and `contentType` stands in when the server omitted it (a live push
+ * names its type in the event instead). A well-formed commit/welcome always
+ * carries group_id + epoch. A ctl (6.5) carries group_id but NO meaningful
+ * epoch (an application message has no per-group ordering) — require only
+ * group_id for it, and stamp epoch 0 so the drain never PARKS a ctl.
+ */
+function mlsSinkEnvelope(
+  event: Extract<
+    E2EEServerEvent,
+    { type: "E2EEMessage" | "MlsCommit" | "MlsWelcome" | "MlsCtl" }
+  >,
+  contentType: string,
+): MlsBufferedEnvelope | null {
+  const isCtl = contentType === "mls_ctl";
+  if (event.group_id == null || (!isCtl && event.epoch == null)) {
+    return null;
+  }
+  return {
+    kind: "envelope",
+    recipientDeviceId: event.recipient_device_id,
+    envelope: {
+      id: event.id,
+      content_type: event.content_type ?? contentType,
+      group_id: event.group_id,
+      epoch: event.epoch ?? 0,
+      ciphertext: event.ciphertext,
+    },
+  };
+}
 
 /**
  * What a call session binds beside its sink (`registerMlsSink`): its
@@ -1288,6 +1333,9 @@ export class E2EEBridge implements E2EEAdapter {
       if (!this.deviceOwnedElsewhere.has("state")) {
         this.deviceOwnedElsewhere.set("state", Date.now());
       }
+      // The server does not accept this device for the signed-in account, so
+      // no call here can use what is held; it stays queued server-side.
+      this.#mlsBuffer.clear();
     } else if (presence === "present") {
       this.deviceOwnedElsewhere.delete("state");
     }
@@ -1470,6 +1518,10 @@ export class E2EEBridge implements E2EEAdapter {
       this.storeOwnedByAnotherAccount.delete("state");
       return;
     }
+
+    // Nothing the signed-in account's call could use: the store holding the
+    // groups these envelopes name is somebody else's.
+    this.#mlsBuffer.clear();
 
     // The stored value is WHEN, not WHO: the owner's id has no reader left
     // now that the destructive control does not key off this flag, and the
@@ -1657,9 +1709,30 @@ export class E2EEBridge implements E2EEAdapter {
         void this.#proveDevice(event.nonce);
         break;
       case "E2EEClaimResult":
+        // Bonfire sends an accepted claim's result and then, on the same
+        // connection and under the same socket write lock, this device's
+        // whole mailbox drain (bonfire websocket.rs) — so this runs before any
+        // envelope of that drain. Nothing held has been acked, and every MLS
+        // envelope is queued before it is pushed live, so the drain
+        // re-delivers what is held (up to its 1024-envelope cap, Olm rows
+        // included); clearing here keeps what is held to this connection's
+        // copy instead of piling a stale one from an earlier connection under
+        // it. A rejected claim gets no drain and clears nothing.
+        if (event.accepted) this.#mlsBuffer.clear();
         void this.#onClaimResult(event.accepted);
         break;
       case "E2EEMessage": {
+        // The mailbox drain carries MLS envelopes under this same event. An
+        // MLS envelope must never reach the Olm decrypt — it would fail,
+        // land as an undecryptable row and be ACKED, deleting it server-side
+        // before the call that needs it exists — so it takes the live
+        // `Mls*` route below, synchronously and unacked.
+        const contentType = event.content_type;
+        if (contentType && inboundRoute(contentType) === "mls") {
+          const sinkEvent = mlsSinkEnvelope(event, contentType);
+          if (sinkEvent) this.#deliverMlsEnvelope(sinkEvent);
+          break;
+        }
         // Serialise: drain + live pushes must decrypt in delivery order
         const envelope = { ...event, type: undefined };
         delete envelope.type;
@@ -1679,7 +1752,8 @@ export class E2EEBridge implements E2EEAdapter {
       case "MlsJoinRequested":
         // Admit trigger — hand the (already server-relayed, client-reverified)
         // intent to the active call session's admit scheduler. No session ⇒
-        // dropped; a joiner re-broadcasts on its retry timer.
+        // dropped, never held: a joiner re-broadcasts on its retry timer, and
+        // a late replay of a held intent could admit a joiner who has left.
         this.#mlsSink?.({
           kind: "join_request",
           request: {
@@ -1697,33 +1771,18 @@ export class E2EEBridge implements E2EEAdapter {
       case "MlsWelcome":
       case "MlsCtl": {
         // MLS handshake / application envelope → the session's per-group
-        // serialized drain (H1), NOT the text `#decryptQueue`. A well-formed
-        // commit/welcome always carries group_id + epoch. A ctl (6.5) carries
-        // group_id but NO meaningful epoch (an application message has no
-        // per-group ordering) — require only group_id for it, and stamp epoch
-        // 0 so the drain never PARKS a ctl. NOT acked here — the session acks
-        // after durable native processing (§3.3).
-        const isCtl = event.type === "MlsCtl";
-        if (event.group_id == null || (!isCtl && event.epoch == null)) {
-          break;
-        }
-        this.#mlsSink?.({
-          kind: "envelope",
-          recipientDeviceId: event.recipient_device_id,
-          envelope: {
-            id: event.id,
-            content_type:
-              event.content_type ??
-              (event.type === "MlsWelcome"
-                ? "mls_welcome"
-                : event.type === "MlsCtl"
-                  ? "mls_ctl"
-                  : "mls_commit"),
-            group_id: event.group_id,
-            epoch: event.epoch ?? 0,
-            ciphertext: event.ciphertext,
-          },
-        });
+        // serialized drain (H1), NOT the text `#decryptQueue`. Malformed
+        // envelopes are dropped (`mlsSinkEnvelope`). NOT acked here — the
+        // session acks after durable native processing (§3.3).
+        const sinkEvent = mlsSinkEnvelope(
+          event,
+          event.type === "MlsWelcome"
+            ? "mls_welcome"
+            : event.type === "MlsCtl"
+              ? "mls_ctl"
+              : "mls_commit",
+        );
+        if (sinkEvent) this.#deliverMlsEnvelope(sinkEvent);
         break;
       }
     }
@@ -3965,6 +4024,9 @@ export class E2EEBridge implements E2EEAdapter {
     this.#reconciledAt.clear();
     this.#selfDevicesUnpinned = false;
     this.sendModes.clear();
+    // Held MLS envelopes name groups the wipe just destroyed; the next call
+    // must not be fed them.
+    this.#mlsBuffer.clear();
 
     // Zero the status snapshot SYNCHRONOUSLY (diff-review HIGH-1): the
     // steps below are network round-trips, and the DELETE's own-device
@@ -4463,17 +4525,56 @@ export class E2EEBridge implements E2EEAdapter {
    * call-plane request rides, and the first-429 notifier.
    */
   #mlsCall: MlsCallTransport | null = null;
+  /**
+   * MLS envelopes that arrived while no sink was registered — above all the
+   * connect-time mailbox drain, which lands before any call session exists.
+   * Held unacked, flushed in order into the next registered sink. Cleared
+   * before each accepted claim's drain, on disable/wipe, and when the store
+   * or device is found not to belong to the signed-in account. Sign-out has
+   * no hook here because it needs none: the client lifecycle builds a new
+   * `Client`, and with it a new bridge, on every sign-out, so what this one
+   * holds is never handed to the next account's call.
+   */
+  #mlsBuffer = new MlsInboundBuffer();
+
+  /**
+   * Hand one MLS envelope to the active sink, or hold it until one exists.
+   *
+   * Only this device's copies are held. A live MLS push goes to the
+   * recipient's user channel (delta `commits_submit.rs` publishes each
+   * device's copy with `.private(user)`), so every session of the account
+   * receives the copies addressed to all of its devices; held, the other
+   * devices' copies would only fill the 512-envelope cap ahead of ours.
+   * Dropping one acks nothing — it belongs to another device's mailbox.
+   * While this device's id is not yet known everything is held, and the
+   * session's own recipient filter drops the rest at flush. The live sink
+   * still gets every copy and filters them itself.
+   */
+  #deliverMlsEnvelope(event: MlsBufferedEnvelope): void {
+    if (this.#mlsSink) {
+      this.#mlsSink(event);
+      return;
+    }
+    const ownDeviceId = this.status.get("state")?.device_id;
+    if (ownDeviceId && event.recipientDeviceId !== ownDeviceId) return;
+    this.#mlsBuffer.push(event);
+  }
 
   /**
    * Register the active call session's inbound sink for `Mls*` events
-   * (`MlsJoinRequested` / `MlsCommit` / `MlsWelcome`), and its transport
-   * binding — the disposal signal that cuts every call-plane request on
-   * hang-up, and the first-429 notifier its fail-safe latches from. Returns
-   * an unregister fn (idempotent — only clears if still the current sink).
-   * While none is registered the events are dropped and their envelopes
-   * stay queued + unacked server-side, so a later call re-drains them:
-   * never ack what no call consumes. The session — NOT this bridge — acks
-   * after durable processing (§3.3).
+   * (`MlsJoinRequested` / `MlsCommit` / `MlsWelcome` / `MlsCtl`, and the MLS
+   * envelopes of the mailbox drain), and its transport binding — the
+   * disposal signal that cuts every call-plane request on hang-up, and the
+   * first-429 notifier its fail-safe latches from. Returns an unregister fn
+   * (idempotent — only clears if still the current sink).
+   *
+   * Envelopes that arrived while no sink was registered were held in
+   * `#mlsBuffer`; they are flushed into `sink` synchronously, in arrival
+   * order, before this returns, so nothing delivered after registration can
+   * overtake them. Join intents are never held (a late replay could admit a
+   * joiner who has left). A held envelope is still queued + unacked
+   * server-side: never ack what no call consumes. The session — NOT this
+   * bridge — acks after durable processing (§3.3).
    */
   registerMlsSink(
     sink: MlsSessionSink,
@@ -4481,6 +4582,15 @@ export class E2EEBridge implements E2EEAdapter {
   ): () => void {
     this.#mlsSink = sink;
     this.#mlsCall = transport;
+    for (const held of this.#mlsBuffer.drain()) {
+      // One envelope the session throws on must not cost it the rest; the
+      // one that threw is still queued server-side for the next drain.
+      try {
+        sink(held);
+      } catch (error) {
+        console.error("[mls] held envelope flush failed", error);
+      }
+    }
     return () => {
       if (this.#mlsSink === sink) {
         this.#mlsSink = null;

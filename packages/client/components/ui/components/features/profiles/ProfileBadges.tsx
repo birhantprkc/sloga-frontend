@@ -1,20 +1,24 @@
-import { BiSolidShield } from "solid-icons/bi";
 import { Show } from "solid-js";
 
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import { User, UserBadges } from "stoat.js";
 import { styled } from "styled-system/jsx";
 
+import badgeActiveSupporter from "../../../../../scripts/assets_fallback/badges/active_supporter.svg";
 import badgeJoke1 from "../../../../../scripts/assets_fallback/badges/amog.svg";
 import badgeJoke2 from "../../../../../scripts/assets_fallback/badges/amorbus.svg";
 import badgeDeveloper from "../../../../../scripts/assets_fallback/badges/developer.svg";
+import badgeDisclosure from "../../../../../scripts/assets_fallback/badges/disclosure.svg";
 import badgeEarlyAdopter from "../../../../../scripts/assets_fallback/badges/early_adopter.svg";
 import badgeFounder from "../../../../../scripts/assets_fallback/badges/founder.svg";
 import badgeModeration from "../../../../../scripts/assets_fallback/badges/moderation.svg";
+import badgePatron from "../../../../../scripts/assets_fallback/badges/patron.svg";
 import badgePaw from "../../../../../scripts/assets_fallback/badges/paw.svg";
-import badgeRaccoon from "../../../../../scripts/assets_fallback/badges/raccoon.svg";
+import badgeRecruiter from "../../../../../scripts/assets_fallback/badges/recruiter.svg";
+import badgeRecruiterElite from "../../../../../scripts/assets_fallback/badges/recruiter_elite.svg";
 import badgeSupporter from "../../../../../scripts/assets_fallback/badges/supporter.svg";
 import badgeTranslator from "../../../../../scripts/assets_fallback/badges/translator.svg";
+import badgeWelcomed from "../../../../../scripts/assets_fallback/badges/welcomed.svg";
 import { Text } from "../../design";
 
 import { ProfileCard } from "./ProfileCard";
@@ -23,13 +27,27 @@ export function ProfileBadges(props: { user: User }) {
   const { t } = useLingui();
 
   return (
-    <Show when={props.user.badges}>
+    <Show when={props.user.badges || props.user.customBadge}>
       <ProfileCard>
         <Text class="title" size="large">
           <Trans>Badges</Trans>
         </Text>
 
         <BadgeRow>
+          <Show when={props.user.customBadge}>
+            {(badge) => (
+              <img
+                use:floating={{
+                  tooltip: {
+                    placement: "top",
+                    content: badge().label,
+                  },
+                }}
+                src={badge().image.createFileURL()}
+                alt=""
+              />
+            )}
+          </Show>
           <Show when={props.user.badges & UserBadges.Founder}>
             <img
               use:floating={{
@@ -63,6 +81,28 @@ export function ProfileBadges(props: { user: User }) {
               src={badgeSupporter}
             />
           </Show>
+          <Show when={props.user.badges & UserBadges.ActiveSupporter}>
+            <img
+              use:floating={{
+                tooltip: {
+                  placement: "top",
+                  content: t`Active Sloga supporter`,
+                },
+              }}
+              src={badgeActiveSupporter}
+            />
+          </Show>
+          <Show when={props.user.badges & UserBadges.Patron}>
+            <img
+              use:floating={{
+                tooltip: {
+                  placement: "top",
+                  content: t`Sloga Patron`,
+                },
+              }}
+              src={badgePatron}
+            />
+          </Show>
           <Show when={props.user.badges & UserBadges.Translator}>
             <img
               use:floating={{
@@ -85,6 +125,45 @@ export function ProfileBadges(props: { user: User }) {
               src={badgeEarlyAdopter}
             />
           </Show>
+          <Show when={props.user.badges & UserBadges.Welcomed}>
+            <img
+              use:floating={{
+                tooltip: {
+                  placement: "top",
+                  content: t`Joined Sloga through a friend`,
+                },
+              }}
+              src={badgeWelcomed}
+            />
+          </Show>
+          {/* Both bits are set at the elite tier; show only the higher one. */}
+          <Show
+            when={
+              props.user.badges & UserBadges.Recruiter &&
+              !(props.user.badges & UserBadges.RecruiterElite)
+            }
+          >
+            <img
+              use:floating={{
+                tooltip: {
+                  placement: "top",
+                  content: t`Invited a friend to Sloga`,
+                },
+              }}
+              src={badgeRecruiter}
+            />
+          </Show>
+          <Show when={props.user.badges & UserBadges.RecruiterElite}>
+            <img
+              use:floating={{
+                tooltip: {
+                  placement: "top",
+                  content: t`Invited 5 friends to Sloga`,
+                },
+              }}
+              src={badgeRecruiterElite}
+            />
+          </Show>
           <Show when={props.user.badges & UserBadges.PlatformModeration}>
             <span
               use:floating={{
@@ -98,16 +177,15 @@ export function ProfileBadges(props: { user: User }) {
             </span>
           </Show>
           <Show when={props.user.badges & UserBadges.ResponsibleDisclosure}>
-            <span
+            <img
               use:floating={{
                 tooltip: {
                   placement: "top",
                   content: t`Responsibly disclosed security issues`,
                 },
               }}
-            >
-              <BiSolidShield />
-            </span>
+              src={badgeDisclosure}
+            />
           </Show>
           <Show
             when={props.user.badges & UserBadges.ReservedRelevantJokeBadge1}
@@ -123,7 +201,7 @@ export function ProfileBadges(props: { user: User }) {
             />
           </Show>
           <Show
-            when={props.user.badges & UserBadges.ReservedRelevantJokeBadge1}
+            when={props.user.badges & UserBadges.ReservedRelevantJokeBadge2}
           >
             <img
               use:floating={{
@@ -146,17 +224,6 @@ export function ProfileBadges(props: { user: User }) {
               src={badgePaw}
             />
           </Show>
-          <Show when={props.user.id === "01EX2NCWQ0CHS3QJF0FEQS1GR4"}>
-            <img
-              use:floating={{
-                tooltip: {
-                  placement: "top",
-                  content: "🦝",
-                },
-              }}
-              src={badgeRaccoon}
-            />
-          </Show>
         </BadgeRow>
       </ProfileCard>
     </Show>
@@ -173,6 +240,7 @@ const BadgeRow = styled("div", {
       width: "24px",
       height: "24px",
       aspectRatio: "1/1",
+      objectFit: "contain",
     },
   },
 });

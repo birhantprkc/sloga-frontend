@@ -5,7 +5,14 @@ import { css } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 
 import { useTime } from "@revolt/i18n";
-import { Avatar, CategoryButton, IconButton, iconSize } from "@revolt/ui";
+import {
+  Avatar,
+  CategoryButton,
+  IconButton,
+  iconSize,
+  isSlogaStaff,
+} from "@revolt/ui";
+import { DisplayName } from "@revolt/ui/components/features/DisplayName";
 
 import MdCakeFill from "@material-design-icons/svg/filled/cake.svg?component-solid";
 import MdEdit from "@material-design-icons/svg/outlined/edit.svg?component-solid";
@@ -34,7 +41,13 @@ export function UserSummary(props: {
         <ProfileDetails>
           <Avatar src={props.user.animatedAvatarURL} size={58} />
           <Username>
-            <span>{props.user.displayName}</span>
+            <span>
+              <DisplayName
+                user={props.user}
+                name={props.user.displayName}
+                brand={isSlogaStaff(props.user)}
+              />
+            </span>
             <span>
               {props.user.username}#{props.user.discriminator}
             </span>
@@ -107,14 +120,15 @@ const Username = styled("div", {
 
     color: "var(--md-sys-color-on-secondary-container)",
 
-    // Display Name
-    "& :nth-child(1)": {
+    // Display Name (direct children only, so the name's own nested spans,
+    // e.g. brand letters, don't pick up these sizes)
+    "& > :nth-child(1)": {
       fontSize: "18px",
       fontWeight: 600,
     },
 
     // Username#Discrim
-    "& :nth-child(2)": {
+    "& > :nth-child(2)": {
       fontSize: "14px",
       fontWeight: 400,
     },

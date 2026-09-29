@@ -27,6 +27,7 @@ import {
   GLOBAL_TIER_ACTIONS,
   IN_APP_TIER_ACTIONS,
   blocksCapture,
+  blocksClear,
   globalTierStatus,
   keybindRowStatus,
 } from "./keybindRowPolicy.ts";
@@ -140,8 +141,9 @@ function GlobalKeybindGroup() {
           <ColouredText colour="var(--md-sys-color-error)">
             <Text class="label">
               <Trans>
-                This device cannot register system-wide keys, so nothing in this
-                group will fire. The Windows desktop app can.
+                This device cannot register system-wide keys, so any keys you
+                have bound here will only fire while Sloga is focused. The
+                Windows desktop app can register them everywhere.
               </Trans>
             </Text>
           </ColouredText>
@@ -340,6 +342,7 @@ function KeybindRow(props: {
         <KeyCapture
           value={binding()}
           disabled={blocksCapture(status())}
+          disableClear={blocksClear(status())}
           pushToTalkKey={pushToTalkKey()}
           copy={{
             label: captureLabel(),

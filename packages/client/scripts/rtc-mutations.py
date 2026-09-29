@@ -392,6 +392,12 @@ CHIP = "chipInputs.ts"
 #: `RTC / mutation.file`) — NOT the `components/rtc/…` form the spec
 #: constants use.
 HOLD = "pauseClauseHold.ts"
+TIMELINE = "mlsJoinTimeline.ts"
+REJOIN_POLICY = "mlsRejoinPolicy.ts"
+#: 🔴 NOT under `components/rtc`. `apply` and the restore in `main` both
+#: address `RTC / mutation.file`, so a `components/client` module is named
+#: relative to `RTC`, and the restore writes back to that same path.
+INBOUND_BUFFER = "../client/mlsInboundBuffer.ts"
 
 JOINRACE_SPEC = "components/rtc/mlsCallSession.joinrace.test.ts"
 HEAL_SPEC = "components/rtc/mlsCallSession.heal.test.ts"
@@ -407,6 +413,13 @@ KICK_POLICY_SPEC = "components/rtc/publishKickPolicy.test.ts"
 WITNESS_SPEC = "components/rtc/decodeWitnessListener.test.ts"
 CHIP_SPEC = "components/rtc/chipInputs.test.ts"
 HOLD_SPEC = "components/rtc/pauseClauseHold.test.ts"
+TIMELINE_SPEC = "components/rtc/mlsJoinTimeline.test.ts"
+SESSION_TIMELINE_SPEC = "components/rtc/mlsCallSession.timeline.test.ts"
+FLEET_SPEC = "components/rtc/mlsCallSession.fleet.test.ts"
+GROUPSCOPE_SPEC = "components/rtc/mlsCallSession.groupscope.test.ts"
+SERVEGUARD_SPEC = "components/rtc/mlsCallSession.serveguard.test.ts"
+REJOIN_POLICY_SPEC = "components/rtc/mlsRejoinPolicy.test.ts"
+INBOUND_BUFFER_SPEC = "components/client/mlsInboundBuffer.test.ts"
 ALL_SPECS = [POLICY_SPEC, HEAL_SPEC, JOINRACE_SPEC]
 
 
@@ -435,6 +448,18 @@ class Mutation:
     #: alongside a CHIP_SPEC that always reddens, and the pin was measured
     #: inert.
     must_red: list[str] = field(default_factory=list)
+    #: Further `(search, replace)` edits to the SAME `file`, applied after the
+    #: first, each held to the same exactly-once rule.
+    #:
+    #: 🔴 For a defect that only exists as a CONJUNCTION. The stagger entry
+    #: below re-introduces a timing (a short Welcome wait) together with the
+    #: guards that made that timing harmless. When it was written (wave 1)
+    #: each half alone left its spec green, so two separate entries would both
+    #: have been "uncaught" and proved nothing about the defect; wave 1.5 added
+    #: a guard and the entry a third edit (see its comment). Every edit is
+    #: applied in memory and the file written once, so a stale anchor in any of
+    #: them refuses before the tree is touched.
+    also: list[tuple[str, str]] = field(default_factory=list)
 
 
 MUTATIONS: list[Mutation] = []
@@ -712,21 +737,22 @@ def exclusive_run_lock() -> Iterator[None]:
 def apply(mutation: Mutation) -> str:
     path = RTC / mutation.file
     original = path.read_text(encoding="utf-8")
-    count = original.count(mutation.search)
-    if count == 0:
-        raise SystemExit(
-            f"MUTATION {mutation.id}: search string not found in "
-            f"{mutation.file} — refusing to report a result.\n"
-            f"  looked for: {mutation.search!r}"
-        )
-    if count > 1:
-        raise SystemExit(
-            f"MUTATION {mutation.id}: search string is ambiguous "
-            f"({count} matches) in {mutation.file} — refusing to guess."
-        )
-    path.write_text(
-        original.replace(mutation.search, mutation.replace), encoding="utf-8"
-    )
+    mutated = original
+    for search, replace in [(mutation.search, mutation.replace), *mutation.also]:
+        count = mutated.count(search)
+        if count == 0:
+            raise SystemExit(
+                f"MUTATION {mutation.id}: search string not found in "
+                f"{mutation.file} — refusing to report a result.\n"
+                f"  looked for: {search!r}"
+            )
+        if count > 1:
+            raise SystemExit(
+                f"MUTATION {mutation.id}: search string is ambiguous "
+                f"({count} matches) in {mutation.file} — refusing to guess."
+            )
+        mutated = mutated.replace(search, replace)
+    path.write_text(mutated, encoding="utf-8")
     return original
 
 
@@ -2093,11 +2119,22 @@ MUTATIONS += [
         # a late Welcome enters, while one in `#toActive` would also run on the
         # creator path and on every honest join, and so redden the suite for
         # reasons that have nothing to do with a late Welcome.
+        #
+        # Re-anchored 2026-09-26 (late-drain guard, W2-M2). The adopt block
+        # no longer calls `#toActive()`: it records a pending Welcome currency
+        # check instead, and `#confirmWelcomeCurrency` goes active only on the
+        # DS's answer. So the old two-line window matches nothing. The
+        # insertion stays in the ADOPT block, right after the
+        # `#joinedGeneration` write (a line that occurs once in the file), for
+        # the reason above: it is where a late Welcome enters, while the
+        # `#toActive()` that now follows the currency check runs on every
+        # honest Welcome join as well. Same defect, same one-line insertion.
+        # Measured after the re-anchor: resecure 5b and 3 go red (2 of 23).
         search="""      this.#joinedGeneration = this.#establishGeneration;
-      this.#toActive();""",
+""",
         replace="""      this.#joinedGeneration = this.#establishGeneration;
       this.#resetRotationState();
-      this.#toActive();""",
+""",
         specs=[RESECURE_SPEC],
     ),
     Mutation(
@@ -3187,6 +3224,922 @@ MUTATIONS += [
         search="""  if (banner.kind === "none" || banner.pause === "none") {""",
         replace="""  if (banner.pause === "none") {""",
         specs=[HOLD_SPEC],
+    ),
+]
+
+
+# --- The join timeline (join-latency plan, slice 0, wave 1, 2026-09-20) ------
+#
+# `mlsJoinTimeline.ts` is the pure recorder both seats stamp as the join
+# ladder passes each stage; `mlsCallSession.ts` only wires it. The three
+# recorder rules a misreading would silently corrupt — first occurrence wins,
+# an untaken stamp reads null (never 0, which is also t0), totalMs is last
+# minus first — are pinned under `mlsJoinTimeline.test.ts` alone. The session
+# wiring is only as measurable as the harness reaches: the `keysInstalled`
+# stamp inside `#onLocalKeyInstalled` is the one the timeline spec drives
+# directly, so it is the one pinned; the rest of the joiner ladder and the
+# admitter map are asserted as a sequence by `mlsCallSession.timeline.test.ts`
+# and are not given entries here, because a dropped stamp elsewhere in that
+# sequence is the same one-line defect and one pin is what proves the spec can
+# see it. Every entry `expect="red"` and `must_red` on its own spec.
+
+MUTATIONS += [
+    # ---- the recorder's rules -----------------------------------------------
+    Mutation(
+        id="timeline-last-wins",
+        what="a duplicate stamp name overwrites the first occurrence, so a retried stage reports the time of the retry and hides the very wait the timeline exists to measure",
+        file=TIMELINE,
+        search="""    if (this.#stamps.some((entry) => entry.name === name)) return;""",
+        replace="""    this.#stamps = this.#stamps.filter((entry) => entry.name !== name);""",
+        specs=[TIMELINE_SPEC],
+        must_red=[TIMELINE_SPEC],
+    ),
+    Mutation(
+        id="timeline-elapsed-zero",
+        what="`elapsedTo` answers 0 for a stamp never taken, which is indistinguishable from t0 — a stage that never ran reads as 'reached instantly'",
+        file=TIMELINE,
+        search="""    return entry ? entry.ms : null;""",
+        replace="""    return entry ? entry.ms : 0;""",
+        specs=[TIMELINE_SPEC],
+        must_red=[TIMELINE_SPEC],
+    ),
+    Mutation(
+        id="timeline-total-first",
+        what="`totalMs` reads the first stamp instead of last minus first, so every summary reports a 0 ms join whatever the ladder took",
+        file=TIMELINE,
+        search="""        ? roundTenth(stamps[stamps.length - 1].ms - stamps[0].ms)""",
+        replace="""        ? roundTenth(stamps[0].ms)""",
+        specs=[TIMELINE_SPEC],
+        must_red=[TIMELINE_SPEC],
+    ),
+    # ---- the session's wiring -----------------------------------------------
+    Mutation(
+        id="timeline-drop-keys-installed",
+        what="the `keysInstalled` stamp is not taken in `#onLocalKeyInstalled`, so the readout cannot attribute the wait between the welcome and the first local key — the stage the plan's levers are argued over",
+        file=SESSION,
+        # The stamp line dropped whole (newline included) so the mutant is
+        # still well-formed TS. Killed by the timeline spec's keysInstalled
+        # assertion on the summary.
+        search="""    this.#joinTimeline?.stamp("keysInstalled");
+""",
+        replace="",
+        specs=[SESSION_TIMELINE_SPEC],
+        must_red=[SESSION_TIMELINE_SPEC],
+    ),
+]
+
+
+# --- The late-drain guard (fix/mls-late-drain-guard, 2026-09-26) -------------
+#
+# L14c: a restarted page wipes its group and re-intents, and its mailbox drains
+# LATE. Two defects rode that drain. W2-M1: a gap refetch the DS answered 404
+# threw out of `#consume` and `#pump` as an unhandled rejection — the envelope
+# never acked, retried or escalated, and the group id in Sentry. W2-M2: a stale
+# Welcome, sealed to the earlier intent, was adopted at an old epoch and went
+# green there. The fix is a pure policy (`mlsRefetchPolicy.ts`: the failure
+# classification and the Welcome currency verdict) plus call-site edits in
+# `mlsCallSession.ts`: `#gapRefetchInline` classifies its own failure, the
+# `gap_refetch` arm retries a failed refetch, `#pump` catches per envelope,
+# and the Welcome adopt block records a pending currency check that `#pump`
+# runs under the lock before anything goes active.
+#
+# Placed HERE, mid-file and ahead of every rejoin-resume block, on purpose:
+# that branch appends its blocks at the end of this file and adds constants to
+# the list at the top, so this block and its own constants below stay out of
+# both merge windows.
+#
+# Each entry is `must_red` on the ONE spec that owns the case that kills it.
+# Almost all of them are the session's `mlsCallSession.drainfail.test.ts`;
+# the three LD1 rule entries are `mlsRefetchPolicy.test.ts`. The case named on
+# each entry is the one MEASURED red under it.
+#
+# 🔴 KNOWN NON-ENTRIES, recorded rather than silently absent:
+#   (a) deleting `if (currentEpoch < welcomeEpoch) return "rejoin";` outright
+#       is EQUIVALENT — `lag` goes negative, no page has a negative length,
+#       and the contiguity rule rejoins anyway. The entry below makes the
+#       line answer `"current"` instead, which is the defect it guards.
+#   (b) the `welcomeEpoch`, `currentEpoch` and per-commit finiteness terms of
+#       `welcomeCurrencyVerdict` are equivalent too (NaN arithmetic already
+#       fails every later comparison into `"rejoin"`); only the `lagLimit`
+#       term is live, and it has no entry here.
+
+REFETCH_POLICY = "mlsRefetchPolicy.ts"
+REFETCH_POLICY_SPEC = "components/rtc/mlsRefetchPolicy.test.ts"
+DRAINFAIL_SPEC = "components/rtc/mlsCallSession.drainfail.test.ts"
+
+MUTATIONS += [
+    # ---- the gap refetch (W2-M1, LD-D2 / LD-D3) ------------------------------
+    Mutation(
+        id="refetch-catch-removed",
+        what="`#gapRefetchInline` no longer catches its own fetch, so a DS 404 is never read as 'not a member': it falls through as a transient failure and the device keeps parking against a group the DS says it is not in, instead of re-securing and rejoining fresh",
+        file=SESSION,
+        # Re-measured 2026-09-26 (fix pass 1): killed by A1, A4b, A5, C9 and
+        # E1 (5 of 33).
+        search="""    let res: Awaited<ReturnType<E2EEBridge["mlsFetchCommits"]>>;
+    try {
+      res = await this.#deps.bridge.mlsFetchCommits(groupId, fromEpoch);
+    } catch (error) {
+      if (this.#terminal() || this.#groupId !== groupId) return;
+      if (classifyRefetchFailure(error) === "transient") throw error;
+      // LD-D2: a 404 is the DS saying this device is not in the group. It is
+      // unauthenticated, so not `#onRemovedSelf`: re-secure now (the gate
+      // holds) and rejoin fresh, as the join-intent 404 and receiver lag do.
+      console.warn("[mls] gap refetch: not a member of the call group");
+      this.#resecureAndRejoin(
+        "gap refetch: the delivery service does not list this device",
+        "rejoin_fresh:refetch_not_member",
+      );
+      return;
+    }
+""",
+        replace="""    const res = await this.#deps.bridge.mlsFetchCommits(groupId, fromEpoch);
+""",
+        specs=[DRAINFAIL_SPEC],
+        must_red=[DRAINFAIL_SPEC],
+    ),
+    Mutation(
+        id="refetch-404-as-caught-up",
+        what="a gap refetch the DS answered 404 returns as if caught up: nothing re-secures, nothing rejoins, and the envelope is dropped from the drain unacked — the device goes on publishing at an epoch the group has left",
+        file=SESSION,
+        # Re-measured 2026-09-26 (fix pass 1): killed by A1, A4b, C9 and E1
+        # (4 of 33).
+        search="""      console.warn("[mls] gap refetch: not a member of the call group");
+      this.#resecureAndRejoin(
+        "gap refetch: the delivery service does not list this device",
+        "rejoin_fresh:refetch_not_member",
+      );
+      return;
+""",
+        replace="""      return;
+""",
+        specs=[DRAINFAIL_SPEC],
+        must_red=[DRAINFAIL_SPEC],
+    ),
+    Mutation(
+        id="refetch-failure-uncounted",
+        what="the `gap_refetch` arm ignores a FAILED refetch: the mailbox envelope is neither acked nor re-queued, so it sits until something else happens to drain, and the park bound it should count against never escalates",
+        file=SESSION,
+        # Re-measured 2026-09-26 (fix pass 1): killed by A2 and A3 (2 of 33).
+        search="""        if (await this.#gapRefetchFailed(envelope, action.fromEpoch))
+          this.#scheduleRetry(envelope);
+""",
+        replace="""        await this.#gapRefetchFailed(envelope, action.fromEpoch);
+""",
+        specs=[DRAINFAIL_SPEC],
+        must_red=[DRAINFAIL_SPEC],
+    ),
+    Mutation(
+        id="refetch-short-ok-as-caught-up",
+        what="an `ok` refetch whose page stops short of `current_epoch` is taken as caught up (LDP-m3), so the envelope that asked for it is dropped from the drain with the group still ahead",
+        file=SESSION,
+        # Re-measured 2026-09-26 (fix pass 1): killed by A3 (1 of 33): its
+        # short-`ok` leg.
+        search="""    if (reached < res.body.current_epoch) {""",
+        replace="""    if (false && reached < res.body.current_epoch) {""",
+        specs=[DRAINFAIL_SPEC],
+        must_red=[DRAINFAIL_SPEC],
+    ),
+    Mutation(
+        id="refetch-group-capture-removed",
+        what="`#gapRefetchInline` re-reads nothing after its awaits: a refetch that settles after its group was replaced acts on the NEW group — its failure retries the old group's envelope into the new one, and its commits and verdicts land there",
+        file=SESSION,
+        # Re-measured 2026-09-26 (fix pass 1): killed by A5 alone (1 of 33).
+        # All four post-await group checks, each reduced to its terminal
+        # check — i.e. the capture is gone. The two 4-space copies are
+        # identical, so each is matched with a neighbouring CODE line.
+        # 🔴 A5 drives the CATCH's check (a failure settling after the group
+        # was replaced). The three checks on the `ok` path are dropped with
+        # it but have no case of their own: not measured separately.
+        search="""    } catch (error) {
+      if (this.#terminal() || this.#groupId !== groupId) return;
+      if (classifyRefetchFailure(error) === "transient") throw error;""",
+        replace="""    } catch (error) {
+      if (this.#terminal()) return;
+      if (classifyRefetchFailure(error) === "transient") throw error;""",
+        also=[
+            (
+                """    if (this.#terminal() || this.#groupId !== groupId) return;
+    if (res.kind === "feature_disabled") {""",
+                """    if (this.#terminal()) return;
+    if (res.kind === "feature_disabled") {""",
+            ),
+            (
+                """      if (this.#terminal() || this.#groupId !== groupId) return;
+      await this.#consume(this.#synthEnvelope(info)); // INLINE (we hold the lock)
+    }
+    if (this.#terminal() || this.#groupId !== groupId) return;""",
+                """      if (this.#terminal()) return;
+      await this.#consume(this.#synthEnvelope(info)); // INLINE (we hold the lock)
+    }
+    if (this.#terminal()) return;""",
+            ),
+        ],
+        specs=[DRAINFAIL_SPEC],
+        must_red=[DRAINFAIL_SPEC],
+    ),
+    # ---- the drain's backstop (LD-D4, LDP-M4) ---------------------------------
+    Mutation(
+        id="pump-catch-removed",
+        what="`#pump` has no per-envelope catch again: one throwing drain step escapes as an unhandled rejection (group id and all, into Sentry), and the rest of the batch waits for the next enqueue",
+        file=SESSION,
+        # Re-measured 2026-09-26 (fix pass 1): killed by B1, B2 and B3 (3 of
+        # 33), each on the escaped rejection.
+        search="""            try {
+              await this.#consume(env);
+            } catch (error) {
+              // Backstop (LD-D4): one throwing step never escapes the pump
+              // as an unhandled rejection, and never stops the batch.
+              this.#onDrainStepThrew(env, error);
+            }
+""",
+        replace="""            await this.#consume(env);
+""",
+        specs=[DRAINFAIL_SPEC],
+        must_red=[DRAINFAIL_SPEC],
+    ),
+    Mutation(
+        id="pump-catch-breaks-batch",
+        what="the per-envelope catch ends the pump instead of moving on, so one throwing step strands every envelope queued behind it until something else enqueues",
+        file=SESSION,
+        # Re-measured 2026-09-26 (fix pass 1): killed by B1 and B3 (2 of 33).
+        # `return`, not `break`: a `break` leaves only the inner loop, and the
+        # outer one re-takes the lock and drains on — which is not the defect.
+        search="""              this.#onDrainStepThrew(env, error);
+""",
+        replace="""              this.#onDrainStepThrew(env, error);
+              return;
+""",
+        specs=[DRAINFAIL_SPEC],
+        must_red=[DRAINFAIL_SPEC],
+    ),
+    Mutation(
+        id="pump-catch-retries-after-ack",
+        what="a step that threw AFTER its envelope was acked is retried like any other (LDP-M4): the ack's side effects are not replayable, so the retry acts on a half-applied envelope instead of latching loud at once",
+        file=SESSION,
+        # Re-measured 2026-09-26 (fix pass 1): killed by B3 alone (1 of 33).
+        search="""    if (this.#seen.has(envelope.id)) {
+      this.#latchLoud(new Error(ENCRYPTION_UNCONFIRMED), "control");
+      return;
+    }
+""",
+        replace="",
+        specs=[DRAINFAIL_SPEC],
+        must_red=[DRAINFAIL_SPEC],
+    ),
+    Mutation(
+        id="drain-retry-cap-removed",
+        what="a drain step that keeps throwing is retried forever: `MAX_ENVELOPE_RETRIES` never latches, so the call sits in whatever state the throw left it, with nothing loud",
+        file=SESSION,
+        # Re-measured 2026-09-26 (fix pass 1): killed by B2 alone (1 of 33).
+        search="""    if (retries >= MAX_ENVELOPE_RETRIES) {
+      this.#latchLoud(new Error(ENCRYPTION_UNCONFIRMED), "control");""",
+        replace="""    if (false && retries >= MAX_ENVELOPE_RETRIES) {
+      this.#latchLoud(new Error(ENCRYPTION_UNCONFIRMED), "control");""",
+        specs=[DRAINFAIL_SPEC],
+        must_red=[DRAINFAIL_SPEC],
+    ),
+    # ---- the Welcome currency check (W2-M2, LD-D5 as folded) ------------------
+    Mutation(
+        id="welcome-currency-skipped",
+        what="the adopt block goes active on the Welcome alone and records no currency check — the pre-fix code: a late-drained Welcome sealed to an earlier intent is green at its stale epoch (L14c)",
+        file=SESSION,
+        # Re-measured 2026-09-26 (fix pass 1): killed by 24 of 33: B3, C1,
+        # C1b, C1r, C2, C2b, C3, C3b, C4, C6, C7, C7b, C8, C9, D1, and all
+        # nine fix-pass cases (R1a, R1b, R1c, C1r+, E1, E2, E3, E4, N1).
+        search="""      this.#welcomeCurrency = {
+        groupId: outcome.group_id,
+        epoch: outcome.epoch,
+        generation: this.#establishGeneration,
+      };""",
+        replace="""      this.#toActive();""",
+        specs=[DRAINFAIL_SPEC],
+        must_red=[DRAINFAIL_SPEC],
+    ),
+    Mutation(
+        id="welcome-active-before-currency",
+        what="the adopt block goes active AND records the check, so the session is green — and the enable can empty the gate — before the DS has said whether the Welcome is current",
+        file=SESSION,
+        # Re-measured 2026-09-26 (fix pass 1): killed by 17 of 33: C1, C1r, C3,
+        # C3b, C4, C6, C7, C8, C9, R1a, R1b, R1c, C1r+, E1, E2, E3 and E4.
+        search="""      this.#welcomeCurrency = {
+        groupId: outcome.group_id,
+        epoch: outcome.epoch,
+        generation: this.#establishGeneration,
+      };""",
+        replace="""      this.#toActive();
+      this.#welcomeCurrency = {
+        groupId: outcome.group_id,
+        epoch: outcome.epoch,
+        generation: this.#establishGeneration,
+      };""",
+        specs=[DRAINFAIL_SPEC],
+        must_red=[DRAINFAIL_SPEC],
+    ),
+    Mutation(
+        id="welcome-currency-404-kept",
+        what="a currency check the DS answers 404 keeps the adoption and goes green, instead of discarding it and rejoining fresh",
+        file=SESSION,
+        # Re-measured 2026-09-26 (fix pass 1): killed by C2 and D1 (2 of 33).
+        search="""        if (classifyRefetchFailure(error) === "not_member") {
+          this.#welcomeCurrencyRejoin(
+            "the delivery service does not list this device",
+          );
+          return null;
+        }""",
+        replace="""        if (classifyRefetchFailure(error) === "not_member") {
+          this.#toActive();
+          return null;
+        }""",
+        specs=[DRAINFAIL_SPEC],
+        must_red=[DRAINFAIL_SPEC],
+    ),
+    Mutation(
+        id="currency-transient-rejoins",
+        what="a currency check whose transient failures outlast the backoff REJOINS instead of latching loud (LDP-M5): intent + claim + commits added to a DS that is already failing — the 2026-09-06 429 storm's shape",
+        file=SESSION,
+        # Re-measured 2026-09-26 (fix pass 1): killed by C3b alone (1 of 33).
+        search="""        if (wait === undefined) {
+          this.#welcomeCurrencyLoud("the delivery service did not answer");""",
+        replace="""        if (wait === undefined) {
+          this.#welcomeCurrencyRejoin("the delivery service did not answer");""",
+        specs=[DRAINFAIL_SPEC],
+        must_red=[DRAINFAIL_SPEC],
+    ),
+    Mutation(
+        id="currency-deadline-removed",
+        what="the currency check's own deadline does nothing (LDP-M3): a check the DS never answers holds the session non-active for good, and since `#joinedGeneration` disarmed the enrolment backstop, nothing ends it loud",
+        file=SESSION,
+        # Re-measured 2026-09-26 (fix pass 1): killed by C6 alone (1 of 33).
+        search="""      check.expired = true;
+      check.wake?.();
+      this.#welcomeCurrencyLoud("the check reached its deadline");""",
+        replace="""      void check;""",
+        specs=[DRAINFAIL_SPEC],
+        must_red=[DRAINFAIL_SPEC],
+    ),
+    Mutation(
+        id="currency-record-not-cleared",
+        what="the pending currency record outlives its check (LDP-M3), so `#pump` re-runs the check after every later envelope — a GET per commit for the rest of the call, each one able to re-secure a healthy session",
+        file=SESSION,
+        # Re-measured 2026-09-26 (fix pass 1): killed by 7 of 33: A1, A2, A3,
+        # B3, C4, C9 and D1.
+        search="""      if (this.#welcomeCurrency === pending) this.#welcomeCurrency = null;
+""",
+        replace="",
+        specs=[DRAINFAIL_SPEC],
+        must_red=[DRAINFAIL_SPEC],
+    ),
+    Mutation(
+        id="currency-generation-unchecked",
+        what="a currency check whose establish generation was superseded under it still acts: its late verdict goes active, rejoins or latches against the NEW generation's join",
+        file=SESSION,
+        # Re-measured 2026-09-26 (fix pass 1): killed by C8 alone (1 of 33).
+        search="""      this.#groupId === check.pending.groupId &&
+      this.#establishGeneration === check.pending.generation
+    );""",
+        replace="""      this.#groupId === check.pending.groupId
+    );""",
+        specs=[DRAINFAIL_SPEC],
+        must_red=[DRAINFAIL_SPEC],
+    ),
+    Mutation(
+        id="currency-native-verdict-skipped",
+        what="a catch-up is taken as landed without asking native (LDP-M6): commits the drain applied short, or not at all, still go green at the DS's epoch",
+        file=SESSION,
+        # Re-measured 2026-09-26 (fix pass 1): killed by C1b alone (1 of 33).
+        search="""        caughtUp =
+          state.epoch === currentEpoch &&""",
+        replace="""        caughtUp =
+          true ||
+          state.epoch === currentEpoch &&""",
+        specs=[DRAINFAIL_SPEC],
+        must_red=[DRAINFAIL_SPEC],
+    ),
+    Mutation(
+        id="currency-not-owner",
+        what="a currency check in flight no longer owns a re-securing, so the backstop latches loud at its first bound while the check is still waiting on the DS — a false red over a join about to go green",
+        file=SESSION,
+        # Re-measured 2026-09-26 (fix pass 1): killed by C9 alone (1 of 33).
+        search="""    if (this.#welcomeCurrencyCheck !== null) return true;
+""",
+        replace="",
+        specs=[DRAINFAIL_SPEC],
+        must_red=[DRAINFAIL_SPEC],
+    ),
+    # ---- LD3-R1: the caught-up key before the enable --------------------------
+    Mutation(
+        id="catchup-activates-before-key-install",
+        what="a catch-up goes active and kicks the enable with no install of the confirmed epoch's keys (the code LD5 stopped on), so when the catch-up applied a Remove the gate empties under the Welcome epoch's send key — one the removed member still holds (locked decision 3) — and the caught-up keys arrive only after",
+        file=SESSION,
+        # Measured at LD7 (24 cases): C1r alone, at its sampled gate monitor
+        # (`staleGreens`). Re-measured 2026-09-26 (fix pass 1): killed by 6 of
+        # 33: C1r, R1a, R1b, R1c, C1r+ and E2.
+        # Kept beside `catchup-install-reorder` below rather than replaced by
+        # it: this is the install SKIPPED outright, that one the install run
+        # AFTER going active — two defects, each with its own kill.
+        # 🔴 One other form was MEASURED and is not an entry: dropping the
+        # `#lastInbound` memo clear in `#installCaughtUpKeys`. At LD7 it was
+        # killed by C1 and C1r on the LOUD path (the install takes Add-grace,
+        # `installed` reads false, the check latches — fail-closed, not this
+        # defect). Re-measured at fix pass 1: killed by 7 of 33 (C1, C1r, R1a,
+        # R1b, R1c, C1r+, E2); the path was not re-diagnosed.
+        search="""      const installed = await this.#installCaughtUpKeys(groupId, currentEpoch);""",
+        replace="""      const installed = true;""",
+        specs=[DRAINFAIL_SPEC],
+        must_red=[DRAINFAIL_SPEC],
+    ),
+    # ---- fix pass 1: LDA-M1, LDA-m1, LDA-m2, LDA-n1 ---------------------------
+    #
+    # Each entry below was SURVIVING (or had no case) at the audit; the drain
+    # spec's R1*/C1r+/E*/N1 cases were written to kill it, and each count is
+    # measured, not inferred.
+    #
+    # 🔴 KNOWN NON-ENTRY: the `#ownSendKeyEpoch` assignment in the Add-grace
+    # timer's fire (`#scheduleGraceLocal`). Dropping it can only make
+    # `#installCaughtUpKeys` read false and latch LOUD: a false red, never a
+    # stale-key green. Measured 2026-09-26: the drain spec stays 33/33 green
+    # under it (LDF3 proved it vacuous the same way). A must-red entry on it
+    # would pin a failure mode that fails closed, so there is none.
+    Mutation(
+        id="catchup-install-reorder",
+        what="a catch-up goes active BEFORE the confirmed epoch's keys install (LDA-m1): the install still runs, but while it is pending the session is green and the enable can empty the gate under the Welcome epoch's send key — one a member the catch-up removed still holds (locked decision 3)",
+        file=SESSION,
+        # At LD7 this form SURVIVED (the install landed before the kicked
+        # enable). The harness's `holdKeyInstall` now keeps it pending.
+        # Measured 2026-09-26 (fix pass 1): killed by 4 of 33: R1b, R1c,
+        # C1r+ and E2.
+        search="""      const installed = await this.#installCaughtUpKeys(groupId, currentEpoch);""",
+        replace="""      this.#toActive();
+      const installed = await this.#installCaughtUpKeys(groupId, currentEpoch);""",
+        specs=[DRAINFAIL_SPEC],
+        must_red=[DRAINFAIL_SPEC],
+    ),
+    Mutation(
+        id="own-send-key-epoch-unchecked",
+        what="the caught-up install is judged on the install counter and the fence alone, not on OUR send key's epoch (LDA-M1): an install that left our send key on the older epoch still reads as installed, and the session goes green publishing under a key a removed member holds",
+        file=SESSION,
+        # Measured 2026-09-26 (fix pass 1): killed by E2 alone (1 of 33).
+        search="""      this.#installEpoch === epoch &&
+      this.#ownSendKeyEpoch === epoch
+    );""",
+        replace="""      this.#installEpoch === epoch
+    );""",
+        specs=[DRAINFAIL_SPEC],
+        must_red=[DRAINFAIL_SPEC],
+    ),
+    Mutation(
+        id="currency-expired-flag-dropped",
+        what="a re-secure started from inside a currency check (its own catch-up hit a 404) no longer expires the check (LDA-m2), so the check resumes after the rejoin was scheduled and goes active on the discarded adoption",
+        file=SESSION,
+        # Measured 2026-09-26 (fix pass 1): killed by E1 alone (1 of 33).
+        search="""    if (this.#welcomeCurrencyCheck) this.#welcomeCurrencyCheck.expired = true;
+""",
+        replace="",
+        specs=[DRAINFAIL_SPEC],
+        must_red=[DRAINFAIL_SPEC],
+    ),
+    Mutation(
+        id="currency-failed-term-dropped",
+        what="a currency check on a `failed` session may still act (LDA-m2): a Welcome from an earlier intent, adopted late after the session failed, runs its check and can revive the failed session",
+        file=SESSION,
+        # Measured 2026-09-26 (fix pass 1): killed by E3 alone (1 of 33).
+        search="""      !this.#terminal() &&
+      this.#state !== "failed" &&
+""",
+        replace="""      !this.#terminal() &&
+""",
+        specs=[DRAINFAIL_SPEC],
+        must_red=[DRAINFAIL_SPEC],
+    ),
+    Mutation(
+        id="synthetic-retry-guard-dropped",
+        what="a synthetic envelope's failed refetch is re-queued like a mailbox envelope (LDA-m2) instead of going back to the inline caller that fed it (the currency check's catch-up), which then never learns its catch-up failed and does not end loud",
+        file=SESSION,
+        # Measured 2026-09-26 (fix pass 1): killed by E4 alone (1 of 33).
+        search="""      if (envelope.id.startsWith("mls-synth:")) throw error;
+""",
+        replace="",
+        specs=[DRAINFAIL_SPEC],
+        must_red=[DRAINFAIL_SPEC],
+    ),
+    Mutation(
+        id="dispose-wake-dropped",
+        what="`dispose` no longer wakes a currency check in its backoff wait (LDA-n1): the wait's timer is cleared, so the pump continuation never settles on a closed session",
+        file=SESSION,
+        # Measured 2026-09-26 (fix pass 1): killed by N1 alone (1 of 33).
+        # 🔴 N1 is a PROXY: it observes that the check's deadline timer is
+        # cleared after dispose, not the never-settling pump promise itself,
+        # which the harness cannot see.
+        search="""    this.#welcomeCurrencyCheck?.wake?.();
+""",
+        replace="",
+        specs=[DRAINFAIL_SPEC],
+        must_red=[DRAINFAIL_SPEC],
+    ),
+    # ---- the pure rules (LD1), one entry per rule -----------------------------
+    Mutation(
+        id="refetch-404-anchor-dropped",
+        what="the 404 match is unanchored, so any refetch failure whose message merely CONTAINS 404 — a group id, an epoch, a 5xx body — is read as 'not a member' and tears the call down into a fresh rejoin",
+        file=REFETCH_POLICY,
+        # Measured 2026-09-26: killed by 4 of 39: the three anchor cases and the
+        # non-MLS transport's 404.
+        search=r"""const NOT_MEMBER_MESSAGE = /^E2EE MLS \S+ \S+ failed: 404$/;""",
+        replace=r"""const NOT_MEMBER_MESSAGE = /404/;""",
+        specs=[REFETCH_POLICY_SPEC],
+        must_red=[REFETCH_POLICY_SPEC],
+    ),
+    Mutation(
+        id="currency-contiguity-dropped",
+        what="a currency page is accepted on its LENGTH alone, so a page with a gap or a duplicate epoch reads `catch_up` and the session applies a history that does not lead to the DS's epoch",
+        file=REFETCH_POLICY,
+        # Measured 2026-09-26: killed by 4 of 39: the duplicate, gap,
+        # out-of-order and starts-at-the-Welcome cases.
+        search="""    commits.length === lag &&
+    commits.every((commit, index) => commit.epoch === welcomeEpoch + 1 + index)""",
+        replace="""    commits.length === lag""",
+        specs=[REFETCH_POLICY_SPEC],
+        must_red=[REFETCH_POLICY_SPEC],
+    ),
+    Mutation(
+        id="currency-stale-welcome-as-current",
+        what="a Welcome AHEAD of the DS's current epoch (`currentEpoch < welcomeEpoch`) reads `current`, so an adoption the DS has no history for goes green",
+        file=REFETCH_POLICY,
+        # Measured 2026-09-26: killed by 2 of 39: the two DS-behind-the-Welcome
+        # cases.
+        # Not a deletion: deleting the line is equivalent (non-entry (a) in
+        # the block note).
+        search="""  if (currentEpoch < welcomeEpoch) return "rejoin";""",
+        replace="""  if (currentEpoch < welcomeEpoch) return "current";""",
+        specs=[REFETCH_POLICY_SPEC],
+        must_red=[REFETCH_POLICY_SPEC],
+    ),
+]
+
+
+# --- Rejoin resume, wave 1: fleet, group scoping, inbound buffer -------------
+#
+# The harness now models N seats against one delivery service
+# (`newFleet`), which is what lets a rejoin served by EVERY member be stated
+# at all: the stagger entry below is the defect class the one-seat world could
+# not express. The session gained a per-page startup-wipe token dep and a
+# group-scope check at the head of `#consume`; the bridge gained a pure pre-sink
+# hold for MLS envelopes (`components/client/mlsInboundBuffer.ts`). Each entry
+# is judged on the ONE spec that owns it, and `must_red` on that spec alone.
+
+MUTATIONS += [
+    # ---- the fleet --------------------------------------------------------
+    #
+    # The fire-time §4.8 re-check alone now has its own single-edit entry,
+    # `fire-time-recheck-removed` (wave 1.5, below), killed by the fleet case
+    # that replays a stale rejoin intent after the re-add. What held it back in
+    # wave 1 — a serve at leaf >= 6 kicking the re-seated member at REAL
+    # constants (fleet F4 finding, 2026-09-25) — was a live defect, and wave
+    # 1.5's epoch-keyed `#removedAtEpoch` guard is its fix.
+    #
+    # 🔴 That guard closes the whole class this entry models, so the entry
+    # carries a THIRD edit that bypasses it (W15P-M3); without it this would no
+    # longer be the defect. Measured 2026-09-25 under the ORIGINAL two-edit
+    # form (the short retry and the fire-time block gone, the guard intact):
+    # every no-kick assertion in the fleet spec holds, the stagger proof
+    # included — the guard alone refuses the serve, which is the parked-wave
+    # class closed. The fleet spec still goes red, but only on three timeline
+    # PRECONDITIONS the 1 500 ms retry moves, none of them a kick: "leaf 6
+    # watching PEER leave and rejoin…" (`not between the two`), "a second
+    # rejoin intent while a member's own Remove is in flight…" (`PEER's re-add
+    # had not landed`) and "a stale rejoin intent sent AFTER the re-add…"
+    # (`every member refused at schedule time`). So the two-edit form gets no
+    # entry: it is not green, and its red is not the defect.
+    Mutation(
+        id="rejoin-stagger-refire",
+        what="a higher leaf's staggered rejoin serve fires after the live member was re-seated and stages a Remove of it — the Welcome wait short enough for the re-add to land inside the stagger, the fire-time §4.8 re-check gone, and the removed-at-epoch guard bypassed",
+        file=SESSION,
+        # ALL THREE edits, in one entry (see `also` on the dataclass). The
+        # third bypasses the removed-at-epoch guard at its one decision point,
+        # which serves both its early exit and its check under the lock.
+        search="""const JOINER_RETRY_MS = 10_000;""",
+        replace="""const JOINER_RETRY_MS = 1_500;""",
+        also=[
+            (
+                """    // §4.8 re-check at FIRE time (the stagger can outlast the schedule-time
+    // check): a re-add that landed during our delay makes this serve stale.
+    if (
+      rejoinServeAction({
+        addedAtMs:
+          this.#recentAdds.get(`${request.user_id}:${request.device_id}`) ??
+          null,
+        nowMs: Date.now(),
+      }) === "refuse_recent_add"
+    ) {
+      return;
+    }
+""",
+                "",
+            ),
+            (
+                """    if (serveTargetStillStale({ scheduledAtEpoch, removedAtEpoch })) {""",
+                """    if (true) {""",
+            ),
+        ],
+        specs=[FLEET_SPEC],
+        must_red=[FLEET_SPEC],
+    ),
+    Mutation(
+        id="wipe-token-dep-ignored",
+        what="the session spends the module-level startup-wipe token instead of its page's own, so a reloaded page shares one Set with every other session and skips the wipe its fresh page owes",
+        file=SESSION,
+        search="""const tokens = this.#deps.startupWipeTokens ?? startupWipedChannels;""",
+        replace="""const tokens = startupWipedChannels;""",
+        specs=[FLEET_SPEC],
+        must_red=[FLEET_SPEC],
+    ),
+    # ---- group scoping ------------------------------------------------------
+    Mutation(
+        id="group-scope-check-removed",
+        what="an envelope for a group other than the live one runs the live group's arms — a drained removed-self, successor or gap for a group we left transitions, refetches or acks against OUR call",
+        file=SESSION,
+        search="""      envelope.group_id !== liveGroup
+    ) {""",
+        replace="""      false
+    ) {""",
+        specs=[GROUPSCOPE_SPEC],
+        must_red=[GROUPSCOPE_SPEC],
+    ),
+    Mutation(
+        id="ctl-exempt-from-scope",
+        what="`mls_ctl` joins the Welcome exemption from group scoping, so another group's ctl-announce skips the check and drives OUR mode machine",
+        file=SESSION,
+        search="""      envelope.content_type !== "mls_welcome" &&
+""",
+        replace="""      envelope.content_type !== "mls_welcome" &&
+      envelope.content_type !== "mls_ctl" &&
+""",
+        specs=[GROUPSCOPE_SPEC],
+        must_red=[GROUPSCOPE_SPEC],
+    ),
+    # ---- the inbound buffer -------------------------------------------------
+    Mutation(
+        id="inbound-commit-routes-olm",
+        what="`inboundRoute` sends `mls_commit` to the Olm path, so a drained commit is decrypted as Olm, fails, and is acked away before the call that needed it exists",
+        file=INBOUND_BUFFER,
+        # The case label dropped whole (newline included), so `mls_commit`
+        # falls through to `default` and the mutant is still well-formed TS.
+        search="""    case "mls_commit":
+""",
+        replace="",
+        specs=[INBOUND_BUFFER_SPEC],
+        must_red=[INBOUND_BUFFER_SPEC],
+    ),
+    Mutation(
+        id="inbound-drain-empty",
+        what="`drain()` empties the hold and hands the sink nothing, so every envelope held before the session registered is lost locally while still queued server-side",
+        file=INBOUND_BUFFER,
+        search="""    return held;""",
+        replace="""    return [];""",
+        specs=[INBOUND_BUFFER_SPEC],
+        must_red=[INBOUND_BUFFER_SPEC],
+    ),
+    Mutation(
+        id="inbound-dedup-removed",
+        what="the hold keeps a repeated envelope id twice, so a live push that the connect-time drain repeats reaches the session twice",
+        file=INBOUND_BUFFER,
+        search="""    if (this.#ids.has(id)) return "duplicate";
+""",
+        replace="",
+        specs=[INBOUND_BUFFER_SPEC],
+        must_red=[INBOUND_BUFFER_SPEC],
+    ),
+]
+
+
+# --- Rejoin resume, wave 1.5: the stagger kick -------------------------------
+#
+# In a call of seven or more, the member at leaf >= 6 fires its staggered
+# rejoin serve after the rejoiner's re-add, and the fire-time §4.8 check reads
+# add observations a non-admitting member only records on its periodic
+# reconcile — so it removed the live, re-seated member. The fix is a monotonic
+# epoch-keyed fact: `#removedAtEpoch` (the highest epoch at which a commit of
+# the live group removed each identity), written from every inbound commit and
+# from this member's own won Removes, cleared only with every scheduled serve,
+# and read UNDER the lock by `serveTargetStillStale` immediately before the
+# serve stages its Remove. Each entry below breaks one leg of that argument
+# and is `must_red` on the spec that owns the case proving the leg; which
+# fleet case kills which entry is recorded on the entry.
+
+MUTATIONS += [
+    # ---- the fact's writers -------------------------------------------------
+    Mutation(
+        id="removed-at-epoch-not-recorded",
+        what="inbound commits no longer record the identities they removed, so a member that did not win the Remove has no fact to refuse a late serve with, and leaf >= 6 kicks the re-seated member again",
+        file=SESSION,
+        # Killed by the phase sweep (14 of its phases), the eight-member case,
+        # the leave-and-return case and the lock-race case.
+        search="""    if (outcome.group_id === this.#groupId) {
+      this.#noteRemovedAtEpoch(outcome.removed, outcome.epoch);
+    }
+""",
+        replace="",
+        specs=[FLEET_SPEC],
+        must_red=[FLEET_SPEC],
+    ),
+    Mutation(
+        id="own-won-remove-not-recorded",
+        what="a member's OWN won Remove is not recorded (it never comes back inbound), so a second serve it armed while that Remove was in flight, anchored before it, removes the re-seated member",
+        file=SESSION,
+        # Killed by the case with a second rejoin intent while the member's
+        # own Remove is in flight.
+        search="""          if (kind === "remove" && groupId === this.#groupId) {
+            this.#noteRemovedAtEpoch(commit.removed, commit.epoch);
+          }
+""",
+        replace="",
+        specs=[FLEET_SPEC],
+        must_red=[FLEET_SPEC],
+    ),
+    Mutation(
+        id="removed-at-epoch-deleted-on-leave",
+        what="a participant leaving the SFU deletes its removed-at-epoch fact, so a rejoiner seen leaving and returning between its Remove and its re-add is served again by a late stagger",
+        file=SESSION,
+        # Killed by the case where leaf 6 watches PEER leave and rejoin the
+        # SFU between its Remove and its re-add.
+        search="""    this.#rejoinServed.delete(identity); // nor a pending re-Add
+""",
+        replace="""    this.#rejoinServed.delete(identity); // nor a pending re-Add
+    this.#removedAtEpoch.delete(identity);
+""",
+        specs=[FLEET_SPEC],
+        must_red=[FLEET_SPEC],
+    ),
+    # ---- the check ----------------------------------------------------------
+    Mutation(
+        id="serve-stale-check-bypassed",
+        what="`serveTargetStillStale` always answers stale, so every late serve removes whatever leaf it finds — the fresh re-add included",
+        file=REJOIN_POLICY,
+        search="""  return i.removedAtEpoch === null || i.removedAtEpoch <= i.scheduledAtEpoch;""",
+        replace="""  return true;""",
+        # Both, each on its own: the policy spec pins the rule, and the fleet
+        # (phase sweep, eight-member, leave-and-return, own-Remove-in-flight
+        # and lock-race cases) proves the session's decision rests on it.
+        specs=[REJOIN_POLICY_SPEC, FLEET_SPEC],
+        must_red=[REJOIN_POLICY_SPEC, FLEET_SPEC],
+    ),
+    Mutation(
+        id="stale-check-outside-lock",
+        what="only the early exit before the roster read checks the fact, not the check inside the Remove's build step under the lock — a serve whose drain applies the Remove AND the re-add while it waits for the lock removes the fresh leaf",
+        file=SESSION,
+        # The in-`build` copy alone (8-space indent, trailing ` {`); the
+        # early exit (` return;`) is kept. Killed by the lock-race case.
+        search="""        if (this.#serveTargetFresh(request, scheduledAtEpoch)) {
+          throw Object.assign(new Error("mls_serve_target_fresh"), {
+            type: "mls_serve_target_fresh",
+          });
+        }
+""",
+        replace="",
+        specs=[FLEET_SPEC],
+        must_red=[FLEET_SPEC],
+    ),
+    # ---- the old §4.8 belt --------------------------------------------------
+    Mutation(
+        id="fire-time-recheck-removed",
+        what="the fire-time §4.8 re-check is gone, so a stale rejoin re-broadcast arriving AFTER the re-add — anchored after the Remove, which the removed-at-epoch guard therefore cannot refuse — is served by every member that observed the re-add only while its stagger ran, and the re-seated member is removed",
+        file=SESSION,
+        # The single edit wave 1 could not give a killer to. Killed by the
+        # case that replays a stale rejoin intent after the re-add.
+        search="""    // §4.8 re-check at FIRE time (the stagger can outlast the schedule-time
+    // check): a re-add that landed during our delay makes this serve stale.
+    if (
+      rejoinServeAction({
+        addedAtMs:
+          this.#recentAdds.get(`${request.user_id}:${request.device_id}`) ??
+          null,
+        nowMs: Date.now(),
+      }) === "refuse_recent_add"
+    ) {
+      return;
+    }
+""",
+        replace="",
+        specs=[FLEET_SPEC],
+        must_red=[FLEET_SPEC],
+    ),
+]
+
+
+# --- Rejoin resume, wave 1.5 fix pass: the serve's other legs ----------------
+#
+# The guard's anchor, and what a serve does once it holds the lock. A serve
+# that has fired gets past every check made outside the lock and then waits
+# for it; three checks run in the Remove's `build`, immediately before
+# `callRemove`, and each refuses a case the other two cannot see
+# (`mlsCallSession.serveguard.test.ts` holds one case per check). Only a serve
+# that passes all three notes a served rejoin and warns that it is removing.
+
+MUTATIONS += [
+    # ---- the anchor ---------------------------------------------------------
+    Mutation(
+        id="serve-anchor-zero",
+        what="a serve is anchored at epoch 0 instead of the epoch that showed the stale leaf, so once a device has been removed ONCE every later serve for it reads that old Remove as newer, is refused, and the device's next wipe-rejoin is never served — locked out of the call's encryption",
+        file=SESSION,
+        # The other direction of the removed-at-epoch guard: the wave-1.5
+        # entries above that break it make it refuse too little, this one
+        # too much. Killed by the no-lockout case (a second wipe-rejoin after
+        # a settled first).
+        search="""      scheduledAtEpoch = state.epoch;
+""",
+        replace="""      scheduledAtEpoch = 0;
+""",
+        specs=[FLEET_SPEC],
+        must_red=[FLEET_SPEC],
+    ),
+    # ---- the checks under the lock ------------------------------------------
+    Mutation(
+        id="serve-generation-check-removed",
+        what="a serve waiting on the lock across a re-entry into the SAME group id is not refused on the establish generation: the reset cleared the removed-at-epoch facts, so the re-entry's leaf for the target reads as stale and is removed",
+        file=SESSION,
+        # The in-`build` generation refusal alone, anchored on its log line
+        # (the group check below throws the same error). Killed by the
+        # serve-guard re-entry case.
+        search="""        if (scheduledGeneration !== this.#establishGeneration) {
+          console.info("[mls] serve was scheduled for an earlier establish", {
+            target: `${request.user_id}:${request.device_id}`,
+            scheduledGeneration,
+            liveGeneration: this.#establishGeneration,
+          });
+          throw Object.assign(new Error("mls_serve_target_fresh"), {
+            type: "mls_serve_target_fresh",
+          });
+        }
+""",
+        replace="",
+        specs=[SERVEGUARD_SPEC],
+        must_red=[SERVEGUARD_SPEC],
+    ),
+    Mutation(
+        id="serve-group-check-removed",
+        what="a serve that builds between a reset and the next establish (`#groupId` moved, the generation not yet bumped) is not refused on the group, and goes on to stage a Remove against whatever group is live",
+        file=SESSION,
+        # The in-`build` group refusal alone, anchored on its log line; the
+        # early exit's `request.group_id !== this.#groupId` outside the lock
+        # is kept. Killed by the serve-guard reset-gap case.
+        search="""        if (request.group_id !== this.#groupId) {
+          console.info("[mls] serve was scheduled for another group", {
+            target: `${request.user_id}:${request.device_id}`,
+            group: request.group_id,
+            liveGroup: this.#groupId,
+          });
+          throw Object.assign(new Error("mls_serve_target_fresh"), {
+            type: "mls_serve_target_fresh",
+          });
+        }
+""",
+        replace="",
+        specs=[SERVEGUARD_SPEC],
+        must_red=[SERVEGUARD_SPEC],
+    ),
+    # ---- what only a staging serve does -------------------------------------
+    Mutation(
+        id="serve-note-outside-lock",
+        what="a serve notes the served rejoin and warns that it is removing BEFORE it takes the lock, so one the check under the lock then refuses has already extended the target's admit-grace and logged a removal it never staged",
+        file=SESSION,
+        # Two edits: the note and the warning leave the `build` closure and
+        # go back ahead of `#stageAndSubmit`, where they sat before the fix.
+        # Killed by the serve-guard epoch case (the probe sees the note) and
+        # by the fleet's lock-race case (the warning at fire time).
+        search="""        // From here the device is CONNECTED and about to be MLS-absent until
+        // its next intent lands an Add: keep it pending across that gap (the
+        // other members learn the same thing from the roster diff in
+        // `#reconcileOnce`). Only a serve that goes on to stage notes it: a
+        // refused one removes nothing, so it must extend no admit-grace.
+        this.#noteRejoinServed(
+          `${request.user_id}:${request.device_id}`,
+          Date.now(),
+        );
+        console.warn(
+          `[mls] removing stale leaf for rejoin: ${request.user_id}:${request.device_id}`,
+        );
+""",
+        replace="",
+        also=[
+            (
+                """    this.#stagingFor = `${request.user_id}:${request.device_id}`;
+    try {
+      await this.#stageAndSubmit(async () => {
+""",
+                """    this.#noteRejoinServed(
+      `${request.user_id}:${request.device_id}`,
+      Date.now(),
+    );
+    console.warn(
+      `[mls] removing stale leaf for rejoin: ${request.user_id}:${request.device_id}`,
+    );
+    this.#stagingFor = `${request.user_id}:${request.device_id}`;
+    try {
+      await this.#stageAndSubmit(async () => {
+""",
+            ),
+        ],
+        specs=[SERVEGUARD_SPEC, FLEET_SPEC],
+        must_red=[SERVEGUARD_SPEC, FLEET_SPEC],
     ),
 ]
 

@@ -125,15 +125,22 @@ import {
   spliceParkedAfterWelcome,
 } from "./mlsDrainPolicy";
 import { joinRequestAction } from "./mlsJoinRequestPolicy";
+import { type JoinTimelineSummary, JoinTimeline } from "./mlsJoinTimeline";
 import {
   type NegotiatingFailsafeInput,
   negotiatingFailsafeAction,
   negotiatingFailsafeReason,
 } from "./mlsNegotiatingFailsafe";
 import {
+  WELCOME_CURRENCY_BACKOFF_MS,
+  classifyRefetchFailure,
+  welcomeCurrencyVerdict,
+} from "./mlsRefetchPolicy";
+import {
   admitInProgressVerdict,
   rejoinReintentWindowMs,
   rejoinServeAction,
+  serveTargetStillStale,
   startupWipeTargets,
   welcomeVerdict,
 } from "./mlsRejoinPolicy";
@@ -154,6 +161,18 @@ const JOINER_RETRY_MS = 10_000;
 const MAX_JOINER_RETRIES = 3;
 /** Bound on the whole locked submit critical section (H1) — no hung wedge. */
 const SUBMIT_TIMEOUT_MS = 10_000;
+/**
+ * Bound on the whole Welcome currency check (LDP-M3): the fetch, every
+ * `WELCOME_CURRENCY_BACKOFF_MS` retry and the catch-up. Keeping
+ * `#joinedGeneration` at the adopt disarms the enrolment backstop for the
+ * join, so this deadline is what bounds a check the DS never answers.
+ */
+const WELCOME_CURRENCY_DEADLINE_MS = SUBMIT_TIMEOUT_MS;
+/**
+ * The curated error every late-drain latch carries (LDP-n2). Never the raw
+ * transport error: its message names the group id.
+ */
+const ENCRYPTION_UNCONFIRMED = "This call's encryption could not be confirmed";
 /** Park/gap-refetch attempts before escalating to desync → rejoin (M4). */
 const MAX_PARK_ATTEMPTS = 8;
 /** Per-envelope transient-error retries before ack+drop-as-poison (item 4). */
@@ -913,6 +932,10 @@ export interface MlsMetricsSummary {
   pass: boolean;
   /** Human-readable threshold breaches (empty ⇒ pass). */
   failures: string[];
+  /** Slice 0: this device's own bring-up timeline (joiner or creator). */
+  joinTimeline?: JoinTimelineSummary;
+  /** Slice 0: admits this member completed — the newest 8, oldest first. */
+  admitTimelines?: JoinTimelineSummary[];
 }
 
 class MlsMetrics {
@@ -1055,12 +1078,39 @@ export interface MlsCallSessionDeps {
    * (`negotiatingFailsafeReason`).
    */
   channelHasOpenGroup?: () => "open" | "none" | "pending" | "ratelimited";
+  /**
+   * The per-channel §4.1 startup-wipe tokens this session reads and spends.
+   * Absent ⇒ the module-level page-lifetime set (`startupWipedChannels`),
+   * which is what production uses. A spec that models a page reload passes
+   * a fresh set per page, because the module set outlives the page it
+   * stands for.
+   */
+  startupWipeTokens?: Set<string>;
 }
 
 /** One staged own commit awaiting arbitration (native pending mirror). */
 interface StagedCommit {
   epoch: number;
   kind: StagedCommitKind;
+}
+
+/** A Welcome adopted at `epoch`, awaiting its DS currency check (W2-M2). */
+interface WelcomeCurrencyPending {
+  groupId: string;
+  epoch: number;
+  generation: number;
+}
+
+/** One run of the Welcome currency check. */
+interface WelcomeCurrencyCheck {
+  pending: WelcomeCurrencyPending;
+  /**
+   * Set by the check's deadline or by a re-secure raised while it runs:
+   * every continuation after it acts on nothing.
+   */
+  expired: boolean;
+  /** Cuts a backoff wait short (the deadline fired). */
+  wake: (() => void) | null;
 }
 
 /**
@@ -1181,6 +1231,20 @@ export class MlsCallSession {
   /** Whether `#establish` is currently running (suppresses the F3 alarm). */
   #establishInFlight = false;
   /**
+   * A Welcome adopted but not yet confirmed current by the DS (W2-M2). Set
+   * by `#onEpochAdvanced`'s welcome arm in place of `#toActive`; `#pump`
+   * runs the check under the lock right after the `#consume` that set it,
+   * and clears it when the check settles. Until then the session stays
+   * non-active, which is what holds the publish gate.
+   */
+  #welcomeCurrency: WelcomeCurrencyPending | null = null;
+  /**
+   * The currency check in flight: set for exactly the lifetime of its
+   * promise, cleared in a `finally`. An OWNER for the re-securing backstop
+   * (`#resecuringHasOwner`) — a pending record alone is not.
+   */
+  #welcomeCurrencyCheck: WelcomeCurrencyCheck | null = null;
+  /**
    * When each identity (`user:device`) was last observed being ADDED to the
    * MLS roster — our own admit reaching the DS, a racing admitter's win, or a
    * reconcile watching it appear. Read by the §4.8 rejoin-serve staleness
@@ -1188,6 +1252,25 @@ export class MlsCallSession {
    * add is a stale re-broadcast/replay and must not remove the fresh leaf.
    */
   #recentAdds = new Map<string, number>();
+  /**
+   * The HIGHEST epoch at which a commit of the live group removed each
+   * identity (`user:device`): every inbound commit (`#onEpochAdvanced`) and
+   * every Remove of our own that won (`#stageAndSubmit`). Read by the rejoin
+   * serve at fire time: a target removed at an epoch after the serve was
+   * scheduled and present again was re-added, so its leaf is fresh.
+   * `#recentAdds` cannot say that on a member that did not admit it — the
+   * roster diff that stamps it runs every `RECONCILE_INTERVAL_MS`, and a
+   * serve at leaf 6 or above fires inside that blind window.
+   *
+   * Max-merge only, and cleared ONLY in `#resetGroupBuffers` together with
+   * every scheduled serve. A serve that has already FIRED is not cleared
+   * there and can outlive the reset; the in-lock checks in
+   * `#removeStaleLeaf` refuse it, by establish generation (any re-entry,
+   * the same group id included) and by group id (a group change). Never
+   * deleted by a leave, an admit, a reconcile or any roster diff: the guard
+   * is sound only because the fact is monotonic.
+   */
+  #removedAtEpoch = new Map<string, number>();
   /** The previous reconcile's MLS roster (diffed to observe inbound Adds). */
   #lastRosterIdentities = new Set<string>();
 
@@ -1202,6 +1285,15 @@ export class MlsCallSession {
   #hasLocalKey = false;
   /** Outstanding epoch-fenced Add-grace local-install timer (NEW-1). */
   #graceTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * The epoch of the LOCAL send key actually installed for the current group
+   * (-1: none). Set only once an install that switches it resolved — the
+   * immediate path's `applyKeys`, the Add-grace fire's `applyLocalKey` — and
+   * only while that epoch is still `#installEpoch`, so a group reset or a
+   * newer push during the await leaves it lower, never higher. A fact, where
+   * `#graceTimer` is only an intent (LDA-M1).
+   */
+  #ownSendKeyEpoch = -1;
   /** True while a rotation is "known" for the §4.4 loud-state debounce. */
   #rotationWindow = false;
   #rotationWindowTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1497,6 +1589,22 @@ export class MlsCallSession {
 
   /** R-1/R-2 metrics recorder (step 8) — off the correctness path. */
   #metrics = new MlsMetrics();
+  /**
+   * Slice-0 join instrumentation (measurement only — nothing reads it back
+   * into a decision). The joiner timeline follows the establish generation;
+   * admit timelines are keyed `user:device` and close on our won Add.
+   */
+  #joinTimeline: JoinTimeline | null = null;
+  #admitTimelines = new Map<string, JoinTimeline>();
+  /** Closed admit timelines, the newest 8, oldest first (`metrics()`). */
+  #admitSummaries: JoinTimelineSummary[] = [];
+  /**
+   * The `user:device` whose admit or rejoin serve is about to be staged, so
+   * `#stageAndSubmit`'s won arm stamps the right admit timeline. Consumed
+   * synchronously at that method's entry, before its lock wait, so neither a
+   * racing admit nor a heartbeat queuing behind it can inherit the key.
+   */
+  #stagingFor: string | null = null;
 
   // --- Admit re-drive + joiner self-enrolment assertion ----------------------
   /**
@@ -1577,7 +1685,16 @@ export class MlsCallSession {
    *  proof; also logged on dispose. NOT a substitute for the T-03-at-the-remover
    *  correctness assertion (audit M3). */
   metrics(): MlsMetricsSummary {
-    return this.#metrics.summary();
+    return this.#foldTimelines(this.#metrics.summary());
+  }
+
+  /** Fold the slice-0 join and admit timelines into a metrics summary. */
+  #foldTimelines(summary: MlsMetricsSummary): MlsMetricsSummary {
+    if (this.#joinTimeline) summary.joinTimeline = this.#joinTimeline.summary();
+    if (this.#admitSummaries.length) {
+      summary.admitTimelines = [...this.#admitSummaries];
+    }
+    return summary;
   }
 
   /**
@@ -1603,8 +1720,14 @@ export class MlsCallSession {
     });
     this.#armNegotiatingFailsafe();
     this.#armEnrolmentAssertion();
+    // Slice-0 timeline t0: enrolment is the first serial round trip of a
+    // fresh join, so it sits inside the measurement rather than before it.
+    const timeline = new JoinTimeline("joiner");
+    this.#joinTimeline = timeline;
+    timeline.stamp("start");
     try {
       await this.#ensureKeyPackages();
+      timeline.stamp("keyPackagesPut");
       if (this.#terminal()) return;
     } catch (error) {
       this.#onLoud(error);
@@ -1807,8 +1930,14 @@ export class MlsCallSession {
   dispose(): void {
     if (this.#state === "closed") return;
     // Emit the R-1/R-2 session summary (§7.3) before tearing down.
-    const summary = this.#metrics.summary();
-    if (summary.rotations || summary.mailbox.gapRefetches) {
+    const summary = this.#foldTimelines(this.#metrics.summary());
+    // A join timeline is worth printing on its own: a solo or short call has
+    // no rotations, and its bring-up cost is exactly what slice 0 measures.
+    if (
+      summary.rotations ||
+      summary.mailbox.gapRefetches ||
+      summary.joinTimeline
+    ) {
       const log = summary.pass ? console.info : console.warn;
       log("[mls] call metrics summary", summary);
     }
@@ -1829,6 +1958,10 @@ export class MlsCallSession {
     this.#cancelReupgrade();
     for (const timer of this.#timers) clearTimeout(timer);
     this.#timers.clear();
+    // LDA-n1: a Welcome currency check in a backoff wait just lost its timer.
+    // Wake it, or its pump continuation never settles; it then sees the
+    // closed session and acts on nothing.
+    this.#welcomeCurrencyCheck?.wake?.();
     for (const timer of this.#scheduledAdmits.values())
       if (timer) clearTimeout(timer);
     this.#scheduledAdmits.clear();
@@ -1932,6 +2065,11 @@ export class MlsCallSession {
     // it and aborts when superseded, so a stale loop broadcasts nothing and
     // never touches the live establish's shared state.
     const generation = ++this.#establishGeneration;
+    // A re-establish is a fresh join for latency purposes: its stamps start
+    // over at this generation's t0 (`start()` opened the first generation's).
+    if (!this.#joinTimeline) this.#joinTimeline = new JoinTimeline("joiner");
+    else if (generation > 1) this.#joinTimeline.restart();
+    this.#joinTimeline.stamp("start");
     this.#establishInFlight = true;
     try {
       await this.#establishWithGeneration(generation, supersedes);
@@ -1983,6 +2121,7 @@ export class MlsCallSession {
       return;
     }
     const decision = routeCreateOrJoin(res);
+    this.#joinTimeline?.stamp("createRouted");
 
     switch (decision.action) {
       case "created":
@@ -1992,6 +2131,7 @@ export class MlsCallSession {
         // Sweep them (never the orphan we just minted) so no surviving state
         // can collide with this call's envelopes.
         await this.#startupWipe(orphanId);
+        this.#joinTimeline?.stamp("wipeDone");
         if (this.#terminal() || generation !== this.#establishGeneration)
           return;
         this.#joinedGeneration = generation; // our own create IS enrolment (F2)
@@ -2034,6 +2174,7 @@ export class MlsCallSession {
         // before the first `callJoinIntent` writes the fresh local intent row
         // the wipe would otherwise delete.
         await this.#startupWipe(null);
+        this.#joinTimeline?.stamp("wipeDone");
         if (this.#terminal() || generation !== this.#establishGeneration)
           return;
         await this.#joinPath(
@@ -2066,7 +2207,8 @@ export class MlsCallSession {
    * broken store loudly. Never burns `MAX_REESTABLISH`.
    */
   async #startupWipe(orphanGroupId: string | null): Promise<void> {
-    if (startupWipedChannels.has(this.#deps.channelId)) return;
+    const tokens = this.#deps.startupWipeTokens ?? startupWipedChannels;
+    if (tokens.has(this.#deps.channelId)) return;
     let localGroupIds: string[];
     try {
       localGroupIds = await this.#deps.bridge.callLocalGroups(
@@ -2084,7 +2226,7 @@ export class MlsCallSession {
     const targets = startupWipeTargets({
       localGroupIds,
       orphanGroupId,
-      tokenSpent: startupWipedChannels.has(this.#deps.channelId),
+      tokenSpent: tokens.has(this.#deps.channelId),
     });
     if (targets.length === 0) return;
     try {
@@ -2093,7 +2235,7 @@ export class MlsCallSession {
         // nothing but also tell nobody; this path must degrade loudly).
         await this.#deps.bridge.callLeaveCleanup(groupId);
       }
-      startupWipedChannels.add(this.#deps.channelId); // spent ONLY on full success
+      tokens.add(this.#deps.channelId); // spent ONLY on full success
       console.warn(
         "[mls] startup fresh-rejoin: wiped surviving local call-group state",
         targets,
@@ -2163,6 +2305,7 @@ export class MlsCallSession {
         error,
       );
     }
+    this.#joinTimeline?.stamp("reconcileDone");
 
     for (let attempt = 0; attempt <= MAX_JOINER_RETRIES; attempt++) {
       // §4.2: a superseded join loop broadcasts NOTHING — every re-broadcast
@@ -2243,6 +2386,7 @@ export class MlsCallSession {
           this.#onLoud(new Error("join intent rejected"));
           return;
         }
+        this.#joinTimeline?.stamp("intentAccepted");
       }
 
       // The admitter's winning Add fans a Welcome to us; the drain processes it
@@ -2369,6 +2513,7 @@ export class MlsCallSession {
     if (action === "ignore") return;
 
     const key = `${request.user_id}:${request.device_id}`;
+    this.#admitTimeline(key).stamp("joinRequestSeen");
     // The joiner is observably still enrolling — keep its admit-grace open
     // (bounded; see #refreshAdmitGrace) so the roster reconcile does not
     // declare it mixed while this very admit is in flight.
@@ -2414,6 +2559,7 @@ export class MlsCallSession {
     } catch (error) {
       return this.#abortAdmit(key, request, "listing_unavailable", error);
     }
+    this.#admitTimelineFor(request)?.stamp("reconcileDone");
     if (this.#state !== "active") {
       return this.#abortAdmit(key, request, "not_active");
     }
@@ -2444,6 +2590,7 @@ export class MlsCallSession {
     const timer = setTimeout(() => {
       this.#scheduledAdmits.delete(key);
       this.#timers.delete(timer);
+      this.#admitTimelineFor(request)?.stamp("staggerFired");
       void this.#tryAdmit(request);
     }, leafStaggerDelayMs(leaf));
     this.#scheduledAdmits.set(key, timer);
@@ -2473,6 +2620,13 @@ export class MlsCallSession {
 
     if (!admitAbortIsRetryable(abort)) {
       this.#pendingAdmits.delete(key);
+      // Slice 0: `already_member` is this attempt's terminal end — a racing
+      // admitter's Add carried the joiner in, so no won Add of ours will ever
+      // close its timeline. Retire it here, or the recorder's first-wins t0
+      // makes this device's NEXT join request report a row spanning both.
+      if (abort === "already_member") {
+        this.#admitTimelines.delete(`${request.user_id}:${request.device_id}`);
+      }
       if (!admitAbortIsBenign(abort)) {
         console.warn(
           `[mls] admit of ${key} abandoned (${abort}) — that participant is ` +
@@ -2578,6 +2732,7 @@ export class MlsCallSession {
     } catch (error) {
       return this.#abortAdmit(key, request, "listing_unavailable", error);
     }
+    this.#admitTimelineFor(request)?.stamp("reconcileDone");
     try {
       await this.#deps.bridge.callVerifyJoinIntent(request);
     } catch (error) {
@@ -2616,7 +2771,15 @@ export class MlsCallSession {
     // Stale leaf still present? Another member's Remove may already have
     // won (idempotence — the roster check discriminates perfectly). Also
     // derive our leaf index for the same liveness stagger admits use.
+    // The epoch that showed the stale leaf present anchors the serve: a
+    // Remove of it at any LATER epoch means the leaf found at fire time is
+    // a re-added, fresh one (`#removeStaleLeaf`). The establish generation
+    // anchors it too, read here, in the same turn as the live-group check
+    // above: a re-establish, even into the same group id, clears the facts
+    // that epoch is compared against, so a serve outliving one must refuse.
     let leaf: number;
+    let scheduledAtEpoch: number;
+    const scheduledGeneration = this.#establishGeneration;
     try {
       const state = await this.#deps.bridge.callState(this.#groupId);
       if (
@@ -2628,6 +2791,7 @@ export class MlsCallSession {
         this.#retireRejoinServe(key);
         return; // already served
       }
+      scheduledAtEpoch = state.epoch;
       leaf = state.members.findIndex(
         (m) =>
           m.user_id === this.#deps.userId &&
@@ -2650,7 +2814,12 @@ export class MlsCallSession {
     const timer = setTimeout(() => {
       this.#scheduledAdmits.delete(key);
       this.#timers.delete(timer);
-      void this.#removeStaleLeaf(request);
+      this.#admitTimelineFor(request)?.stamp("staggerFired");
+      void this.#removeStaleLeaf(
+        request,
+        scheduledAtEpoch,
+        scheduledGeneration,
+      );
     }, leafStaggerDelayMs(leaf));
     this.#scheduledAdmits.set(key, timer);
     this.#timers.add(timer);
@@ -2662,7 +2831,44 @@ export class MlsCallSession {
     this.#pendingAdmits.delete(key);
   }
 
-  async #removeStaleLeaf(request: MlsJoinRequest): Promise<void> {
+  /** The admit timeline for `user:device`, opened on its first join request. */
+  #admitTimeline(key: string): JoinTimeline {
+    let timeline = this.#admitTimelines.get(key);
+    if (!timeline) {
+      timeline = new JoinTimeline("admitter");
+      this.#admitTimelines.set(key, timeline);
+    }
+    return timeline;
+  }
+
+  /** The open admit timeline for the device behind `request`, if any. */
+  #admitTimelineFor(request: MlsJoinRequest): JoinTimeline | undefined {
+    return this.#admitTimelines.get(`${request.user_id}:${request.device_id}`);
+  }
+
+  /**
+   * Our commit for `key`'s join won: stamp its admit timeline and, once the
+   * Add itself is in, report the row and retire the entry (newest 8 kept).
+   */
+  #closeAdmitTimeline(key: string, kind: StagedCommit["kind"]): void {
+    const timeline = this.#admitTimelines.get(key);
+    if (!timeline) return;
+    timeline.stamp("commitWon");
+    if (kind !== "admit") return;
+    const summary = timeline.summary();
+    // `p` is the absolute `performance.now()` of the print, the same clock
+    // `[gate-trace]` carries, so a leg anchors the row at t0 = p − totalMs.
+    console.info("[mls] admit timeline", { p: performance.now(), ...summary });
+    this.#admitSummaries.push(summary);
+    if (this.#admitSummaries.length > 8) this.#admitSummaries.shift();
+    this.#admitTimelines.delete(key);
+  }
+
+  async #removeStaleLeaf(
+    request: MlsJoinRequest,
+    scheduledAtEpoch: number,
+    scheduledGeneration: number,
+  ): Promise<void> {
     // Belt for the ledger: this serve is being acted on, nothing may re-drive it.
     this.#pendingAdmits.delete(
       `rejoin:${request.user_id}:${request.device_id}`,
@@ -2686,6 +2892,8 @@ export class MlsCallSession {
     ) {
       return;
     }
+    // Early exit only: the check that decides runs under the lock, below.
+    if (this.#serveTargetFresh(request, scheduledAtEpoch)) return;
     // Re-check under FRESH state at fire time: the lowest leaf usually wins
     // during our stagger delay, making this a clean no-op.
     try {
@@ -2701,25 +2909,94 @@ export class MlsCallSession {
     } catch {
       return;
     }
-    // From here the device is CONNECTED and about to be MLS-absent until its
-    // next intent lands an Add: keep it pending across that gap (the other
-    // members learn the same thing from the roster diff in `#reconcileOnce`).
-    this.#noteRejoinServed(
-      `${request.user_id}:${request.device_id}`,
-      Date.now(),
-    );
-    console.warn(
-      `[mls] removing stale leaf for rejoin: ${request.user_id}:${request.device_id}`,
-    );
-    await this.#stageAndSubmit(
-      () =>
-        this.#deps.bridge.callRemove(
+    this.#stagingFor = `${request.user_id}:${request.device_id}`;
+    try {
+      await this.#stageAndSubmit(async () => {
+        // The serve must still be for the live establish. A reset clears
+        // only SCHEDULED serves (and `#removedAtEpoch` with them); one that
+        // has already fired can be waiting here across it, and `callRemove`
+        // acts on whatever group is live now. Every re-entry runs a new
+        // `#establish`, which bumps the generation before it adopts a group,
+        // so this refuses a re-entry into the SAME group id too, where the
+        // cleared facts would read the old leaf's replacement as stale.
+        if (scheduledGeneration !== this.#establishGeneration) {
+          console.info("[mls] serve was scheduled for an earlier establish", {
+            target: `${request.user_id}:${request.device_id}`,
+            scheduledGeneration,
+            liveGeneration: this.#establishGeneration,
+          });
+          throw Object.assign(new Error("mls_serve_target_fresh"), {
+            type: "mls_serve_target_fresh",
+          });
+        }
+        // The group itself changed under the serve. Between a reset and the
+        // next establish's bump (a leave-clean still running, or no
+        // establish at all past the re-establish cap) the generation has not
+        // moved but `#groupId` has: only this check refuses there.
+        if (request.group_id !== this.#groupId) {
+          console.info("[mls] serve was scheduled for another group", {
+            target: `${request.user_id}:${request.device_id}`,
+            group: request.group_id,
+            liveGroup: this.#groupId,
+          });
+          throw Object.assign(new Error("mls_serve_target_fresh"), {
+            type: "mls_serve_target_fresh",
+          });
+        }
+        // The check that decides, UNDER the lock, immediately before the
+        // stage. Outside it the pump can apply the target's Remove AND its
+        // re-Add while we wait, and native `callRemove` resolves the target
+        // by identity, so it would remove the fresh leaf. Under the lock no
+        // commit applies concurrently: a present target was either never
+        // removed (stale, serve it) or re-added after a Remove that was
+        // applied, and recorded, first.
+        if (this.#serveTargetFresh(request, scheduledAtEpoch)) {
+          throw Object.assign(new Error("mls_serve_target_fresh"), {
+            type: "mls_serve_target_fresh",
+          });
+        }
+        // From here the device is CONNECTED and about to be MLS-absent until
+        // its next intent lands an Add: keep it pending across that gap (the
+        // other members learn the same thing from the roster diff in
+        // `#reconcileOnce`). Only a serve that goes on to stage notes it: a
+        // refused one removes nothing, so it must extend no admit-grace.
+        this.#noteRejoinServed(
+          `${request.user_id}:${request.device_id}`,
+          Date.now(),
+        );
+        console.warn(
+          `[mls] removing stale leaf for rejoin: ${request.user_id}:${request.device_id}`,
+        );
+        return this.#deps.bridge.callRemove(
           this.#groupId!,
           request.user_id,
           request.device_id,
-        ),
-      "remove",
+        );
+      }, "remove");
+    } finally {
+      this.#stagingFor = null;
+    }
+  }
+
+  /**
+   * Whether a rejoin serve anchored at `scheduledAtEpoch` must refuse: its
+   * target was removed at a later epoch, so a leaf present now is a re-added
+   * one. Logs the refusal.
+   */
+  #serveTargetFresh(
+    request: MlsJoinRequest,
+    scheduledAtEpoch: number,
+  ): boolean {
+    const target = `${request.user_id}:${request.device_id}`;
+    const removedAtEpoch = this.#removedAtEpoch.get(target) ?? null;
+    if (serveTargetStillStale({ scheduledAtEpoch, removedAtEpoch })) {
+      return false;
+    }
+    console.info(
+      "[mls] serve target was removed after scheduling; the present leaf is fresh",
+      { target, scheduledAtEpoch, removedAtEpoch },
     );
+    return true;
   }
 
   async #tryAdmit(request: MlsJoinRequest): Promise<void> {
@@ -2810,6 +3087,7 @@ export class MlsCallSession {
         claimRes.body.results[0]?.status,
       );
     }
+    this.#admitTimelineFor(request)?.stamp("claimDone");
 
     // The attempt now owns a consumed KeyPackage and reaches the DS. Whatever
     // `#stageAndSubmit` decides (won / lost-and-rebased / loud) is reported by
@@ -2822,11 +3100,16 @@ export class MlsCallSession {
     // leaf we cannot verify from failing OUR session — the pre-check above
     // catches the common case, this covers a refusal that only the claimed
     // KeyPackage's own credential can reveal.
-    await this.#stageAndSubmit(
-      () => this.#deps.bridge.callAdmit(request, claimed),
-      "admit",
-      (error) => this.#abortAdmit(key, request, "leaf_unverifiable", error),
-    );
+    this.#stagingFor = key;
+    try {
+      await this.#stageAndSubmit(
+        () => this.#deps.bridge.callAdmit(request, claimed),
+        "admit",
+        (error) => this.#abortAdmit(key, request, "leaf_unverifiable", error),
+      );
+    } finally {
+      this.#stagingFor = null;
+    }
     // §4.8: record the Add observation (ours, or on a Lost the racing winner's
     // — either way the leaf is fresh) so a stale rejoin re-broadcast landing
     // after it cannot re-remove the member it was already served by.
@@ -2856,6 +3139,11 @@ export class MlsCallSession {
      */
     onTargetRefused?: (error: unknown) => void,
   ): Promise<void> {
+    // Consume the caller's attribution FIRST, before any await or early
+    // return: it was set synchronously just before this call, and a heartbeat
+    // or ghost Remove queuing behind us on the lock must not inherit it.
+    const stagingFor = this.#stagingFor;
+    this.#stagingFor = null;
     if (!this.#groupId || this.#terminal()) return;
     const groupId = this.#groupId;
 
@@ -2870,10 +3158,14 @@ export class MlsCallSession {
         // makes this race LIKELY for rejoin serves, AUD-MED-1) reports as
         // native `mls_group_not_found`: a benign no-op, never a session
         // failure. Same for the group itself being gone (we left). Covers
-        // #serveRejoin AND the pre-existing #removeMember ghost path.
+        // #serveRejoin AND the pre-existing #removeMember ghost path. A serve
+        // whose target turned out fresh (`#removeStaleLeaf`) refuses the same
+        // way: nothing was staged, and nothing is wrong with the session.
+        const buildError = (error as { type?: string } | null)?.type;
         if (
           kind === "remove" &&
-          (error as { type?: string } | null)?.type === "mls_group_not_found"
+          (buildError === "mls_group_not_found" ||
+            buildError === "mls_serve_target_fresh")
         ) {
           return;
         }
@@ -2963,6 +3255,14 @@ export class MlsCallSession {
         case "won":
           await this.#deps.bridge.callCommitWon(groupId, commit.epoch);
           this.#staged = null;
+          // Our own won Remove never comes back inbound (`commit_won` returns
+          // `removed: []`), so record it from the staged commit, at the new
+          // epoch. A serve re-scheduled while it was in flight is anchored
+          // before it and must see it (the `rejoin:` dedup key is gone by
+          // then). A group swapped under the await gets nothing.
+          if (kind === "remove" && groupId === this.#groupId) {
+            this.#noteRemovedAtEpoch(commit.removed, commit.epoch);
+          }
           // R-1 own-commit propagation (§7.3): submit → Won round-trip.
           this.#metrics.recordCommitPropagation(
             performance.now() - submitStart,
@@ -2970,8 +3270,18 @@ export class MlsCallSession {
           // C1: record the own-won KIND so step 4 classifies rotation timing
           // (commit_won returns removed:[] — the outcome would look Add-driven).
           this.#lastOwnWon = { epoch: commit.epoch, kind };
+          // Slice 0: a won Remove (rejoin serve) only stamps; the Add that
+          // follows it closes the entry, so a rejoin's two-commit gap is one row.
+          if (stagingFor) this.#closeAdmitTimeline(stagingFor, kind);
           break;
         case "lost":
+          // Slice 0: a lost Add is terminal for this attempt (`#tryAdmit`
+          // records the observation and does not re-drive), so its timeline
+          // must not survive to seed a later request's t0. A lost Remove
+          // stays open: the rejoin serve's Add is still to come.
+          if (stagingFor && kind === "admit") {
+            this.#admitTimelines.delete(stagingFor);
+          }
           await this.#safeCommitLost();
           await this.#rebaseInline(outcome.winning); // INLINE — we hold the lock
           break;
@@ -3125,7 +3435,18 @@ export class MlsCallSession {
               );
               continue;
             }
-            await this.#consume(env);
+            try {
+              await this.#consume(env);
+            } catch (error) {
+              // Backstop (LD-D4): one throwing step never escapes the pump
+              // as an unhandled rejection, and never stops the batch.
+              this.#onDrainStepThrew(env, error);
+            }
+            // Still under the lock: nothing else of the adopted group applies
+            // before the DS has said whether the Welcome is current.
+            if (this.#welcomeCurrency && !this.#welcomeCurrencyCheck) {
+              await this.#runWelcomeCurrencyCheck();
+            }
           }
         } finally {
           release();
@@ -3144,6 +3465,53 @@ export class MlsCallSession {
   async #consume(envelope: MlsEnvelope): Promise<void> {
     if (this.#seen.has(envelope.id)) {
       this.#metrics.recordDedupSkip(); // ULID dedup (drain-vs-live-push race)
+      return;
+    }
+
+    // Group scoping (audit M2): an envelope for a group other than the live
+    // one (including while none is live) is applied natively and acked only
+    // on a terminal disposition. Every other arm below acts on OUR group —
+    // the H1 clear, the gap refetch of `#groupId`, the desync escalation, the
+    // removed-self/successor/rejoin transitions, the inbound memo — so a
+    // drained or replayed envelope for a group we left must reach none of
+    // them. A non-terminal one (gap, identity, transient) stays unacked in
+    // the mailbox (invariant 10). Welcomes are exempt: the join path adopts
+    // its group from one.
+    const liveGroup = this.#groupId;
+    if (
+      envelope.content_type !== "mls_welcome" &&
+      envelope.group_id !== liveGroup
+    ) {
+      const foreign = await this.#deps.bridge.processEnvelope(
+        envelope,
+        this.#deps.userId,
+      );
+      if (foreign.kind === "drop" && foreign.loud) {
+        // A loud-classified drop consumed an unrepeatable envelope; it says
+        // nothing about OUR group, so it latches nothing, but it is never
+        // quiet either.
+        console.error("[mls] loud drop for another group", {
+          group: envelope.group_id,
+          liveGroup,
+          epoch: envelope.epoch,
+          contentType: envelope.content_type,
+          reason: foreign.reason,
+        });
+      } else {
+        console.info("[mls] envelope for another group", {
+          group: envelope.group_id,
+          liveGroup,
+          epoch: envelope.epoch,
+          contentType: envelope.content_type,
+          disposition: foreign.kind,
+          acked: foreign.ack,
+        });
+      }
+      if (foreign.ack) {
+        this.#seen.add(envelope.id);
+        this.#retries.delete(envelope.id);
+        this.#deps.bridge.ackEnvelopes([envelope.id]);
+      }
       return;
     }
 
@@ -3222,7 +3590,8 @@ export class MlsCallSession {
         this.#parkAttempts++;
         this.#metrics.recordPark();
         this.#metrics.recordGapRefetch();
-        await this.#gapRefetchInline(action.fromEpoch);
+        if (await this.#gapRefetchFailed(envelope, action.fromEpoch))
+          this.#scheduleRetry(envelope);
         return;
       }
       case "escalate_desync":
@@ -3349,17 +3718,44 @@ export class MlsCallSession {
     }
   }
 
+  /**
+   * Fetch the commits from `fromEpoch` and apply them INLINE (the caller holds
+   * the lock). Returns when caught up, when the answer was handed to a
+   * transition (a 404 → re-securing + a scheduled fresh rejoin, receiver lag
+   * → a scheduled fresh rejoin, `feature_disabled` → plaintext), or when the
+   * group changed or the session ended under an await (moot). THROWS when the
+   * refetch failed — a transient error, or an answer that stops short of
+   * `current_epoch` (LDP-m3): the drain arm turns that into a bounded retry
+   * of its mailbox envelope (`#gapRefetchFailed`), and `#rebaseInline`'s
+   * caller catches it into re-securing, as before.
+   */
   async #gapRefetchInline(fromEpoch: number): Promise<void> {
-    if (!this.#groupId || this.#terminal()) return;
-    const res = await this.#deps.bridge.mlsFetchCommits(
-      this.#groupId,
-      fromEpoch,
-    );
+    // Captured before the await: every continuation checks it (LDP-M2).
+    const groupId = this.#groupId;
+    if (!groupId || this.#terminal()) return;
+    let res: Awaited<ReturnType<E2EEBridge["mlsFetchCommits"]>>;
+    try {
+      res = await this.#deps.bridge.mlsFetchCommits(groupId, fromEpoch);
+    } catch (error) {
+      if (this.#terminal() || this.#groupId !== groupId) return;
+      if (classifyRefetchFailure(error) === "transient") throw error;
+      // LD-D2: a 404 is the DS saying this device is not in the group. It is
+      // unauthenticated, so not `#onRemovedSelf`: re-secure now (the gate
+      // holds) and rejoin fresh, as the join-intent 404 and receiver lag do.
+      console.warn("[mls] gap refetch: not a member of the call group");
+      this.#resecureAndRejoin(
+        "gap refetch: the delivery service does not list this device",
+        "rejoin_fresh:refetch_not_member",
+      );
+      return;
+    }
+    if (this.#terminal() || this.#groupId !== groupId) return;
     if (res.kind === "feature_disabled") {
       this.#toPlaintext();
       return;
     }
-    if (res.kind !== "ok") return; // never a conflict on this route
+    // Never a conflict on this route; anything but `ok` is a failed refetch.
+    if (res.kind !== "ok") throw new Error(`gap refetch answered ${res.kind}`);
 
     // Lag / wraparound guard (§1.5): if the group has advanced far past the
     // epoch we are missing from, don't grind a huge backlog through the drain —
@@ -3377,9 +3773,338 @@ export class MlsCallSession {
       console.warn(`[mls] receiver lag ${lag.lag} approaching desync`);
 
     for (const info of res.body.commits) {
-      if (this.#terminal()) return;
+      if (this.#terminal() || this.#groupId !== groupId) return;
       await this.#consume(this.#synthEnvelope(info)); // INLINE (we hold the lock)
     }
+    if (this.#terminal() || this.#groupId !== groupId) return;
+    // LDP-m3: an `ok` that leaves this group short of `current_epoch` is a
+    // failed refetch, not a caught-up one. A commit's `epoch` is the epoch it
+    // produces, so an empty page reaches `fromEpoch - 1`.
+    const ours = res.body.commits.filter((info) => info.group_id === groupId);
+    const reached = ours.length ? ours[ours.length - 1].epoch : fromEpoch - 1;
+    if (reached < res.body.current_epoch) {
+      throw new Error(
+        `gap refetch stopped at epoch ${reached} of ${res.body.current_epoch}`,
+      );
+    }
+  }
+
+  /**
+   * The drain arm's gap refetch (LD-D3): true when it FAILED, so the mailbox
+   * envelope stays unacked and is retried (the park bound escalates). A
+   * synthetic envelope (`mls-synth:`, see `#synthEnvelope`) is never
+   * re-queued: its failure goes back to the inline caller that fed it — the
+   * rebase's catch, an outer refetch, or the Welcome currency check (LDP-M6).
+   */
+  async #gapRefetchFailed(
+    envelope: MlsEnvelope,
+    fromEpoch: number,
+  ): Promise<boolean> {
+    try {
+      await this.#gapRefetchInline(fromEpoch);
+      return false;
+    } catch (error) {
+      if (envelope.id.startsWith("mls-synth:")) throw error;
+      console.warn(
+        "[mls] gap refetch failed — the envelope stays unacked and is retried",
+        error,
+      );
+      return true;
+    }
+  }
+
+  /**
+   * `#pump`'s per-envelope backstop (LD-D4). The envelope is never acked or
+   * marked seen here:
+   *  - its ack already ran (`#seen` has it, LDP-M4): what followed the ack
+   *    cannot be replayed, so latch loud NOW;
+   *  - otherwise it counts against `MAX_ENVELOPE_RETRIES` and re-drains after
+   *    the usual backoff; at the cap it latches loud and stays unacked.
+   * The latched error is curated: the thrown one can name the group (LDP-n2).
+   */
+  #onDrainStepThrew(envelope: MlsEnvelope, error: unknown): void {
+    console.error(
+      "[mls] drain step threw",
+      { contentType: envelope.content_type, epoch: envelope.epoch },
+      error,
+    );
+    if (this.#terminal()) return;
+    if (this.#seen.has(envelope.id)) {
+      this.#latchLoud(new Error(ENCRYPTION_UNCONFIRMED), "control");
+      return;
+    }
+    const retries = (this.#retries.get(envelope.id) ?? 0) + 1;
+    this.#retries.set(envelope.id, retries);
+    if (retries >= MAX_ENVELOPE_RETRIES) {
+      this.#latchLoud(new Error(ENCRYPTION_UNCONFIRMED), "control");
+      return;
+    }
+    this.#scheduleRetry(envelope);
+  }
+
+  /**
+   * Re-secure now and rejoin fresh (LD-D2, LDP-M2). Called with the lock held
+   * (the drain, the inline rebase, the currency check), so the rejoin is
+   * SCHEDULED, never awaited: an inline `#rejoinFresh` waits for a Welcome the
+   * held pump could never drain. It is scheduled one task later, once the
+   * group action that delivered a Welcome (the establish whose wait it just
+   * resolved) has returned — `#scheduleGroupAction` would otherwise drop it —
+   * and only if nothing replaced the group meanwhile. A dropped schedule still
+   * holds the gate (re-securing, `negotiating`), and the re-securing backstop
+   * ends it loud.
+   */
+  #resecureAndRejoin(reason: string, kind: string): void {
+    const groupId = this.#groupId;
+    const generation = this.#establishGeneration;
+    // A currency check in flight (this came from it, or from a commit its
+    // catch-up applied) acts on nothing further: no `#toActive` after this.
+    if (this.#welcomeCurrencyCheck) this.#welcomeCurrencyCheck.expired = true;
+    this.#toResecuring(reason);
+    this.#dropModeToNegotiating();
+    const timer = setTimeout(() => {
+      this.#timers.delete(timer);
+      if (this.#terminal()) return;
+      if (
+        this.#groupId !== groupId ||
+        this.#establishGeneration !== generation
+      ) {
+        console.info("[mls] rejoin superseded before it was scheduled", {
+          kind,
+        });
+        return;
+      }
+      this.#scheduleGroupAction(() => this.#rejoinFresh(reason), kind);
+    }, 0);
+    this.#timers.add(timer);
+  }
+
+  /**
+   * The Welcome currency check (W2-M2; LD-D5 as amended by LDP-M2…M6, m2,
+   * n2). A Welcome native accepted can be stale — sealed to an earlier
+   * intent and drained late — so enrolment only counts once the DS confirms
+   * the group is still at the Welcome's epoch, or the commits since are
+   * applied and native agrees. Runs from `#pump` with the lock HELD, bounded
+   * by `WELCOME_CURRENCY_DEADLINE_MS`, and never throws. The session stays
+   * non-active until it answers, which holds the publish gate.
+   */
+  async #runWelcomeCurrencyCheck(): Promise<void> {
+    const pending = this.#welcomeCurrency;
+    if (!pending) return;
+    const check: WelcomeCurrencyCheck = { pending, expired: false, wake: null };
+    this.#welcomeCurrencyCheck = check;
+    const deadline = setTimeout(() => {
+      this.#timers.delete(deadline);
+      if (this.#welcomeCurrencyCheck !== check) return;
+      if (!this.#welcomeCurrencyLive(check)) return; // moot, not unconfirmed
+      check.expired = true;
+      check.wake?.();
+      this.#welcomeCurrencyLoud("the check reached its deadline");
+    }, WELCOME_CURRENCY_DEADLINE_MS);
+    this.#timers.add(deadline);
+    try {
+      await this.#confirmWelcomeCurrency(check);
+    } catch (error) {
+      console.error("[mls] welcome currency check threw", error);
+      if (this.#welcomeCurrencyLive(check)) {
+        this.#welcomeCurrencyLoud("the check threw");
+      }
+    } finally {
+      clearTimeout(deadline);
+      this.#timers.delete(deadline);
+      if (this.#welcomeCurrencyCheck === check) {
+        this.#welcomeCurrencyCheck = null;
+      }
+      if (this.#welcomeCurrency === pending) this.#welcomeCurrency = null;
+    }
+  }
+
+  async #confirmWelcomeCurrency(check: WelcomeCurrencyCheck): Promise<void> {
+    const { groupId, epoch } = check.pending;
+    const res = await this.#fetchWelcomeCurrency(check);
+    if (!res || !this.#welcomeCurrencyLive(check)) return;
+    if (res.kind !== "ok") {
+      // LDP-m2: `feature_disabled` is NOT plaintext from here — the adopted
+      // group is what is in doubt, so the create path decides.
+      this.#welcomeCurrencyRejoin(`the delivery service answered ${res.kind}`);
+      return;
+    }
+    const currentEpoch = res.body.current_epoch;
+    const commits = res.body.commits.filter(
+      (info) => info.group_id === groupId,
+    );
+    const verdict = welcomeCurrencyVerdict({
+      welcomeEpoch: epoch,
+      currentEpoch,
+      commits,
+      lagLimit: LAG_DESYNC_THRESHOLD,
+    });
+    if (verdict === "rejoin") {
+      this.#welcomeCurrencyRejoin(
+        `adopted at epoch ${epoch}, the group is at ${currentEpoch}`,
+      );
+      return;
+    }
+    if (verdict === "catch_up") {
+      // LDP-M6: the same inline path `#gapRefetchInline` uses. A
+      // `removed_self` in here is handled by `#consume`'s own arm; the
+      // native check below then fails, and the rejoin it asks for is
+      // dropped or superseded.
+      for (const info of commits) {
+        await this.#consume(this.#synthEnvelope(info)); // INLINE (lock held)
+        if (!this.#welcomeCurrencyLive(check)) return;
+      }
+      // `#consume` reports nothing on main, so native decides: self present
+      // at the DS's current epoch.
+      let caughtUp = false;
+      try {
+        const state = await this.#deps.bridge.callState(groupId);
+        caughtUp =
+          state.epoch === currentEpoch &&
+          state.members.some(
+            (m) =>
+              m.user_id === this.#deps.userId &&
+              m.device_id === this.#deps.deviceId,
+          );
+      } catch (error) {
+        console.warn("[mls] welcome currency: native state unreadable", error);
+      }
+      if (!this.#welcomeCurrencyLive(check)) return;
+      if (!caughtUp) {
+        this.#welcomeCurrencyRejoin(
+          `catch-up to epoch ${currentEpoch} did not land natively`,
+        );
+        return;
+      }
+      // Locked decision 3: the catch-up may have applied a Remove, and the
+      // installed send key is still the Welcome epoch's, which the removed
+      // member holds. Install the confirmed epoch's keys BEFORE `#toActive`
+      // lets the enable open the gate.
+      const installed = await this.#installCaughtUpKeys(groupId, currentEpoch);
+      if (!this.#welcomeCurrencyLive(check)) return;
+      if (!installed) {
+        this.#welcomeCurrencyLoud("the caught-up keys did not install");
+        return;
+      }
+    }
+    console.info("[mls] welcome confirmed current", {
+      epoch: currentEpoch,
+      caughtUp: commits.length,
+    });
+    this.#toActive();
+    // The first key installed while the check held `active` back, and the
+    // reconcile it kicked was refused by `#evaluateEnable` (not active).
+    if (this.#hasLocalKey && !this.#e2eeEnabled) void this.reconcileNow();
+  }
+
+  /**
+   * The currency fetch, from the epoch after the Welcome's. Null when the
+   * failure was handled here: a 404 → a scheduled fresh rejoin; a transient
+   * failure → the `WELCOME_CURRENCY_BACKOFF_MS` retries, then LOUD (LDP-M5 —
+   * never a rejoin, which adds intent + claim + commit load to a DS that is
+   * already failing); or the check went moot under an await.
+   */
+  async #fetchWelcomeCurrency(
+    check: WelcomeCurrencyCheck,
+  ): Promise<Awaited<ReturnType<E2EEBridge["mlsFetchCommits"]>> | null> {
+    const { groupId, epoch } = check.pending;
+    for (let attempt = 0; ; attempt++) {
+      if (!this.#welcomeCurrencyLive(check)) return null;
+      try {
+        return await this.#deps.bridge.mlsFetchCommits(groupId, epoch + 1);
+      } catch (error) {
+        if (!this.#welcomeCurrencyLive(check)) return null;
+        if (classifyRefetchFailure(error) === "not_member") {
+          this.#welcomeCurrencyRejoin(
+            "the delivery service does not list this device",
+          );
+          return null;
+        }
+        const wait = WELCOME_CURRENCY_BACKOFF_MS[attempt];
+        if (wait === undefined) {
+          this.#welcomeCurrencyLoud("the delivery service did not answer");
+          return null;
+        }
+        console.warn(
+          "[mls] welcome currency check failed — retrying",
+          { attempt: attempt + 1, retryInMs: wait },
+          error,
+        );
+        await this.#welcomeCurrencyBackoff(check, wait);
+      }
+    }
+  }
+
+  /**
+   * Install `epoch`'s keys, the LOCAL send key included, now. Awaited under
+   * the lock: `onLocalKeysChanged` never takes it and never waits on the
+   * pump. `#lastInbound` names only the last commit the catch-up applied, not
+   * the jump from the installed key, which spans the whole catch-up and may
+   * span a Remove; cleared, the classifier falls to its fail-safe (C1):
+   * Remove-immediate, never an Add-grace that keeps the old send key.
+   *
+   * True when nothing can publish under an older key: the install landed (the
+   * counter moved, the fence is still `epoch`, and OUR send key is `epoch`'s
+   * — `#ownSendKeyEpoch`, a fact), or no key was ever installed and none can
+   * be yet. Not "no Add-grace timer pending" (LDA-M1): native's keys-changed
+   * push for the same epoch can land after the catch-up's last commit (an
+   * Add) and schedule a grace AFTER this install, which already put `epoch`'s
+   * send key in place. The counter alone is no proof either: that push's
+   * remote-only install moves it while our local half may have failed.
+   */
+  async #installCaughtUpKeys(groupId: string, epoch: number): Promise<boolean> {
+    if (!this.#media?.localIdentity()) return !this.#hasLocalKey;
+    const before = this.#installSeq;
+    this.#lastInbound = null;
+    await this.onLocalKeysChanged(groupId, epoch);
+    return (
+      this.#installSeq > before &&
+      this.#installEpoch === epoch &&
+      this.#ownSendKeyEpoch === epoch
+    );
+  }
+
+  /** Whether `check` may still act: not expired, and nothing moved under it. */
+  #welcomeCurrencyLive(check: WelcomeCurrencyCheck): boolean {
+    return (
+      !check.expired &&
+      !this.#terminal() &&
+      this.#state !== "failed" &&
+      this.#groupId === check.pending.groupId &&
+      this.#establishGeneration === check.pending.generation
+    );
+  }
+
+  /** A retry wait the check's deadline can cut short (`check.wake`). */
+  #welcomeCurrencyBackoff(
+    check: WelcomeCurrencyCheck,
+    ms: number,
+  ): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        this.#timers.delete(timer);
+        check.wake = null;
+        resolve();
+      };
+      const timer = setTimeout(done, ms);
+      this.#timers.add(timer);
+      check.wake = done;
+    });
+  }
+
+  /** Not current: discard the adoption and rejoin fresh (scheduled). */
+  #welcomeCurrencyRejoin(detail: string): void {
+    console.warn("[mls] welcome currency: rejoining fresh —", detail);
+    this.#resecureAndRejoin(
+      "the adopted Welcome is not current",
+      "rejoin_fresh:welcome_currency",
+    );
+  }
+
+  /** Unconfirmable: latch loud with the curated error (LDP-M3/M5, n2). */
+  #welcomeCurrencyLoud(detail: string): void {
+    console.error("[mls] welcome currency not confirmed —", detail);
+    this.#latchLoud(new Error(ENCRYPTION_UNCONFIRMED), "control");
   }
 
   #synthEnvelope(info: MlsCommitInfo): MlsEnvelope {
@@ -3569,6 +4294,11 @@ export class MlsCallSession {
     this.#scheduledAdmits.clear();
     this.#pendingAdmits.clear(); // requests are group-scoped
     this.#recentAdds.clear(); // add observations are group-scoped (§4.8)
+    // Remove observations too, and only here: the scheduled serves they
+    // guard were just cleared with `#scheduledAdmits`. A serve that already
+    // fired can outlive them; its in-lock checks refuse it after any
+    // re-entry, same group id or not (`#removeStaleLeaf`).
+    this.#removedAtEpoch.clear();
     this.#healAdds.clear();
     this.#rejoinServed.clear(); // so are served-rejoin observations
     this.#lastRosterIdentities.clear();
@@ -3638,10 +4368,25 @@ export class MlsCallSession {
         generation: this.#establishGeneration,
         waitInstalled: verdict.resolveWait,
       });
+      this.#joinTimeline?.stamp("welcomeAdopted");
       this.#groupId = outcome.group_id;
       this.#joinedGeneration = this.#establishGeneration;
-      this.#toActive();
+      // W2-M2: NOT `#toActive` yet. Native accepts a Welcome sealed to any
+      // held KeyPackage for any intent on the group, so a late-drained one
+      // can adopt a stale epoch. `#pump` asks the DS right after this
+      // envelope, under the lock, and only its answer goes active.
+      this.#welcomeCurrency = {
+        groupId: outcome.group_id,
+        epoch: outcome.epoch,
+        generation: this.#establishGeneration,
+      };
       if (verdict.resolveWait) this.#welcomeWait?.resolve(true);
+    }
+    // Every applied commit of OUR group reaches here: live pushes, the 409
+    // rebase body and gap-refetch synthetics alike. The check keeps another
+    // group's Removes out (Welcomes are exempt from the `#consume` scoping).
+    if (outcome.group_id === this.#groupId) {
+      this.#noteRemovedAtEpoch(outcome.removed, outcome.epoch);
     }
     // Record the inbound rotation kind for the rotation classifier, keyed by
     // epoch (Remove-driven iff the outcome carried removed devices —
@@ -3667,6 +4412,20 @@ export class MlsCallSession {
       outcome.kind !== "welcome_joined"
     ) {
       void this.#announceDowngrade();
+    }
+  }
+
+  /** Max-merge `removed` at `epoch` into `#removedAtEpoch` (never lowers). */
+  #noteRemovedAtEpoch(
+    removed: MlsProcessOutcome["removed"],
+    epoch: number,
+  ): void {
+    for (const device of removed ?? []) {
+      const key = `${device.user_id}:${device.device_id}`;
+      const known = this.#removedAtEpoch.get(key);
+      if (known === undefined || epoch > known) {
+        this.#removedAtEpoch.set(key, epoch);
+      }
     }
   }
 
@@ -3760,6 +4519,7 @@ export class MlsCallSession {
     try {
       if (timing === "immediate") {
         await media.installer.applyKeys(frameKeys, identity);
+        if (this.#installEpoch === epoch) this.#ownSendKeyEpoch = epoch;
         this.#onEpochKeysApplied(
           installRef,
           installEntries(frameKeys, identity, true),
@@ -3875,6 +4635,7 @@ export class MlsCallSession {
    */
   #onLocalKeyInstalled(): void {
     this.#hasLocalKey = true;
+    this.#joinTimeline?.stamp("keysInstalled");
     // 6.7b MEDIUM-1: installing the FIRST local key is the genuine recovery
     // that closes the joiner window (`!#hasLocalKey` — see #surfaceError /
     // classifyEncryptionError). Clear the awaiting-first-key escalation HERE,
@@ -3907,6 +4668,7 @@ export class MlsCallSession {
       if (this.#terminal() || this.#installEpoch !== epoch) return;
       try {
         await this.#media?.installer.applyLocalKey(frameKeys, identity);
+        if (this.#installEpoch === epoch) this.#ownSendKeyEpoch = epoch;
         this.#onLocalKeyInstalled();
       } catch (error) {
         this.#onRotationError(error);
@@ -4892,6 +5654,7 @@ export class MlsCallSession {
     // publish gate stands in front of that; not holding the key is stronger.
     this.#media?.installer.resetForGroup();
     this.#installEpoch = -1;
+    this.#ownSendKeyEpoch = -1;
     this.#hasLocalKey = false;
     this.#lastOwnWon = null;
     this.#lastInbound = null;
@@ -5021,6 +5784,10 @@ export class MlsCallSession {
     this.#noteMembershipObserved(identity);
     this.#clearAdmitGrace(identity); // a leaver holds no admit window
     this.#rejoinServed.delete(identity); // nor a pending re-Add
+    // Slice 0: nor an open admit timeline — a leaver's join can no longer
+    // close on our Add, and its t0 must not leak into the row for the join
+    // request it sends when it comes back.
+    this.#admitTimelines.delete(identity);
     if (this.#leaveGrace.has(identity)) return; // already pending
     const timer = setTimeout(() => {
       this.#leaveGrace.delete(identity);
@@ -5576,10 +6343,12 @@ export class MlsCallSession {
   async #enable(): Promise<void> {
     const media = this.#media;
     if (!media || this.#e2eeEnabled || this.#state !== "active") return;
+    this.#joinTimeline?.stamp("enableBegin");
     this.#e2eeEnabled = true; // set first — re-entry guard across the awaits
     try {
       await media.pausePublishing?.("enable-window");
       await media.setEncryptionEnabled?.(true);
+      this.#joinTimeline?.stamp("e2eeEnabled");
       // The flip republished what was registered; anything that landed
       // during it is declared NONE. Re-declare inside the window, so no
       // frame goes out under a declaration a receiver would disarm on.
@@ -5852,6 +6621,25 @@ export class MlsCallSession {
     mode = modeUnderLoudLatch(mode, this.#loudLatched);
     const wasNegotiating = this.#callMode.kind === "negotiating";
     this.#callMode = mode;
+    // Slice 0: the label reaching `e2ee` is the join's end for the session's
+    // purposes. Report the timeline once per establish generation (a restart
+    // clears the stamp, so a re-establish reports again). Stamped BEFORE the
+    // gate release and the UI callback below so the row measures the session
+    // alone, not the media plane's resume; `p` is the absolute
+    // `performance.now()` of the print, the clock `[gate-trace]` carries, so
+    // a leg anchors the row at t0 = p − totalMs.
+    const timeline = this.#joinTimeline;
+    if (
+      mode.kind === "e2ee" &&
+      timeline &&
+      timeline.elapsedTo("modeE2ee") === null
+    ) {
+      timeline.stamp("modeE2ee");
+      console.info("[mls] join timeline", {
+        p: performance.now(),
+        ...timeline.summary(),
+      });
+    }
     if (mode.kind === "negotiating" && !wasNegotiating) {
       void this.#media?.pausePublishing?.("negotiating");
     } else if (mode.kind !== "negotiating" && wasNegotiating) {
@@ -6356,8 +7144,11 @@ export class MlsCallSession {
    *    would outlive the create that follows and leave an encrypted call red
    *    for good. Its requests ride the same deadline; a legacy MFA prompt is
    *    user-driven, and the 240 s self-enrolment assertion ends that loud.
+   *  - a Welcome currency check IN FLIGHT (not merely pending), bounded by
+   *    `WELCOME_CURRENCY_DEADLINE_MS` and ending active, rejoining or loud.
    */
   #resecuringHasOwner(): boolean {
+    if (this.#welcomeCurrencyCheck !== null) return true;
     return (
       this.#establishInFlight ||
       this.#groupActionPending ||

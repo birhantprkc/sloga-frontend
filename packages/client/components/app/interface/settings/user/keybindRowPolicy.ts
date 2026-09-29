@@ -126,7 +126,11 @@ export function globalTierStatus(arm: KeybindArmState): GlobalTierStatus {
  *   and it is not a positive one either, so the row makes no claim.
  * - `"unavailable"` — the global tier is proven absent, in one of exactly the
  *   two ways {@link GlobalTierStatus} lists: no shell bridge, or a bridged
- *   arm that produced no evidence. Nothing in the global tier can fire. 🔴
+ *   arm that produced no evidence. Nothing in the global tier can fire
+ *   WHILE SLOGA IS UNFOCUSED — the DOM transport applies no tier filter, so a
+ *   chord already bound here still fires when the window has focus. Do not
+ *   restate this as "nothing can fire": that sentence was shipped in the UI
+ *   and had to be corrected. 🔴
  *   NOT "the probe answered and `nativeAvailable` is `false`": that reading
  *   also covers the no-evidence state, and the no-evidence state must stay
  *   open.
@@ -201,4 +205,23 @@ export function keybindRowStatus(
  */
 export function blocksCapture(status: KeybindRowStatus): boolean {
   return status === "unavailable";
+}
+
+/**
+ * Should the row refuse to CLEAR what is already bound?
+ *
+ * 🔴 Never — and that is the whole point of this predicate existing. Locking
+ * capture says "you cannot bind this here". Locking clear says "you cannot undo
+ * what you already bound", which is a trap: on a shell that has an invoke
+ * bridge but no native hook (macOS today) the first system-wide binding turns
+ * every global row `"unavailable"`, and wiring the clear control to the same
+ * flag left the user with a chord they could neither replace nor remove. The
+ * only escape was the page-level reset, which wipes every binding they have.
+ *
+ * Written as a named predicate returning a constant rather than a literal
+ * `false` at the call site so the asymmetry with {@link blocksCapture} is
+ * visible here, and so a spec can hold it to it.
+ */
+export function blocksClear(_status: KeybindRowStatus): boolean {
+  return false;
 }

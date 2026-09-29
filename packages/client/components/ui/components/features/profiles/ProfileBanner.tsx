@@ -8,6 +8,8 @@ import { useLingui } from "@lingui-solid/solid/macro";
 import { Tooltip } from "@revolt/ui";
 import { Avatar, Ripple, UserStatus, typography } from "../../design";
 import { Row } from "../../layout";
+import { DisplayName } from "../DisplayName";
+import { isSlogaStaff } from "../legacy/Username";
 
 export function ProfileBanner(props: {
   user: User;
@@ -67,7 +69,13 @@ export function ProfileBanner(props: {
             }
           >
             <span class={css({ fontWeight: 600 })}>
-              {props.member?.displayName ?? props.user.displayName}
+              <DisplayName
+                user={props.user}
+                member={props.member}
+                name={props.member?.displayName ?? props.user.displayName}
+                brand={isSlogaStaff(props.user)}
+                animate
+              />
             </span>
           </Show>
           <Tooltip
@@ -75,7 +83,22 @@ export function ProfileBanner(props: {
             placement="top"
           >
             <Username onClick={onUsernameClick}>
-              {props.user.username}
+              {/* the username carries the style when it is the only name shown */}
+              <Show
+                when={
+                  (props.member?.displayName ?? props.user.displayName) ===
+                  props.user.username
+                }
+                fallback={props.user.username}
+              >
+                <DisplayName
+                  user={props.user}
+                  member={props.member}
+                  name={props.user.username}
+                  brand={isSlogaStaff(props.user)}
+                  animate
+                />
+              </Show>
               <span class={css({ fontWeight: 200 })}>
                 #{props.user.discriminator}
               </span>

@@ -42,6 +42,7 @@ import {
   GLOBAL_TIER_ACTIONS,
   IN_APP_TIER_ACTIONS,
   blocksCapture,
+  blocksClear,
   globalTierStatus,
   keybindRowStatus,
 } from "./keybindRowPolicy.ts";
@@ -503,5 +504,69 @@ describe("blocksCapture: true for exactly one status", () => {
       EVERY_ROW_STATUS.filter((status) => blocksCapture(status)),
       ["unavailable"],
     );
+  });
+});
+
+/* ------------------------------------------------------------------------ *
+ * blocksClear
+ * ------------------------------------------------------------------------ */
+
+describe("blocksClear: never true, for any status", () => {
+  for (const status of EVERY_ROW_STATUS) {
+    it(`${status} → false`, () => {
+      assert.equal(blocksClear(status), false);
+    });
+  }
+
+  it("is false for all six, so no status is a one-way door", () => {
+    assert.deepEqual(
+      EVERY_ROW_STATUS.filter((status) => blocksClear(status)),
+      [],
+    );
+  });
+});
+
+describe("the macOS lock trap: capture closes, clearing does not", () => {
+  /**
+   * The shape macOS actually produces. `keybinds_arm` is Windows-only; off
+   * Windows it returns three empty lists and NO error, so the probe completes
+   * with a bridge present, the binding submitted, and no positive evidence of
+   * a native hook. `deriveNativeAvailable` is a positive test by design, so
+   * "no evidence" is not "present" — the tier is correctly `"unavailable"`.
+   *
+   * What was NOT correct was wiring the clear control to that same verdict:
+   * the user's first system-wide binding locked every global row INCLUDING its
+   * own clear, and the only escape was the page-level reset that wipes every
+   * binding they have.
+   */
+  const bridgedNoEvidence = arm({
+    probed: true,
+    bridge: true,
+    submitted: 1,
+    nativeAvailable: false,
+  });
+
+  it("every global row reads unavailable", () => {
+    for (const action of GLOBAL_TIER_ACTIONS) {
+      assert.equal(
+        keybindRowStatus(action, bridgedNoEvidence),
+        "unavailable",
+        action,
+      );
+    }
+  });
+
+  it("capture is blocked on every global row", () => {
+    for (const action of GLOBAL_TIER_ACTIONS) {
+      const status = keybindRowStatus(action, bridgedNoEvidence);
+      assert.equal(blocksCapture(status), true, action);
+    }
+  });
+
+  it("clearing is NOT blocked on any global row — this is the regression", () => {
+    for (const action of GLOBAL_TIER_ACTIONS) {
+      const status = keybindRowStatus(action, bridgedNoEvidence);
+      assert.equal(blocksClear(status), false, action);
+    }
   });
 });

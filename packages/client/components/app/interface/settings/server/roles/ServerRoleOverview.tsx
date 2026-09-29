@@ -1,11 +1,12 @@
 import { BiRegularListUl } from "solid-icons/bi";
-import { Show } from "solid-js";
+import { Accessor, Setter, Show } from "solid-js";
 
 import { Trans } from "@lingui-solid/solid/macro";
 import { useMutation } from "@tanstack/solid-query";
 import { Server } from "stoat.js";
 import { styled } from "styled-system/jsx";
 
+import { useDevice } from "@revolt/common";
 import { useModals } from "@revolt/modal";
 import {
   Avatar,
@@ -29,11 +30,55 @@ import { useSettingsNavigation } from "../../Settings";
 export function ServerRoleOverview(props: { context: Server }) {
   const { navigate } = useSettingsNavigation();
   const { openModal, showError } = useModals();
+  const { isMobile } = useDevice();
 
   const change = useMutation(() => ({
     mutationFn: (order: string[]) => props.context.setRoleOrdering(order),
     onError: showError,
   }));
+
+  /**
+   * Save a new role order, but only if it is new.
+   *
+   * The drop zone reports every finished drag, including one that put the
+   * row back where it started, and on a phone a press-and-hold that drifts a
+   * few pixels is exactly that. Re-sending the same ranking would still be a
+   * permissions write, so an unchanged order stops here.
+   * @param order role ids, highest rank first
+   */
+  function reorder(order: string[]) {
+    const current = props.context.orderedRoles.map((role) => role.id);
+    if (
+      order.length === current.length &&
+      order.every((id, index) => id === current[index])
+    )
+      return;
+
+    change.mutate(order);
+  }
+
+  /**
+   * Props for a row's drag handle.
+   *
+   * On a phone the handle only marks the row as movable: holding anywhere on
+   * the row, the handle included, picks it up (`longPress`). Its own arming
+   * handlers are dropped there, because under a finger they arm the whole
+   * list and nothing disarms it again: `touchstart` survives a scroll that
+   * starts on the handle, and the `mouseenter` a tap synthesizes lands after
+   * the finger has lifted. The next flick anywhere on the list then drags a
+   * role and saves a new ranking.
+   * @param dragDisabled the zone's arming state
+   * @param setDragDisabled its setter
+   */
+  function dragHandle(
+    dragDisabled: Accessor<boolean>,
+    setDragDisabled: Setter<boolean>,
+  ) {
+    const handle = createDragHandle(dragDisabled, setDragDisabled);
+    return isMobile
+      ? { ...handle, ontouchstart: undefined, onmouseenter: undefined }
+      : handle;
+  }
 
   function createRole() {
     openModal({
@@ -76,14 +121,18 @@ export function ServerRoleOverview(props: { context: Server }) {
         </Text>
         <Draggable
           dragHandles
+          // The handle does nothing under a finger (see `createDragHandle`),
+          // so a phone picks a role up by holding its row instead. Constant
+          // for the life of the list, as `longPress` requires.
+          longPress={isMobile}
           items={props.context.orderedRoles}
-          onChange={change.mutate}
+          onChange={reorder}
         >
           {(entry) => (
             <ItemContainer>
               <MdDragIndicator
                 fill="var(--md-sys-color-on-surface)"
-                {...createDragHandle(entry.dragDisabled, entry.setDragDisabled)}
+                {...dragHandle(entry.dragDisabled, entry.setDragDisabled)}
               />
 
               <CategoryButton

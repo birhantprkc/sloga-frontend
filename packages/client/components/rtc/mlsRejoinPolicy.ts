@@ -41,6 +41,56 @@ export function rejoinServeAction(opts: {
 }
 
 /**
+ * Whether a staggered rejoin serve's target is still the stale leaf the serve
+ * was scheduled against. `scheduledAtEpoch` is the epoch of the roster read in
+ * which the serve confirmed that leaf present; `removedAtEpoch` is the HIGHEST
+ * epoch at which this member saw a commit remove that identity (`null` =
+ * never). `false` means the identity was removed after scheduling, so the leaf
+ * present now is a fresh re-add: refuse the serve.
+ *
+ * THE DEFECT. A serve fires `leafStaggerDelayMs(leaf)` after it is scheduled,
+ * so in a call of seven or more members the member at leaf 6 or above fires
+ * 12 s or later, after the rejoiner's Add (about 10.5 s on a wipe-rejoin). The
+ * fire-time §4.8 check reads add observations that a non-admitting member
+ * records only in its periodic roster reconcile (every 5 s), so it is blind in
+ * that window; the roster read shows the target present (the FRESH leaf), and
+ * the serve removed a live member, sending it round the re-enrol ladder again.
+ * A wall-clock recency window cannot close this. Commit order can.
+ *
+ * WHY THIS IS COMPLETE. Both epochs share one numbering (a commit's outcome
+ * epoch is the epoch it produced; the roster read reports the current epoch).
+ * `removedAtEpoch` is written from every commit this member applies for the
+ * group (inbound, rebased or refetched) and from its own won Removes. The
+ * authoritative check runs inside the Remove's build step, UNDER the session
+ * lock, immediately before native stages the Remove, so no commit is applied
+ * concurrently with it. Native resolves the target by identity, so it finds
+ * one only if either (a) no Remove of it has been applied since the anchor
+ * (the leaf is the stale one and serving is correct), or (b) a later Add was
+ * applied. Commits apply in strict epoch order and a gap is desync, never a
+ * skip-ahead (invariant 10), so in (b) the Remove that preceded that Add, at
+ * an epoch after the anchor, was applied first and recorded, and this returns
+ * `false`. The anchor never predates this member's own join (the roster read
+ * requires membership), so Removes it never saw cannot matter. Equal epochs
+ * are still stale: a Remove AT the anchor epoch is already reflected in the
+ * roster the serve was scheduled against. Outside the lock the argument fails:
+ * the pump can apply the Remove AND the Add while the check awaits.
+ *
+ * NEVER DELETABLE WITHIN A GROUP. The fact is monotonic (max-merge only) and is
+ * cleared only on a group change, together with every scheduled serve, so no
+ * serve can outlive the fact it is checked against. A rejoiner can be seen
+ * leaving and returning (a reconnect, a second reload) between its Remove and
+ * its Add; deleting the fact on a leave, an admit, a reconcile or any roster
+ * diff erases it exactly when a late serve needs it, and reopens the defect.
+ * That deletable, observation-driven shape is what left the §4.8 check blind.
+ */
+export function serveTargetStillStale(i: {
+  scheduledAtEpoch: number;
+  removedAtEpoch: number | null;
+}): boolean {
+  return i.removedAtEpoch === null || i.removedAtEpoch <= i.scheduledAtEpoch;
+}
+
+/**
  * Which surviving LOCAL groups the startup fresh-rejoin wipes (rejoin plan
  * §4.1). The probe lists the native store's group ids for the USER-intended
  * channel — existence tested by existence, never readability (F5: a corrupt

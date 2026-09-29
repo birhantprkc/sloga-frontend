@@ -2,6 +2,7 @@ import { Accessor, For, Match, Show, Switch } from "solid-js";
 
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import { File, Message } from "stoat.js";
+import { styled } from "styled-system/jsx";
 
 import { useClient, useE2EE, useUser } from "@revolt/client";
 import { CustomEmoji, UnicodeEmoji } from "@revolt/markdown/emoji";
@@ -38,6 +39,59 @@ import {
   ContextMenuDivider,
   ContextMenuSubMenu,
 } from "./ContextMenu";
+
+/**
+ * One-click reactions shown across the top of the menu. These are the exact
+ * strings the emoji picker sends (see emojiMapping.json): the heart is a bare
+ * U+2764 with no U+FE0F, so a quick heart lands on the same reaction as a
+ * picked one instead of starting a second, visually identical one.
+ */
+const QUICK_REACTIONS = [
+  "\u{1F44D}", // thumbs-up
+  "\u{1F44E}", // thumbs-down
+  "❤", // red-heart
+  "\u{1F642}", // slightly-happy
+  "\u{1F641}", // frown
+];
+
+const QuickReactionRow = styled("div", {
+  base: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "var(--gap-sm)",
+    padding: "var(--gap-xs) var(--gap-md)",
+  },
+});
+
+const QuickReactionButton = styled("button", {
+  base: {
+    display: "grid",
+    placeItems: "center",
+    width: "36px",
+    height: "36px",
+    padding: 0,
+    border: "none",
+    borderRadius: "var(--borderRadius-full)",
+    background: "transparent",
+    cursor: "pointer",
+    "--emoji-size": "22px",
+
+    "&:hover": {
+      background:
+        "color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent)",
+    },
+  },
+  variants: {
+    active: {
+      true: {
+        background: "var(--md-sys-color-primary-container)",
+        "&:hover": {
+          background: "var(--md-sys-color-primary-container)",
+        },
+      },
+    },
+  },
+});
 
 /**
  * Context menu for messages
@@ -118,6 +172,44 @@ export function MessageContextMenu(props: {
     } catch (error) {
       showError(error);
     }
+  }
+
+  /**
+   * Whether this message takes reactions at all: ephemerals have no
+   * server-side existence to react to.
+   */
+  const canReact = () =>
+    !props.message!.isEphemeral &&
+    !!props.message!.channel?.havePermission("React");
+
+  /**
+   * Quick reactions this message will accept. A message that restricts
+   * reactions to its own list refuses anything else server-side, so those
+   * are left out rather than offered and rejected.
+   */
+  const quickReactions = () => {
+    const interactions = props.message!.interactions;
+    return interactions?.restrict_reactions
+      ? QUICK_REACTIONS.filter((emoji) =>
+          interactions.reactions?.includes(emoji),
+        )
+      : QUICK_REACTIONS;
+  };
+
+  /**
+   * Whether the current user has already reacted with this emoji
+   */
+  const hasReacted = (emoji: string) =>
+    !!props.message!.reactions.get(emoji)?.has(user()!.id);
+
+  /**
+   * Toggle a quick reaction, same as clicking it in the reaction bar
+   */
+  function toggleQuickReaction(emoji: string) {
+    (hasReacted(emoji)
+      ? props.message!.unreact(emoji)
+      : props.message!.react(emoji)
+    ).catch(showError);
   }
 
   /**
@@ -221,6 +313,25 @@ export function MessageContextMenu(props: {
 
   return (
     <ContextMenu>
+      <Show when={props.message && canReact() && quickReactions().length}>
+        <QuickReactionRow>
+          <For each={quickReactions()}>
+            {(emoji) => (
+              <QuickReactionButton
+                type="button"
+                aria-label={emoji}
+                aria-pressed={hasReacted(emoji)}
+                active={hasReacted(emoji)}
+                onClick={() => toggleQuickReaction(emoji)}
+              >
+                <UnicodeEmoji emoji={emoji} />
+              </QuickReactionButton>
+            )}
+          </For>
+        </QuickReactionRow>
+
+        <ContextMenuDivider />
+      </Show>
       <Show when={props.file}>
         <ContextMenuButton icon={MdOpenInNew} onClick={openFile}>
           <Trans>Open file</Trans>

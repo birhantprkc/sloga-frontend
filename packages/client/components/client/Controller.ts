@@ -11,7 +11,7 @@ import type { Session } from "@revolt/state/stores/Auth";
 import { killServiceWorkerSubscription } from "./NotificationsController";
 import { E2EEBridge, nativeE2EEAvailable } from "./e2ee";
 import { IS_OVERLAY_WINDOW } from "./popout";
-import { createSignOutHooks } from "./signOutHooks";
+import { createSignOutHooks, transitionEndsSession } from "./signOutHooks";
 
 export enum State {
   Ready = "Ready",
@@ -103,6 +103,7 @@ class Lifecycle {
     this.#controller = controller;
 
     this.onState = this.onState.bind(this);
+    this.onEvent = this.onEvent.bind(this);
     this.onReady = this.onReady.bind(this);
     this.onPolicyChanges = this.onPolicyChanges.bind(this);
 
@@ -151,6 +152,7 @@ class Lifecycle {
       // Remove listeners before teardown so stale async events from the old
       // client don't fire transitions on the new one.
       this.client.events.off("state", this.onState);
+      this.client.events.off("event", this.onEvent);
       this.client.off("ready", this.onReady);
       this.client.off("policyChanges", this.onPolicyChanges);
       this.client.on("error", () => {}); // suppress stale unhandled errors
@@ -204,6 +206,7 @@ class Lifecycle {
     }
 
     this.client.events.on("state", this.onState);
+    this.client.events.on("event", this.onEvent);
     this.client.on("ready", this.onReady);
     this.client.on("policyChanges", this.onPolicyChanges);
   }
@@ -242,6 +245,13 @@ class Lifecycle {
         this.#controller.state.auth.markValid();
         this.#setLoadedOnce(true);
         this.#connectionFailures = 0;
+
+        // A referral code only applies when creating an account, so once
+        // signed in a stored one is spent. Checked first so reconnects don't
+        // queue a disk write each time.
+        if (this.#controller.state.layout.referralCode !== undefined) {
+          this.#controller.state.layout.setReferralCode(undefined);
+        }
         break;
       case State.Dispose:
         this.dispose();
@@ -288,9 +298,11 @@ class Lifecycle {
    * lives OUTSIDE this controller never heard about it — above all the voice
    * call: the LiveKit room survived a sign-out and kept the user in the call,
    * floating card and all, on top of the login page, under a session the
-   * server had just revoked. Hooks fire for every Logout transition, whether
-   * or not the current state has an arm for it (a state without a call has
-   * nothing to tear down, and the callers are idempotent). `DisposeOnly`
+   * server had just revoked. Hooks fire for every transition that ends the
+   * session (`transitionEndsSession`: a Logout, an `InvalidSession` failure,
+   * or dismissing the error screen), whether or not the current state has an
+   * arm for it (a state without a call has nothing to tear down, and the
+   * callers are idempotent). `DisposeOnly`
    * deliberately does NOT fire these: it runs on every route change and HMR
    * update, and a hook there would hang up the call on navigation.
    *
@@ -309,10 +321,25 @@ class Lifecycle {
       return;
     }
 
-    if (transition.type === TransitionType.Logout) {
+    if (
+      transitionEndsSession(
+        transition.type === TransitionType.Logout
+          ? { kind: "logout" }
+          : transition.type === TransitionType.PermanentFailure
+            ? { kind: "permanent-failure", error: transition.error }
+            : transition.type === TransitionType.Dismiss
+              ? {
+                  kind: "dismiss",
+                  fromErrorState: this.state() === State.Error,
+                }
+              : { kind: "other" },
+      )
+    ) {
       // Fire BEFORE the state machine moves: the old client is still alive,
-      // so a teardown that wants the API one last time (the MLS session's
-      // best-effort self-remove) still has it.
+      // so a teardown that wants the API one last time still has it (after a
+      // revocation every call fails, so hooks must not depend on one). A
+      // revoked session is covered too (see transitionEndsSession): it used
+      // to leave the call running.
       this.#signOutHooks.run((_hook, error) => {
         // One failing teardown must not keep the user signed in.
         console.error("Sign-out hook failed", error);
@@ -363,7 +390,14 @@ class Lifecycle {
         }
         break;
       case State.Error:
-        if (transition.type === TransitionType.Dismiss) {
+        // Logout too: deleting or disabling your own account signs out every
+        // session, so the server's Logout event can land us here just before
+        // the client's own logout() arrives. It must still finish the sign-out
+        // instead of leaving the user on the error screen.
+        if (
+          transition.type === TransitionType.Dismiss ||
+          transition.type === TransitionType.Logout
+        ) {
           this.#enter(State.Dispose);
         }
         break;
@@ -393,6 +427,11 @@ class Lifecycle {
         switch (transition.type) {
           case TransitionType.TemporaryFailure:
             this.#enter(State.Disconnected);
+            break;
+          // A server `Logout` event (see onEvent) arrives while connected.
+          case TransitionType.PermanentFailure:
+            this.#permanentError = transition.error;
+            this.#enter(State.Error);
             break;
           case TransitionType.Logout:
             this.#enter(State.Dispose);
@@ -457,6 +496,22 @@ class Lifecycle {
     }
   }
 
+  /**
+   * Bonfire sends `Logout` down a live connection when that connection's
+   * session is deleted: revoked from another device, "log out everywhere",
+   * or a bot's token reset. Nothing used to handle it, so the revocation only
+   * surfaced after the socket closed and the first reconnect was refused, and
+   * a call kept running until then. Treat it as the InvalidSession it is.
+   */
+  private onEvent(event: ProtocolV1["server"]) {
+    if (event.type === "Logout") {
+      this.transition({
+        type: TransitionType.PermanentFailure,
+        error: "InvalidSession",
+      });
+    }
+  }
+
   private onReady() {
     this.transition({
       type: TransitionType.SocketConnected,
@@ -476,6 +531,10 @@ class Lifecycle {
   private onState(state: ConnectionState) {
     switch (state) {
       case ConnectionState.Disconnected:
+        // A server Logout event already moved us to Error, and the socket
+        // closing behind it is expected, not a failure to report.
+        if (this.state() === State.Error) break;
+
         if (this.client.events.lastError) {
           if (this.client.events.lastError.type === "revolt") {
             // if (this.client.events.lastError.data.type == 'InvalidSession') {
@@ -714,10 +773,18 @@ export default class ClientController {
     });
   }
 
-  async selectUsername(username: string) {
-    await this.lifecycle.client.api.post("/onboard/complete", {
-      username,
-    });
+  async selectUsername(
+    username: string,
+    extras?: { referral_code?: string; invite_code?: string },
+  ) {
+    // The server rejects an empty code, so a blank one is left out
+    const data: API.DataOnboard & NonNullable<typeof extras> = { username };
+    if (extras?.referral_code) data.referral_code = extras.referral_code;
+    if (extras?.invite_code) data.invite_code = extras.invite_code;
+
+    await this.lifecycle.client.api.post("/onboard/complete", data);
+
+    this.state.layout.setReferralCode(undefined);
 
     this.lifecycle.transition({
       type: TransitionType.UserCreated,
@@ -726,7 +793,18 @@ export default class ClientController {
 
   logout() {
     this.state.settings.resetNotificationsState();
-    killServiceWorkerSubscription(this.getCurrentClient(), true);
+    // Tell the server to drop this session's push subscription, not only the
+    // device. It used to skip that on sign-out (`loggingOut = true`), on the
+    // assumption that the session was deleted with it; but sign-out never
+    // deletes the session, so the server kept the subscription and a phone
+    // went on receiving notifications after "Sign out".
+    //
+    // 🔴 Do NOT "fix" that by revoking the session here. Deleting a session
+    // also deletes the E2EE device bound to it (sessions/model.rs ->
+    // revoke_devices_for_session), and the E2EE layer relies on a local
+    // sign-out keeping that device so the next sign-in re-attaches it.
+    // Revoking on sign-out needs an E2EE design decision first.
+    killServiceWorkerSubscription(this.getCurrentClient(), false);
     this.state.auth.removeSession();
     this.lifecycle.transition({
       type: TransitionType.Logout,

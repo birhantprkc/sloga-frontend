@@ -30,6 +30,7 @@ import { streamerModeHides } from "@revolt/state/streamer";
 
 import { useClient, useClientLifecycle, useNotifications, useSound } from ".";
 import { State } from "./Controller";
+import { isWebPushPlatform } from "./NotificationsController";
 import {
   notificationPermissionGranted,
   showNotification,
@@ -72,7 +73,8 @@ export function NotificationsWorker() {
     });
   });
 
-  const { initNotifications, resyncPushSubscription } = useNotifications();
+  const { initNotifications, resyncPushSubscription, retryWebPushOnGesture } =
+    useNotifications();
 
   /**
    * Whether Streamer Mode is suppressing notification popups right now.
@@ -705,6 +707,8 @@ export function NotificationsWorker() {
   onMount(() => {
     document.addEventListener("click", tryRequest);
     document.addEventListener("visibilitychange", onVisibilityChange);
+    // Web push re-syncs from the configured-client effect below instead.
+    if (isWebPushPlatform()) return;
     // Native app: heal the FCM subscription on every logged-in launch — a
     // session whose subscription was lost otherwise never rings again. One
     // delayed retry covers the client/session not being ready yet at mount.
@@ -722,6 +726,44 @@ export function NotificationsWorker() {
     document.removeEventListener("click", tryRequest);
     document.removeEventListener("visibilitychange", onVisibilityChange);
     window.clearTimeout(resyncRetryTimer);
+  });
+
+  /**
+   * Web push: heal the browser subscription once per launch, as soon as the
+   * client has fetched the server configuration. The subscription has to
+   * match the VAPID key advertised there, so the mount-time resync above runs
+   * too early whenever that fetch is still in flight, and its single 15 s
+   * retry is no guarantee either. Web only: the native app is covered by the
+   * mount-time call and its retry.
+   */
+  let webResyncStarted = false;
+  let disposed = false;
+
+  /**
+   * Safari refuses subscribe() outside a user gesture, so a launch resync that
+   * needs a new subscription fails there. Retry it once on the next click, the
+   * same way tryRequest defers the permission prompt.
+   */
+  function retryWebResyncOnClick() {
+    document.removeEventListener("click", retryWebResyncOnClick);
+    resyncPushSubscription();
+  }
+
+  createEffect(() => {
+    if (webResyncStarted || !isWebPushPlatform()) return;
+    const c = client();
+    if (!c?.configured()) return;
+    webResyncStarted = true;
+    resyncPushSubscription().then(() => {
+      if (!disposed && retryWebPushOnGesture()) {
+        document.addEventListener("click", retryWebResyncOnClick);
+      }
+    });
+  });
+
+  onCleanup(() => {
+    disposed = true;
+    document.removeEventListener("click", retryWebResyncOnClick);
   });
 
   return null;

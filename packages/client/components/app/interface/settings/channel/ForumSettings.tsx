@@ -277,7 +277,10 @@ export default function ForumSettings(props: ChannelSettingsProps) {
           </MenuItem>
         </FloatingSelect>
 
-        <Checkbox checked={forceSort()} onChange={setForceSort}>
+        <Checkbox
+          checked={forceSort()}
+          onChange={(e) => setForceSort(e.currentTarget.checked)}
+        >
           <Trans>Use this order for everyone</Trans>
         </Checkbox>
         <Text>

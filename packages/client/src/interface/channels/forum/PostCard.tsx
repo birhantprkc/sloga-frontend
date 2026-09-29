@@ -5,7 +5,8 @@ import { styled } from "styled-system/jsx";
 
 import { TextWithEmoji } from "@revolt/markdown";
 import { useNavigate } from "@revolt/routing";
-import { Avatar, Text } from "@revolt/ui";
+import { Avatar, Text, isSlogaStaff } from "@revolt/ui";
+import { DisplayName } from "@revolt/ui/components/features/DisplayName";
 import { Time } from "@revolt/ui/components/utils";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
@@ -66,7 +67,11 @@ export function PostCard(props: {
         <Show when={author()}>
           <Avatar src={author()!.animatedAvatarURL} size={20} />
           <Text class="label" size="small">
-            {author()!.displayName}
+            <DisplayName
+              user={author()}
+              name={author()!.displayName}
+              brand={isSlogaStaff(author())}
+            />
           </Text>
         </Show>
         <FooterGrow />

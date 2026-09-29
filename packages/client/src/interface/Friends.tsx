@@ -31,10 +31,12 @@ import {
   NavigationRail,
   NavigationRailItem,
   UserStatus,
+  isSlogaStaff,
   main,
   presenceLabel,
   useSnackbar,
 } from "@revolt/ui";
+import { DisplayName } from "@revolt/ui/components/features/DisplayName";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
 import { HeaderIcon } from "./common/CommonHeader";
@@ -387,7 +389,13 @@ function SelfBar() {
         />
         <div class={nameStack()}>
           <div class={selfName()}>
-            <span class={ellipsis()}>{user()?.displayName}</span>
+            <span class={ellipsis()}>
+              <DisplayName
+                user={user()}
+                name={user()?.displayName ?? ""}
+                brand={isSlogaStaff(user())}
+              />
+            </span>
             <Symbol size={18}>expand_more</Symbol>
           </div>
           <div class={`${statusText()} ${ellipsis()}`}>
@@ -572,7 +580,11 @@ function Entry(props: { user: User; tabIndex?: number }) {
 
       <div class={nameStack()}>
         <div class={`name ${name()} ${ellipsis()}`}>
-          {props.user.displayName}
+          <DisplayName
+            user={props.user}
+            name={props.user.displayName}
+            brand={isSlogaStaff(props.user)}
+          />
         </div>
         {/* The note REPLACES the status line on incoming requests — the row
             is a fixed-height virtualized item, so a third line would clip */}

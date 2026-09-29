@@ -3,7 +3,9 @@
 //   node --test components/rtc/mlsRejoinPolicy.test.ts   (Node >=23.6 strips types)
 // Focus (rejoin plan §6 tests 2/3/8): the startup wipe's target selection
 // (channel-scoped, orphan-sparing, once-per-page), the peer-side rejoin-serve
-// staleness gate, and the generation-guarded Welcome acceptance.
+// staleness gate, and the generation-guarded Welcome acceptance. Wave 1.5:
+// the epoch-keyed serve-target check that stops a staggered serve removing a
+// member re-seated after the serve was scheduled.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -12,6 +14,7 @@ import {
   admitInProgressVerdict,
   rejoinReintentWindowMs,
   rejoinServeAction,
+  serveTargetStillStale,
   startupWipeTargets,
   welcomeVerdict,
 } from "./mlsRejoinPolicy.ts";
@@ -237,4 +240,44 @@ test("a backwards clock jump reads as LAPSED, not as a fresh window", () => {
     admitInProgressVerdict({ ...idle, rejoinServedAtMs: 10_000, nowMs: 5_000 }),
     false,
   );
+});
+
+// ---- serveTargetStillStale (the staggered-serve kick) -----------------------
+
+test("a serve target no commit has removed is still the stale leaf", () => {
+  assert.equal(
+    serveTargetStillStale({ scheduledAtEpoch: 7, removedAtEpoch: null }),
+    true,
+  );
+});
+
+test("a Remove at the scheduling epoch was already in the state the serve read — still stale", () => {
+  // The anchor is the epoch of the callState that confirmed the leaf present,
+  // so that leaf was present AFTER this Remove: it is the one to serve.
+  assert.equal(
+    serveTargetStillStale({ scheduledAtEpoch: 7, removedAtEpoch: 7 }),
+    true,
+  );
+});
+
+test("🔴 a Remove applied after scheduling means the present leaf is the re-seated member — refuse", () => {
+  // The fleet defect: leaf 6's serve fires at 12 s, after the Remove and the
+  // Add (~10.5 s), and would remove the LIVE re-added member.
+  for (const removedAtEpoch of [8, 9, 1_000]) {
+    assert.equal(
+      serveTargetStillStale({ scheduledAtEpoch: 7, removedAtEpoch }),
+      false,
+      `removed at ${removedAtEpoch}`,
+    );
+  }
+});
+
+test("a Remove from before scheduling (an earlier rejoin cycle) never blocks the serve", () => {
+  for (const removedAtEpoch of [0, 3, 6]) {
+    assert.equal(
+      serveTargetStillStale({ scheduledAtEpoch: 7, removedAtEpoch }),
+      true,
+      `removed at ${removedAtEpoch}`,
+    );
+  }
 });

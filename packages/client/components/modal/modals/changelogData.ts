@@ -9,90 +9,444 @@ import type { ChangelogResponse } from "./Changelog";
  */
 export const CHANGELOGS: ChangelogResponse[] = [
   // ==========================================================================
-  // 🔴 HELD BACK — DO NOT UNCOMMENT UNTIL THE FLAG IS LIT.
-  //
-  // Native Windows screen-share audio (WASAPI process-loopback). The feature
-  // is DARK: `ENABLE_WIN_NATIVE_SCREEN_AUDIO` is off, no dist carries it, and
-  // the live legs (L1–L17 plus the §11.9 grandchild negative control) are
-  // still owed — so publishing now would describe behavior no user can reach.
-  //
-  // A COMMENT rather than an array entry on purpose. An entry that merely sits
-  // on main unbuilt is NOT safe: on 2026-08-20 exactly that reached users as a
-  // side effect of an unrelated feature deploy, describing more than had
-  // actually shipped.
-  //
-  // To publish, in the release that lights the flag:
-  //   1. uncomment and move to the TOP of the array;
-  //   2. set `id` to `sloga-<real date>`, `published_at` to that date, and
-  //      `web_version` to that release's version;
-  //   3. re-read it against what actually shipped. If window shares (slice 2)
-  //      landed in the same release, the "whole-screen shares only" bullet is
-  //      WRONG and must go.
-  //   4. 🔴 RE-CHECK THE LINUX AND macOS SENTENCE AGAINST THAT BUILD. It is
-  //      the line most likely to have gone stale: Linux gained a PipeWire
-  //      screen-audio path of its own, and its flag has shipped both lit and
-  //      accidentally dark across recent releases. Read the built dist rather
-  //      than trusting this comment.
-  //
-  // Copy constraints, load-bearing:
+  // v0.63.0 (cut 2026-09-25 at main `5a6c9ee0`). Copy constraints, load-bearing:
+  // - The entry was written provisionally from 2026-09-23 and folded in as
+  //   fixes landed. The `id` keeps its 2026-09-23 date on purpose: the live
+  //   web served nothing newer than `sloga-2026-09-21` at the cut, so nobody
+  //   has seen this entry and it pops once. `published_at` is the release
+  //   day, set by the sweep. A further edit after the cut moves the cut point.
+  // - 🔴 The quick-reaction bullet must NOT promise more than the menu does.
+  //   Nobody has clicked the row in a signed-in session: it is covered by tsc,
+  //   eslint, and a built bundle that boots, never by use. It says what the
+  //   row IS and what a click does, and stops there.
+  // - Never name phones. Whether the phone app's long-press opens this same
+  //   menu was not checked.
+  // - The heart line is deliberate: the row sends the picker's exact heart, so
+  //   a quick heart adds to an existing heart instead of starting a twin.
+  // - The Singapore node (sg1) went live on the server side 2026-09-24, before
+  //   this release; only the "Asia (Singapore)" dropdown label ships here. A
+  //   real call passed on it the same day (region pin, webhooks, cleanup),
+  //   but from New Jersey: no latency was measured from Asia, so still no
+  //   millisecond figures.
+  //   Only the call's FIRST joiner picks the server, so "Sloga picks for you"
+  //   stays conditional ("calls you start"). 🔴 A region the server owner
+  //   pinned overrides the measurement, hence "unless the server owner has
+  //   chosen a region"; never drop that clause.
+  // - The own-message fix has two halves. The server half went live
+  //   2026-09-24 for EVERY app version: sending marks the channel read for
+  //   its author. Checked in the database on one real send plus the organic
+  //   traffic after it, never by watching a second device, so the bullet
+  //   says what happens to the channel and makes no claim about how fast.
+  //   The client half (own messages never add to a count) ships here.
+  // - 🔴 Keep the scheduled-message exception. A scheduled message only marks
+  //   the channel read if the author had already read everything in it, so
+  //   dropping that sentence would promise something false.
+  // - Self-mentions: the author is filtered out of mention and push fan-out,
+  //   including @everyone and role mentions, so "does not notify you" holds.
+  // - Scheduled messages: server-side only. It went live 2026-09-24 for EVERY
+  //   app version (crond now runs the task workers, backend `cedfa612`).
+  //   Before that, a scheduled message never marked the channel unread, never
+  //   recorded mentions, and never sent a push. The prod crond log shows the
+  //   channel-unread update firing for real scheduled deliveries. The mention
+  //   and push path is covered only by an ignored integration test and has
+  //   never been watched on a scheduled message in prod. So the bullet says
+  //   "the same as a message you send yourself" and lists nothing it cannot
+  //   back. 🔴 Do not add link previews or a DM reopening: neither was checked.
+  // - Worker fix: server-side only, live 2026-09-24 on delta, crond, pushd and
+  //   bonfire (backend `65ddc651`, deployed from `344701ad`). NEITHER trigger
+  //   has been seen in prod. The fix is covered by tests: a deleted-channel
+  //   regression test on both database drivers, a supervisor restart test,
+  //   and an ignored end-to-end worker test against a local broker. So the
+  //   bullet says what COULD happen, never that anyone lost notifications or
+  //   how often.
+  //   🔴 "Restarts itself" means after a 1 to 60 s backoff. Never "instantly".
+  //   🔴 Keep the extra-notification sentence. When the online check fails,
+  //   everyone is now treated as offline, so people who have Sloga open can
+  //   get a push. The same fallback can also show people as offline in a
+  //   connection made during that outage. The copy leaves that out on
+  //   purpose, but must never claim that presence is unaffected.
+  // - 2026-09-25 additions. NONE of these was clicked through live; each is
+  //   covered by unit/route tests with negative controls and nothing else.
+  //   - Server-side and live for EVERY app version: owner rank (delta
+  //     `99b84f74`, deployed 09-25), password reset for unverified accounts
+  //     (`bd12181f`, same deploy), http->https (Caddy, 09-24). The forum
+  //     ReadMessageHistory bullet is server-side too: live 2026-09-25 05:28Z
+  //     in delta `938b7508` (with the soundboard migration below).
+  //   - Client-side, ships here: the call leaving on a revoked session, the
+  //     disappearing timer hidden under E2EE, the member list behind the
+  //     gates, the forum-post Permissions entry, permission headings and the
+  //     Remote Control row.
+  //   - 🔴 The disappearing-timer bullet must not say the timer WORKS
+  //     anywhere. It deletes from the sending tab after the delay, so a closed
+  //     tab never deletes. The bullet only says it is gone where it never
+  //     took effect.
+  //   - 🔴 The Remote Control row: the bit is enforced on the server for
+  //     server channels (code-verified, never a live leg), and it governs who
+  //     may HAND OVER their own screen, never who may take one. Owners and
+  //     staff always have it. The copy says only that the setting exists.
+  //   - 🔴 The "signing out stops push" bullet must NOT say signing out ends
+  //     the session on the server: it deliberately does not (deleting a
+  //     session deletes its E2EE device). It only drops the subscription.
+  //   - 🔴 Forum Read Message History: only FETCHING is gated (the post
+  //     list's starters, message_fetch on threads). Live delivery is not, so
+  //     a connected member still sees new posts and replies arrive. Keep
+  //     "older" / "earlier"; never "cannot read replies".
+  //   - Sloga Helper moved to heart1 2026-09-25: it connected, authenticated
+  //     and synced its commands. No command was run by hand afterwards, so
+  //     the bullet says "back online", not that each command was tested.
+  //   - The soundboard bullet is server-side (migration revision 70, runs
+  //     when delta starts with it). Live 2026-09-25 05:28Z in delta
+  //     `938b7508`; prod migrations are at revision 71. Covers servers
+  //     created before 2026-07-15 only.
+  //   - 🔴 The sign-out bullet says the device LEAVES the call when the
+  //     server ends its session. It must not say "instantly": it happens
+  //     when the server's logout message arrives or, failing that, at the
+  //     first refused reconnect.
+  //   - 🔴 Roles by touch: proven only in a browser harness with synthetic
+  //     touches under an emulated Android browser, never on a real phone. The
+  //     switch is `useDevice().isMobile` (a mobile-browser check), so it says
+  //     "on a phone": a Windows touch laptop does not get the hold. Saying
+  //     the handle "did not work with a finger" is exact; it armed the list
+  //     but never started a drag itself.
+  //   - 🔴 Stuck panes (frontend `eba358cb`): this does NOT fix whatever
+  //     threw in the Android report behind it. That cause is still unknown.
+  //     The boundary only stops one error from freezing a pane for the rest
+  //     of the session. So the bullet promises recovery and an error message,
+  //     never "fixed the freeze", and it asks for the screenshot we need.
+  //     Proven in a node harness on the real solid-js; never seen on a device.
+  //   - 🔴 Stuck drawer (`4619cf0f`): proven only in a node harness with
+  //     simulated touches (the two stuck cases fail on the old code), never
+  //     on a phone. The edge back-swipe and the notification shade are the
+  //     documented ways Android cancels a touch; do not add other triggers.
+  //   - Profile badges (`a87b2c95`, merged as `badafac2`): every badge SVG
+  //     was the same blank white square. Seen only in a headless preview
+  //     render, never in the running app. The joke-badge flag mix-up and
+  //     the dropped raccoon badge are left out on purpose; nobody on Sloga
+  //     could have had either.
+  //   - 🔴 Android backups (`4a8bdcc0`, audit L5): the push SharedPreferences
+  //     held the API URL and a live session token, and the backup rules let
+  //     Google cloud backup and device transfer carry it. Only backups made
+  //     AFTER this update leave it out; one already stored keeps its copy
+  //     until the phone replaces it. So the bullet says backups made after
+  //     "you update the Android app", never that old backups are clean. The
+  //     fix lives in the APK: Play still carries vc66 (vc67-69 were never
+  //     uploaded), so nothing changes on a phone until it installs this
+  //     release. The same holds for the other-apps bullet below, hence its
+  //     "after this update". Signing out does NOT end
+  //     the session on the server (see above), so do not suggest it as the
+  //     remedy; removing the session in Settings → Sessions does.
+  //   - Deliberately left out: the web push re-subscribe on a VAPID key
+  //     change (`c826eb0e`). Nothing visible happens until the server key
+  //     rotates, and that rollout (R3+) has not happened.
+  //   - 🔴 Other apps controlling Sloga (frontend `fdbc539b`, audit H2): the
+  //     launcher activity is exported, so an app with no permissions could
+  //     start it with crafted notification extras. They were pasted into the
+  //     JavaScript run inside the app (code injection in Sloga's origin), and
+  //     `sloga_answer_call` joined that channel's call. Fixed with a
+  //     per-install nonce on every notification Intent plus JSON-built
+  //     payloads. Compile-checked on both flavors and code-reviewed; never
+  //     run on a phone. Android only, hence "on your phone". Nothing shows it
+  //     was ever used, so never say anyone was affected. A notification
+  //     posted by the old version opens the app but not its channel after the
+  //     update; left out, it lasts one notification.
+  //   - Deliberately left out: the Recents replay (`e2c5874e`). Reopening
+  //     from Recents after the process died could re-run an earlier Answer
+  //     tap. It follows from how Android recreates activities but was never
+  //     reproduced, so it gets no bullet.
+  //   - 🔴 Server hardening from the 2026-09-24 audit, server-side and live
+  //     for EVERY app version. bonfire moved to tungstenite 0.20.1
+  //     (CVE-2023-43669; backend `34ef5670`, live 2026-09-25 13:40:51Z, exe
+  //     `a7c36915`). Push delivery is held to the browsers' push services:
+  //     delta has refused other endpoints since `9fbcc76e` (live 05:28Z) and
+  //     pushd re-checks every send and gives up after 10 s (`a7e0fe52`, live
+  //     13:41:53Z, exe `8d256e1e`). Proven by unit tests (a real handshake,
+  //     a silent socket, a redirect that must not be followed) and a live
+  //     handshake through the edge (101). Neither problem was ever seen in
+  //     prod and pushd refused 0 stored endpoints at deploy, so never say
+  //     anyone was attacked or that a notification went astray.
+  //   - 🔴 Clearing a display name (stoat.js `45070b6`, frontend `fb36822a`
+  //     and `beaee6d2`): two bugs. The profile editor sent
+  //     `display_name: ""` for a blank field, which the server rejects (2-32
+  //     chars), so a display name could not be removed at all; it now sends
+  //     `remove: ["DisplayName"]` (the bot profile editor is the same
+  //     component). And UserUpdate never handled `clear: ["DisplayName"]`,
+  //     so a removed name, including a deleted account's or bot's
+  //     (`mark_deleted`), stayed on every open client until a reload.
+  //     Checked live on the web client against production, two accounts:
+  //     clearing and restoring one's name updated the other's DM list and
+  //     message authors without a reload. The field was emptied by script
+  //     (the test browser dropped Backspace); Save was a real click. Not
+  //     checked on the desktop or Android apps.
+  //   - 🔴 Encrypted-call fixes (frontend `1fbab1e0` + `bd1b7de5`, merged as
+  //     `9139682a`). Proven in the multi-member test harness and a build-level
+  //     check only; the two-seat live leg was SKIPPED by operator ruling, so
+  //     neither has been seen in a real call. The bullets say what could
+  //     happen and no longer does, with no frequency and no speed.
+  //     `1fbab1e0`: call-encryption messages queued while a member's
+  //     connection was down were replayed on reconnect through DM decryption,
+  //     failed, and were deleted; another group's messages could also disturb
+  //     the current call. `bd1b7de5`: in calls of 7 or more, a member who
+  //     rejoined inside the 10 s leave grace could be removed again.
+  //     🔴 NEVER say rejoining is instant or faster. The rejoin-latency work
+  //     is NOT in this release; rejoin speed is unchanged.
+  //   - 🔴 Deleted-channel badges and the newest-message marker: server-side,
+  //     live for EVERY app version since 2026-09-26 01:17-01:23Z (delta,
+  //     crond, pushd on heart1). Both were found in code review; neither was
+  //     reported or seen as a wrong badge in prod, so "could" and no numbers.
+  //     🔴 The deleted-channel bullet is iOS ICON BADGE ONLY and MENTIONS
+  //     ONLY. The orphaned row is visible only through pushd get_badge_count
+  //     (apn.rs), which sums mentions across every unread row without
+  //     checking the channel exists; web, desktop and Android ignore rows for
+  //     deleted channels. A read receipt recreates the row with no mentions,
+  //     which adds nothing, and a deleted channel has no badge of its own. Do
+  //     not widen it to "unread badges" or other platforms. "No way to clear
+  //     it" was never checked, so it stays out.
+  //     "Soon after getting back in" in the rejoin bullet is deliberate: the
+  //     re-removal came 12 s or more later, so never "right after".
+  //     Badges already stuck before the deploy were NOT cleaned up, so never
+  //     say they are gone. Deleting a channel already cleared its unreads, so
+  //     never present that as new. Keep these apart from the "Notifications
+  //     no longer quietly stop" bullet: different bugs.
+  // - 2026-09-25 referrals (frontend `feat/referrals-client` `0a64e3ad`,
+  //   backend `feat/referrals` as merged in wt-referrals-merge `8de325b4`).
+  //   It is the bigger change, so the headline names it and its section
+  //   goes FIRST. 🔴 NOBODY HAS USED THIS ON PRODUCTION. Every check ran on
+  //   a local test stack: the onboarding field, the /r/ link, pending ->
+  //   qualified, the badges, the color trial, the name-style editor, and a
+  //   second account seeing the styles in the member list and author line.
+  //   So the bullets say what the feature IS and what the rules are, and
+  //   never how fast anything happens (crond sweeps hourly; not a promise).
+  //   - 🔴 NO Ko-fi, supporting, donating, payment, supporter perks or
+  //     tiers, or anything bought with money. Store builds (Google Play and
+  //     iOS) show these same notes and store policy forbids perk-for-money
+  //     copy there; Ko-fi is not switched on yet either. The app hides its
+  //     own Support rows behind allowsDonationLinks(); these notes have no
+  //     such gate, so they cover earned referral rewards only.
+  //   - 🔴 The 50-referral upload reward is NOT announced. It is off on the
+  //     server until the config gains a [features.limits.perk] table
+  //     (User::limits, users/model.rs), and nobody can reach 50 for weeks
+  //     anyway. The ladder bullet stops at 25 and says "more further up":
+  //     never a size, never a retention. The 100-referral custom badge is
+  //     left out with it, so the list skips no rung. Outside this file:
+  //     the Referrals page renders every rung the server sends, so it does
+  //     show the upload reward's label today.
+  //   - 🔴 The counting rule is the server's (Referral::evaluate in
+  //     referrals/model.rs, numbers in referrals/tiers.rs), NOT the
+  //     Referrals page's looser "used Sloga regularly for a week, chatting on
+  //     several different days". All of: a verified
+  //     email; 7 days since onboarding recorded the referral; activity on 4
+  //     distinct UTC days, one of them day 7 or later ("second week or
+  //     later"); 10 messages, or 3 plus a server join through an invite the
+  //     referrer did not create. Activity is a message sent anywhere but
+  //     Saved Notes (an encrypted send only once it reached someone else),
+  //     a channel marked read (not Saved Notes), or an invite join. At most
+  //     10 qualify per referrer per rolling 7 days; the rest stay pending
+  //     and still expire 60 days after onboarding, hence the two sentences
+  //     sit together.
+  //   - 🔴 The bullets do NOT publish those thresholds (10 messages, 4 days,
+  //     10 per 7 days): spelling them out is a how-to for gaming the check.
+  //     They reuse the Referrals page's own wording ("used Sloga regularly
+  //     for a week, chatting on several different days"), which ships in the
+  //     same build, plus the verified email. Keep "a
+  //     week" vague; never "after 7 days", which the rule does not promise.
+  //   - Left out: a bot, deleted, banned or spam-flagged invitee never
+  //     counts, a suspended one waits, a deleted referrer's referrals
+  //     expire, a self-referral is never recorded, and staff can revoke.
+  //   - Server invites credit the invite's creator only when the sign-up
+  //     started at an /invite/ link and no referral code was entered (a
+  //     code wins). Referral codes are SLOGA- plus four characters; the
+  //     field accepts them with or without the prefix, in any case.
+  //   - The /r/ link: signed out, it keeps a well-formed code and opens
+  //     account creation, and the code is pre-filled in the optional field
+  //     at the username step (FlowLogin and FlowOAuthCallback alike).
+  //     Signed in, it only opens the app. The link's host comes from the
+  //     server config, so the copy names no domain.
+  //   - The friend's reward starts when the referral QUALIFIES, not at
+  //     sign-up: the "Joined Sloga through a friend" badge (it stays) and
+  //     a name-color perk for 30 days (WELCOME_TRIAL_DAYS). After that the
+  //     stored color is kept but no longer shown.
+  //   - 🔴 Name styles: the server sends every viewer only the parts the
+  //     owner's perks allow; only clients from this release draw them
+  //     (nameStyle.ts is new here), hence "everyone using this version".
+  //     In a server a role color beats the personal color (nameLayers.ts)
+  //     while font and effect still show. A masquerade shows nothing
+  //     personal and staff names keep their brand letters; both left out.
+  //   - Effects animate only in a message's author line (sent or still
+  //     sending; not in search results), the profile banner and the
+  //     Appearance preview, and only while "Show animated name effects" is
+  //     on (the default); everywhere else they are a still frame, as they
+  //     are under reduced motion. The Name style editor preview is the
+  //     exception: it always plays (NameStyleEditor never reads the
+  //     setting), hence the parenthesis in the bullet.
+  {
+    id: "sloga-2026-09-23",
+    title: "Patch Notes",
+    published_at: "2026-09-26T12:00:00.000Z",
+    web_version: "0.63.0",
+    markdown_content: `## v0.63.0 — Referral Program, Get Perks
+
+### 🎁 Referral Program - Invite Friends
+- **Invite friends to Sloga and earn rewards.** Your referral code and link are on the new **Settings → Referrals** page. Your link opens sign-up and fills in your code at the username step, and a friend who signs up through one of your server invites counts too.
+- **Anyone signing up can enter a code.** It goes in the optional **Referral code** field when they choose a username, with or without the SLOGA- in front.
+- **A referral counts once your friend has settled in.** It shows as pending until they have verified their email and used Sloga regularly for a week, chatting on several different days.
+- **Pending referrals don't wait forever.** Only so many of your referrals can count each week, and any more stay pending until there is room. A referral that has not counted within 60 days of sign-up expires.
+- **Your friend gets something too.** When their referral counts, they get a **Joined Sloga through a friend** badge and 30 days of a custom name color.
+- **What you can earn.** A Recruiter badge at 1 referral, a custom name color at 3, an Elite recruiter badge at 5, a name font at 10 and an animated name effect at 25. There are more rewards further up.
+- **Style your name.** Once you unlock them, **Settings → Profile → Name style** sets your name's color, one of five fonts, and a Shimmer, Glow or Rainbow effect. Everyone using this version of Sloga sees it next to your messages, in member lists and on your profile.
+- **Role colors still come first in servers.** Where you have a colored role, your name shows the role's color there instead of yours. Your font and effect still show.
+- **Animated effects move next to messages and on profiles, and hold still everywhere else.** To keep them still on your screen, turn off **Show animated name effects** in **Settings → Appearance** (the Name style preview still plays them).
+
+### 💬 Messages
+- **React without opening the emoji picker.** Right-click a message, or open its **⋯** menu, and 👍 👎 ❤ 🙂 🙁 sit across the top. One click adds the reaction; a highlighted one is already yours, and clicking it again takes it back off.
+- **A quick heart joins the hearts already there.** It is the same heart the emoji picker sends, so it adds to the existing count rather than starting a second one that looks identical.
+- **You only see the ones you can use.** The row is hidden where you do not have permission to react, and on a message that only accepts certain reactions, only those appear.
+
+### 🌏 Voice
+- **Sloga now has a voice server in Asia, in Singapore.** If you are in the Philippines, Indonesia, Malaysia, Thailand, Vietnam or nearby, calls you start no longer have to cross the Pacific to reach the US. Unless the server owner has chosen a region, Sloga measures which server is fastest for you and uses it, so there is nothing to set.
+- **Server owners can pin calls to it.** **Server Settings → Overview → Voice region** now lists **Asia (Singapore)** alongside US East and South America (São Paulo).
+
+### 🔔 Fixes
+- **Your own message no longer shows up as a new notification.** If you were the last person to post in a channel, it could come back marked unread, with a +1 on the badge, on your other devices and every time you reopened Sloga. Sending a message now marks that channel read for you everywhere. The one exception is a scheduled message: if there was something you had not read yet when it went out, the channel stays unread so you do not miss it.
+- **Mentioning yourself no longer notifies you.** That includes **@everyone** and a role you have.
+- **Scheduled messages now arrive like normal ones.** A message you scheduled used to go out without a push notification, without counting as a mention for anyone it @mentioned, and without marking the channel unread for people who were not online. It now goes out the same as a message you send yourself.
+- **Notifications no longer quietly stop after a problem on our servers.** Two rare problems could stop the part of Sloga that delivers mentions, unread badges and push notifications. One was an **@everyone** or role mention in a channel that was deleted a few seconds later. The other was a brief outage of the service that tracks who is online. Each could lose a batch of notifications, and if it happened enough times, delivery stopped until the server restarted. Sloga now handles both, and if that part of Sloga stops for any other reason, it restarts itself. If the online check has an outage now, the worst case is a push notification on a device where you already have Sloga open.
+- **A channel deleted at the wrong moment can no longer leave a mention stuck on the app icon.** On iPhone and iPad, a mention that arrived just as its channel was being deleted could keep counting in the app icon's badge after the channel was gone.
+- **New messages can no longer slip past the unread marker.** When several parts of Sloga updated a channel's newest-message marker at nearly the same moment, it could be moved backwards, and a new message, including a scheduled one, might then not mark the channel unread. The marker now only moves forward.
+- **Signing a device out from somewhere else now takes it out of the call too.** If you remove a session in your settings, or sign out everywhere, a device that was in a voice call leaves it when its session ends. It used to stay connected, even behind the "You were logged out" screen.
+- **Encrypted calls no longer throw away encryption updates sent while you were disconnected.** If your connection dropped during an encrypted call, the encryption updates the rest of the call sent in the meantime were discarded when you reconnected, which could leave you out of step with everyone else. They are now kept and applied. Encryption messages meant for a different call can no longer disturb the one you are in, either.
+- **Coming back to a large encrypted call no longer gets you removed again.** In an encrypted call of 7 or more people, someone who left and rejoined within 10 seconds could be taken out of the call again soon after getting back in.
+- **Forgot your password before verifying your email? The reset email now arrives.** It used to say "check your email" and send nothing. Setting a new password from that email also verifies your address, so you can sign straight in.
+- **The disappearing-messages timer is no longer offered in encrypted chats.** It never deleted encrypted messages, so it showed a timer that did nothing there.
+- **Forum posts no longer show an empty Permissions page in their settings.** A post follows its forum's permissions, so there is nothing to set on the post itself.
+- **Permission lists keep their section titles.** On some channel types a section's title went missing and its settings ran on under the section before.
+- **You can reorder roles on a phone.** In **Server Settings → Roles**, press and hold a role, then drag it into place. The small handle beside each role did not work with a finger.
+- **The channel list and chat no longer stay stuck after an error.** If one of them runs into a problem, it now shows what went wrong and a **Try again** button, and tapping another server or channel brings it back too. Before, it could stop updating until you restarted Sloga, while the server list beside it kept working. If you see this message, please send us a screenshot of it: it tells us what to fix.
+- **The side panel on a phone no longer stops sliding.** If a swipe was interrupted, for example by the back gesture from the edge of the screen or by pulling down the notification shade, the panel could stop responding until you restarted Sloga. It now slides back into place.
+- **Signing out now stops push notifications to that device.** A phone you signed out of could keep receiving notifications for the account.
+- **The soundboard works on older servers.** On servers created before the soundboard arrived in July, members got an error when they tried to play a sound.
+- **The Windows app no longer shows a push notification switch that could not work.** Notifications while Sloga is open are unchanged.
+- **Sloga Helper is back online.** Its commands (**/remind**, **/giveaway**, **/coinflip** and **/8ball**) had stopped answering since late August.
+- **Profile badges now show their icons.** Every badge on a profile was drawn as the same blank white square. Each one now has its own icon.
+- **You can remove your display name.** Emptying **Display Name** in **Settings → Profile** and saving did not remove it, so there was no way back to showing just your username. It now does, and anyone who already has Sloga open sees the change without reloading. The same goes for a deleted account or bot, whose old display name used to stay on screen until a reload.
+
+### 🛡️ Safety and privacy
+- **A channel's member list now stays behind its age, password or spoiler screen.** Until you get past that screen, the member list beside the channel list stays hidden too. Before, a mature channel showed who was in it right next to the "are you 18?" prompt.
+- **Forum posts and threads now sit behind their channel's screen.** A post in a mature, password-protected or spoiler forum used to open straight away, with no screen at all. Getting past the forum's screen once covers its posts.
+- **Voice channels too.** Who is in a gated voice channel's call stays hidden in the channel list until you get past its screen, and double-clicking the channel opens the screen instead of joining.
+- **Moderators can no longer mute, deafen or rename the server owner.** An owner with no roles counted as the lowest rank, so anyone allowed to mute members could mute them too.
+- **Forum posts now respect Read Message History.** A role denied it can still see which posts exist and their titles, but can no longer open older posts or read their earlier replies.
+- **Server owners can choose who may hand over control of their screen.** **Remote Control** now appears under **Voice** in a server's and channel's permissions. It covers handing over your own shared screen; nobody can take control of someone else's.
+- **Android backups no longer include your sign-in.** The Android app keeps a copy of it so push notifications can renew themselves, and Google backup and moving to a new phone carried that copy along. Once you update the Android app, backups made after that leave it out.
+- **Other apps on your phone can no longer control Sloga after this update.** An app installed on the same Android phone could open Sloga as if it were one of Sloga's own notifications, and use that to run its own code inside Sloga or put you in a voice call. Sloga now only acts on notifications it created itself.
+- **A malformed connection can no longer tie up Sloga's servers.** A specially built connection request could keep the server that delivers your messages live busy for minutes. The part that handles those connections is now on a version that is not affected.
+- **Push notifications only go to real push services.** Sloga's servers now refuse to send a browser push notification anywhere other than the browser's own push service, and stop waiting on one that does not answer.
+- **sloga.gg and app.sloga.gg now always use a secure connection.** Typing an \`http://\` address sends you to the \`https://\` one.
+`,
+  },
+  // ==========================================================================
+  // v0.62.0 (2026-09-21). Copy constraints, load-bearing — READ BEFORE EDITING
+  // THE SCREEN-AUDIO SECTION. It went live under the 2026-09-21 operator ruling
+  // that SKIPPED the live legs (L1-L17 and the S11.9 grandchild negative
+  // control), so every word of it is verified by construction and none of it by
+  // use. That is exactly why the wording below is what it is:
   // - Windows DESKTOP SHELL only. Never claim it for the web — a Windows
   //   browser tab has no native capture and still echoes the call — and never
-  //   for macOS.
-  // - The upstream Chromium bug was DRAFTED, NOT FILED (slice 0 leg 5). Say the
-  //   browser engine needs the fix; do not say a bug is open.
-  // - ENTIRE-SCREEN shares only. Window shares are slice 2 and carry no audio.
-  // - This entry CORRECTS v0.54.0's below, which tells Windows users to redo the
-  //   share with the system-audio box ticked. On a capable shell that box no
-  //   longer exists, so the old advice is impossible to follow — that
-  //   correction is why these notes gate the lighting.
-  // - PARAPHRASE the new dialog strings, never quote them: they are this
-  //   release's deploy gate markers, and quoting them here would put them in the
-  //   changelog chunk, so a dist grep would pass on the notes alone.
-  // - 🔴 SAY NOTHING ABOUT ENCRYPTION. The silence is deliberate, not an
-  //   oversight. A "your system audio is end-to-end encrypted" line would be
-  //   false in two reachable states: a mixed/downgraded call publishes screen
-  //   audio in plaintext by design (the assertion is skipped when
-  //   `!room.isE2EEEnabled`), and §7 records that even on a full-E2EE call the
-  //   assertion is a detector rather than a preventer, with a residual of
-  //   server-visible plaintext.
-  //
-  // THE THREE RESIDUALS, each of which the copy must respect:
-  // - 🔴 The exclusion is NOT unconditional. The measured exclusion covers the
-  //   target process and its DIRECT children, one level; a grandchild-owned
-  //   render session is NOT excluded, the §11.9 runtime control that would
-  //   catch it is unbuilt, and the one-level result is a single-box
-  //   measurement. System sounds (pid 0) are under no root at all, so Sloga's
-  //   own notification dings are still captured (WE24). The bullet below is
-  //   therefore written as what Sloga DOES — leave its own output out of the
-  //   capture — and NOT as a promise that no echo is possible.
-  // - 🔴 Failures are NOT always surfaced. At least four paths degrade to a
-  //   SILENT share by design and report nothing: a probe failure or timeout,
-  //   no Tauri bridge, refusing to start over an existing session, and the
-  //   `SLOGA_NO_SCREEN_AUDIO=1` opt-out. §9 names the silent share as the
-  //   ACCEPTED degrade; the existence of the settings-dialog help text is proof
-  //   that shares do go quietly silent.
-  // - 🔴 The WEB path is unfixed and stays unfixed. A Windows browser tab
-  //   sharing system audio still captures the call along with everything else.
-  //   That needs the browser engine, not us.
-  //
-  // {
-  //   id: "sloga-YYYY-MM-DD",
-  //   title: "Patch Notes",
-  //   published_at: "YYYY-MM-DDTHH:MM:SS.000Z",
-  //   web_version: "X.Y.Z",
-  //   markdown_content: `## vX.Y.Z — Windows screen shares carry your computer's sound
-  //
-  // ### 🔊 Screen sharing in the Windows desktop app
-  // - **Share your whole screen and your computer's sound goes with it.** Sloga now captures what your machine is playing directly, and leaves its own output out of that capture, so your game, your video and your music reach everyone.
-  // - **There is no system-audio checkbox to remember any more.** The Windows picker used to offer one, and ticking it was what caused the echo. Sound follows your screen-share audio setting instead, so there is one less thing to get wrong.
-  // - **Whole-screen shares only, for now.** Sharing a single window still carries no sound.
-  // - **When we can tell why the sound did not start, we say so** — on older Windows builds, for instance, or when a second copy of Sloga is already running and holding the capture. Some setups still share silently without an explanation; if that is you, the screen-share settings dialog says what it can.
-  //
-  // ### What has not changed
-  // - This is the Windows desktop app. Sharing system audio **in a web browser still picks up everything the machine is playing, the call included** — that one needs a fix in the browser engine itself, and we are chasing it upstream.
-  // - macOS screen shares carry no system audio. Linux has its own separate capture path — check what that build actually shipped before saying anything about it here.
-  // `,
-  // },
+  //   for macOS, which ships this release but has no native system-audio
+  //   capture of its own. (It is NOT held back any more — see the macOS
+  //   bullet below, which supersedes the old "never name the Mac" rule.)
+  // - The upstream Chromium bug was DRAFTED, NOT FILED. Say the browser engine
+  //   needs the fix; do not say a bug is open.
+  // - ENTIRE-SCREEN shares only. Re-verified 2026-09-21: `state.tsx` gates the
+  //   capture on `wantsAudio && entireScreen`. If window shares (slice 2) ever
+  //   land, that bullet is wrong and must go.
+  // - PARAPHRASE the dialog strings, never quote them: they are the release's
+  //   deploy gate markers, and quoting them here would put them in the changelog
+  //   chunk, so a dist grep would pass on the notes alone.
+  // - 🔴 SAY NOTHING ABOUT ENCRYPTION. Deliberate. A "your system audio is
+  //   end-to-end encrypted" line would be false in two reachable states: a
+  //   mixed/downgraded call publishes screen audio in plaintext by design, and
+  //   S7 records that even on a full-E2EE call the assertion is a detector
+  //   rather than a preventer.
+  // - 🔴 The echo bullet says what Sloga DOES ("leaves its own output out of
+  //   that capture"), never that no echo is possible. The exclusion covers the
+  //   target process and its DIRECT children, one level, measured on ONE box; a
+  //   grandchild-owned render session is not excluded, and system sounds (pid 0)
+  //   are under no root at all.
+  // - 🔴 Failures are NOT always surfaced: probe failure/timeout, no Tauri
+  //   bridge, refusing to start over an existing session, and the
+  //   SLOGA_NO_SCREEN_AUDIO=1 opt-out all degrade to a silent share.
+  // - No live click-through of anything in this release. Nothing here may claim
+  //   one, and no bullet may promise an outcome.
+  // - 🔴 macOS COMES CURRENT in this release (0.59.0 -> 0.62.0), so the old
+  //   "never name the Mac" rule is LIFTED and the Mac section below exists
+  //   because of it. It ships only once the keybinds clear-lock fix is in the
+  //   build; if the Mac slips out of this release, that section must come out
+  //   with it. 🔴 Nothing GATES that — there is no SLOGA_EXPECT_* variable for
+  //   the Mac the way there is for screen audio — so the copy is hedged
+  //   ("is coming current with") rather than stated as accomplished fact. Do not enumerate what 0.60/0.61 contained — point at the
+  //   entries below instead, so this copy cannot drift from them.
+  // - Screen-share system audio stays Windows + Linux only. The Mac coming
+  //   current does NOT give it system audio.
+  // - 🔴 The floating-call-card bullet covers the MUTED case ONLY. Both the
+  //   before and the after were seen in a real two-seat call, but the pane
+  //   that drove both seats blocks the microphone, so every participant read
+  //   as muted: an unmuted column and the speaking ring are unverified. No
+  //   copy here may describe what an unmuted person's card looks like. The
+  //   four-person cap is named on purpose - it is a trade, not a feature, and
+  //   a big call now shows fewer faces in that card than it used to.
+  // - 🔴 The double-click bullet must NOT promise a join. Nobody has
+  //   double-clicked a real voice channel: the path is covered by a unit
+  //   spec and the typecheck, never by use, so the copy says what the
+  //   gesture DOES in the channel list and stops there. It is also the one
+  //   change in this release that alters what an existing habit does, which
+  //   is why the bullet names the off switch in the same breath.
+  // - 🔴 The channel-reordering bullets must NOT promise that a drag succeeds
+  //   on any given handset. NO DEVICE LEG WAS EVER RUN. The feature is covered
+  //   by a 30-case unit spec, tsc, eslint and prettier and by nothing else - it
+  //   has never executed on a phone, on any OS (operator ruling 2026-09-22
+  //   skipped the leg; the approved plan had written it in as a hard merge
+  //   gate). That is why the second bullet names the failure modes out loud
+  //   rather than claiming coverage, why neither bullet says the gesture
+  //   "works", and why both lean on Save being the only thing that writes.
+  //   Runsheet still owed in full: ~/Downloads/CHANREORDER-HANDOFF.md.
+  //   🔴 This is the THIRD user-visible change in v0.62.0 with its live leg
+  //   skipped, after the screen-audio legs and double-click join.
+  {
+    id: "sloga-2026-09-21",
+    title: "Patch Notes",
+    published_at: "2026-09-21T23:30:00.000Z",
+    web_version: "0.62.0",
+    markdown_content: `## v0.62.0 — Windows screen shares carry your computer's sound
+
+### 🔊 Screen sharing in the Windows desktop app
+- **Share your whole screen and your computer's sound goes with it.** Sloga captures what your machine is playing directly, and leaves its own output out of that capture, so your game, your video and your music reach everyone.
+- **There is no system-audio checkbox to remember any more.** The Windows picker used to offer one, and ticking it was what fed the call back into the share. Sound follows your screen-share audio setting instead, so there is one less thing to get wrong.
+- **Whole-screen shares only, for now.** Sharing a single window still carries no sound.
+- **When we can tell why the sound did not start, we say so** — on older Windows builds, for instance, or when a second copy of Sloga is already running and holding the capture. Some setups still share silently without an explanation; if that is you, the screen-share settings dialog says what it can.
+- **This replaces the advice under v0.54.0 below,** which told Windows users to redo the share with the system-audio box ticked. On this build there is no such box.
+
+### 🎧 Getting into a voice channel
+- **Double-click a voice channel to join it.** Until now the channel list only opened a voice channel and the join sat behind the call button in the header; a double-click now does both steps at once. A single click is unchanged — it still just opens the channel — so nothing you already do behaves differently. Not to your taste? Settings → Voice → Voice Channels turns it off.
+
+### 📱 On your phone
+- **Channels can be rearranged from the phone app.** Press and hold a channel or a category header, choose **Rearrange channels**, then hold a row to pick it up and drag it where you want it. **Save** applies the new order and **Cancel** throws it away — nothing is written to your server until you press Save. Reordering had been desktop-only; on a phone there was no way to do it at all.
+- **This part is brand new, and phones differ.** Press-and-hold has to share the screen with scrolling and with Android's own press-and-hold menu, and that arrangement is not the same on every handset. If a row will not pick up, or the page slides away mid-drag, tell us which phone you are on — and remember nothing changes for anyone else unless you press Save.
+
+### 🔔 Fixes
+- **Notifications stop coming back every time you open Sloga.** Channels you had already read were being marked unread again at startup, so the app opened with a pile of notifications for channels that had nothing new in them. Your read positions were saved correctly the whole time — the app was throwing them away as it started, and now it keeps them.
+- **The small floating call card no longer hides whoever is muted.** When someone muted, their mute icon was drawn on top of their avatar instead of beside it, so their face vanished altogether — with two people in the card you saw one face and one mute icon, and the icon read as a marker on the person next to them. Everyone in the card now has their name under their avatar, and a muted person gets a small mute icon of their own between the two. The card names up to four people and counts the rest, since names need more room than the bare icons did.
+- **In forum settings, "Use this order for everyone" saves.** It was failing with an error every time while the rest of the screen, auto-archive included, saved fine.
+- **A channel menu item that read \`a/HlD/\` says "Move to category" again.**
+
+### 🍎 If you are on a Mac
+The Mac app has been held back at 0.59.0 while we fixed a keybinds problem that only affected it. It is coming current with this release, so everything in the entries below — from v0.61.0 down to v0.60.0 — arrives on the Mac at once. None of that is new in this release; it is just new to the Mac.
+
+### What has not changed
+- This is the Windows desktop app. Sharing system audio **in a web browser still picks up everything the machine is playing, the call included** — that one needs a fix in the browser engine itself, and we are chasing it upstream.
+- **Linux** has its own separate capture path and already carries screen audio; nothing about it changes here.
+- **macOS** screen shares still carry no system audio.
+`,
+  },
   // ==========================================================================
   // v0.61.0 (2026-09-20). Copy constraints, load-bearing:
   // - A MINOR bump, not a patch: the encrypted-call banner changes what users
@@ -173,7 +527,7 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //   copy of the client, so they get this with their next build; the entry
   //   must not promise it everywhere.
   // - "Never" is a real option (0 minutes on the wire). Say it plainly.
-  // - Existing forums become 7 days for NEW posts. That is a behaviour change
+  // - Existing forums become 7 days for NEW posts. That is a behavior change
   //   for every forum that never chose one, so it is stated.
   // - Who can change a post's setting is exact: its author, or anyone with
   //   Manage Channel. An author who cannot post in the forum cannot change it
@@ -237,7 +591,7 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //   are DISABLED and cannot be bound at all. Only the three in-app actions
   //   (start screen share, fullscreen, theater) work there. An earlier draft
   //   said bindings "still fire while Sloga is focused", which would send a
-  //   Mac user to a greyed-out row to file a bug.
+  //   Mac user to a grayed-out row to file a bug.
   // - The lone-Ctrl caution is deliberate, not a hedge: a bare Ctrl binding
   //   fires on every Ctrl shortcut system-wide AND on every AltGr, because
   //   Windows synthesizes ControlLeft before AltRight. Users who bind it
@@ -270,7 +624,7 @@ export const CHANGELOGS: ChangelogResponse[] = [
 - **The key still works in whatever you are using.** Sloga acts on it and the game or app in front of you receives it as normal, so binding a key you already use somewhere else will not break it there.
 - **A key on its own works, and so does a combination.** Ctrl by itself is a valid binding, and so is Ctrl+H. Bear in mind that a lone Ctrl fires on *every* Ctrl shortcut you press — and on AltGr, which Windows reports as Ctrl — so binding it together with a regular key is usually what you want. Sloga warns you when a binding is a key you are likely to type.
 - Starting a screen share, fullscreen and theater mode are bound too, but they need Sloga in front of you.
-- Keys that work outside the app are **Windows only for now.** On macOS, Linux and the web the system-wide group is greyed out with a note saying why; the three that need Sloga in front of you — starting a screen share, fullscreen and theater mode — can still be bound, and still work.
+- Keys that work outside the app are **Windows only for now.** On macOS, Linux and the web the system-wide group is grayed out with a note saying why; the three that need Sloga in front of you — starting a screen share, fullscreen and theater mode — can still be bound, and still work.
 - **CapsLock can be bound**, and capturing AltGr reads as "Ctrl + Right Alt", which is the binding that works on those layouts.
 - **Keybinds are saved on the device you set them on** and are not carried between your devices.
 
@@ -411,7 +765,7 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //   so the copy names the mode rather than implying every muted user was
   //   being broadcast.
   // - This entry CLEARS the held-back list from the 0.58.0 entry: group-chat
-  //   calls, the cancelled-picker dialog, the shorter join banner, the
+  //   calls, the canceled-picker dialog, the shorter join banner, the
   //   immediate pause when a plain browser joins, and the chip after people
   //   churn. Those were held back for want of a live leg they never got; they
   //   ship announced here under the same waiver as the rest of this entry.
@@ -435,13 +789,13 @@ export const CHANGELOGS: ChangelogResponse[] = [
 
 ### 🎙️ Your microphone does what the button says
 - **Muting yourself now holds.** On Voice Activity input mode, talking could re-open your microphone a moment after you started — while the button still read muted. If your audio interface has a mute of its own, that one always worked, which is the detail that gave the bug away.
-- **Your microphone no longer freezes while Sloga is in the background.** Minimising the window or alt-tabbing into a game stopped voice detection outright, leaving your microphone stuck however it was last set: unable to open until you came back, or still open when you thought you were quiet.
+- **Your microphone no longer freezes while Sloga is in the background.** Minimizing the window or alt-tabbing into a game stopped voice detection outright, leaving your microphone stuck however it was last set: unable to open until you came back, or still open when you thought you were quiet.
 - **Mute and deafen follow what you pressed.** They used to flip whatever your microphone happened to be doing at that instant, so pressing mute during a pause between words could switch it on.
 
 ### 🖥️ Screen sharing
 - **The resolution and frame-rate options are visible when the call is full screen.** They were opening behind it, so the share sat paused waiting on a dialog you could not see.
 - **Retrying a share no longer stacks up dialogs** behind the first one.
-- **Cancelling the screen picker counts as cancelling**, instead of raising an error about it.
+- **Canceling the screen picker counts as canceling**, instead of raising an error about it.
 
 ### 💬 Forums
 - **A forum can no longer require a tag it does not have.** Turning on "every post needs a tag" without adding any tags left the New Post button dead with nothing on screen explaining why. Settings now says which of the two to change, and the composer says what is missing.
@@ -464,7 +818,7 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //   markers.
   // - EXCLUDED, no live leg on this build: the shorter join banner, the
   //   immediate pause when a plain browser joins, the chip after people churn,
-  //   group-chat calls, the cancelled-picker dialog. They ride the next sweep's
+  //   group-chat calls, the canceled-picker dialog. They ride the next sweep's
   //   entry once they have been seen live.
   // - `web_version` is what Settings will print once this entry reaches the web.
   {

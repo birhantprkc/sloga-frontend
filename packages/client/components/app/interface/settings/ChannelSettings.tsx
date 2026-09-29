@@ -22,6 +22,13 @@ import { ViewWebhook } from "./channel/webhooks/ViewWebhook";
 import { WebhooksList } from "./channel/webhooks/WebhooksList";
 import { BackCard } from "./user/_AccountCard";
 
+/** Channel types that have a Permissions page (see `render`). */
+const PERMISSION_PAGE_TYPES: Channel["type"][] = [
+  "Group",
+  "TextChannel",
+  "Forum",
+];
+
 const Config: SettingsConfiguration<Channel> = {
   /**
    * Page titles
@@ -81,6 +88,7 @@ const Config: SettingsConfiguration<Channel> = {
         return <ChannelOverview channel={channel} />;
       case "forum":
         return <ForumSettings channel={channel} />;
+      // Keep these arms in step with PERMISSION_PAGE_TYPES.
       case "permissions":
         switch (channel.type) {
           case "Group":
@@ -127,8 +135,12 @@ const Config: SettingsConfiguration<Channel> = {
               title: <Trans>Forum</Trans>,
             },
             {
+              // Listed only for the types `render` has a page for. A thread
+              // (a forum post included) takes its permissions from its parent
+              // and has no overrides of its own, so it used to get an entry
+              // that opened a blank page.
               hidden:
-                channel.type === "SavedMessages" ||
+                !PERMISSION_PAGE_TYPES.includes(channel.type) ||
                 !channel.havePermission("ManagePermissions"),
               id: "permissions",
               icon: <BiRegularListUl size={20} />,

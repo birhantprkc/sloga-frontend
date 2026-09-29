@@ -8,6 +8,8 @@ import { Button, Text, iconSize } from "@revolt/ui";
 
 import MdVisibilityOff from "@material-design-icons/svg/round/visibility_off.svg?component-solid";
 
+import { spoilerGateKey } from "./channelGates";
+
 /**
  * Click-to-reveal gate for spoiler channels. Wraps channel content and asks
  * the member to reveal it once; the choice is remembered per device, same as
@@ -20,7 +22,7 @@ export function SpoilerGate(props: {
   children: JSXElement;
 }) {
   const state = useState();
-  const storageKey = () => `${props.channelId}-spoiler`;
+  const storageKey = () => spoilerGateKey(props.channelId);
   const revealed = () => state.layout.getSectionState(storageKey(), false);
 
   return (

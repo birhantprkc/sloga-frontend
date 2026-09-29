@@ -25,6 +25,43 @@ export interface SignOutHooks {
   readonly size: number;
 }
 
+/**
+ * The lifecycle transitions that matter to sign-out, reduced to what this
+ * module can see without importing the controller.
+ */
+export type SessionTransition =
+  | { kind: "logout" }
+  | { kind: "permanent-failure"; error: string }
+  | { kind: "dismiss"; fromErrorState: boolean }
+  | { kind: "other" };
+
+/**
+ * Whether a transition ends the session, so the sign-out hooks must run.
+ *
+ * - An explicit logout always does.
+ * - A permanent failure does only when the server said the session is gone
+ *   (`InvalidSession`: revoked from another device, or the account signed out
+ *   everywhere). Other permanent errors can be a server hiccup, and hanging
+ *   up a healthy call over one would be worse than the bug this closes.
+ * - Dismissing the error screen does, whatever the error was: it disposes the
+ *   client and lands on the login page, so nothing may outlive it.
+ *
+ * Before this, only the explicit logout fired the hooks, so a session revoked
+ * remotely left its call running under the error screen and after it.
+ */
+export function transitionEndsSession(transition: SessionTransition): boolean {
+  switch (transition.kind) {
+    case "logout":
+      return true;
+    case "permanent-failure":
+      return transition.error === "InvalidSession";
+    case "dismiss":
+      return transition.fromErrorState;
+    case "other":
+      return false;
+  }
+}
+
 export function createSignOutHooks(): SignOutHooks {
   const hooks = new Set<SignOutHook>();
   return {

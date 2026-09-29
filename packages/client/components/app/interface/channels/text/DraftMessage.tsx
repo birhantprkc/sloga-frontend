@@ -15,8 +15,10 @@ import {
   MessageReply,
   SizedContent,
   Text,
-  Username,
+  isSlogaStaff,
+  typography,
 } from "@revolt/ui";
+import { DisplayName } from "@revolt/ui/components/features/DisplayName";
 
 import { DraftMessageContextMenu } from "../../../menus/DraftMessageContextMenu";
 
@@ -51,7 +53,17 @@ export function DraftMessage(props: Props) {
         )
       }
       sendStatus={props.draft.status === "sending" ? "sending" : "failed"}
-      username={<Username username={userInfo().username} />}
+      username={
+        <span class={typography({ class: "label", size: "large" })}>
+          <DisplayName
+            user={user()}
+            member={props.channel.server?.member}
+            name={userInfo().username}
+            brand={isSlogaStaff(user())}
+            animate
+          />
+        </span>
+      }
       header={
         <For each={props.draft.replies}>
           {(reply) => (

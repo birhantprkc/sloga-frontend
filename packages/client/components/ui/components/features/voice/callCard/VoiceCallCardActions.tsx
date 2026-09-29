@@ -68,7 +68,7 @@ export function VoiceCallCardActions(props: { size: "xs" | "sm" }) {
   onCleanup(() => document.removeEventListener("pointerdown", onPointerDown));
 
   return (
-    <Actions>
+    <Actions compact={compact()}>
       <Show when={props.size === "xs"}>
         <IconButton
           variant="standard"
@@ -341,6 +341,22 @@ const Actions = styled("div", {
 
     borderRadius: "var(--borderRadius-full)",
     background: "var(--md-sys-color-surface-container)",
+  },
+  variants: {
+    /**
+     * The PiP card's bar. Six 32px controls at the full `--gap-md` spacing
+     * overran the 300px card and wrapped the hang-up button onto a row of its
+     * own — which both ate the roster's vertical space and put the one
+     * destructive control somewhere the eye does not expect it. At `--gap-sm`
+     * the whole set fits on one row with room to spare.
+     */
+    compact: {
+      true: {
+        gap: "var(--gap-sm)",
+        padding: "var(--gap-sm)",
+      },
+      false: {},
+    },
   },
 });
 

@@ -20,6 +20,7 @@ import { cva } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 
 import { UserContextMenu } from "@revolt/app";
+import { useClient } from "@revolt/client";
 import { useUser } from "@revolt/markdown/users";
 import { useVoice } from "@revolt/rtc";
 import { useState } from "@revolt/state";
@@ -28,6 +29,8 @@ import { Row } from "@revolt/ui/components/layout";
 import { OverflowingText } from "@revolt/ui/components/utils";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
+import { DisplayName } from "../../DisplayName";
+import { isSlogaStaff } from "../../legacy/Username";
 import {
   isScreenLeg,
   participantUserId,
@@ -59,6 +62,21 @@ export function ParticipantTile(props: TileProps) {
   const participant = useEnsureParticipant();
   const track = useTrackRefContext();
   const user = useUser(participantUserId(participant.identity));
+  const client = useClient();
+
+  /**
+   * This participant as a member of the call's server (not the route's), the
+   * source of their nickname and role color. Absent for DM and group calls.
+   */
+  const callMember = () => {
+    const serverId = voice.channel()?.serverId;
+    return serverId
+      ? client().serverMembers.getByKey({
+          server: serverId,
+          user: participantUserId(participant.identity),
+        })
+      : undefined;
+  };
 
   let videoRef: HTMLVideoElement | undefined;
 
@@ -399,7 +417,7 @@ export function ParticipantTile(props: TileProps) {
           contextMenu: () => (
             <UserContextMenu
               user={user().user!}
-              member={user().member}
+              member={callMember()}
               inVoice={!isScreenShare()}
               isScreenshare={isScreenShare()}
             />
@@ -489,7 +507,18 @@ export function ParticipantTile(props: TileProps) {
         </Show>
         <Overlay showOnHover={isScreenShare()}>
           <OverlayInner>
-            <OverflowingText>{user().username}</OverflowingText>
+            <OverflowingText>
+              <DisplayName
+                user={user().user}
+                member={callMember()}
+                name={
+                  callMember()?.displayName ??
+                  user().user?.displayName ??
+                  user().username
+                }
+                brand={isSlogaStaff(user().user)}
+              />
+            </OverflowingText>
             <Row gap="md">
               {/* Per-participant media-E2EE lock (slice 6.5 §4.4): MLS member
                   ⇒ lock (filled if user-verified, outline if not); SFU

@@ -111,7 +111,14 @@ export function UserProfileEditor(props: Props) {
     };
 
     if (editGroup.controls.displayName.isDirty) {
-      changes.display_name = editGroup.controls.displayName.value.trim();
+      // the server rejects an empty name (2-32 chars), so clearing it has to
+      // go through `remove` like the other fields
+      const displayName = editGroup.controls.displayName.value.trim();
+      if (displayName) {
+        changes.display_name = displayName;
+      } else {
+        changes.remove!.push("DisplayName");
+      }
     }
 
     if (editGroup.controls.pronouns.isDirty) {

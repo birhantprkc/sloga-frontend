@@ -5,6 +5,8 @@ import { Channel } from "stoat.js";
 import { styled } from "styled-system/jsx";
 
 import { Text } from "../../../design";
+import { DisplayName } from "../../DisplayName";
+import { isSlogaStaff } from "../../legacy/Username";
 
 interface Props {
   /**
@@ -21,7 +23,15 @@ export function ConversationStart(props: Props) {
     <Base>
       <Show when={props.channel.type !== "SavedMessages"}>
         <Text class="headline" size="large">
-          {props.channel.name ?? props.channel.recipient?.username}
+          <Show when={props.channel.recipient} fallback={props.channel.name}>
+            {(recipient) => (
+              <DisplayName
+                user={recipient()}
+                name={props.channel.name ?? recipient().username}
+                brand={isSlogaStaff(recipient())}
+              />
+            )}
+          </Show>
         </Text>
       </Show>
       <Text class="title">

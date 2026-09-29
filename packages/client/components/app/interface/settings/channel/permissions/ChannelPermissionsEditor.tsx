@@ -268,12 +268,13 @@ export function ChannelPermissionsEditor(props: Props) {
       title: t`Read Message History`,
       description: {
         TextChannel: t`Read past messages sent in channel`,
-        // Deliberately NOT "read past posts": the forum post list is gated on
-        // View Channel alone, and the server hands back every starter message
-        // with it, so this permission only ever governs the replies inside a
-        // post. Promising more would let an admin deny it and believe the
-        // posts were hidden.
-        Forum: t`Read past replies inside a post`,
+        // Since backend c48a7a2b the server withholds starter messages (and
+        // any thread message fetched by id) without this permission, so it
+        // governs what older posts SAY as well as their replies. Keep "past":
+        // live delivery is not gated, so new posts and replies still arrive
+        // for a connected member. The post list (titles, tags) is View
+        // Channel only. 🔴 Must not ship before c48a7a2b is deployed.
+        Forum: t`Read past posts and their replies. Without it, older posts show only their titles`,
         Server: t`Read past messages sent in channels`,
       },
     },
@@ -439,6 +440,19 @@ export function ChannelPermissionsEditor(props: Props) {
       },
     },
     {
+      // Bit 41. Checked on the SHARER: it governs who may hand control of
+      // their own shared screen to someone, never who may take control. It
+      // had no row at all, so the only way to change it was a raw API call.
+      // DMs and group DMs never consult it, hence no Group wording.
+      key: "UseRemoteControl",
+      value: 2n ** 41n,
+      title: t`Remote Control`,
+      description: {
+        TextChannel: t`Hand control of their own shared screen to someone in the call`,
+        Server: t`Hand control of their own shared screen to someone in the call`,
+      },
+    },
+    {
       // Bit 42. Off by default (not in DEFAULT_PERMISSION), so this row is the
       // only way an ordinary member gets it — recording is the one voice action
       // whose output outlives the call. The description says everyone is told,
@@ -493,14 +507,38 @@ export function ChannelPermissionsEditor(props: Props) {
     return desc[context] ?? desc.Any;
   }
 
+  /**
+   * The heading to draw above each entry.
+   *
+   * A heading is declared on the first entry of its section, but that entry
+   * can be hidden in this context (no wording for it). Drawing the heading
+   * only with its own entry took the whole section's title away with it, so
+   * the section's remaining rows ran on under the previous heading. The
+   * heading now goes above the first entry of the section that IS shown.
+   */
+  const headingFor = (() => {
+    const headings = new Map<(typeof Permissions)[number], string>();
+    let section: string | undefined;
+    let drawn: string | undefined;
+    for (const entry of Permissions) {
+      if (entry.heading) section = entry.heading;
+      if (!description(entry)) continue;
+      if (section && section !== drawn) {
+        headings.set(entry, section);
+        drawn = section;
+      }
+    }
+    return (entry: (typeof Permissions)[number]) => headings.get(entry);
+  })();
+
   return (
     <div class={css({ display: "flex", flexDirection: "column" })}>
       <For each={Permissions}>
         {(entry) => (
           <Show when={description(entry)}>
-            <Show when={entry.heading}>
+            <Show when={headingFor(entry)}>
               <span class={css({ marginTop: "var(--gap-md)" })}>
-                <Text class="label">{entry.heading}</Text>
+                <Text class="label">{headingFor(entry)}</Text>
               </span>
             </Show>
 
