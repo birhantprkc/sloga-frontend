@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Mutation-verify the RTC/MLS specs.
 
-    packages/client/scripts/rtc-mutations.py [--list] [--only ID[,ID...]]
+    packages/client/scripts/rtc-mutations.py [--list] [--preflight] [--only ID[,ID...]]
 
 A green suite is weak evidence on this branch: five of the six defects six
 `media-e2ee-reviewer` rounds found passed a green gate, and three of them were
@@ -42,6 +42,9 @@ ASSERTIONS with the full suite executing, and every mutation marked
 
 Exit 96 if another run of this script is already mutating the same worktree —
 it REFUSES rather than queues; see `exclusive_run_lock`.
+
+Exit 95, before anything is written or run, if any entry in the table would
+not apply exactly once; see `preflight`. `--preflight` runs only that check.
 """
 
 from __future__ import annotations
@@ -67,11 +70,12 @@ NODE = "node"
 SESSION = "mlsCallSession.ts"
 POLICY = "mlsCallModePolicy.ts"
 HARNESS = "mlsCallSession.harness.ts"
-#: No entry targets `state.tsx` any more — wave 1 moved everything a mutation
-#: could reach into `publishGateEpisode.ts`, and the seam wave moved the
-#: verdict DERIVATION into `pauseVerdict.ts` (see `VERDICT` below). What is
-#: LEFT in `state.tsx` is WIRING, and it is still unreachable here: that
-#: `beginDrive` is passed as
+#: Wave 1 moved everything a mutation could reach into
+#: `publishGateEpisode.ts`, and the seam wave moved the verdict DERIVATION
+#: into `pauseVerdict.ts` (see `VERDICT` below). What is LEFT in `state.tsx`
+#: is WIRING. Only the `state-*` entries at the end of this table reach any of
+#: it (see the next paragraph), and the publish-gate wiring is still
+#: unreachable here: that `beginDrive` is passed as
 #: `coalescingSweeper`'s FOURTH positional argument (a three-argument call
 #: still compiles and silently degrades drive scope to no scope), that the
 #: `EpisodeDeps` thunks are bound to the right room, and that `scheduleConfirm`
@@ -80,8 +84,15 @@ HARNESS = "mlsCallSession.harness.ts"
 #: as an `expect="green"` entry, which would be an admission dressed as a
 #: measurement.
 #:
-#: 🔴 ZERO entries carry `file=STATE`, and the wave-1 fix round ADDED to what
-#: that leaves unmeasured. `#gateGen` plus the per-sweeper `stillCurrent`
+#: 🔴 The ONLY entries that carry `file=STATE` are the `state-*` entries at the
+#: end of this table (call-view suggestions, wave 7). They reach nothing but
+#: the voice-move and chip-publication statements `stateWiring.test.ts` pins
+#: as TEXT: those source pins strip comments before matching (`codeOf`, in
+#: `sourcePins.harness.ts`), so unlike a `grep -qF` one comment line cannot
+#: satisfy them, but the same text in dead code still would, and a pin proves
+#: a statement is PRESENT, never what it does at runtime. Nothing else in
+#: `state.tsx` is pinned, and the wave-1 fix round ADDED to what that leaves
+#: unmeasured. `#gateGen` plus the per-sweeper `stillCurrent`
 #: closure (`gen === this.#gateGen && this.room() === room`, captured when the
 #: sweeper is BUILT) is now the only thing keeping a sweep parked on an awaited
 #: livekit op from spending publications in the NEXT call's episode. The
@@ -89,8 +100,10 @@ HARNESS = "mlsCallSession.harness.ts"
 #: answers false; nothing pins that the closure ANSWERS false for a disposed
 #: sweeper, and nothing in this table can. Do not paper over it with a
 #: source-text assertion: a `grep -qF` over a file no runner can load does not
-#: converge — one comment line defeats it. Closing this needs a further
-#: extraction or a live leg, not another entry here.
+#: converge — one comment line defeats it — and even a comment-stripped pin
+#: would hold the closure's TEXT, not that it answers false for a disposed
+#: sweeper. Closing this needs a further extraction or a live leg, not
+#: another entry here.
 #:
 #: 🔴 AND THE TWO VERDICT-READER ASSIGNMENTS, which is the residue the seam
 #: wave did NOT close and must not be read as covered:
@@ -781,11 +794,90 @@ def apply(mutation: Mutation) -> str:
     return original
 
 
+def preflight(mutations: list[Mutation]) -> list[str]:
+    """Every reason an entry would measure nothing, found WITHOUT writing.
+
+    🔴 `apply` refuses a search that is missing or ambiguous, but only when it
+    reaches that entry, deep into a run with the entries before it already
+    spent, and a table that has drifted in one place has usually drifted in
+    several. The FE-2 merge retired voice-move's handler and left five
+    searches matching nothing, found by a reviewer reading the table. So the
+    whole table is checked up front, on every run, `--only` included, before
+    the lock is taken or a spec runs: each entry's `search` and every `also`
+    edit must occur exactly once in its target, applied in order in memory
+    exactly as `apply` would, and must change the text. Its target must sit
+    inside this client package, never the stoat.js submodule (D8: the suite
+    does not mutate the submodule's tree), and every spec it names must exist.
+    """
+    problems: list[str] = []
+    ids: set[str] = set()
+    for m in mutations:
+        if m.id in ids:
+            problems.append(f"{m.id}: duplicate id")
+        ids.add(m.id)
+        if m.expect not in (RED, GREEN):
+            problems.append(f"{m.id}: expect={m.expect!r} is neither red nor green")
+        if not m.specs:
+            problems.append(f"{m.id}: names no spec, so nothing can catch it")
+        path = RTC / m.file
+        if CLIENT.resolve() not in path.resolve().parents:
+            problems.append(f"{m.id}: target {m.file} is outside {CLIENT}")
+            continue
+        try:
+            original = path.read_text(encoding="utf-8")
+        except OSError as e:
+            problems.append(f"{m.id}: cannot read {m.file}: {e}")
+            continue
+        mutated = original
+        for n, (search, replace) in enumerate([(m.search, m.replace), *m.also]):
+            count = mutated.count(search)
+            if count != 1:
+                problems.append(
+                    f"{m.id}: edit {n} occurs {count} time(s) in {m.file}, "
+                    f"not exactly once: {search[:120]!r}"
+                )
+                break
+            # The start-of-line rule `apply` enforces (MFR-n3), checked here
+            # too: without it this passed twelve entries `apply` refuses.
+            at = mutated.index(search)
+            if at > 0 and mutated[at - 1] != "\n":
+                problems.append(
+                    f"{m.id}: edit {n} starts mid-line in {m.file}: "
+                    f"{search[:120]!r}"
+                )
+                break
+            if search == replace:
+                problems.append(f"{m.id}: edit {n} replaces its search with itself")
+            mutated = mutated.replace(search, replace)
+        else:
+            if mutated == original:
+                problems.append(f"{m.id}: its edits leave {m.file} unchanged")
+        for spec in [*m.specs, *m.must_red]:
+            if not (CLIENT / spec).is_file():
+                problems.append(f"{m.id}: spec {spec} does not exist")
+    return problems
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--only", default="")
+    #: Only the checks `preflight` makes, over the whole table; nothing is
+    #: written and no spec runs, so it is safe beside any other lane.
+    ap.add_argument("--preflight", action="store_true")
     args = ap.parse_args()
+
+    if args.preflight or not args.list:
+        problems = preflight(MUTATIONS)
+        for p in problems:
+            print(f">>> PREFLIGHT FAIL: {p}")
+        if problems:
+            print(f"################ MUTATIONS: {len(problems)} table problem(s), "
+                  f"refusing to run ################")
+            return 95
+        if args.preflight:
+            print(f">>> PREFLIGHT OK: all {len(MUTATIONS)} entries apply exactly once")
+            return 0
 
     if args.list:
         for m in MUTATIONS:
@@ -2891,10 +2983,28 @@ MUTATIONS += [
         id="chip-observed-accessor-detached",
         what="the observed-status accessor is passed detached, losing its receiver",
         file=CHIP,
-        search="""    observedEncrypted: observedEncryptionMap(publishing, (identity) =>
-      sources.observedEncryption(identity),
-    ),""",
-        replace="""    observedEncrypted: observedEncryptionMap(publishing, () => true),""",
+        search="""      (identity) => sources.observedEncryption(identity),""",
+        replace="""      () => true,""",
+        specs=[CHIP_SPEC],
+    ),
+    # Opt-in shares (final audit F2): nobody here subscribes an unwatched
+    # share, so its GCM declaration is the only thing that can contradict a
+    # "not NONE" status. Both halves of that one-way rule must stay pinned.
+    Mutation(
+        id="chip-share-declaration-not-none",
+        what="an unwatched share passes on any declaration that is not NONE, so a missing field reads green",
+        file=CHIP,
+        search="""  return publications.some((pub) => pub.encryption !== ENCRYPTION_TYPE_GCM);""",
+        replace="""  return publications.some((pub) => pub.encryption === 0);""",
+        specs=[CHIP_SPEC],
+    ),
+    Mutation(
+        id="chip-share-contradiction-dropped",
+        what="a non-GCM declaration on an all-unwatched-shares participant no longer forces the status false",
+        file=CHIP,
+        search="""    if (shareOnlyDeclarationContradicts(participant))
+      observed.set(participant.identity, false);""",
+        replace="""    if (shareOnlyDeclarationContradicts(participant)) continue;""",
         specs=[CHIP_SPEC],
     ),
     Mutation(
@@ -5731,6 +5841,1491 @@ MUTATIONS += [
 """,
         specs=[RESUME_SPEC],
         must_red=[RESUME_SPEC],
+    ),
+]
+
+
+# --- Opt-in screen shares (call-view suggestions, wave 5, audit F3) ----------
+#
+# A remote screen share is subscribed only once its identity is WATCHED. The
+# media-e2ee final audit found the enforcement had no mutation coverage at
+# all: deleting the watch check from `RoomAudioManager`'s video effect brought
+# back blanket share subscription with every gate green. The decisions now
+# live in `screenShareWatchPolicy.ts` (pure, spec'd), and
+# `RoomAudioManager.tsx` — which `node --test` cannot load — is held to
+# calling them by the SOURCE PINS at the end of
+# `screenShareWatchPolicy.test.ts`. So a `file=AUDIO_MANAGER` entry below is
+# killed by a pin, not by running the effect: what it proves is that the pin
+# notices the wiring change, and the policy entries prove the functions it
+# pins are themselves held by assertions. The pins strip comments before
+# matching, so commenting a call out does not satisfy them; the same text in
+# dead code (`if (false) { ... }`) would, and nothing here measures that.
+#
+# 🔴 No entry touches the cryptor-disarm sweep, even transiently: the pins
+# assert its inputs (`tracks()` / `videoTracks()`) stay unfiltered, but that
+# rule is not mutation-tested here.
+
+#: Relative to `RTC`, like every other target (`apply` reads
+#: `RTC / mutation.file`).
+AUDIO_MANAGER = "components/RoomAudioManager.tsx"
+WATCH_POLICY = "screenShareWatchPolicy.ts"
+RECORDER = "callRecorder.ts"
+WATCH_POLICY_SPEC = "components/rtc/screenShareWatchPolicy.test.ts"
+RECORDER_SPEC = "components/rtc/callRecorder.test.ts"
+
+MUTATIONS += [
+    # ---- the wiring in RoomAudioManager.tsx (killed by the source pins) -----
+    Mutation(
+        id="watch-audio-gate-dropped",
+        what="the audio memo filters inline again without the watch check, so every remote screen share's audio is subscribed and played whether or not anyone pressed Watch",
+        file=AUDIO_MANAGER,
+        search="""    return remoteAudioToPlay(tracks(), watched, {
+      isLocal: (track) => isLocal(track.participant),
+      isAudio: (track) => track.publication.kind === Track.Kind.Audio,
+      addressee: (track) => whisperTarget(track.publication.trackName),
+      localUserId: myUserId,
+      watchPub: watchPubOf,
+    });
+""",
+        replace="""    return tracks().filter((track) => {
+      if (isLocal(track.participant)) return false;
+      if (track.publication.kind !== Track.Kind.Audio) return false;
+      const addressee = whisperTarget(track.publication.trackName);
+      if (addressee && addressee !== myUserId()) return false;
+      return true;
+    });
+""",
+        specs=[WATCH_POLICY_SPEC],
+        must_red=[WATCH_POLICY_SPEC],
+    ),
+    Mutation(
+        id="watch-audio-view-neutered",
+        what="the audio memo still calls `remoteAudioToPlay`, but hands it a watch view that calls every track a microphone, so the watch gate passes all share audio",
+        file=AUDIO_MANAGER,
+        search="""      watchPub: watchPubOf,
+""",
+        replace="""      watchPub: (track) => ({ ...watchPubOf(track), source: "microphone" }),
+""",
+        specs=[WATCH_POLICY_SPEC],
+        must_red=[WATCH_POLICY_SPEC],
+    ),
+    Mutation(
+        id="watch-audio-subscribes-unfiltered",
+        what="the audio subscribe effect requests every track in the UNFILTERED list instead of the gated memo, so unwatched share audio is subscribed",
+        file=AUDIO_MANAGER,
+        # Two anchors, so the debug `console.info` between them is free to go:
+        # `const tracks = filteredTracks();` alone also opens the normalizer
+        # effect, hence the `createEffect` line in front of it.
+        search="""  createEffect(() => {
+    const tracks = filteredTracks();
+""",
+        replace="""  createEffect(() => {
+""",
+        also=[
+            (
+                """    for (const track of tracks) {
+""",
+                """    for (const track of tracks()) {
+""",
+            ),
+        ],
+        specs=[WATCH_POLICY_SPEC],
+        must_red=[WATCH_POLICY_SPEC],
+    ),
+    Mutation(
+        id="watch-camera-effect-takes-shares",
+        what="the camera effect subscribes every remote video, screen shares included, so unwatched share video is pulled down alongside the cameras",
+        file=AUDIO_MANAGER,
+        search="""    for (const track of nonShareVideoToSubscribe(filteredVideoTracks())) {
+""",
+        replace="""    for (const track of filteredVideoTracks()) {
+""",
+        specs=[WATCH_POLICY_SPEC],
+        must_red=[WATCH_POLICY_SPEC],
+    ),
+    Mutation(
+        id="watch-share-video-ungated",
+        what="the watched-share video effect subscribes every remote screen share (the audit's F3 deletion), so share video flows before anyone presses Watch",
+        file=AUDIO_MANAGER,
+        search="""    for (const track of watchedShareVideoToSubscribe(
+      filteredVideoTracks(),
+      watched,
+      watchPubOf,
+    )) {
+""",
+        replace="""    for (const track of filteredVideoTracks().filter((track) =>
+      isShareSource(track.source),
+    )) {
+""",
+        specs=[WATCH_POLICY_SPEC],
+        must_red=[WATCH_POLICY_SPEC],
+    ),
+    Mutation(
+        id="watch-share-video-watch-set-ignored",
+        what="the watched-share video effect still calls the policy, but with a watch set of everyone publishing video, so every remote share counts as watched",
+        file=AUDIO_MANAGER,
+        search="""      filteredVideoTracks(),
+      watched,
+      watchPubOf,
+""",
+        replace="""      filteredVideoTracks(),
+      new Set(filteredVideoTracks().map((t) => t.participant.identity)),
+      watchPubOf,
+""",
+        specs=[WATCH_POLICY_SPEC],
+        must_red=[WATCH_POLICY_SPEC],
+    ),
+    Mutation(
+        id="watch-unsubscribe-backstop-dropped",
+        what="the explicit-unsubscribe backstop never selects anything, so a share some other path made desired while unwatched stays subscribed and is re-requested on every resume",
+        file=AUDIO_MANAGER,
+        search="""    for (const { publication } of sharesToUnsubscribe(pubs, watched)) {
+""",
+        replace="""    for (const { publication } of pubs.filter(() => false)) {
+""",
+        specs=[WATCH_POLICY_SPEC],
+        must_red=[WATCH_POLICY_SPEC],
+    ),
+    Mutation(
+        id="watch-reconcile-sees-no-transition",
+        what="the watch-transition effect reconciles the previous set against itself, so Stop watching never unsubscribes the share and a re-Watch never re-requests its audio",
+        file=AUDIO_MANAGER,
+        search="""      for (const change of reconcileShareSubscriptions(prev, next, pubs)) {
+""",
+        replace="""      for (const change of reconcileShareSubscriptions(prev, prev, pubs)) {
+""",
+        specs=[WATCH_POLICY_SPEC],
+        must_red=[WATCH_POLICY_SPEC],
+    ),
+    # ---- the decisions in screenShareWatchPolicy.ts --------------------------
+    Mutation(
+        id="watch-policy-watched-check-flipped",
+        what="`shouldSubscribeRemote` subscribes a share only when its identity is NOT watched: every unwatched share flows and a Watch press cuts it off",
+        file=WATCH_POLICY,
+        search="""  return watched.has(pub.identity);
+""",
+        replace="""  return !watched.has(pub.identity);
+""",
+        specs=[WATCH_POLICY_SPEC],
+        must_red=[WATCH_POLICY_SPEC],
+    ),
+    Mutation(
+        id="watch-policy-unsubscribe-check-flipped",
+        what="`sharesToUnsubscribe` selects WATCHED shares instead of unwatched ones, so the backstop tears down what the viewer chose and keeps what they did not",
+        file=WATCH_POLICY,
+        search="""    if (pub.isSelfLeg || !watched.has(pub.identity)) out.push(pub);
+""",
+        replace="""    if (pub.isSelfLeg || watched.has(pub.identity)) out.push(pub);
+""",
+        specs=[WATCH_POLICY_SPEC],
+        must_red=[WATCH_POLICY_SPEC],
+    ),
+    Mutation(
+        id="watch-policy-audio-gate-dropped",
+        what="`remoteAudioToPlay` keeps every remote audio track that is not a whisper to someone else, so unwatched share audio (and our own leg's) is subscribed and played",
+        file=WATCH_POLICY,
+        search="""    return shouldSubscribeRemote(reads.watchPub(ref), watched);
+""",
+        replace="""    return true;
+""",
+        specs=[WATCH_POLICY_SPEC],
+        must_red=[WATCH_POLICY_SPEC],
+    ),
+    Mutation(
+        id="watch-policy-share-video-gate-dropped",
+        what="`watchedShareVideoToSubscribe` returns every share-source reference without the watch check, so all remote share video is subscribed",
+        file=WATCH_POLICY,
+        search="""      isShareSource(ref.source) &&
+      shouldSubscribeRemote(watchPub(ref), watched),
+""",
+        replace="""      isShareSource(ref.source),
+""",
+        specs=[WATCH_POLICY_SPEC],
+        must_red=[WATCH_POLICY_SPEC],
+    ),
+    Mutation(
+        id="watch-policy-camera-takes-shares",
+        what="`nonShareVideoToSubscribe` returns every video reference, so the camera effect subscribes screen shares too, watched or not",
+        file=WATCH_POLICY,
+        search="""  return refs.filter((ref) => !isShareSource(ref.source));
+""",
+        replace="""  return [...refs];
+""",
+        specs=[WATCH_POLICY_SPEC],
+        must_red=[WATCH_POLICY_SPEC],
+    ),
+    # ---- the recorder's watch-set getter (callRecorder.ts) -------------------
+    Mutation(
+        id="recorder-watch-set-ignored",
+        what="the recorder asks the policy about a watch set that always contains the sender, so every share's audio the SFU pushes is mixed into the recording, watched or not",
+        file=RECORDER,
+        search="""      this.#watchedShares(),
+""",
+        replace="""      new Set([identity]),
+""",
+        specs=[RECORDER_SPEC],
+        must_red=[RECORDER_SPEC],
+    ),
+    Mutation(
+        id="recorder-watch-set-snapshotted",
+        what="the recorder reads the watch set once at construction, so a Watch or Stop watching during a recording never moves that share into or out of the mix",
+        file=RECORDER,
+        search="""    this.#watchedShares = watchedShares;
+""",
+        replace="""    const snapshot = watchedShares();
+    this.#watchedShares = () => snapshot;
+""",
+        specs=[RECORDER_SPEC],
+        must_red=[RECORDER_SPEC],
+    ),
+]
+
+
+# --- Voice moves and chip publications (call-view suggestions, wave 7) ------
+#
+# Both reviewers of waves 5-6 found that the `state.tsx` wiring of four fixes
+# could be undone by a one-token edit with every gate green: F1 (a device the
+# user's own other session kicked must not follow that session's move), F4
+# (a dropped move token answers from the refusal latch it bypassed), S1 (only
+# some latched refusals may be bypassed) and F2 (the chip's share-only
+# contradiction reads each remote publication's desired/subscribed state and
+# re-derives when it flips). The decisions live in `voiceMovePolicy.ts` and
+# `chipInputs.ts`, whose own specs hold them (the `move-policy-*` and
+# `chip-pubs-*` entries); `state.tsx` is held to CALLING them by the source
+# pins in `stateWiring.test.ts` (the `state-*` entries), which is the same
+# arrangement as the `watch-*` entries above: a `file=STATE` entry is killed
+# by a pin noticing the text changed, not by running the code, and dead code
+# carrying the pinned text would not be noticed.
+
+#: Relative to `RTC`, like every other target (`apply` reads
+#: `RTC / mutation.file`).
+VOICE_MOVE_POLICY = "voiceMovePolicy.ts"
+#: The move ladder `moveDecision` (AFK) that the FE-2 merge made the ONLY
+#: follow rule. Its spec also holds the `state.tsx` pins over the handler
+#: that feeds it (the state-pin half), so several `state-*` entries name it.
+#: 🔴 By far the slowest spec any entry names (it sweeps millions of worlds),
+#: and an entry pays for it once per listing in `specs` and `must_red`. No
+#: number here, for the reason given at `SPEC_TIMEOUT_S`.
+MOVE_POLICY = "movePolicy.ts"
+MOVE_POLICY_SPEC = "components/rtc/movePolicy.test.ts"
+STATE_WIRING_SPEC = "components/rtc/stateWiring.test.ts"
+VOICE_MOVE_SPEC = "components/rtc/voiceMovePolicy.test.ts"
+
+MUTATIONS += [
+    # ---- the wiring in state.tsx (killed by the source pins) ----------------
+    #
+    # FE-2 retargeted the three F1 entries below from voice-move's
+    # `#followMove` / `shouldObeyMove` pair, which the AFK merge retired (D3),
+    # to the one merged handler `#handleVoiceMove`. The failure mode each
+    # re-introduces is unchanged: the verdict "this token was minted for THIS
+    # connection" stops being computed from this connection's identity. It now
+    # feeds `moveDecision` (movePolicy.ts), so `movePolicy.test.ts`'s
+    # state-pin half must see each one too.
+    Mutation(
+        id="state-move-token-check-bypassed",
+        what="`#handleVoiceMove` hands `moveDecision` a constant `tokenForThisConnection: true`, so a device the user's own other session removed follows that session's move back into the call (F1)",
+        file=STATE,
+        search="""      tokenForThisConnection: forThisConnection,
+""",
+        replace="""      tokenForThisConnection: true,
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC, MOVE_POLICY_SPEC],
+    ),
+    Mutation(
+        id="state-move-token-wrong-identity",
+        what="`#handleVoiceMove` checks the move's token against the bare user id instead of the identity this connection last held, so a token minted for another session's identity reads as this connection's (F1)",
+        file=STATE,
+        search="""      expectedIdentity: this.#lastLocalIdentity ?? "",
+""",
+        replace="""      expectedIdentity: this.getClient()?.user?.id ?? "",
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC, MOVE_POLICY_SPEC],
+    ),
+    Mutation(
+        id="state-move-verdict-or-true",
+        what="`#handleVoiceMove`'s token verdict gains an appended `|| true`, so every move reads as minted for this connection and a device the user's own other session removed follows that session's move (F1; the pinned text is still there, as a prefix)",
+        file=STATE,
+        search="""      expectedIdentity: this.#lastLocalIdentity ?? "",
+      to: move.to,
+    });
+""",
+        replace="""      expectedIdentity: this.#lastLocalIdentity ?? "",
+      to: move.to,
+    }) || true;
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC, MOVE_POLICY_SPEC],
+    ),
+    Mutation(
+        id="state-last-identity-gen-guard-dropped",
+        what="the connected listener records `#lastLocalIdentity` without its generation check, so a superseded Room connecting late overwrites the identity the move rule compares against (F1)",
+        file=STATE,
+        search="""      if (gen === this.#connectGen)
+        this.#lastLocalIdentity = room.localParticipant.identity;
+""",
+        replace="""      this.#lastLocalIdentity = room.localParticipant.identity;
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-last-identity-suffix",
+        what="the connected listener records only the user-id part of the identity (`.split(\":\")[0]`), so a token minted for another session's `user:device` identity is compared against the bare user id (F1; the pinned text is still there, as a prefix)",
+        file=STATE,
+        search="""        this.#lastLocalIdentity = room.localParticipant.identity;
+""",
+        replace="""        this.#lastLocalIdentity = room.localParticipant.identity.split(":")[0];
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-last-identity-written-at-connect",
+        what="`#lastLocalIdentity` is also written when the Room is created, from the bare user id, so it names an identity the connection never held until (and unless) it connects (F1)",
+        file=STATE,
+        search="""      this.#setRoom(room);
+      this.#setChannel(channel);
+      this.#setState("CONNECTING");
+""",
+        replace="""      this.#setRoom(room);
+      this.#setChannel(channel);
+      this.#lastLocalIdentity = this.getClient()?.user?.id;
+      this.#setState("CONNECTING");
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-f4-latch-reads-joinblocked",
+        what="the decision after M3 reads the latch through `joinBlocked`, which answers \"in-flight\" inside the attempt, so `answer_latch` is unreachable and a dropped move token joins past a refusal that still holds (F4)",
+        file=STATE,
+        search="""        bypassedRefusal !== undefined && this.#refusalLatchHolds(channel),
+""",
+        replace="""        bypassedRefusal !== undefined && this.joinBlocked(channel) === "refused",
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-f4-latch-helper-sees-in-flight",
+        what="`#refusalLatchHolds` passes the in-flight channel, so it reads \"in-flight\" for the attempt asking and never \"refused\": `answer_latch` is unreachable again (F4)",
+        file=STATE,
+        search="""    return this.#joinBlockedWith(channel, undefined) === "refused";
+""",
+        replace="""    return this.#joinBlockedWith(channel, this.joinPending()) === "refused";
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-joinblockedwith-reads-pending",
+        what="`#joinBlockedWith` looks the in-flight attempt up itself instead of using what its caller passed, so `#refusalLatchHolds` reads \"in-flight\" inside the attempt and `answer_latch` is unreachable again (D1/F4)",
+        file=STATE,
+        search="""      inFlightChannelId,
+      latch,
+""",
+        replace="""      inFlightChannelId: this.joinPending(),
+      latch,
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-joinblocked-drops-in-flight",
+        what="the public `joinBlocked` passes no in-flight channel, so a join affordance stays live while its own attempt is in flight (D1)",
+        file=STATE,
+        search="""    return this.#joinBlockedWith(channel, this.joinPending());
+""",
+        replace="""    return this.#joinBlockedWith(channel, undefined);
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-f4-answer-latch-joins",
+        what="the `answer_latch` arm drops the token and falls through to the normal join instead of answering from the latch, so a refusal the move bypassed is joined past anyway (F4)",
+        file=STATE,
+        search="""        this.disconnect();
+        this.onErr(new Error(this.#joinRefusalText(channel, bypassedRefusal!)));
+        return false;
+""",
+        replace="""        auth = undefined;
+        break;
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-latch-bypass-any-reason",
+        what="`connect()` lets a move token past ANY latched refusal, not only the ones `moveBypassesRefusalLatch` allows, so a move steps past a device or encryption refusal (S1)",
+        file=STATE,
+        search="""        auth &&
+        opts?.moveLatchBypass &&
+        moveBypassesRefusalLatch(latchedReason)
+""",
+        replace="""        auth &&
+        opts?.moveLatchBypass
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-latch-bypass-without-token",
+        what="`connect()` honors `moveLatchBypass` with no move token in hand, so a caller passing the option steps past a latched refusal on its own (S1)",
+        file=STATE,
+        search="""        auth &&
+        opts?.moveLatchBypass &&
+""",
+        replace="""        opts?.moveLatchBypass &&
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-chip-publications-inline-desired",
+        what="the chip's remote publications are mapped inline again with `desired: true`, so an unwatched share never reads undesired and F2's share-only contradiction is off for every participant",
+        file=STATE,
+        search="""                  publications: chipPublicationsOf(
+                    p.trackPublications.values(),
+                  ),
+""",
+        replace="""                  publications: [...p.trackPublications.values()].map(
+                    (pub) => ({
+                      source: pub.source,
+                      desired: true,
+                      subscribed: pub.isSubscribed,
+                      encryption: pub.trackInfo?.encryption,
+                    }),
+                  ),
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-chip-subscription-listener-removed",
+        what="nothing listens for `trackSubscriptionStatusChanged`, so Stop watching flips `isDesired` without re-deriving the chip, which keeps reading the stale state (F2)",
+        file=STATE,
+        search="""    room.addListener("trackSubscriptionStatusChanged", () => {
+      if (this.room() !== room) return;
+      this.#setChipPublicationsVersion((v) => v + 1);
+    });
+""",
+        replace="",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-chip-reconnect-bump-removed",
+        what="the `reconnected` listener no longer bumps the chip's publication version, so a subscription change whose event `SignalResumed` discarded never re-derives the chip (F2)",
+        file=STATE,
+        search="""      this.#seedLiveRemoteShares(room);
+      // The same discard can eat a `trackSubscriptionStatusChanged` (below).
+      this.#setChipPublicationsVersion((v) => v + 1);
+""",
+        replace="""      this.#seedLiveRemoteShares(room);
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-chip-version-read-removed",
+        what="`callEncryptionChip()` no longer reads the publication version, so the bumps above re-run nothing and the chip keeps a stale desired/subscribed reading (F2)",
+        file=STATE,
+        search="""    this.#chipPublicationsVersion();
+    const room = this.room();
+""",
+        replace="""    const room = this.room();
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-move-event-name-unchecked",
+        what="the move event's name loses `satisfies keyof Events`, so a misspelling (or an SDK rename) registers a listener that never fires and no move is ever followed, with tsc green",
+        file=STATE,
+        search="""const VOICE_MOVE_REQUESTED = "voiceMoveRequested" satisfies keyof Events;
+""",
+        replace="""const VOICE_MOVE_REQUESTED: string = "voiceMoveRequested";
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    # ---- the decisions in voiceMovePolicy.ts --------------------------------
+    #
+    # RETIRED by FE-2: `move-policy-disconnected-token-dropped` and
+    # `move-policy-reconnecting-token-ignored`. Both edited `shouldObeyMove`,
+    # which the AFK merge deleted (D3) along with `moveTokenForConnection`; the
+    # rule they guarded (a dropped or reconnecting seat follows a move only
+    # with proof it is the seat addressed, F1) is now `moveDecision`'s steps 4
+    # and 5 in movePolicy.ts. The `move-decision-*` entries below re-introduce
+    # the same failure there: `move-decision-step4-device-match`,
+    # `move-decision-bare-identity-proves-seat` and
+    # `move-decision-tokenless-marker-proves-seat`.
+    Mutation(
+        id="move-policy-dropped-token-always-joins",
+        what="`moveAuthDecision` ignores `latchStillRefused` and joins normally with any dropped token, so a move whose token M3 rejected joins past the refusal latch it bypassed (F4, fail open)",
+        file=VOICE_MOVE_POLICY,
+        search="""  return input.latchStillRefused ? "answer_latch" : "join";
+""",
+        replace="""  return "join";
+""",
+        specs=[VOICE_MOVE_SPEC],
+        must_red=[VOICE_MOVE_SPEC],
+    ),
+    Mutation(
+        id="move-policy-dropped-token-always-answers",
+        what="`moveAuthDecision` ignores `latchStillRefused` and answers from the latch for every dropped token, so a move into a channel whose latch has cleared is refused (F4, fail closed but wrong)",
+        file=VOICE_MOVE_POLICY,
+        search="""  return input.latchStillRefused ? "answer_latch" : "join";
+""",
+        replace="""  return "answer_latch";
+""",
+        specs=[VOICE_MOVE_SPEC],
+        must_red=[VOICE_MOVE_SPEC],
+    ),
+    Mutation(
+        id="move-policy-bypass-allowlist-widened",
+        what="the move bypass allowlist gains `DeviceNotRegistered`, so a move token steps past a device refusal that no moderator can waive (S1)",
+        file=VOICE_MOVE_POLICY,
+        search="""  "MissingPermission",
+  "CannotJoinCall",
+]);
+""",
+        replace="""  "MissingPermission",
+  "CannotJoinCall",
+  "DeviceNotRegistered",
+]);
+""",
+        specs=[VOICE_MOVE_SPEC],
+        must_red=[VOICE_MOVE_SPEC],
+    ),
+    # ---- the F2 mapping in chipInputs.ts ------------------------------------
+    Mutation(
+        id="chip-pubs-desired-constant",
+        what="`chipPublicationsOf` maps every publication as desired, so an unwatched share never reads undesired and F2's share-only contradiction never applies",
+        file=CHIP,
+        search="""    desired: pub.isDesired,
+""",
+        replace="""    desired: true,
+""",
+        specs=[CHIP_SPEC],
+        must_red=[CHIP_SPEC],
+    ),
+    Mutation(
+        id="chip-pubs-subscribed-dropped",
+        what="`chipPublicationsOf` drops `subscribed`, so F2 reads every publication as unsubscribed",
+        file=CHIP,
+        search="""    subscribed: pub.isSubscribed,
+""",
+        replace="",
+        specs=[CHIP_SPEC],
+        must_red=[CHIP_SPEC],
+    ),
+    Mutation(
+        id="chip-pubs-encryption-defaulted",
+        what="`chipPublicationsOf` defaults a missing declaration to GCM, so a share whose `trackInfo.encryption` was dropped reads as declared encrypted",
+        file=CHIP,
+        search="""    encryption: pub.trackInfo?.encryption,
+  }));
+""",
+        replace="""    encryption: pub.trackInfo?.encryption ?? 1,
+  }));
+""",
+        specs=[CHIP_SPEC],
+        must_red=[CHIP_SPEC],
+    ),
+]
+
+
+# --- The AFK x voice-move client merge (FE-2) ---------------------------------
+#
+# The merge replaced voice-move's `#followMove` / `shouldObeyMove` with AFK's
+# `moveDecision` ladder behind one handler, `#handleVoiceMove`, and added a
+# client-side gate (a move never joins a channel whose age, password or
+# spoiler check this member has not passed on this device), a tokenless `join`
+# arm, the SEC5-1 recompute (M3 drops a token not minted for the identity the
+# attempt requests), and the member surfaces' refusal copy. Most entries here
+# are a lane's known-bad control carried over verbatim, and every one was run
+# red on each spec in its `must_red` before it was added. As above, a
+# `file=STATE` entry (and every surface entry) is killed by a source pin
+# noticing the text changed, not by running the code.
+#
+# D8: nothing here touches the stoat.js submodule. The FE1-2 redaction pin's
+# control (`console.debug("[S->C]", event)` in the SDK's two log sites) runs
+# once, in place, outside this suite; `preflight` refuses any target outside
+# this package.
+
+#: Relative to `RTC`, like every other target (`apply` reads
+#: `RTC / mutation.file`), so the files outside `components/rtc` climb out.
+IDLE_POLICY = "idlePolicy.ts"
+CALL_MODERATION_POLICY = "callModerationPolicy.ts"
+SOURCE_PINS_HARNESS = "sourcePins.harness.ts"
+MEMBER_GATE = "../../src/interface/channels/memberGate.ts"
+USER_CONTEXT_MENU = "../app/menus/UserContextMenu.tsx"
+SERVER_SIDEBAR = "../../src/interface/navigation/channels/ServerSidebar.tsx"
+VOICE_CHANNEL_PREVIEW = "../ui/components/features/voice/VoiceChannelPreview.tsx"
+CHANNEL_OVERVIEW = "../app/interface/settings/channel/Overview.tsx"
+IDLE_POLICY_SPEC = "components/rtc/idlePolicy.test.ts"
+CALL_MODERATION_SPEC = "components/rtc/callModerationPolicy.test.ts"
+VOICE_REJOIN_SPEC = "components/rtc/voiceRejoinPolicy.test.ts"
+#: Source pins over the member surfaces a move starts from: the member
+#: menu, the sidebar's drag-to-move and the voice channel preview's drag.
+MOVE_SURFACE_PINS_SPEC = "components/rtc/moveSurfacePins.test.ts"
+#: 🔴 Carries one OPT-IN skip (the backend literal cross-check) whenever
+#: `SLOGA_BACKEND_DIR` is unset. `baseline_green` records it and every mutant
+#: must reproduce it, so the skip neither hides a catch nor counts as one.
+MEMBER_GATE_SPEC = "src/interface/channels/memberGate.test.ts"
+AFK_CHANNEL_SETTINGS_SPEC = "src/lib/afkChannelSettings.test.ts"
+
+MUTATIONS += [
+    # ---- the move handler and M3 in state.tsx (source pins) -----------------
+    Mutation(
+        id="state-move-gated-block-cards",
+        what="the gated-destination block puts the destination on the call card, so its Rejoin (an ordinary join) walks straight past the age, password or spoiler check (FE2A-1 a)",
+        file=STATE,
+        search="""        this.#replacedLeftAt = undefined;
+        const destinationName = destination.name;
+""",
+        replace="""        this.#replacedLeftAt = undefined;
+        this.#setChannel(destination);
+        const destinationName = destination.name;
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-member-gate-default-open",
+        what="the member gate's default answers 'not gated', so a Voice built before `setMemberGate` runs follows a move into any checked channel (FE2A-1 b, fail open)",
+        file=STATE,
+        # Re-anchored at MERGE-2 (2026-09-29, M2G): `apply` refuses a search
+        # that starts mid-line (MFR-n3), so the search and replace now carry
+        # the line's leading text. Same line, same edit: the mutated file is
+        # byte-identical to the old mid-line form.
+        search="""  #memberGate: (channel: Channel) => boolean = () => true;""",
+        replace="""  #memberGate: (channel: Channel) => boolean = () => false;""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-member-gate-unwired",
+        what="VoiceContext never calls `setMemberGate`, so the handler asks the default and never the member's real unlocks: every move is refused as gated (FE2A-1 c)",
+        file=STATE,
+        search="""  voice.setMemberGate((channel) =>
+    isChannelGatedForMember(
+      channel,
+      (key) => state.layout.getSectionState(key, false),
+      LAYOUT_SECTIONS.MATURE,
+    ),
+  );
+""",
+        replace="""""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-member-gate-inverted",
+        what="the handler inverts the member gate, so a move follows exactly into the channels whose check this member has NOT passed (FE2A-1 d)",
+        file=STATE,
+        # Re-anchored at MERGE-2 (2026-09-29, M2G): `apply` refuses a search
+        # that starts mid-line (MFR-n3), so the search and replace now carry
+        # the line's leading text. Same line, same edit: the mutated file is
+        # byte-identical to the old mid-line form.
+        search="""    const gated = destination !== undefined && this.#memberGate(destination);""",
+        replace="""    const gated = destination !== undefined && !this.#memberGate(destination);""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-move-gated-block-falls-through",
+        what="the gated-destination block loses its `return`, so after the refusal it falls through to the card batch and the destination lands on the card (FE2A-1)",
+        file=STATE,
+        search="""          ),
+        );
+        return;
+      }
+      // Every other arm resolved""",
+        replace="""          ),
+        );
+      }
+      // Every other arm resolved""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-move-gated-constant-false",
+        what="the handler's gate verdict is a constant `false`, so no move is ever refused for a checked destination (FE0-3)",
+        file=STATE,
+        search="""    const gated = destination !== undefined && this.#memberGate(destination);
+""",
+        replace="""    const gated = false;
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC, MOVE_POLICY_SPEC],
+    ),
+    Mutation(
+        id="state-move-destination-gated-false",
+        what="`moveDecision` is handed `destinationGated: false`, so the gate's verdict is computed and then thrown away (FE0-3)",
+        file=STATE,
+        search="""      destinationGated: gated,
+""",
+        replace="""      destinationGated: false,
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC, MOVE_POLICY_SPEC],
+    ),
+    Mutation(
+        id="state-m3-join-keeps-token",
+        what="M3's `join` arm no longer drops the token, so a device-qualified attempt dials with a bare token it did not mint (SEC5-1, FE2A-4 a)",
+        file=STATE,
+        search="""        auth = undefined;
+        preConnectDeadlineAt = undefined;
+""",
+        replace="""        preConnectDeadlineAt = undefined;
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-m3-join-keeps-budget",
+        what="M3's `join` arm drops the token but keeps the move's pre-connect budget, so an ordinary join runs under the 3 s clamp meant for a ticking token and trips a spurious `hold_loud` (C3)",
+        file=STATE,
+        search="""        auth = undefined;
+        preConnectDeadlineAt = undefined;
+""",
+        replace="""        auth = undefined;
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC, MOVE_POLICY_SPEC],
+    ),
+    Mutation(
+        id="state-m3-identity-always-bare",
+        what="M3's expected identity is always the bare user id, so a device seat keeps a bare token and connects as an identity it did not ask for (SEC5-1)",
+        file=STATE,
+        # Re-anchored at MERGE-2 (2026-09-29, M2G): `apply` refuses a search
+        # that starts mid-line (MFR-n3), so the search and replace now carry
+        # the line's leading text. Same line, same edit: the mutated file is
+        # byte-identical to the old mid-line form.
+        search="""              ? `${selfUserId}:${e2eeDeviceId}`
+""",
+        replace="""              ? selfUserId
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-premintedauth-hoisted",
+        what="`preMintedAuth` is computed above M3's switch, so a token M3 dropped still reads as pre-minted and the session-device writes treat an ordinary join as the server's identity (C3)",
+        file=STATE,
+        search="""    switch (authDecision) {
+      case "use":
+        break;
+      case "join":
+        // The dropped token takes its clock with it: this attempt mints its
+        // own token below, after setup, like any other join.
+        auth = undefined;
+        preConnectDeadlineAt = undefined;
+        break;
+      case "answer_latch":
+        // No await separates this from the generation check after the
+        // device enumeration, so this cannot fail today. It stays so that
+        // an await added above can never raise a superseded attempt's
+        // refusal over the newer call.
+        if (gen !== this.#connectGen) return false;
+        // `connect()` has already left the previous call; `disconnect()`
+        // releases the worker and provider constructed above (no Room
+        // exists yet). `latchStillRefused` implies `bypassedRefusal`.
+        this.disconnect();
+        this.onErr(new Error(this.#joinRefusalText(channel, bypassedRefusal!)));
+        return false;
+      default: {
+        const exhaustive: never = authDecision;
+        return exhaustive;
+      }
+    }
+
+    /**
+     * TRUE when this attempt connects with a token it did not mint — a move
+     * whose token M3 kept. Kept distinct from `isMove` deliberately: that one
+     * asks whether this attempt STARTED as a move, this one asks whether the
+     * identity we present is the SERVER's choice rather than ours, which is
+     * the question both `#sessionDeviceId` writes turn on. Read only after
+     * M3: a dropped token is an ordinary join, identity and all.
+     */
+    const preMintedAuth = auth !== undefined;
+""",
+        replace="""    const preMintedAuth = auth !== undefined;
+    switch (authDecision) {
+      case "use":
+        break;
+      case "join":
+        // The dropped token takes its clock with it: this attempt mints its
+        // own token below, after setup, like any other join.
+        auth = undefined;
+        preConnectDeadlineAt = undefined;
+        break;
+      case "answer_latch":
+        // No await separates this from the generation check after the
+        // device enumeration, so this cannot fail today. It stays so that
+        // an await added above can never raise a superseded attempt's
+        // refusal over the newer call.
+        if (gen !== this.#connectGen) return false;
+        // `connect()` has already left the previous call; `disconnect()`
+        // releases the worker and provider constructed above (no Room
+        // exists yet). `latchStillRefused` implies `bypassedRefusal`.
+        this.disconnect();
+        this.onErr(new Error(this.#joinRefusalText(channel, bypassedRefusal!)));
+        return false;
+      default: {
+        const exhaustive: never = authDecision;
+        return exhaustive;
+      }
+    }
+
+    /**
+     * TRUE when this attempt connects with a token it did not mint — a move
+     * whose token M3 kept. Kept distinct from `isMove` deliberately: that one
+     * asks whether this attempt STARTED as a move, this one asks whether the
+     * identity we present is the SERVER's choice rather than ours, which is
+     * the question both `#sessionDeviceId` writes turn on. Read only after
+     * M3: a dropped token is an ordinary join, identity and all.
+     */
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-m3-extra-auth-write",
+        what="a second write to `auth` after M3, so the keep/drop decision is no longer the only place the dialed token is chosen (SEC5-1, FE2A-4)",
+        file=STATE,
+        search="""    const preMintedAuth = auth !== undefined;
+""",
+        replace="""    if (bypassedRefusal !== undefined) auth ??= undefined;
+    const preMintedAuth = auth !== undefined;
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-m3-decision-conditional",
+        what="`moveAuthDecision` runs only inside an `if`, so an attempt reaching the dial without passing it keeps whatever token it holds (SEC5-1, FE2A-4)",
+        file=STATE,
+        search="""    const authDecision = moveAuthDecision({
+""",
+        replace="""    let authDecision: ReturnType<typeof moveAuthDecision> = "use";
+    if (auth) authDecision = moveAuthDecision({
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-tokenless-arm-latch-bypass",
+        what="the tokenless `join` arm passes `moveLatchBypass: true`, so a move with no token steps past a latched refusal the moment `connect()`'s `auth &&` guard is relaxed (D4, S1)",
+        file=STATE,
+        search="""        attempt = this.connect(destination);
+""",
+        replace="""        attempt = this.connect(destination, undefined, {
+          moveLatchBypass: true,
+        });
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC, MOVE_POLICY_SPEC],
+    ),
+    Mutation(
+        id="state-tokenless-arm-budget",
+        what="the tokenless `join` arm passes the move's pre-connect budget, so an ordinary join that mints its own token runs under the clamp meant for a ticking one (D2)",
+        file=STATE,
+        search="""        attempt = this.connect(destination);
+""",
+        replace="""        attempt = this.connect(destination, undefined, {
+          movePreConnectBudgetMs: MOVE_PRECONNECT_BUDGET_MS,
+        });
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC, MOVE_POLICY_SPEC],
+    ),
+    Mutation(
+        id="state-d5-retry-under-budget",
+        what="the D5 retry after a failed token arm runs under the move budget, so the one plain join meant to recover a dead token is clamped as if it held one (D5)",
+        file=STATE,
+        search="""          joined = await this.connect(destination);
+""",
+        replace="""          joined = await this.connect(destination, undefined, {
+            movePreConnectBudgetMs: MOVE_PRECONNECT_BUDGET_MS,
+          });
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC, MOVE_POLICY_SPEC],
+    ),
+    Mutation(
+        id="state-token-arm-no-latch-bypass",
+        what="the token arm stops passing `moveLatchBypass`, so a moderator's move into a channel the member was refused answers from the latch instead of joining (S1)",
+        file=STATE,
+        search="""            moveLatchBypass: true,
+""",
+        replace="""""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC, MOVE_POLICY_SPEC],
+    ),
+    Mutation(
+        id="state-move-releases-join-refusal",
+        what="the handler releases the destination's join-refusal latch before joining, so a refusal the tokenless join should have answered from is cleared for every later join too (D4)",
+        file=STATE,
+        search="""    const startedAt = Date.now();
+""",
+        replace="""    this.#releaseJoinRefusal(destination.id);
+    const startedAt = Date.now();
+""",
+        specs=[MOVE_POLICY_SPEC],
+        must_red=[MOVE_POLICY_SPEC],
+    ),
+    Mutation(
+        id="state-attempt-drops-latched-reason",
+        what="`connect()` stops handing `#connectAttempt` the latched reason, so a dropped move token can no longer answer from the refusal it bypassed (F4)",
+        file=STATE,
+        # Re-anchored at MERGE-2 (2026-09-29, M2G): `apply` refuses a search
+        # that starts mid-line (MFR-n3), so the search and replace now carry
+        # the line's leading text. Same line, same edit: the mutated file is
+        # byte-identical to the old mid-line form.
+        search="""      return await this.#connectAttempt(channel, auth, opts, latchedReason);""",
+        replace="""      return await this.#connectAttempt(channel, auth, opts);""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC, MOVE_POLICY_SPEC, VOICE_REJOIN_SPEC],
+    ),
+    Mutation(
+        id="state-identity-is-device-constant",
+        what="the handler reports every identity as device-qualified, so a bare seat with a fresh marker and a matching bare token follows a move its sibling session was kicked for (FE2A-2)",
+        file=STATE,
+        search="""    const identityIsDevice = (this.#lastLocalIdentity ?? "").includes(":");
+""",
+        replace="""    const identityIsDevice = true;
+""",
+        specs=[MOVE_POLICY_SPEC],
+        must_red=[MOVE_POLICY_SPEC],
+    ),
+    Mutation(
+        id="state-move-handler-logs-error",
+        what="the handler logs the token arm's error object, whose LiveKit signal URL carries `access_token=` (FE2A-12)",
+        file=STATE,
+        search="""    } catch {
+      // D5: one plain join""",
+        replace="""    } catch (error) {
+      console.error("[rtc] move failed", error);
+      // D5: one plain join""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="state-move-listener-legacy-name",
+        what="the move listener subscribes to `\"userMoveVoiceChannel\"`, which stoat.js no longer emits, so no move is ever followed and tsc stays green through `as never` (FE1-1)",
+        file=STATE,
+        search="""      client.addListener(VOICE_MOVE_REQUESTED, handler);
+""",
+        replace="""      client.addListener("userMoveVoiceChannel" as never, handler);
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC, MOVE_POLICY_SPEC],
+    ),
+    Mutation(
+        id="state-move-listener-doubled",
+        what="the move listener is registered twice, so every move event is handled twice",
+        file=STATE,
+        search="""      client.addListener(VOICE_MOVE_REQUESTED, handler);
+""",
+        replace="""      client.addListener(VOICE_MOVE_REQUESTED, handler);
+      client.addListener(VOICE_MOVE_REQUESTED, handler);
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC, MOVE_POLICY_SPEC],
+    ),
+    Mutation(
+        id="state-move-event-name-legacy",
+        what="the move event constant names `\"userMoveVoiceChannel\"`, the retired event, so the listener never fires (FE1-1; tsc also catches this one, the mutation suite does not run tsc)",
+        file=STATE,
+        search="""const VOICE_MOVE_REQUESTED = "voiceMoveRequested" satisfies keyof Events;""",
+        replace="""const VOICE_MOVE_REQUESTED = "userMoveVoiceChannel" satisfies keyof Events;""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC, MOVE_POLICY_SPEC],
+    ),
+    # ---- the move ladder in movePolicy.ts -----------------------------------
+    Mutation(
+        id="move-decision-step4-device-match",
+        what="step 4 goes back to the device match: a fresh marker on a seat whose token was not minted for it follows the move a sibling session was kicked for (F1, D1)",
+        file=MOVE_POLICY,
+        # Re-anchored at MERGE-2 (2026-09-29, M2G): `apply` refuses a search
+        # that starts mid-line (MFR-n3), so the search and replace now carry
+        # the line's leading text. Same line, same edit: the mutated file is
+        # byte-identical to the old mid-line form.
+        search="""  const labelMatches = nonceGate ? nonceMatches : tokenProvesSeat;""",
+        replace="""  const labelMatches = nonceGate ? nonceMatches : deviceMatches;""",
+        specs=[MOVE_POLICY_SPEC],
+        must_red=[MOVE_POLICY_SPEC],
+    ),
+    Mutation(
+        id="move-decision-bare-identity-proves-seat",
+        what="the token proof drops the device-qualified identity conjunct, so a bare seat's fresh marker plus a bare token follows a move with a live mic (FE2A-2)",
+        file=MOVE_POLICY,
+        # Re-anchored at MERGE-2 (2026-09-29, M2G): `apply` refuses a search
+        # that starts mid-line (MFR-n3), so the search and replace now carry
+        # the line's leading text. Same line, same edit: the mutated file is
+        # byte-identical to the old mid-line form.
+        search="""    !!world.token && world.tokenForThisConnection && world.lastIdentityIsDevice;""",
+        replace="""    !!world.token && world.tokenForThisConnection;""",
+        specs=[MOVE_POLICY_SPEC],
+        must_red=[MOVE_POLICY_SPEC],
+    ),
+    Mutation(
+        id="move-decision-tokenless-marker-proves-seat",
+        what="the token proof drops `!!world.token`, so a fresh marker with no token at all counts as proof and a tokenless seat joins (FE2WA-2)",
+        file=MOVE_POLICY,
+        search="""    !!world.token && world.tokenForThisConnection && world.lastIdentityIsDevice;""",
+        replace="""    world.tokenForThisConnection && world.lastIdentityIsDevice;""",
+        specs=[MOVE_POLICY_SPEC],
+        must_red=[MOVE_POLICY_SPEC],
+    ),
+    Mutation(
+        id="move-decision-gate-ignored",
+        what="the ladder ignores the destination's gate, so a move follows into a channel whose age, password or spoiler check this member has not passed (FE0-3)",
+        file=MOVE_POLICY,
+        # Re-anchored at MERGE-2 (2026-09-29, M2G): `apply` refuses a search
+        # that starts mid-line (MFR-n3), so the search and replace now carry
+        # the line's leading text. Same line, same edit: the mutated file is
+        # byte-identical to the old mid-line form.
+        search="""  const gatedDestination = world.destinationKnown && world.destinationGated;""",
+        replace="""  const gatedDestination = false;""",
+        specs=[MOVE_POLICY_SPEC],
+        must_red=[MOVE_POLICY_SPEC],
+    ),
+    Mutation(
+        id="move-decision-gate-not-over-carded-arms",
+        what="a gated destination no longer replaces the carded fail-loud arms, so `unverified-session` / `stale-notice` put a checked channel on the card and its Rejoin walks past the check (FE0-3)",
+        file=MOVE_POLICY,
+        search="""    gatedDestination
+      ? { action: "fail-loud", reason: "gated-destination" }
+      : { action: "fail-loud", reason };""",
+        replace="""    false
+      ? { action: "fail-loud", reason: "gated-destination" }
+      : { action: "fail-loud", reason };""",
+        specs=[MOVE_POLICY_SPEC],
+        must_red=[MOVE_POLICY_SPEC],
+    ),
+    Mutation(
+        id="move-decision-tokenless-moves",
+        what="the tokenless tail answers `move` with an empty token and URL instead of an ordinary `join`, so a move event without a token dials an empty URL instead of joining (D2)",
+        file=MOVE_POLICY,
+        search="""    return { action: "join", to: world.to };""",
+        replace="""    return { action: "move", url: world.url ?? "", token: world.token ?? "", to: world.to };""",
+        specs=[MOVE_POLICY_SPEC],
+        must_red=[MOVE_POLICY_SPEC],
+    ),
+    Mutation(
+        id="move-decision-foreign-token-moves",
+        what="the token arm stops requiring the token be this connection's, so a token minted for another identity is passed through and dialed (FE2WA-9)",
+        file=MOVE_POLICY,
+        search="""      world.token &&
+      world.tokenForThisConnection &&
+""",
+        replace="""      world.token &&
+""",
+        specs=[MOVE_POLICY_SPEC],
+        must_red=[MOVE_POLICY_SPEC],
+    ),
+    Mutation(
+        id="move-decision-negative-marker-age-fresh",
+        what="a marker stamped in the future (negative age) counts as fresh, so a clock skew makes a stale drop follow the move (FE2WA-3)",
+        file=MOVE_POLICY,
+        # Re-anchored at MERGE-2 (2026-09-29, M2G): `apply` refuses a search
+        # that starts mid-line (MFR-n3), so the search and replace now carry
+        # the line's leading text. Same line, same edit: the mutated file is
+        # byte-identical to the old mid-line form.
+        search="""    markerAgeMs >= 0 &&""",
+        replace="""    markerAgeMs >= -Infinity &&""",
+        specs=[MOVE_POLICY_SPEC],
+        must_red=[MOVE_POLICY_SPEC],
+    ),
+    Mutation(
+        id="move-decision-negative-replaced-age-fresh",
+        what="a replaced connection stamped in the future counts as fresh, so the S-a record matches under clock skew (FE2WA-3)",
+        file=MOVE_POLICY,
+        # Re-anchored at MERGE-2 (2026-09-29, M2G): `apply` refuses a search
+        # that starts mid-line (MFR-n3), so the search and replace now carry
+        # the line's leading text. Same line, same edit: the mutated file is
+        # byte-identical to the old mid-line form.
+        search="""      replacedAgeMs >= 0 &&""",
+        replace="""      replacedAgeMs >= -Infinity &&""",
+        specs=[MOVE_POLICY_SPEC],
+        must_red=[MOVE_POLICY_SPEC],
+    ),
+    Mutation(
+        id="move-decision-empty-from-acts",
+        what="an event with an empty `from` is no longer ignored, so a move naming no source channel is acted on (FE2WA-4)",
+        file=MOVE_POLICY,
+        # Re-anchored at MERGE-2 (2026-09-29, M2G): `apply` refuses a search
+        # that starts mid-line (MFR-n3), so the search and replace now carry
+        # the line's leading text. Same line, same edit: the mutated file is
+        # byte-identical to the old mid-line form.
+        search="""  if (!world.from)""",
+        replace="""  if (false)""",
+        specs=[MOVE_POLICY_SPEC],
+        must_red=[MOVE_POLICY_SPEC],
+    ),
+    # ---- the token check in voiceMovePolicy.ts (SEC5-1) ---------------------
+    Mutation(
+        id="move-policy-token-usable-ignores-identity",
+        what="`moveTokenUsable` stops comparing the token's `sub` with the identity this attempt would request, so a bare token is used by a device seat (SEC5-1, FE2A-4 b)",
+        file=VOICE_MOVE_POLICY,
+        search="""  return claims.sub === input.expectedIdentity && claims.room === input.to;
+""",
+        replace="""  return claims.room === input.to;
+""",
+        specs=[VOICE_MOVE_SPEC],
+        must_red=[VOICE_MOVE_SPEC],
+    ),
+    Mutation(
+        id="move-policy-token-usable-ignores-room",
+        what="`moveTokenUsable` stops comparing the token's room with the destination, so a token for another room counts as this move's (SEC5-1, FE2A-4 c)",
+        file=VOICE_MOVE_POLICY,
+        search="""  return claims.sub === input.expectedIdentity && claims.room === input.to;
+""",
+        replace="""  return claims.sub === input.expectedIdentity;
+""",
+        specs=[VOICE_MOVE_SPEC],
+        must_red=[VOICE_MOVE_SPEC],
+    ),
+    # ---- the idle latch, the moderation offer, the member gate --------------
+    Mutation(
+        id="idle-latch-drops-not-owner",
+        what="the idle beacon's latch set loses `NotOwner`, so a 403 for a foreign or stale session is retried with backoff instead of stopping this connection's beacon",
+        file=IDLE_POLICY,
+        search="""  "NotAVoiceChannel",
+  "NotOwner",
+];
+""",
+        replace="""  "NotAVoiceChannel",
+];
+""",
+        specs=[IDLE_POLICY_SPEC],
+        must_red=[IDLE_POLICY_SPEC],
+    ),
+    Mutation(
+        id="call-moderation-moves-bots",
+        what="`canOfferMove` ignores `isBot`, so the menu offers Move for a bot and every press is refused with IsBot",
+        file=CALL_MODERATION_POLICY,
+        search="""  if (subject.isBot) return false;
+""",
+        replace="""""",
+        specs=[CALL_MODERATION_SPEC],
+        must_red=[CALL_MODERATION_SPEC],
+    ),
+    Mutation(
+        id="member-gate-thread-ungated",
+        what="`channelHasClientGate` answers `false` for a thread, so a thread under a checked parent can be made the AFK channel and the sweep moves members past the parent's check (FE2A-1)",
+        file=MEMBER_GATE,
+        search="""  if (channel.isThread) return true;
+""",
+        replace="""  if (channel.isThread) return false;
+""",
+        specs=[MEMBER_GATE_SPEC],
+        must_red=[MEMBER_GATE_SPEC],
+    ),
+    Mutation(
+        id="member-gate-skips-gate-source",
+        what="`isChannelGatedForMember` reads the thread's own flags and unlocks instead of its parent's, so a thread under a checked parent reads as ungated (FE2A-1)",
+        file=MEMBER_GATE,
+        search="""  const source = gateSource(channel);
+""",
+        replace="""  const source = channel;
+""",
+        specs=[MEMBER_GATE_SPEC],
+        must_red=[MEMBER_GATE_SPEC],
+    ),
+    # ---- the member surfaces a move starts from (source pins) ---------------
+    Mutation(
+        id="move-menu-self-filter-removed",
+        what="the self Move menu stops filtering out gated channels, so a member can move themselves into a channel whose check they have not passed (D7)",
+        file=USER_CONTEXT_MENU,
+        search="""      props.user.self
+        ? channels.filter(""",
+        replace="""      false
+        ? channels.filter(""",
+        specs=[MOVE_SURFACE_PINS_SPEC],
+        must_red=[MOVE_SURFACE_PINS_SPEC],
+    ),
+    Mutation(
+        id="move-menu-gate-filter-applied-to-all",
+        what="the member's own gate filter is applied to moving OTHERS too, so a moderator cannot move someone into a channel the moderator has not unlocked (D7)",
+        file=USER_CONTEXT_MENU,
+        search="""      props.user.self
+        ? channels.filter(""",
+        replace="""      true
+        ? channels.filter(""",
+        specs=[MOVE_SURFACE_PINS_SPEC],
+        must_red=[MOVE_SURFACE_PINS_SPEC],
+    ),
+    Mutation(
+        id="move-menu-isbot-false",
+        what="the menu tells the moderation policy no subject is a bot, so Move is offered for bots (B4)",
+        file=USER_CONTEXT_MENU,
+        search="""        isBot: !!props.user.bot,""",
+        replace="""        isBot: false,""",
+        specs=[MOVE_SURFACE_PINS_SPEC],
+        must_red=[MOVE_SURFACE_PINS_SPEC],
+    ),
+    Mutation(
+        id="move-menu-logs-error",
+        what="the refused-move handler logs the raw error object beside its kind",
+        file=USER_CONTEXT_MENU,
+        search="""    console.error("Voice move refused:", kind);""",
+        replace="""    console.error("Voice move refused:", kind, err);""",
+        specs=[MOVE_SURFACE_PINS_SPEC],
+        must_red=[MOVE_SURFACE_PINS_SPEC],
+    ),
+    Mutation(
+        id="move-menu-others-copy-drift",
+        what="the moving-others refusal copy drifts from the FROZEN map (FE2A-9)",
+        file=USER_CONTEXT_MENU,
+        search="""        return t`Bots can't be moved between voice channels.`;""",
+        replace="""        return t`Bots can't be moved between voice channels!`;""",
+        specs=[MOVE_SURFACE_PINS_SPEC],
+        must_red=[MOVE_SURFACE_PINS_SPEC],
+    ),
+    Mutation(
+        id="move-menu-self-others-swapped",
+        what="the self and others refusal maps are swapped, so a member moving themselves is told about 'them' (FE2A-9)",
+        file=USER_CONTEXT_MENU,
+        search="""      message: self ? selfMoveRefusal(kind) : otherMoveRefusal(kind),""",
+        replace="""      message: self ? otherMoveRefusal(kind) : selfMoveRefusal(kind),""",
+        specs=[MOVE_SURFACE_PINS_SPEC],
+        must_red=[MOVE_SURFACE_PINS_SPEC],
+    ),
+    Mutation(
+        id="move-menu-self-copy-drift",
+        what="the moving-self refusal copy drifts from the FROZEN map (FE2A-9)",
+        file=USER_CONTEXT_MENU,
+        search="""        return t`You can only move yourself from the device that's in the call.`;""",
+        replace="""        return t`You can only move yourself from the device that's in the call!`;""",
+        specs=[MOVE_SURFACE_PINS_SPEC],
+        must_red=[MOVE_SURFACE_PINS_SPEC],
+    ),
+    Mutation(
+        id="move-menu-refusal-signs-out",
+        what="a `not-authenticated` move refusal signs the member out, though it only means the move came from another device",
+        file=USER_CONTEXT_MENU,
+        search="""    console.error("Voice move refused:", kind);
+""",
+        replace="""    console.error("Voice move refused:", kind);
+    if (kind === "not-authenticated") void client().logout();
+""",
+        specs=[MOVE_SURFACE_PINS_SPEC],
+        must_red=[MOVE_SURFACE_PINS_SPEC],
+    ),
+    Mutation(
+        id="move-sidebar-gate-fails-open",
+        what="the sidebar reads a missing unlock key as unlocked, so every checked channel reads as passed (fail open)",
+        file=SERVER_SIDEBAR,
+        search="""    (key) => state.layout.getSectionState(key, false),
+    LAYOUT_SECTIONS.MATURE,
+  );
+}""",
+        replace="""    (key) => state.layout.getSectionState(key, true),
+    LAYOUT_SECTIONS.MATURE,
+  );
+}""",
+        specs=[MOVE_SURFACE_PINS_SPEC],
+        must_red=[MOVE_SURFACE_PINS_SPEC],
+    ),
+    Mutation(
+        id="move-sidebar-own-gate-copy",
+        what="the sidebar grows its own `gateSource` call beside the shared member gate, a second copy of the rule that can drift",
+        file=SERVER_SIDEBAR,
+        search="""function isGatedFor(
+""",
+        replace="""const legacyGateSource = (c: Channel) => gateSource(c);
+function isGatedFor(
+""",
+        specs=[MOVE_SURFACE_PINS_SPEC],
+        must_red=[MOVE_SURFACE_PINS_SPEC],
+    ),
+    Mutation(
+        id="move-sidebar-drop-logs-error",
+        what="the drag-to-move refusal logs the raw error object instead of its kind (B3)",
+        file=SERVER_SIDEBAR,
+        search="""        console.warn("[voice-move] drag-to-move refused:", kind);""",
+        replace="""        console.warn("[voice-move] drag-to-move refused:", err);""",
+        specs=[MOVE_SURFACE_PINS_SPEC],
+        must_red=[MOVE_SURFACE_PINS_SPEC],
+    ),
+    Mutation(
+        id="move-sidebar-others-shows-self-copy",
+        what="the sidebar's moving-others `not-connected` copy speaks to the mover about themselves (FE2A-9)",
+        file=SERVER_SIDEBAR,
+        search="""        return t`They're not in a voice call you can move them from.`;""",
+        replace="""        return t`You're not in a voice call you can move from.`;""",
+        specs=[MOVE_SURFACE_PINS_SPEC],
+        must_red=[MOVE_SURFACE_PINS_SPEC],
+    ),
+    Mutation(
+        id="move-sidebar-self-copy-drift",
+        what="the sidebar's moving-self refusal copy drifts from the FROZEN map (FE2A-9)",
+        file=SERVER_SIDEBAR,
+        search="""          return t`Couldn't move you to that channel.`;""",
+        replace="""          return t`Couldn't move you to that channel!`;""",
+        specs=[MOVE_SURFACE_PINS_SPEC],
+        must_red=[MOVE_SURFACE_PINS_SPEC],
+    ),
+    Mutation(
+        id="move-drag-isbot-false",
+        what="the voice-channel drag tells `canDragParticipant` no participant is a bot, so bots can be dragged and every drop is refused (B4)",
+        file=VOICE_CHANNEL_PREVIEW,
+        search="""      isBot: !!user().user?.bot,""",
+        replace="""      isBot: false,""",
+        specs=[MOVE_SURFACE_PINS_SPEC],
+        must_red=[MOVE_SURFACE_PINS_SPEC],
+    ),
+    Mutation(
+        id="source-pins-string-literal-always-true",
+        what="the pin harness calls every argument a string literal, so `assertLogsOnly` passes a handler that logs an error object",
+        file=SOURCE_PINS_HARNESS,
+        search="""export function isStringLiteral(code: string): boolean {
+  return (
+""",
+        replace="""export function isStringLiteral(code: string): boolean {
+  return true || (
+""",
+        specs=[STATE_WIRING_SPEC],
+        must_red=[STATE_WIRING_SPEC],
+    ),
+    Mutation(
+        id="source-pins-console-calls-unseen",
+        what="the pin harness finds no console calls at all, so every log-only pin passes vacuously",
+        file=SOURCE_PINS_HARNESS,
+        search='  return [...code.matchAll(/(?<![\\w$.])console\\.[\\w$]+\\(/g)].map((m) => {\n',
+        replace='  return [...code.matchAll(/(?<![\\w$.])CONSOLE\\.[\\w$]+\\(/g)].map((m) => {\n',
+        specs=[MOVE_SURFACE_PINS_SPEC],
+        must_red=[MOVE_SURFACE_PINS_SPEC],
+    ),
+    # ---- the AFK channel's check rules in Overview.tsx ----------------------
+    Mutation(
+        id="afk-settings-spoiler-uncaught",
+        what="the spoiler toggle loses its catch, so a refused save is an unhandled rejection with nothing shown",
+        file=CHANNEL_OVERVIEW,
+        search="""    } catch (error) {
+      setSpoilerFailed(true);
+      showError(error);
+    } finally {
+      setSpoilerSaving(false);""",
+        replace="""    } finally {
+      setSpoilerSaving(false);""",
+        specs=[AFK_CHANNEL_SETTINGS_SPEC],
+        must_red=[AFK_CHANNEL_SETTINGS_SPEC],
+    ),
+    Mutation(
+        id="afk-settings-password-uncaught",
+        what="the password save loses its catch, so a refused save is an unhandled rejection with nothing shown",
+        file=CHANNEL_OVERVIEW,
+        search="""    } catch (error) {
+      setPwFailed(true);
+      showError(error);
+    } finally {
+      setPwSaving(false);""",
+        replace="""    } finally {
+      setPwSaving(false);""",
+        specs=[AFK_CHANNEL_SETTINGS_SPEC],
+        must_red=[AFK_CHANNEL_SETTINGS_SPEC],
+    ),
+    Mutation(
+        id="afk-settings-password-flag-stuck",
+        what="the password save clears its saving flag inside the try, so a throw leaves the button disabled for good",
+        file=CHANNEL_OVERVIEW,
+        search="""    } catch (error) {
+      setPwFailed(true);
+      showError(error);
+    } finally {
+      setPwSaving(false);
+    }""",
+        replace="""      setPwSaving(false);
+    } catch (error) {
+      setPwFailed(true);
+      showError(error);
+    }""",
+        specs=[AFK_CHANNEL_SETTINGS_SPEC],
+        must_red=[AFK_CHANNEL_SETTINGS_SPEC],
+    ),
+    Mutation(
+        id="afk-settings-gate-rule-inverted",
+        what="the AFK-channel-can't-gain-a-check rule is inverted, so every OTHER channel's checks are disabled and the AFK channel's are open",
+        file=CHANNEL_OVERVIEW,
+        # Re-anchored at MERGE-2 (2026-09-29, M2G): `apply` refuses a search
+        # that starts mid-line (MFR-n3), so the search and replace now carry
+        # the line's leading text. Same line, same edit: the mutated file is
+        # byte-identical to the old mid-line form.
+        search="""  const afkBlocksGate = (gateIsOn: boolean) => isDesignatedAfk() && !gateIsOn;""",
+        replace="""  const afkBlocksGate = (gateIsOn: boolean) => !isDesignatedAfk() && !gateIsOn;""",
+        specs=[AFK_CHANNEL_SETTINGS_SPEC],
+        must_red=[AFK_CHANNEL_SETTINGS_SPEC],
+    ),
+    Mutation(
+        id="afk-settings-make-afk-ungated",
+        what="Make AFK Channel is enabled on a checked channel, so the backend refusal is the only thing stopping it",
+        file=CHANNEL_OVERVIEW,
+        # Re-anchored at MERGE-2 (2026-09-29, M2G): `apply` refuses a search
+        # that starts mid-line (MFR-n3), so the search and replace now carry
+        # the line's leading text. Same line, same edit: the mutated file is
+        # byte-identical to the old mid-line form.
+        search="""              isDisabled={afkSaving() || gateBlocksAfk()}""",
+        replace="""              isDisabled={afkSaving()}""",
+        specs=[AFK_CHANNEL_SETTINGS_SPEC],
+        must_red=[AFK_CHANNEL_SETTINGS_SPEC],
+    ),
+    Mutation(
+        id="afk-settings-mature-ungated",
+        what="Mark as Mature stays enabled on the AFK channel",
+        file=CHANNEL_OVERVIEW,
+        search="""            isDisabled={afkBlocksGate(props.channel.mature)}
+""",
+        replace="""""",
+        specs=[AFK_CHANNEL_SETTINGS_SPEC],
+        must_red=[AFK_CHANNEL_SETTINGS_SPEC],
+    ),
+    Mutation(
+        id="afk-settings-afk-rule-inverted",
+        what="the checked-channel-can't-be-AFK rule is inverted, so only the current AFK channel is blocked from being made AFK",
+        file=CHANNEL_OVERVIEW,
+        search="""    !isDesignatedAfk() && channelHasClientGate(props.channel);""",
+        replace="""    isDesignatedAfk() && channelHasClientGate(props.channel);""",
+        specs=[AFK_CHANNEL_SETTINGS_SPEC],
+        must_red=[AFK_CHANNEL_SETTINGS_SPEC],
+    ),
+    Mutation(
+        id="afk-settings-notice-untranslated",
+        what="the AFK-channel notice beside the spoiler control leaves its `<Trans>`, so it is never translated",
+        file=CHANNEL_OVERVIEW,
+        search="""          <Show when={afkBlocksGate(props.channel.isSpoiler)}>
+            <Text>
+              <Trans>""",
+        replace="""          <Show when={afkBlocksGate(props.channel.isSpoiler)}>
+            <Text>
+              <span>""",
+        specs=[AFK_CHANNEL_SETTINGS_SPEC],
+        must_red=[AFK_CHANNEL_SETTINGS_SPEC],
+    ),
+    # The stripper fix's own guard: under the old `/\/\*[\s\S]*?\*\//g`
+    # stripper this write sat inside the deleted span and every spec stayed
+    # green.
+    Mutation(
+        id="afk-settings-null-pointer-late-in-overview",
+        what="Remove Password also writes `afk_channel_id: null`, the 200 that changes nothing, in the part of Overview.tsx the old regex comment stripper deleted from `accept=\"image/*\"` on",
+        file=CHANNEL_OVERVIEW,
+        search="""                setPwInput("");
+                setChannelPassword();
+""",
+        replace="""                setPwInput("");
+                void props.channel.server?.edit({ afk_channel_id: null } as never);
+                setChannelPassword();
+""",
+        specs=[AFK_CHANNEL_SETTINGS_SPEC],
+        must_red=[AFK_CHANNEL_SETTINGS_SPEC],
     ),
 ]
 

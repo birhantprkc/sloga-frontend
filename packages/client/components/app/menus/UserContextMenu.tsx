@@ -1,6 +1,7 @@
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import { useNavigate } from "@solidjs/router";
-import { type JSX, Match, Show, Switch } from "solid-js";
+import { Track } from "livekit-client";
+import { type JSX, For, Match, Show, Switch } from "solid-js";
 import type { Channel, Message, ServerMember, User } from "stoat.js";
 
 import { useClient } from "@revolt/client";
@@ -9,11 +10,18 @@ import { useModals } from "@revolt/modal";
 import { useSmartParams } from "@revolt/routing";
 import {
   callModerationActions,
+  canOfferMove,
   hasCallModerationActions,
   nativeScreenShareAvailable,
   useVoice,
 } from "@revolt/rtc";
+import {
+  type MoveRefusalKind,
+  moveRefusalKind,
+  moveTargets,
+} from "@revolt/rtc/voiceMovePolicy";
 import { useState } from "@revolt/state";
+import { LAYOUT_SECTIONS } from "@revolt/state/stores/Layout";
 import { Slider, Text, useSnackbar } from "@revolt/ui";
 
 import MdAccountCircle from "@material-design-icons/svg/outlined/account_circle.svg?component-solid";
@@ -31,22 +39,28 @@ import MdClose from "@material-design-icons/svg/outlined/close.svg?component-sol
 import MdDoNotDisturbOn from "@material-design-icons/svg/outlined/do_not_disturb_on.svg?component-solid";
 import MdDraw from "@material-design-icons/svg/outlined/draw.svg?component-solid";
 import MdFace from "@material-design-icons/svg/outlined/face.svg?component-solid";
+import MdHeadphones from "@material-design-icons/svg/outlined/headphones.svg?component-solid";
 import MdHeadsetOff from "@material-design-icons/svg/outlined/headset_off.svg?component-solid";
 import MdHearing from "@material-design-icons/svg/outlined/hearing.svg?component-solid";
 import MdMicOff from "@material-design-icons/svg/outlined/mic_off.svg?component-solid";
+import MdMoveDown from "@material-design-icons/svg/outlined/move_down.svg?component-solid";
 import MdPersonAddAlt from "@material-design-icons/svg/outlined/person_add_alt.svg?component-solid";
 import MdPersonRemove from "@material-design-icons/svg/outlined/person_remove.svg?component-solid";
 import MdReport from "@material-design-icons/svg/outlined/report.svg?component-solid";
 import MdScreenShare from "@material-design-icons/svg/outlined/screen_share.svg?component-solid";
 import MdVideocam from "@material-design-icons/svg/outlined/videocam.svg?component-solid";
+import MdVisibility from "@material-design-icons/svg/outlined/visibility.svg?component-solid";
+import MdVisibilityOff from "@material-design-icons/svg/outlined/visibility_off.svg?component-solid";
 import MdVoiceOverOff from "@material-design-icons/svg/outlined/voice_over_off.svg?component-solid";
 import MdChecked from "@material-symbols/svg-400/outlined/check_box.svg?component-solid";
 import MdUnchecked from "@material-symbols/svg-400/outlined/check_box_outline_blank.svg?component-solid";
 
+import { isChannelGatedForMember } from "../../../src/interface/channels/memberGate";
 import {
   ContextMenu,
   ContextMenuButton,
   ContextMenuDivider,
+  ContextMenuSubMenu,
 } from "./ContextMenu";
 import { NotificationContextMenu } from "./shared/NotificationContextMenu";
 
@@ -61,6 +75,13 @@ export function UserContextMenu(props: {
   contextMessage?: Message;
   inVoice?: boolean;
   isScreenshare?: boolean;
+  /**
+   * The voice channel this participant row belongs to, when the menu is
+   * opened from a call surface that knows it (the sidebar's voice channel
+   * preview). Lets a moderator who is NOT in that call act on someone who
+   * is. Falls back to the call we are in.
+   */
+  voiceChannel?: Channel;
 }) {
   // TODO: if we take serverId instead, we could dynamically fetch server member here
   // same for the floating menu I guess?
@@ -423,6 +444,30 @@ export function UserContextMenu(props: {
   }
 
   /**
+   * The ONE call channel every call entry in this menu is about: the row's
+   * own voice channel when the caller supplied it (a sidebar participant row,
+   * possibly of a call we are not in), otherwise the call we are in.
+   */
+  const callChannel = () => props.voiceChannel ?? voice.channel();
+
+  /**
+   * Whether this device is connected to that call channel right now.
+   */
+  function inThisCall() {
+    const current = voice.channel();
+    return !!current && callChannel()?.id === current.id;
+  }
+
+  /**
+   * Whether the menu was opened from a call surface: a participant tile, or
+   * a participant row in the sidebar. Everywhere else (message authors, the
+   * member list, friends) keeps its old behavior of offering no call
+   * entries: the call we happen to be in may belong to a different server
+   * than the one the menu was opened in.
+   */
+  const fromCallSurface = () => !!props.inVoice || !!props.voiceChannel;
+
+  /**
    * The target as a member of the CALL's server.
    *
    * Deliberately NOT `props.member`, which `useUser` resolves through the
@@ -432,7 +477,7 @@ export function UserContextMenu(props: {
    * the menu must ask about too. Undefined for a DM or group call.
    */
   function callMember() {
-    const serverId = voice.channel()?.serverId;
+    const serverId = callChannel()?.serverId;
     if (!serverId) return undefined;
 
     const id = { server: serverId, user: props.user.id };
@@ -456,10 +501,13 @@ export function UserContextMenu(props: {
   }
 
   /**
-   * Which server-moderation entries this call menu may offer.
+   * The subject and the acting user's permissions for the call policy, both
+   * resolved against the call channel's server. `server` is undefined for a
+   * DM or group call, and then so are the permissions: nothing is offered.
    */
-  function moderation() {
-    const serverId = voice.channel()?.serverId;
+  function callModerationInput() {
+    const channel = callChannel();
+    const serverId = channel?.serverId;
     // Resolve the server DIRECTLY, not through the target member: deriving it
     // from an uncached target collapsed the whole menu to the same "no server
     // here" branch a DM takes, so the entries silently vanished instead of
@@ -479,19 +527,96 @@ export function UserContextMenu(props: {
         user: props.user.id,
       });
 
-    return callModerationActions(
-      {
+    return {
+      server,
+      subject: {
         isSelf: props.user.self,
-        isConnected: !!voice.channel()?.voiceParticipants.has(props.user.id),
+        // The server refuses to move a bot (`IsBot`), itself included.
+        isBot: !!props.user.bot,
+        isConnected: !!channel?.voiceParticipants.has(props.user.id),
         // No actor means we could not resolve our own membership; treat that
         // as "not established", never as elevated.
         isInferiorToActor: resolved && !!actor && member!.inferiorTo(actor),
       },
-      server && {
-        muteMembers: server.havePermission("MuteMembers"),
-        deafenMembers: server.havePermission("DeafenMembers"),
-        moveMembers: server.havePermission("MoveMembers"),
+      permissions:
+        server && channel
+          ? {
+              // Mute and deafen are resolved at SERVER level by the API.
+              muteMembers: server.havePermission("MuteMembers"),
+              deafenMembers: server.havePermission("DeafenMembers"),
+              // Disconnect and move are resolved at CHANNEL level, on the
+              // voice channel the target is in (the call channel).
+              moveMembersInSource: channel.havePermission("MoveMembers"),
+            }
+          : undefined,
+    };
+  }
+
+  /**
+   * Which server-moderation entries this call menu may offer.
+   */
+  function moderation() {
+    const { subject, permissions } = callModerationInput();
+    return callModerationActions(subject, permissions);
+  }
+
+  /**
+   * The voice channels "Move to…" offers, in sidebar order. Empty unless the
+   * policy lets us move this person at all (MoveMembers in the SOURCE and
+   * outranking them, or it is us); `moveTargets` then checks only the
+   * destination.
+   *
+   * Moving OURSELVES is offered only from the device that is in that call:
+   * a device-bound call can only be moved from that device's own session, so
+   * from any other session the API refuses it.
+   *
+   * Moving OURSELVES also leaves out every channel whose age, password or
+   * spoiler check we have not passed on this device. The voice client
+   * refuses to follow a move into such a channel and leaves the call, so
+   * offering one would only drop us. Moving someone else is not filtered:
+   * their unlocks live on their own device, not in our layout.
+   */
+  function moveTargetChannels() {
+    const channel = callChannel();
+    const { server, subject, permissions } = callModerationInput();
+    if (!channel || !server) return [];
+    if (!canOfferMove(subject, permissions)) return [];
+    if (props.user.self && !inThisCall()) return [];
+    if (!callMember()) return [];
+
+    const channels = server.orderedChannels.flatMap(
+      (category) => category.channels,
+    );
+
+    return moveTargets(
+      props.user.self
+        ? channels.filter(
+            (c) =>
+              !isChannelGatedForMember(
+                c,
+                (k) => state.layout.getSectionState(k, false),
+                LAYOUT_SECTIONS.MATURE,
+              ),
+          )
+        : channels,
+      {
+        currentChannelId: channel.id,
+        isSelf: props.user.self,
+        isVoice: (c) => c.isVoice && c.serverId === server.id,
+        canConnect: (c) => c.havePermission("Connect"),
+        canMoveMembers: (c) => c.havePermission("MoveMembers"),
       },
+    );
+  }
+
+  /**
+   * Whether the call-moderation section has anything to show: it is only
+   * ever offered from a call surface, for a call channel on a server.
+   */
+  function callModerationShown() {
+    if (!fromCallSurface() || !callChannel()?.serverId) return false;
+    return (
+      hasCallModerationActions(moderation()) || moveTargetChannels().length > 0
     );
   }
 
@@ -504,6 +629,144 @@ export function UserContextMenu(props: {
       message: t`That didn't go through. They may have left, or you may not have permission.`,
     });
   }
+
+  /**
+   * What to say when moving SOMEONE ELSE was refused, by the kind of
+   * refusal. Every kind is listed, so a new one fails to compile here until
+   * it is given its words.
+   */
+  function otherMoveRefusal(kind: MoveRefusalKind): string {
+    switch (kind) {
+      case "target-cannot-view":
+        return t`They can't see that channel, so they can't be moved there.`;
+      case "is-bot":
+        return t`Bots can't be moved between voice channels.`;
+      case "cannot-join":
+        return t`They can't join that call right now. It may be full, or they may not be able to connect to it.`;
+      case "not-connected":
+        return t`They're not in a voice call you can move them from.`;
+      case "server-error":
+        return t`Something went wrong on our end. Try again in a moment.`;
+      case "not-authenticated":
+      case "other":
+        return t`Couldn't move them. They may have left the call, or you may not have permission.`;
+    }
+  }
+
+  /**
+   * What to say when moving OURSELVES was refused, by the kind of refusal.
+   * Every kind is listed, as above.
+   */
+  function selfMoveRefusal(kind: MoveRefusalKind): string {
+    switch (kind) {
+      case "cannot-join":
+        return t`You can't join that call right now. It may be full, or you may not be able to connect to it.`;
+      case "not-connected":
+        return t`You're not in a voice call you can move from.`;
+      case "not-authenticated":
+        return t`You can only move yourself from the device that's in the call.`;
+      case "server-error":
+        return t`Something went wrong on our end. Try again in a moment.`;
+      case "target-cannot-view":
+      case "is-bot":
+      case "other":
+        return t`Couldn't move you to that channel.`;
+    }
+  }
+
+  /**
+   * Surface a refused move in the words its kind calls for. A
+   * `NotAuthenticated` refusal (HTTP 401) only means a self-move was asked
+   * for from a session other than the one in the call: like every refusal
+   * here it shows a message and nothing else, and never signs anyone out.
+   *
+   * Logs the kind alone, never the error itself, so nothing the error
+   * carries reaches the console.
+   */
+  function moveFailed(err: unknown, self: boolean) {
+    const kind = moveRefusalKind(err);
+    console.error("Voice move refused:", kind);
+    snackbar.show({
+      message: self ? selfMoveRefusal(kind) : otherMoveRefusal(kind),
+    });
+  }
+
+  /**
+   * Move this member (or ourselves) to another voice channel of the call's
+   * server. The server re-checks every permission and the rank.
+   */
+  function moveToChannel(channelId: string) {
+    const self = props.user.self;
+    const member = callMember();
+    if (!member) return;
+
+    member
+      .moveToVoiceChannel(channelId)
+      .catch((err: unknown) => moveFailed(err, self));
+    props.onClose?.();
+  }
+
+  /**
+   * The REMOTE share identities of this user the menu offers Watch / Listen
+   * for: only while we are in that same call, and never on the screen-share
+   * tile's menu, whose tile already carries the Watch / Stop watching control
+   * for its own share. For our own user this is only our OTHER devices.
+   */
+  function watchIdentities(): string[] {
+    if (!props.inVoice || props.isScreenshare || !inThisCall()) return [];
+    return voice.shareIdentitiesOf(props.user.id);
+  }
+
+  /**
+   * Whether this share publishes screen AUDIO without screen VIDEO (plan
+   * decision A, "Audio-only shares"). It has no tile, so the menu is the
+   * only place to Listen. Read-only against the Room; its participant and
+   * publication maps are not signals, so the read is tied to
+   * `callParticipantsVersion()` the same way `shareIdentitiesOf` is.
+   */
+  function isAudioOnlyShare(identity: string) {
+    void voice.callParticipantsVersion();
+    const participant = voice.room()?.remoteParticipants.get(identity);
+    if (!participant) return false;
+
+    let video = false;
+    let audio = false;
+    for (const publication of participant.trackPublications.values()) {
+      if (publication.source === Track.Source.ScreenShare) video = true;
+      else if (publication.source === Track.Source.ScreenShareAudio)
+        audio = true;
+    }
+    return audio && !video;
+  }
+
+  /**
+   * Toggle watching (or listening to) one share identity.
+   */
+  function toggleWatch(identity: string) {
+    if (voice.isWatchingShare(identity)) voice.stopWatchingShare(identity);
+    else voice.watchShare(identity);
+    props.onClose?.();
+  }
+
+  /**
+   * The personal in-call controls (volume, mute, whisper, draw consent).
+   */
+  const personalVoiceShown = () =>
+    !!props.inVoice && !props.user.self && !props.isScreenshare;
+
+  /**
+   * The first group of the call section: personal controls and watch items.
+   */
+  const callPersonalShown = () =>
+    personalVoiceShown() || watchIdentities().length > 0;
+
+  /**
+   * Whether the quick-actions group (profile, message, mention) renders
+   * anything. It is the only group below the call section without a leading
+   * divider of its own, so the call section's trailing divider depends on it.
+   */
+  const quickActionsShown = () =>
+    !isProfileOpen() || canDm() || props.channel?.type === "TextChannel";
 
   /**
    * Toggle the server mute on this member
@@ -554,7 +817,7 @@ export function UserContextMenu(props: {
   return (
     <ContextMenu class="UserContextMenu">
       {/* Voice controls */}
-      <Show when={props.inVoice && !props.user.self && !props.isScreenshare}>
+      <Show when={personalVoiceShown()}>
         <ContextMenuButton
           onMouseDown={(e) => e.stopImmediatePropagation()}
           onClick={(e) => e.stopImmediatePropagation()}
@@ -635,43 +898,110 @@ export function UserContextMenu(props: {
             </ContextMenuButton>
           </Show>
         </Show>
-        {/* Server moderation of the call. Distinct from the personal "Mute"
-            above, which only silences this person for ME — these change what
-            the SFU accepts from them, for everyone. Each entry is gated by
-            the same server-level permission and rank check the API applies,
-            so an entry that renders is one the API will honour. */}
-        <Show when={hasCallModerationActions(moderation())}>
-          <ContextMenuDivider />
-          <Show when={moderation().mute}>
+      </Show>
+      {/* Watch / Listen, one entry per share identity (two devices sharing
+          give two entries). Outside the personal block on purpose: that one
+          is hidden on our own row, and a share from another of OUR devices
+          needs a Watch too. */}
+      <For each={watchIdentities()}>
+        {(identity) => (
+          <Show
+            when={isAudioOnlyShare(identity)}
+            fallback={
+              <ContextMenuButton
+                icon={
+                  voice.isWatchingShare(identity)
+                    ? MdVisibilityOff
+                    : MdVisibility
+                }
+                onClick={() => toggleWatch(identity)}
+              >
+                <Show
+                  when={voice.isWatchingShare(identity)}
+                  fallback={<Trans>Watch stream</Trans>}
+                >
+                  <Trans>Stop watching</Trans>
+                </Show>
+              </ContextMenuButton>
+            }
+          >
             <ContextMenuButton
-              icon={MdVoiceOverOff}
-              onClick={toggleServerMute}
-              actionSymbol={callMember()?.serverMuted ? MdChecked : MdUnchecked}
-            >
-              <Trans>Server mute</Trans>
-            </ContextMenuButton>
-          </Show>
-          <Show when={moderation().deafen}>
-            <ContextMenuButton
-              icon={MdHeadsetOff}
-              onClick={toggleServerDeafen}
-              actionSymbol={
-                callMember()?.serverDeafened ? MdChecked : MdUnchecked
+              icon={
+                voice.isWatchingShare(identity) ? MdHeadsetOff : MdHeadphones
               }
+              onClick={() => toggleWatch(identity)}
             >
-              <Trans>Server deafen</Trans>
+              <Show
+                when={voice.isWatchingShare(identity)}
+                fallback={<Trans>Listen to stream audio</Trans>}
+              >
+                <Trans>Stop listening</Trans>
+              </Show>
             </ContextMenuButton>
           </Show>
-          <Show when={moderation().disconnect}>
-            <ContextMenuButton
-              icon={MdCallEnd}
-              onClick={disconnectFromCall}
-              destructive
-            >
-              <Trans>Disconnect from call</Trans>
-            </ContextMenuButton>
-          </Show>
+        )}
+      </For>
+      {/* Server moderation of the call. Distinct from the personal "Mute"
+          above, which only silences this person for ME — these change what
+          the SFU accepts from them, for everyone. Its own section so a
+          moderator can act from a sidebar row of a call they are not in.
+          Each entry is gated by the same permission (server level for mute
+          and deafen, channel level for disconnect and move) and rank check
+          the API applies, so an entry that renders is one the API will
+          honour. */}
+      <Show when={callModerationShown()}>
+        <Show when={callPersonalShown()}>
+          <ContextMenuDivider />
         </Show>
+        <Show when={moderation().mute}>
+          <ContextMenuButton
+            icon={MdVoiceOverOff}
+            onClick={toggleServerMute}
+            actionSymbol={callMember()?.serverMuted ? MdChecked : MdUnchecked}
+          >
+            <Trans>Server mute</Trans>
+          </ContextMenuButton>
+        </Show>
+        <Show when={moderation().deafen}>
+          <ContextMenuButton
+            icon={MdHeadsetOff}
+            onClick={toggleServerDeafen}
+            actionSymbol={
+              callMember()?.serverDeafened ? MdChecked : MdUnchecked
+            }
+          >
+            <Trans>Server deafen</Trans>
+          </ContextMenuButton>
+        </Show>
+        <Show when={moderation().disconnect}>
+          <ContextMenuButton
+            icon={MdCallEnd}
+            onClick={disconnectFromCall}
+            destructive
+          >
+            <Trans>Disconnect from call</Trans>
+          </ContextMenuButton>
+        </Show>
+        <Show when={moveTargetChannels().length > 0}>
+          <ContextMenuSubMenu
+            icon={MdMoveDown}
+            buttonContent={<Trans>Move to…</Trans>}
+          >
+            <For each={moveTargetChannels()}>
+              {(channel) => (
+                <ContextMenuButton onClick={() => moveToChannel(channel.id)}>
+                  {channel.name}
+                </ContextMenuButton>
+              )}
+            </For>
+          </ContextMenuSubMenu>
+        </Show>
+      </Show>
+      <Show
+        when={
+          (callPersonalShown() || callModerationShown()) && quickActionsShown()
+        }
+      >
         <ContextMenuDivider />
       </Show>
       <Show when={props.isScreenshare && !props.user.self}>

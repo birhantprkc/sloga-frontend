@@ -23,6 +23,7 @@ import { autoUpdate, flip, offset, shift } from "@floating-ui/dom";
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import { useMutation } from "@tanstack/solid-query";
 import type { API, Channel, Server, ServerFlags } from "stoat.js";
+import { cva } from "styled-system/css";
 import { styled } from "styled-system/jsx";
 
 import { ContextMenu, ContextMenuButton } from "@revolt/app/menus/ContextMenu";
@@ -33,7 +34,18 @@ import { TextWithEmoji } from "@revolt/markdown";
 import { useModals } from "@revolt/modal";
 import { useNavigate } from "@revolt/routing";
 import { useVoice } from "@revolt/rtc";
+import { isAfkChannel } from "@revolt/rtc/afkPolicy";
 import { shouldJoinOnDoubleClick } from "@revolt/rtc/doubleClickJoinPolicy";
+import {
+  VOICE_MOVE_MIME,
+  draggedVoiceParticipant,
+  setDraggedVoiceParticipant,
+} from "@revolt/rtc/voiceMoveDrag";
+import {
+  type MoveRefusalKind,
+  moveRefusalKind,
+  moveTargets,
+} from "@revolt/rtc/voiceMovePolicy";
 import { useState } from "@revolt/state";
 import { LAYOUT_SECTIONS } from "@revolt/state/stores/Layout";
 import {
@@ -51,6 +63,7 @@ import {
   typography,
   unreadTone,
   useLayoutSides,
+  useSnackbar,
 } from "@revolt/ui";
 import { VoiceChannelPreview } from "@revolt/ui/components/features/voice/VoiceChannelPreview";
 import { createDragHandle } from "@revolt/ui/components/utils/Draggable";
@@ -60,7 +73,7 @@ import MdChevronRight from "@material-design-icons/svg/filled/chevron_right.svg?
 import MdLibraryAdd from "@material-design-icons/svg/outlined/library_add.svg?component-solid";
 import MdSettings from "@material-symbols/svg-400/outlined/settings-fill.svg?component-solid";
 
-import { gateSource, isChannelGated } from "../../channels/channelGates";
+import { isChannelGatedForMember } from "../../channels/memberGate";
 import { ServerMemberSidebar } from "../../channels/text/MemberSidebar";
 
 import { parseChannelPassword } from "../../../lib/channelPassword";
@@ -84,19 +97,17 @@ import { exitReorderMode, reorderMode } from "./reorderMode";
  * channel outside it: the member list, a voice channel's live roster, and a
  * double-click that joins the call. Each asks here first, so passing the gate
  * is the only way to reach any of them.
+ *
+ * The check itself is the shared one in `memberGate.ts`: the member menus
+ * filter their Move targets with it and the voice client asks it before
+ * following a move, so all of them agree on what "gated" means.
  */
 function isGatedFor(
   state: ReturnType<typeof useState>,
   channel: Channel,
 ): boolean {
-  const source = gateSource(channel);
-  return isChannelGated(
-    {
-      id: source.id,
-      mature: !!source.mature,
-      isSpoiler: !!source.isSpoiler,
-      hasPassword: !!parseChannelPassword(source.description).passwordHash,
-    },
+  return isChannelGatedForMember(
+    channel,
     (key) => state.layout.getSectionState(key, false),
     LAYOUT_SECTIONS.MATURE,
   );
@@ -1800,6 +1811,189 @@ function Entry(
   const client = useClient();
   const { openModal } = useModals();
   const { isMobile } = useDevice();
+  const snackbar = useSnackbar();
+  const { t } = useLingui();
+
+  /**
+   * Whether a voice-member drag is hovering this row (see `voiceMoveDrop`)
+   */
+  const [dropHover, setDropHover] = createSignal(false);
+
+  // A new drag, or the source clearing the old one on `dragend`, starts every
+  // row unhighlighted. Without this, a row whose `dragleave` never arrived
+  // would light up the moment the NEXT drag began, before the pointer was
+  // anywhere near it.
+  createEffect(
+    on(draggedVoiceParticipant, () => setDropHover(false), { defer: true }),
+  );
+
+  /**
+   * Highlight only while a voice-member drag is actually in flight
+   */
+  const dropActive = () => dropHover() && !!draggedVoiceParticipant();
+
+  /**
+   * The voice member being dragged, if this row may take the drop.
+   *
+   * Drag-to-move (`voiceMoveDrag.ts`): a participant row out of another
+   * voice channel's preview in THIS server, dropped here, moves that member
+   * here. Undefined for every other drag, which this row must then leave
+   * completely alone: the channel reorder, a file drop, a text selection.
+   *
+   * The module signal says WHO is being dragged; the MIME type in
+   * `dataTransfer.types` says this drag is the one that set it. The signal
+   * alone can be stale (its source row unmounted mid-drag, so `dragend` never
+   * cleared it), and a stale signal must not turn an unrelated drag into a
+   * move.
+   *
+   * The destination checks mirror `moveTargets` so the row never lights up
+   * for a move the server is sure to refuse. MoveMembers in the SOURCE and
+   * outranking the target were the source row's gate before it let the drag
+   * start (`canDragParticipant`). None of this is authorization; the server
+   * decides.
+   */
+  function voiceMoveDrop(e: DragEvent) {
+    const types = e.dataTransfer?.types;
+    // `types` is a plain array today but a DOMStringList in older engines
+    if (!types || !Array.prototype.includes.call(types, VOICE_MOVE_MIME))
+      return undefined;
+
+    const dragged = draggedVoiceParticipant();
+    const channel = props.channel;
+    if (!dragged || props.reordering) return undefined;
+    if (!channel.isVoice || !channel.serverId) return undefined;
+    if (dragged.serverId !== channel.serverId) return undefined;
+
+    // A channel still behind its gate isn't one we've entered: its roster is
+    // hidden below, and a double-click won't join it either.
+    if (isGatedFor(state, channel)) return undefined;
+
+    const allowed = moveTargets([channel], {
+      currentChannelId: dragged.fromChannelId,
+      isSelf: dragged.userId === client().user?.id,
+      isVoice: (c) => c.isVoice && !!c.serverId,
+      canConnect: (c) => c.havePermission("Connect"),
+      canMoveMembers: (c) => c.havePermission("MoveMembers"),
+    });
+    return allowed.length ? dragged : undefined;
+  }
+
+  /**
+   * `dragenter` / `dragover`: claim a voice-member drag this row can take.
+   * Any other drag is not cancelled, so it carries on exactly as before.
+   */
+  function onVoiceMoveDragOver(e: DragEvent) {
+    if (!voiceMoveDrop(e)) {
+      setDropHover(false);
+      return;
+    }
+
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    setDropHover(true);
+  }
+
+  /**
+   * `dragleave` fires on every child the pointer crosses, so only a leave
+   * to somewhere outside this row clears the highlight. Where an engine
+   * reports no `relatedTarget` (older WebKit), this clears on each crossing
+   * and the next `dragover` puts it straight back. A cancelled drag (Esc)
+   * ends with a `dragleave` whose `relatedTarget` is null, so it clears too.
+   */
+  function onVoiceMoveDragLeave(e: DragEvent) {
+    const zone = e.currentTarget;
+    const into = e.relatedTarget;
+    if (zone instanceof Node && into instanceof Node && zone.contains(into))
+      return;
+    setDropHover(false);
+  }
+
+  /**
+   * Move the dragged member into this voice channel
+   */
+  function onVoiceMoveDrop(e: DragEvent) {
+    setDropHover(false);
+
+    const dragged = voiceMoveDrop(e);
+    if (!dragged) return;
+    // `getData` is readable only now, at the drop. Require it to name the
+    // same member as the signal, so only the drag that set the signal can
+    // act on it (the server stays the authority either way).
+    if (e.dataTransfer?.getData(VOICE_MOVE_MIME) !== dragged.userId) return;
+
+    e.preventDefault();
+    setDraggedVoiceParticipant(undefined);
+
+    const channelId = props.channel.id;
+    const isSelf = dragged.userId === client().user?.id;
+
+    // `fetch` returns the cached member when it is fully loaded and asks the
+    // server otherwise. Nothing in the voice path fills that cache, so a
+    // participant can easily be unknown here (see `callMember` in
+    // UserContextMenu).
+    client()
+      .serverMembers.fetch(dragged.serverId, dragged.userId)
+      .then((member) => member.moveToVoiceChannel(channelId))
+      .catch((err: unknown) => {
+        const kind = moveRefusalKind(err);
+        // The kind only, never the rejection itself: its shape belongs to
+        // the request layer (stoat-api 0.13 throws the response body), so
+        // nothing here can promise it holds no credential.
+        console.warn("[voice-move] drag-to-move refused:", kind);
+        snackbar.show({ message: moveRefusedMessage(kind, isSelf) });
+      });
+  }
+
+  /**
+   * What a refused drag-to-move tells the mover. The member menus' Move
+   * entries (UserContextMenu) show exactly the same strings for the same
+   * refusals, whichever way the move was asked for.
+   *
+   * The copy for moving someone else who isn't in a call is worded so it
+   * never says whether they are in one the mover can't see.
+   */
+  function moveRefusedMessage(kind: MoveRefusalKind, isSelf: boolean) {
+    if (isSelf) {
+      switch (kind) {
+        case "cannot-join":
+          return t`You can't join that call right now. It may be full, or you may not be able to connect to it.`;
+        case "not-connected":
+          return t`You're not in a voice call you can move from.`;
+        case "not-authenticated":
+          return t`You can only move yourself from the device that's in the call.`;
+        case "server-error":
+          return t`Something went wrong on our end. Try again in a moment.`;
+        case "target-cannot-view":
+        case "is-bot":
+        case "other":
+          return t`Couldn't move you to that channel.`;
+        default: {
+          const unhandled: never = kind;
+          return unhandled;
+        }
+      }
+    }
+
+    switch (kind) {
+      case "target-cannot-view":
+        return t`They can't see that channel, so they can't be moved there.`;
+      case "is-bot":
+        return t`Bots can't be moved between voice channels.`;
+      case "cannot-join":
+        return t`They can't join that call right now. It may be full, or they may not be able to connect to it.`;
+      case "not-connected":
+        return t`They're not in a voice call you can move them from.`;
+      case "server-error":
+        return t`Something went wrong on our end. Try again in a moment.`;
+      case "not-authenticated":
+      case "other":
+        return t`Couldn't move them. They may have left the call, or you may not have permission.`;
+      default: {
+        const unhandled: never = kind;
+        return unhandled;
+      }
+    }
+  }
 
   // Joined, non-archived threads hanging off this channel — nested below it.
   // Membership is seeded from Ready (joined threads only) and kept live by
@@ -1851,6 +2045,19 @@ function Entry(
   );
 
   const inCall = () => props.channel.id === voice.channel()?.id;
+
+  /**
+   * Whether this is the server's designated AFK channel, which is what the
+   * muted-mic icon means.
+   *
+   * This used to key off the channel NAME (`name?.toLowerCase() === "afk"`), so
+   * renaming any channel to "afk" earned the icon, renaming the real one lost
+   * it, and "AFK Channel" or "💤 AFK" got nothing — while the server muted a
+   * completely different channel. An accessor rather than a value so a
+   * designation change repaints without a reload.
+   */
+  const isAfkVoiceChannel = () =>
+    isAfkChannel(props.channel.server?.afkChannelId, props.channel.id);
 
   /**
    * Double-click a voice channel to join it, skipping the two-step the
@@ -1911,7 +2118,20 @@ function Entry(
   );
 
   return (
-    <Column gap="sm">
+    <Column
+      gap="sm"
+      // The whole block takes a voice-member drop: the row and the roster
+      // under it. Inert for every other drag and for non-voice channels.
+      class={
+        props.channel.isVoice
+          ? voiceDropTarget({ hover: dropActive() })
+          : undefined
+      }
+      onDragEnter={onVoiceMoveDragOver}
+      onDragOver={onVoiceMoveDragOver}
+      onDragLeave={onVoiceMoveDragLeave}
+      onDrop={onVoiceMoveDrop}
+    >
       <MenuButton
         // No navigation while rearranging. A plain tap on a row is easy to
         // land during a drag, and on a phone following the link ALSO slides
@@ -1967,9 +2187,7 @@ function Entry(
             <Switch fallback={<Symbol>edit</Symbol>}>
               <Match when={props.channel.isVoice}>
                 <Symbol color={inCall() ? inCallIconColour() : undefined}>
-                  {props.channel.name?.toLowerCase() === "afk"
-                    ? "mic_off"
-                    : "mic"}
+                  {isAfkVoiceChannel() ? "mic_off" : "mic"}
                 </Symbol>
               </Match>
               <Match when={props.channel.type === "Forum"}>
@@ -1985,6 +2203,9 @@ function Entry(
                 css={{ marginEnd: "0.2em" }}
               />
             </Show>
+            {/* The lock says the channel HAS a password, whether or not this
+                member has passed it, so this is not `isGatedFor`. These rows
+                are never threads, so there is no parent to resolve. */}
             <Show
               when={
                 parseChannelPassword(props.channel.description).passwordHash
@@ -2102,6 +2323,30 @@ function Entry(
     </Column>
   );
 }
+
+/**
+ * A voice channel's block while a dragged voice member hovers it
+ * (drag-to-move, `voiceMoveDrag.ts`). No `false` variant on purpose: an
+ * idle block looks exactly as it did before.
+ */
+const voiceDropTarget = cva({
+  base: {
+    borderRadius: "var(--borderRadius-lg)",
+    outline: "2px solid transparent",
+    outlineOffset: "-2px",
+    transition:
+      "var(--transitions-fast) background-color, var(--transitions-fast) outline-color",
+  },
+  variants: {
+    hover: {
+      true: {
+        outlineColor: "var(--md-sys-color-primary)",
+        background:
+          "color-mix(in srgb, var(--md-sys-color-primary) 12%, transparent)",
+      },
+    },
+  },
+});
 
 /**
  * Indentation wrapper for threads nested under their parent channel

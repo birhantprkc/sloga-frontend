@@ -34,6 +34,7 @@ import {
   MONOSPACE_FONT_KEYS,
   MonospaceFonts,
 } from "@revolt/ui/themes/fonts";
+import { BRAND_ACCENT } from "@revolt/ui/themes/materialTheme";
 import { RAIL_ACCENT_PRESETS } from "@revolt/ui/themes/railAccent";
 
 import MDPalette from "@material-design-icons/svg/outlined/palette.svg?component-solid";
@@ -139,80 +140,68 @@ export function AppearanceMenu() {
           </Button>
         </Row>
 
-        <Show when={state.theme.preset === "you"}>
-          <Row align justify wrap>
-            {/* The swatch button and the hidden colour input shared one ref
-                signal, so which element `pickerRef()` ended up pointing at was
-                just whichever Solid created last. It happened to be the input,
-                which is the one we want to click — only by accident. */}
-            <IconButton
-              variant="filled"
-              shape="square"
-              size="md"
-              onPress={() => pickerRef()?.click()}
-            >
-              <MDPalette />
-            </IconButton>
-            <input
-              ref={setPickerRef}
-              type="color"
-              value={state.theme.m3Accent ?? "#ffffff"}
-              onInput={(e) => {
-                const colour = (e.currentTarget as HTMLInputElement).value;
-                state.theme.setM3Accent(colour);
-              }}
-              style={{
-                position: "absolute",
-                opacity: 0,
-                width: "0px",
-                height: "0px",
-                padding: 0,
-                border: "none",
-              }}
-            />
-            <For
-              each={[
-                "#FF5733",
-                "#ffdc2f",
-                "#9bf088",
-                "#54ecc1",
-                "#549bec",
-                "#5470ec",
-                "#8C5FD3",
-              ]}
-            >
-              {(colour) => (
-                <Button
-                  size="md"
-                  bg={colour}
-                  group="standard"
-                  groupActive={state.theme.m3Accent === colour}
-                  onPress={() => state.theme.setM3Accent(colour)}
-                />
-                // <div
-                //   class={css({
-                //     borderRadius: "var(--borderRadius-full)",
-                //     width: "48px",
-                //     height: "48px",
-                //     cursor: "pointer",
-                //   })}
-                //   style={{ "background-color": colour }}
-                //   onClick={() => state.theme.setM3Accent(colour)}
-                // />
-              )}
-            </For>
-            {/* <div
-            class={css({
-              borderRadius: "var(--borderRadius-full)",
-              width: "48px",
-              height: "48px",
-              cursor: "pointer",
-            })}
+        {/* Outside the preset guard: each preset keeps its own accent, and
+            the Sloga one used to be unreachable, so picking a colour there did
+            nothing at all. */}
+        <Row align justify wrap>
+          {/* The swatch button and the hidden colour input shared one ref
+              signal, so which element `pickerRef()` ended up pointing at was
+              just whichever Solid created last. It happened to be the input,
+              which is the one we want to click — only by accident. */}
+          <IconButton
+            variant="filled"
+            shape="square"
+            size="md"
+            onPress={() => pickerRef()?.click()}
           >
-            <MdColorize />
-          </div> */}
-          </Row>
+            <MDPalette />
+          </IconButton>
+          <input
+            ref={setPickerRef}
+            type="color"
+            value={state.theme.accent ?? "#ffffff"}
+            onInput={(e) => {
+              const colour = (e.currentTarget as HTMLInputElement).value;
+              state.theme.setAccent(colour);
+            }}
+            style={{
+              position: "absolute",
+              opacity: 0,
+              width: "0px",
+              height: "0px",
+              padding: 0,
+              border: "none",
+            }}
+          />
+          {/* Sloga blue first: it is the default for both presets, and the
+              only way back to it after trying another colour. */}
+          <For
+            each={[
+              BRAND_ACCENT,
+              "#FF5733",
+              "#ffdc2f",
+              "#9bf088",
+              "#54ecc1",
+              "#549bec",
+              "#5470ec",
+              "#8C5FD3",
+            ]}
+          >
+            {(colour) => (
+              <Button
+                size="md"
+                bg={colour}
+                group="standard"
+                groupActive={
+                  state.theme.accent.toLowerCase() === colour.toLowerCase()
+                }
+                onPress={() => state.theme.setAccent(colour)}
+              />
+            )}
+          </For>
+        </Row>
 
+        <Show when={state.theme.preset === "you"}>
           {/* TODO: Cursed on mobile; may need to be replaced
           with FloatingSelect / similar on small screens */}
           <Row justify="stretch">

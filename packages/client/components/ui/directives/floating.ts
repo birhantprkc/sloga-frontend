@@ -179,12 +179,17 @@ export function floating(element: HTMLElement, accessor: Accessor<Props>) {
   createEffect(
     on(
       () => accessor().tooltip,
-      (tooltip) => {
+      (tooltip, prevTooltip) => {
         if (tooltip) {
           element.ariaLabel =
             typeof tooltip.content === "string"
               ? tooltip.content
               : tooltip!.aria!;
+
+          // A showing tooltip renders the config it opened with. Swap in the
+          // new one so changed content updates while hovered, rather than on
+          // the next mouseenter.
+          if (show()?.tooltip) setShow({ tooltip });
 
           element.addEventListener("mouseenter", onMouseEnter);
           element.addEventListener("mouseleave", onMouseLeave);
@@ -197,6 +202,15 @@ export function floating(element: HTMLElement, accessor: Accessor<Props>) {
             element.removeEventListener("touchstart", onTouch);
             element.removeEventListener("touchend", onTouch);
           });
+        } else if (prevTooltip) {
+          // The tooltip was taken away (callers pass it conditionally): drop
+          // the label set above, and hide it if it is showing, since its
+          // mouseleave listener is gone and nothing else hides tooltips.
+          // Not in onCleanup: callers may return a new config object on every
+          // evaluation, which would hide a visible tooltip each time. Gated on
+          // prevTooltip so an aria-label the caller set is left alone.
+          element.removeAttribute("aria-label");
+          if (show()?.tooltip) setShow(undefined);
         }
       },
     ),

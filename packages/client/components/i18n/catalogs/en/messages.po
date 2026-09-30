@@ -570,6 +570,54 @@ msgid "A moderator deafened you in this server. You won't hear this call until t
 msgstr "A moderator deafened you in this server. You won't hear this call until they lift it."
 
 #: components/rtc/state.tsx
+msgid "Your call continued in another window or on another device"
+msgstr "Your call continued in another window or on another device"
+
+#: components/rtc/state.tsx
+msgid "Your call was moved to #{channelName} in another window or on another device"
+msgstr "Your call was moved to #{channelName} in another window or on another device"
+
+#: components/rtc/state.tsx
+msgid "Your call was moved in another window or on another device"
+msgstr "Your call was moved in another window or on another device"
+
+#: components/rtc/state.tsx
+msgid "You were moved to another voice channel, but this app doesn't know that channel yet. You've left your old call — reload Sloga, then open the channel you were moved to."
+msgstr "You were moved to another voice channel, but this app doesn't know that channel yet. You've left your old call — reload Sloga, then open the channel you were moved to."
+
+#: components/rtc/state.tsx
+msgid "You were moved to #{destinationName}, but that channel has an age, password or spoiler check you haven't passed on this device, so you've left your old call. Open the channel to pass the check, then join the call."
+msgstr "You were moved to #{destinationName}, but that channel has an age, password or spoiler check you haven't passed on this device, so you've left your old call. Open the channel to pass the check, then join the call."
+
+#: components/rtc/state.tsx
+msgid "You were moved to #{destinationName}. This device can't follow a move on its own, so you've left your old call — the new channel is on your call card, press Rejoin to connect to it."
+msgstr "You were moved to #{destinationName}. This device can't follow a move on its own, so you've left your old call — the new channel is on your call card, press Rejoin to connect to it."
+
+#: components/rtc/state.tsx
+msgid "You were moved to #{destinationName}, but the notice reached this device too late to follow on its own. You've left your old call — the new channel is on your call card, so press Rejoin to connect to it."
+msgstr "You were moved to #{destinationName}, but the notice reached this device too late to follow on its own. You've left your old call — the new channel is on your call card, so press Rejoin to connect to it."
+
+#: components/rtc/state.tsx
+msgid "You were moved to #{destinationName}, but connecting to it failed. You've left your old call — the new channel is on your call card, so press Rejoin to connect to it."
+msgstr "You were moved to #{destinationName}, but connecting to it failed. You've left your old call — the new channel is on your call card, so press Rejoin to connect to it."
+
+#: components/rtc/state.tsx
+msgid "You were moved to #{destinationName}, but connecting to it failed. You've left your old call — open the channel you were moved to and join it again."
+msgstr "You were moved to #{destinationName}, but connecting to it failed. You've left your old call — open the channel you were moved to and join it again."
+
+#: components/rtc/state.tsx
+msgid "You were moved to a voice channel that isn't available here, so you have left the call."
+msgstr "You were moved to a voice channel that isn't available here, so you have left the call."
+
+#: components/rtc/state.tsx
+msgid "You were moved to #{destName}, but the call there couldn't be joined."
+msgstr "You were moved to #{destName}, but the call there couldn't be joined."
+
+#: components/rtc/state.tsx
+msgid "Moved to #{destName}"
+msgstr "Moved to #{destName}"
+
+#: components/rtc/state.tsx
 msgid "A moderator muted you in this server. Your microphone and camera stay off for everyone until they lift it."
 msgstr "A moderator muted you in this server. Your microphone and camera stay off for everyone until they lift it."
 
@@ -891,6 +939,14 @@ msgstr "Android will ask you to confirm every time you start sharing."
 msgid "Announcement channel"
 msgstr "Announcement channel"
 
+#: components/modal/modals/CreateChannel.tsx
+msgid "AFK channel"
+msgstr "AFK channel"
+
+#: components/modal/modals/CreateChannel.tsx
+msgid "Nobody can speak, share video or share their screen in the AFK channel. A server has one AFK channel, so choosing this one replaces any previous choice."
+msgstr "Nobody can speak, share video or share their screen in the AFK channel. A server has one AFK channel, so choosing this one replaces any previous choice."
+
 #: components/app/interface/settings/channel/Overview.tsx
 msgid "Announcement Channel"
 msgstr "Announcement Channel"
@@ -1004,6 +1060,11 @@ msgstr "Ask them to move their mouse. Their pointer should move on the screen yo
 #: components/ui/components/features/voice/callCard/ParticipantTile.tsx
 msgid "Asked"
 msgstr "Asked"
+
+#. placeholder {0}: displayName()
+#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
+msgid "Stop watching stream from {0}"
+msgstr "Stop watching stream from {0}"
 
 #: components/ui/components/features/voice/callCard/VoicePassControlPanel.tsx
 msgid "Asked for a turn"
@@ -1390,6 +1451,15 @@ msgstr "Camera settings"
 #: components/app/interface/settings/user/voice/CameraOptions.tsx
 #~ msgid "Camera Settings"
 #~ msgstr "Camera Settings"
+
+#: components/ui/components/features/voice/callCard/VoiceCallCardActiveRoom.tsx
+#: components/ui/components/features/voice/callCard/VoiceCallCardActiveRoom.tsx
+msgid "Show all participants"
+msgstr "Show all participants"
+
+#: components/ui/components/features/voice/callCard/VoiceCallCardActiveRoom.tsx
+msgid "Hide participants without video"
+msgstr "Hide participants without video"
 
 #: components/app/interface/settings/user/voice/CameraPreview.tsx
 msgid "Camera unavailable — check permissions and that no other app is using it."
@@ -2434,6 +2504,14 @@ msgstr "Deafened by a moderator. They cannot hear this call."
 msgid "Decline"
 msgstr "Decline"
 
+#: components/ui/components/features/voice/VoiceChannelPreview.tsx
+msgid "Join the call, then press Watch to see their screen"
+msgstr "Join the call, then press Watch to see their screen"
+
+#: components/ui/components/features/voice/VoiceChannelPreview.tsx
+msgid "Press Watch to see their screen"
+msgstr "Press Watch to see their screen"
+
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 #: components/app/interface/settings/user/voice/VoiceProcessingOptions.tsx
 msgid "Deep"
@@ -2657,6 +2735,10 @@ msgstr "Disconnect"
 msgid "Disconnect from call"
 msgstr "Disconnect from call"
 
+#: components/app/menus/UserContextMenu.tsx
+msgid "Move to…"
+msgstr "Move to…"
+
 #: components/app/interface/settings/user/notifications/Sounds.tsx
 msgid "Disconnect Sound Style"
 msgstr "Disconnect Sound Style"
@@ -2792,6 +2874,10 @@ msgstr "e.g. they/them"
 #: components/modal/modals/UserProfileRoles.tsx
 msgid "Edit {0}'s roles"
 msgstr "Edit {0}'s roles"
+
+#: components/rtc/state.tsx
+msgid "You're in the AFK channel. Your microphone and camera stay off for everyone here — move to another voice channel to talk."
+msgstr "You're in the AFK channel. Your microphone and camera stay off for everyone here — move to another voice channel to talk."
 
 #: components/app/interface/settings/channel/permissions/ChannelPermissionsEditor.tsx
 msgid "Edit and delete channel"
@@ -4828,6 +4914,31 @@ msgstr "Neutral"
 msgid "Never"
 msgstr "Never"
 
+#: components/app/interface/settings/channel/Overview.tsx
+#: components/modal/modals/CreateChannel.tsx
+msgid "15 minutes"
+msgstr "15 minutes"
+
+#: components/app/interface/settings/channel/Overview.tsx
+msgid "This is the idle timeout that will be used once this channel is the AFK channel. It starts from whatever this server already has."
+msgstr "This is the idle timeout that will be used once this channel is the AFK channel. It starts from whatever this server already has."
+
+#: components/app/interface/settings/channel/Overview.tsx
+msgid "Make AFK Channel"
+msgstr "Make AFK Channel"
+
+#: components/app/interface/settings/channel/Overview.tsx
+msgid "Stop being the AFK Channel"
+msgstr "Stop being the AFK Channel"
+
+#: components/app/interface/settings/channel/Overview.tsx
+msgid "Save idle timeout"
+msgstr "Save idle timeout"
+
+#: components/app/interface/settings/channel/Overview.tsx
+msgid "A channel with an age, password or spoiler check can't be the AFK channel. Remove the check first."
+msgstr "A channel with an age, password or spoiler check can't be the AFK channel. Remove the check first."
+
 #: components/ui/components/features/messaging/elements/MessageDivider.tsx
 msgid "NEW"
 msgstr "NEW"
@@ -6077,6 +6188,18 @@ msgstr "Remove other members' avatars"
 msgid "Remove Password"
 msgstr "Remove Password"
 
+#: components/app/interface/settings/channel/Overview.tsx
+#: components/app/interface/settings/channel/Overview.tsx
+#: components/app/interface/settings/channel/Overview.tsx
+msgid "This is the server's AFK channel, so it can't have an age, password or spoiler check. Choose another AFK channel first."
+msgstr "This is the server's AFK channel, so it can't have an age, password or spoiler check. Choose another AFK channel first."
+
+#: components/app/interface/settings/channel/Overview.tsx
+#: components/app/interface/settings/channel/Overview.tsx
+#: components/app/interface/settings/channel/Overview.tsx
+msgid "That change was not saved."
+msgstr "That change was not saved."
+
 #: components/app/menus/MessageContextMenu.tsx
 msgid "Remove reaction"
 msgstr "Remove reaction"
@@ -6905,6 +7028,11 @@ msgstr "Show message timestamps"
 msgid "Show Others"
 msgstr "Show Others"
 
+#. placeholder {0}: selection().hiddenCount
+#: components/ui/components/features/voice/callCard/VoiceCallCardActiveRoom.tsx
+msgid "{0, plural, one {# participant without video hidden} other {# participants without video hidden}}"
+msgstr "{0, plural, one {# participant without video hidden} other {# participants without video hidden}}"
+
 #: components/app/interface/settings/user/voice/OverlaySettings.tsx
 msgid "Show overlay during calls"
 msgstr "Show overlay during calls"
@@ -7298,6 +7426,24 @@ msgstr "Stop all drawing"
 msgid "Stop all drawing on my screen"
 msgstr "Stop all drawing on my screen"
 
+#: components/app/menus/UserContextMenu.tsx
+#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
+msgid "Watch stream"
+msgstr "Watch stream"
+
+#: components/app/menus/UserContextMenu.tsx
+#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
+msgid "Stop watching"
+msgstr "Stop watching"
+
+#: components/app/menus/UserContextMenu.tsx
+msgid "Listen to stream audio"
+msgstr "Listen to stream audio"
+
+#: components/app/menus/UserContextMenu.tsx
+msgid "Stop listening"
+msgstr "Stop listening"
+
 #: components/ui/components/features/voice/callCard/VoiceGiveControlButton.tsx
 msgid "Stop at any time with Ctrl+Shift+Alt+Q."
 msgstr "Stop at any time with Ctrl+Shift+Alt+Q."
@@ -7326,6 +7472,16 @@ msgstr "Stop screen share"
 #: components/ui/components/features/voice/callCard/ParticipantTile.tsx
 msgid "Stop sharing"
 msgstr "Stop sharing"
+
+#. placeholder {0}: displayName()
+#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
+msgid "{0} is sharing their screen"
+msgstr "{0} is sharing their screen"
+
+#. placeholder {0}: displayName()
+#: components/ui/components/features/voice/callCard/ParticipantTile.tsx
+msgid "Watch stream from {0}"
+msgstr "Watch stream from {0}"
 
 #: components/ui/components/features/voice/callCard/VoiceTranscribeButton.tsx
 msgid "Stop transcribing"
@@ -7552,6 +7708,58 @@ msgstr "That bot is currently offline — try again once it reconnects."
 msgid "That didn't go through. They may have left, or you may not have permission."
 msgstr "That didn't go through. They may have left, or you may not have permission."
 
+#: components/app/menus/UserContextMenu.tsx
+#: src/interface/navigation/channels/ServerSidebar.tsx
+msgid "Couldn't move you to that channel."
+msgstr "Couldn't move you to that channel."
+
+#: components/app/menus/UserContextMenu.tsx
+#: src/interface/navigation/channels/ServerSidebar.tsx
+msgid "They can't see that channel, so they can't be moved there."
+msgstr "They can't see that channel, so they can't be moved there."
+
+#: components/app/menus/UserContextMenu.tsx
+#: src/interface/navigation/channels/ServerSidebar.tsx
+msgid "Bots can't be moved between voice channels."
+msgstr "Bots can't be moved between voice channels."
+
+#: components/app/menus/UserContextMenu.tsx
+#: src/interface/navigation/channels/ServerSidebar.tsx
+msgid "They can't join that call right now. It may be full, or they may not be able to connect to it."
+msgstr "They can't join that call right now. It may be full, or they may not be able to connect to it."
+
+#: components/app/menus/UserContextMenu.tsx
+#: src/interface/navigation/channels/ServerSidebar.tsx
+msgid "They're not in a voice call you can move them from."
+msgstr "They're not in a voice call you can move them from."
+
+#: components/app/menus/UserContextMenu.tsx
+#: components/app/menus/UserContextMenu.tsx
+#: src/interface/navigation/channels/ServerSidebar.tsx
+#: src/interface/navigation/channels/ServerSidebar.tsx
+msgid "Something went wrong on our end. Try again in a moment."
+msgstr "Something went wrong on our end. Try again in a moment."
+
+#: components/app/menus/UserContextMenu.tsx
+#: src/interface/navigation/channels/ServerSidebar.tsx
+msgid "Couldn't move them. They may have left the call, or you may not have permission."
+msgstr "Couldn't move them. They may have left the call, or you may not have permission."
+
+#: components/app/menus/UserContextMenu.tsx
+#: src/interface/navigation/channels/ServerSidebar.tsx
+msgid "You can't join that call right now. It may be full, or you may not be able to connect to it."
+msgstr "You can't join that call right now. It may be full, or you may not be able to connect to it."
+
+#: components/app/menus/UserContextMenu.tsx
+#: src/interface/navigation/channels/ServerSidebar.tsx
+msgid "You're not in a voice call you can move from."
+msgstr "You're not in a voice call you can move from."
+
+#: components/app/menus/UserContextMenu.tsx
+#: src/interface/navigation/channels/ServerSidebar.tsx
+msgid "You can only move yourself from the device that's in the call."
+msgstr "You can only move yourself from the device that's in the call."
+
 #: components/modal/modals/ImportDiscord.tsx
 msgid "That doesn't look like a Discord server template link."
 msgstr "That doesn't look like a Discord server template link."
@@ -7592,6 +7800,30 @@ msgstr "The calendar feature is not enabled on this server."
 #: components/rtc/state.tsx
 msgid "The call couldn't be started right now."
 msgstr "The call couldn't be started right now."
+
+#: components/rtc/state.tsx
+msgid "You're in the AFK channel, so your microphone stays off for everyone here. Move to another voice channel to talk."
+msgstr "You're in the AFK channel, so your microphone stays off for everyone here. Move to another voice channel to talk."
+
+#: components/rtc/state.tsx
+msgid "You're in the AFK channel, so your camera stays off for everyone here. Move to another voice channel to turn it on."
+msgstr "You're in the AFK channel, so your camera stays off for everyone here. Move to another voice channel to turn it on."
+
+#: components/rtc/state.tsx
+msgid "You're in the AFK channel, so you can't share your screen here. Move to another voice channel to share."
+msgstr "You're in the AFK channel, so you can't share your screen here. Move to another voice channel to share."
+
+#: components/rtc/state.tsx
+msgid "You don't have permission to speak in this channel."
+msgstr "You don't have permission to speak in this channel."
+
+#: components/rtc/state.tsx
+msgid "You don't have permission to turn on your camera in this channel."
+msgstr "You don't have permission to turn on your camera in this channel."
+
+#: components/rtc/state.tsx
+msgid "You don't have permission to share your screen in this channel."
+msgstr "You don't have permission to share your screen in this channel."
 
 #: components/rtc/state.tsx
 msgid "The call is full. Try again when someone leaves."
@@ -8287,6 +8519,19 @@ msgstr "Unmark as mature"
 #: components/app/interface/settings/channel/Overview.tsx
 msgid "Unmark as Mature"
 msgstr "Unmark as Mature"
+
+#: components/app/interface/settings/channel/Overview.tsx
+msgid "AFK Channel"
+msgstr "AFK Channel"
+
+#: components/app/interface/settings/channel/Overview.tsx
+msgid "Nobody can speak, share video or share their screen in the AFK channel, including you. A server has one AFK channel, so making this one replaces any previous choice."
+msgstr "Nobody can speak, share video or share their screen in the AFK channel, including you. A server has one AFK channel, so making this one replaces any previous choice."
+
+#: components/app/interface/settings/channel/Overview.tsx
+#: components/modal/modals/CreateChannel.tsx
+msgid "Move idle members here after"
+msgstr "Move idle members here after"
 
 #: components/modal/modals/ChannelToggleMature.tsx
 msgid "Unmark this channel as mature?"

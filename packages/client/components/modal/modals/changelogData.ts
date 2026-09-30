@@ -9,6 +9,86 @@ import type { ChangelogResponse } from "./Changelog";
  */
 export const CHANGELOGS: ChangelogResponse[] = [
   // ==========================================================================
+  // v0.64.0 (written 2026-09-29 by the merge steward from the v0.64 inbox,
+  // ~/.claude/plans/v064-patch-notes-inbox.md). NOT CUT YET: the release
+  // sweep bumps the root version and sets `published_at` to the release day.
+  // Copy constraints, load-bearing — READ BEFORE EDITING:
+  // - 🔴 This entry may only ship AFTER the AFK + voice-move backend is
+  //   deployed (bonfire, then every delta, then crond, then voice-ingress, at
+  //   acutest f07d2b99 or later). The frontend on main needs it; see the
+  //   merge ledger.
+  // - AFK and moves: no live two-client test ran (waived by the operator
+  //   2026-09-29). The bullets say what the code does, with no speed or
+  //   reliability claims. "Using Sloga" means input in the visible window,
+  //   not any activity on the computer. Only members on this version report
+  //   idle. Anyone in a call from before the deploy is disconnected, not
+  //   moved, until they rejoin. Moderator moves ignore the user limit and
+  //   need no Connect for the member (ruling D0): true, deliberately left
+  //   out. The old settings line "Members who can't connect to this channel
+  //   won't be moved." was false and is gone; never repeat it. An older
+  //   client is disconnected, not moved; do not say it "can join the new
+  //   channel" (a moderator may move someone where they can't connect).
+  //   Backend revision 72 designates a server's single unchecked "afk"
+  //   voice channel at deploy with no timeout, hence that bullet.
+  // - Screen shares: always on, no setting. The device legs were waived; the
+  //   web legs passed. Recordings leave out the sound of shares you aren't
+  //   watching (an accepted trade-off in the plan), hence that bullet.
+  // - Late-drain guard (27f87779): encrypted calls run in the desktop and
+  //   phone apps, so it reaches people with this release's app builds.
+  // - Color picker (e961314b): nobody tapped the swatches signed in (a
+  //   9-test spec and a built dist). The theme is saved per device, NOT
+  //   synced; do not claim the "theme reset after updating" report is fixed.
+  //   The light-mode sentence is load-bearing (bright swatches render
+  //   darker). Old installs with the upstream #FF5733 stay Sloga blue.
+  // - Tooltips (b9763ffd + adaacb11): checked in a harness with the real
+  //   directive, not signed in.
+  // - Referral colors (536a2332): never viewed in a browser; the red may be
+  //   low-contrast in dark mode (open audit note).
+  // - LEFT OUT on purpose: audio link embeds (on main, but dark until the
+  //   january flag flips; add a bullet then) and the encrypted-call resume
+  //   (fix/mls-rejoin-resume-w2, inbox entry 1) until it lands on main.
+  //   Never mention reloads, Ctrl+R or "0 s" for the resume.
+  {
+    id: "sloga-2026-09-29",
+    title: "Patch Notes",
+    published_at: "2026-09-29T12:00:00.000Z",
+    web_version: "0.64.0",
+    markdown_content: `## v0.64.0 — AFK Channels and Moving Members
+
+### 💤 AFK Channel
+- **Give your server an AFK channel.** In a voice channel's settings, **Make AFK Channel** turns it into the server's AFK channel; when you create a voice channel, tick **AFK channel** instead (you need Manage Server). A server has one; picking a new one replaces the old.
+- **Already had a voice channel named "afk"?** If your server had exactly one, with no age, password or spoiler check, it is now your server's AFK channel: nobody can speak, turn on their camera or share their screen in it. No idle timeout is set, so nobody is moved there until someone with Manage Server picks one. To undo it, open the channel's settings and press **Stop being the AFK Channel**.
+- **Idle members get moved there.** Choose how long someone can sit idle in a call before they're moved: 1, 5, 15 or 30 minutes, or 1 hour. Talking, holding push-to-talk, sharing your screen or camera, watching a share, or using Sloga counts as activity.
+- **Only people on this version of Sloga are moved when idle.** The app is what notices someone is idle, so a member on an older version stays where they are.
+- **The AFK channel is quiet by design.** Nobody can speak, turn on their camera or share their screen there, including the server owner. Move to another voice channel to talk again.
+- **An AFK channel can't have an age, password or spoiler check,** and a channel that is the AFK channel can't be given one. Remove the check, or pick another AFK channel first.
+- **The muted-microphone icon in the channel list now marks your server's AFK channel,** not any channel that happens to be named "afk".
+- **Importing a server from Discord now brings over its AFK channel and idle timeout,** unless that channel has an age, password or spoiler check.
+
+### ↔️ Moving members between voice channels
+- **Move someone to another voice channel.** Right-click a member in a call and choose **Move to…**, or drag them onto another voice channel in the sidebar. You need Move Members in both channels and permission to connect to the one you move them into. Bots can't be moved, but they can still be disconnected.
+- **A move only affects the device someone is in the call on.** Their other windows and devices aren't pulled into the call.
+- **You can move yourself too,** from the device that's in the call.
+- **Channels with a check stay behind their check.** If you're moved into a channel with an age, password or spoiler check you haven't passed on this device, Sloga leaves your old call and tells you why instead of putting you in. Open the channel, pass the check, then join.
+- **Someone on an older version of Sloga is disconnected from the call instead of being moved.** The same goes for anyone who was already in a call when this update reached our servers, until they rejoin once.
+
+### 🖥️ Screen shares and the call view
+- **You choose which screen shares to watch.** When someone shares their screen, you see their name and a **Watch stream** button instead. Nothing from the share, picture or sound, reaches you until you press it, and **Stop watching** turns it off again. Each new share asks again.
+- **A share with only sound has no tile.** Right-click the person in the call and choose **Listen to stream audio**.
+- **Recordings leave out the sound of screen shares you aren't watching.**
+- **Hide participants without video.** A new button in the call view keeps only the people with their camera or a share on, so the video gets more room. A note shows how many people are hidden; click it to show everyone again. Sloga remembers the choice on this device.
+- **With it on, a new share no longer takes over the view** while two or more videos are showing; they sit side by side at the same size.
+
+### 🔔 Fixes
+- **Encrypted calls recover more reliably when you join while the call is changing.** If the server could not supply some of the call's security updates, Sloga now re-secures the call instead of getting stuck. A device that joins late now confirms it has the call's latest keys before showing the call as encrypted. If it cannot confirm them, it says so rather than showing green.
+- **Picking a color in Appearance now works on the Sloga theme.** The color swatches only appeared, and only did anything, under **Material You**, so on the default Sloga theme changing your color seemed to do nothing. **Settings → Appearance** now shows them under both themes. On Sloga, your color takes the place of the blue and the navy look stays. Sloga blue is the first swatch if you want to go back. In light mode a very bright color is shown darker, so text on it stays readable.
+- **Tooltips no longer get stuck or show old text.** A tooltip that was showing could stay on screen after it no longer applied, or keep its old text after the thing it described changed.
+
+### 🎁 Referrals
+- **Your referral counts are color-coded.** On **Settings → Referrals**, the Qualified, Pending and Expired counts are shown in green, yellow and red.
+`,
+  },
+  // ==========================================================================
   // v0.63.0 (cut 2026-09-25 at main `5a6c9ee0`). Copy constraints, load-bearing:
   // - The entry was written provisionally from 2026-09-23 and folded in as
   //   fixes landed. The `id` keeps its 2026-09-23 date on purpose: the live

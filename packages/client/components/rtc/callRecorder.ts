@@ -5,13 +5,16 @@ import { Room, RoomEvent, Track } from "livekit-client";
 // (`allowImportingTsExtensions`) and vite resolves it — dropping the extension
 // compiles and builds fine but breaks the specs.
 import { captureFilename } from "./captureFilename.ts";
+import { isShareSource } from "./screenShareWatchPolicy.ts";
+import { identityUserId, whisperTarget } from "./whisperPermissions.ts";
 
 /**
  * Local call recording (call-recording plan §1).
  *
- * Mixes every participant's audio — remote microphones, remote screen-share
- * audio, and the local microphone — into one file written on THIS machine by
- * a `MediaRecorder`. Nothing is uploaded and nothing is recorded server-side.
+ * Mixes the call's audio — remote microphones, whispers addressed to us, the
+ * audio of the remote screen shares the user is WATCHING, and the local
+ * participant's own tracks — into one file written on THIS machine by a `MediaRecorder`.
+ * Nothing is uploaded and nothing is recorded server-side.
  *
  * **Why local.** Media E2EE for calls is mandatory (see the
  * `e2eeCallsEnabled` accessor: it returns true unconditionally), so the server
@@ -26,7 +29,7 @@ import { captureFilename } from "./captureFilename.ts";
  * and would put real encode load on the recorder's machine mid-call. Audio
  * covers the "record the meeting" case at ~1 MB/min with no per-frame work.
  *
- * ## Two behaviours worth stating plainly
+ * ## Behaviors worth stating plainly
  *
  * - **Deafen does not stop capture.** Deafen mutes local *playback*; the
  *   tracks keep arriving. Honouring it here would silently produce a file
@@ -35,6 +38,11 @@ import { captureFilename } from "./captureFilename.ts";
  * - **Late joiners are mixed in live.** A participant who joins mid-recording
  *   is added to the graph on their first audio track, so the file matches the
  *   call rather than the roster at the moment Record was pressed.
+ * - **Unwatched screen shares are left out.** Shares are opt-in (click to
+ *   watch), and a recording holds only the audio the user chose to hear. See
+ *   {@link recordsRemoteAudio}.
+ * - **Whispers to someone else are left out.** A whisper addressed to a third
+ *   party is never ours to hear, even if the SFU delivers it.
  */
 
 /** Wire format. Opus in WebM is the only combination every target shell
@@ -216,6 +224,65 @@ export function recordingMimeType(): string | undefined {
 }
 
 /**
+ * Whether a REMOTE publication's audio belongs in the recording (plan decision
+ * A, "Accepted trade-offs"; wave 3 audit follow-up).
+ *
+ * Screen shares are opt-in: we connect with `autoSubscribe: false` and
+ * subscribe a remote share only while it is watched. The SFU (the LiveKit
+ * API-key holder) can still push a subscription we never asked for through
+ * `UpdateSubscriptions`, and the recorder mixes whatever is subscribed. So
+ * the recorder re-applies the watch set itself rather than trusting the
+ * subscription state: a recording holds only what the user chose to hear.
+ *
+ * - A whisper addressed to someone else → false, whatever its source. A
+ *   whisper is a track named `whisper:{userId}` (`whisperTarget`); the SFU
+ *   should refuse us the subscription, but `RoomAudioManager` never plays
+ *   one addressed to another user, and the recorder applies the same rule
+ *   rather than trusting the SFU. With `localUserId` undefined (identity not
+ *   known yet), EVERY addressed whisper is refused: fail closed.
+ * - Anything else that is not a share source (microphone, a whisper
+ *   addressed to us, a track with no addressee; whispers publish as
+ *   `"unknown"`, camera) → true. The recorder's `Track.Kind.Audio` filter,
+ *   not this function, keeps video out of the mix.
+ * - A share source (`"screen_share_audio"`, and `"screen_share"` too, so this
+ *   fails closed if a share ever carried audio under its video source) →
+ *   true only when `identity` is in `watched`. The match is on the EXACT
+ *   device-qualified identity, the key the watch set uses: `"u:d"` and
+ *   `"u:d:screen"` are different shares.
+ *
+ * Our own device's screen leg is never in the watch set (`watchShare` refuses
+ * it), so its share audio is left out too, as `RoomAudioManager` never
+ * subscribes it. The local participant's own tracks never pass through here.
+ */
+export function recordsRemoteAudio(
+  source: string,
+  identity: string,
+  watched: ReadonlySet<string>,
+  trackName: string | undefined,
+  localUserId: string | undefined,
+): boolean {
+  // Same rule as `RoomAudioManager`'s filter: an addressee that is not us
+  // (or any addressee while we do not know who we are) is refused.
+  const addressee = whisperTarget(trackName);
+  if (addressee !== undefined && addressee !== localUserId) return false;
+  if (!isShareSource(source)) return true;
+  return watched.has(identity);
+}
+
+/** No share is watched: the fail-closed default for {@link CallRecorder}. */
+const NO_WATCHED_SHARES: ReadonlySet<string> = new Set<string>();
+
+/** The slice of a remote publication the recorder's decisions read. */
+interface RemotePublication {
+  trackSid: string;
+  kind: Track.Kind;
+  source: string;
+  /** `whisper:{userId}` for a whisper; see {@link recordsRemoteAudio}. */
+  trackName: string;
+  track?: { mediaStreamTrack: MediaStreamTrack };
+}
+
+/**
  * Owns one recording. Constructed per recording rather than per call so a
  * stop/start cycle cannot inherit a half-torn-down audio graph.
  */
@@ -237,15 +304,24 @@ export class CallRecorder {
   #bytesWritten = 0;
   /** First streaming-write failure — a full disk must not pass as a save. */
   #writeError: unknown;
+  /** The identities whose screen shares the user is watching, read LIVE. */
+  #watchedShares: () => ReadonlySet<string>;
 
+  /**
+   * `watchedShares` is read at every decision, never snapshotted, so a Watch
+   * or Stop watching during the recording applies from that moment. Omitted,
+   * no share is treated as watched: remote share audio is left out entirely.
+   */
   constructor(
     room: Room,
     onAutoStop: (reason: string) => void,
     target?: RecordingTarget,
+    watchedShares: () => ReadonlySet<string> = () => NO_WATCHED_SHARES,
   ) {
     this.#room = room;
     this.#onAutoStop = onAutoStop;
     this.#target = target;
+    this.#watchedShares = watchedShares;
   }
 
   /** The file being written, when streaming. */
@@ -287,6 +363,11 @@ export class CallRecorder {
     // silently absent from the file.
     this.#room.on(RoomEvent.TrackSubscribed, this.#onTrackSubscribed);
     this.#room.on(RoomEvent.TrackUnsubscribed, this.#onTrackUnsubscribed);
+    this.#room.on(
+      RoomEvent.TrackSubscriptionStatusChanged,
+      this.#onTrackSubscriptionStatusChanged,
+    );
+    this.#room.on(RoomEvent.Reconnected, this.#onReconnected);
     this.#room.on(RoomEvent.LocalTrackPublished, this.#onLocalTrackPublished);
     this.#room.on(
       RoomEvent.LocalTrackUnpublished,
@@ -421,6 +502,11 @@ export class CallRecorder {
   #detach(): void {
     this.#room.off(RoomEvent.TrackSubscribed, this.#onTrackSubscribed);
     this.#room.off(RoomEvent.TrackUnsubscribed, this.#onTrackUnsubscribed);
+    this.#room.off(
+      RoomEvent.TrackSubscriptionStatusChanged,
+      this.#onTrackSubscriptionStatusChanged,
+    );
+    this.#room.off(RoomEvent.Reconnected, this.#onReconnected);
     this.#room.off(RoomEvent.LocalTrackPublished, this.#onLocalTrackPublished);
     this.#room.off(
       RoomEvent.LocalTrackUnpublished,
@@ -448,6 +534,15 @@ export class CallRecorder {
     for (const participant of this.#room.remoteParticipants.values()) {
       for (const publication of participant.trackPublications.values()) {
         if (publication.kind !== Track.Kind.Audio) continue;
+        if (
+          !this.#recordsRemote(
+            participant.identity,
+            publication.source,
+            publication.trackName,
+          )
+        ) {
+          continue;
+        }
         const track = publication.track;
         if (track) this.#addTrack(publication.trackSid, track.mediaStreamTrack);
       }
@@ -503,12 +598,118 @@ export class CallRecorder {
     }
   }
 
+  /**
+   * {@link recordsRemoteAudio} against the watch set and our own identity as
+   * they are RIGHT NOW.
+   */
+  #recordsRemote(
+    identity: string,
+    source: string,
+    trackName: string | undefined,
+  ): boolean {
+    const local = this.#room.localParticipant.identity;
+    return recordsRemoteAudio(
+      source,
+      identity,
+      this.#watchedShares(),
+      trackName,
+      local ? identityUserId(local) : undefined,
+    );
+  }
+
+  /**
+   * Re-decide one remote audio publication against the current rules: out of
+   * the mix if the filter refuses it, into the mix if it is allowed and its
+   * track is present. Both directions are idempotent.
+   */
+  #redecide(publication: RemotePublication, identity: string): void {
+    if (publication.kind !== Track.Kind.Audio) return;
+    if (
+      !this.#recordsRemote(identity, publication.source, publication.trackName)
+    ) {
+      this.#removeTrack(publication.trackSid);
+      return;
+    }
+    const track = publication.track;
+    if (track) this.#addTrack(publication.trackSid, track.mediaStreamTrack);
+  }
+
   #onTrackSubscribed = (
     track: { kind: Track.Kind; mediaStreamTrack: MediaStreamTrack },
-    publication: { trackSid: string },
+    publication: { trackSid: string; source: string; trackName: string },
+    participant: { identity: string },
   ) => {
     if (track.kind !== Track.Kind.Audio) return;
+    // A subscription the SFU pushed for a share the user is not watching, or
+    // for a whisper addressed to someone else, arrives here like any other;
+    // the rules, not the subscription, decide.
+    if (
+      !this.#recordsRemote(
+        participant.identity,
+        publication.source,
+        publication.trackName,
+      )
+    ) {
+      return;
+    }
     this.#addTrack(publication.trackSid, track.mediaStreamTrack);
+  };
+
+  /**
+   * Re-decide one remote publication when its subscription status changes.
+   *
+   * This is what keeps a mid-recording Watch or Stop watching honest, whatever
+   * the SFU does. The watch set is written before `RoomAudioManager` calls
+   * `setSubscribed`, and livekit-client 2.15.13 emits this status change
+   * synchronously inside `setSubscribed` (`RemoteTrackPublication.ts`
+   * `emitSubscriptionUpdateIfChanged`), so the decision already sees the new
+   * set. That holds only while the room is Connected: the room forwards the
+   * event through `emitWhenConnected` (`Room.ts`), which BUFFERS it during a
+   * signal resume and DROPS the buffer at `SignalResumed`. A Watch or Stop
+   * watching pressed in that window never arrives here; the `Reconnected`
+   * resync below covers it. While Connected:
+   *
+   * - **Stop watching.** `setSubscribed(false)` turns the status to
+   *   `unsubscribed` at once, and the share leaves the mix here. The normal
+   *   `TrackUnsubscribed` only follows once the SFU actually stops sending,
+   *   and a server that keeps pushing would never send it.
+   * - **Watch a share the SFU had already pushed.** Its track is already
+   *   present, so no new `TrackSubscribed` fires. `setSubscribed(true)` turns
+   *   the status from `unsubscribed` to `subscribed`, and the share joins the
+   *   mix here instead of being missing for the rest of the recording.
+   *
+   * For anything the watch set does not govern (a microphone, a whisper
+   * addressed to us) this can only re-add a track that is still present,
+   * which `#addTrack` makes a no-op: those stay exactly as `TrackSubscribed` /
+   * `TrackUnsubscribed` left them.
+   */
+  #onTrackSubscriptionStatusChanged = (
+    publication: RemotePublication,
+    _status: unknown,
+    participant: { identity: string },
+  ) => {
+    this.#redecide(publication, participant.identity);
+  };
+
+  /**
+   * Resync every remote audio publication after a reconnect.
+   *
+   * A status change emitted while the signal connection was resuming is
+   * buffered and then DROPPED at `SignalResumed` (livekit-client 2.15.13
+   * `Room.ts`), so a Watch or Stop watching pressed in that window reached
+   * no handler: an unwatched share would stay in the mix until the SFU
+   * dropped the track. `Reconnected` fires on a resume after the surviving
+   * buffer is flushed (`EngineEvent.Resumed`), and on a full restart once
+   * the room is Connected again, so re-deciding everything here restores the
+   * rules whatever was lost. Every decision reads the live watch set, so an
+   * event flushed later cannot undo it.
+   */
+  #onReconnected = () => {
+    for (const participant of this.#room.remoteParticipants.values()) {
+      for (const publication of participant.trackPublications.values()) {
+        this.#redecide(publication, participant.identity);
+      }
+    }
   };
 
   #onTrackUnsubscribed = (

@@ -16,7 +16,7 @@ import {
 import type { SelectedTheme, TypeTheme } from "@revolt/state/stores/Theme";
 
 /**
- * Seed colour for the Sloga preset, and the default accent for Material You.
+ * Default accent for both presets: Sloga blue.
  */
 export const BRAND_ACCENT = "#00B2FF";
 
@@ -80,6 +80,54 @@ const BRAND_LIGHT: Partial<MaterialColours> = {
 };
 
 /**
+ * The navy chrome and brand-blue accent roles, as a colour the user picked
+ * under the Sloga preset would re-derive them.
+ *
+ * The brand blue itself returns the hand-tuned tables above untouched, so the
+ * default look cannot drift. Any other accent keeps the navy surfaces and takes
+ * the brand's treatment of the accent roles instead:
+ * - dark mode fills with the colour as picked, lifted to tone 60 if it is
+ *   darker than that (a tone-20 accent on a tone-3 canvas is not a button),
+ *   and labels it navy like the brand blue. Tone 60 is what makes navy always
+ *   the right label: it is at least 6.3:1 there, and white at most 3.2:1;
+ * - light mode fills with the colour's own hue and chroma at tone 40, the same
+ *   rule that gives the brand #006492, which always carries a white label.
+ *
+ * Normalised through Hct so the result is always six-digit hex: the triplet
+ * parser in `createMduiColourTriplets` throws on the three-digit form.
+ */
+export function brandPins(
+  accent: string,
+  darkMode: boolean,
+): Partial<MaterialColours> {
+  if (accent.toLowerCase() === BRAND_ACCENT.toLowerCase()) {
+    return darkMode ? BRAND_DARK : BRAND_LIGHT;
+  }
+
+  const hct = Hct.fromInt(argbFromHex(accent));
+
+  if (!darkMode) {
+    const fill = hexFromArgb(Hct.from(hct.hue, hct.chroma, 40).toInt());
+    return {
+      primary: fill,
+      "primary-container": fill,
+      "on-primary": "#ffffff",
+      "on-primary-container": "#ffffff",
+    };
+  }
+
+  const fill = hexFromArgb(
+    (hct.tone < 60 ? Hct.from(hct.hue, hct.chroma, 60) : hct).toInt(),
+  );
+
+  return {
+    ...BRAND_DARK,
+    primary: fill,
+    "primary-container": fill,
+  };
+}
+
+/**
  * Generate the Material variables from the given properties
  *
  * Currently only generates color keys
@@ -97,7 +145,7 @@ export function createMaterialColourVariables<P extends string>(
 
   const colours =
     theme.preset === "stoat"
-      ? { ...scheme, ...(theme.darkMode ? BRAND_DARK : BRAND_LIGHT) }
+      ? { ...scheme, ...brandPins(theme.accent, theme.darkMode) }
       : scheme;
 
   return Object.entries(colours).reduce(

@@ -23,6 +23,7 @@ export type { OutgoingRingAction } from "./outgoingRingPolicy";
 
 export {
   callModerationActions,
+  canOfferMove,
   hasCallModerationActions,
 } from "./callModerationPolicy";
 export type {
