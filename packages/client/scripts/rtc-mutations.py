@@ -411,6 +411,8 @@ REJOIN_POLICY = "mlsRejoinPolicy.ts"
 #: address `RTC / mutation.file`, so a `components/client` module is named
 #: relative to `RTC`, and the restore writes back to that same path.
 INBOUND_BUFFER = "../client/mlsInboundBuffer.ts"
+#: 🔴 Same form, same reason: relative to `RTC`, not `components/client/…`.
+RESUME_KEEP = "../client/mlsResumeKeep.ts"
 
 JOINRACE_SPEC = "components/rtc/mlsCallSession.joinrace.test.ts"
 HEAL_SPEC = "components/rtc/mlsCallSession.heal.test.ts"
@@ -431,8 +433,11 @@ SESSION_TIMELINE_SPEC = "components/rtc/mlsCallSession.timeline.test.ts"
 FLEET_SPEC = "components/rtc/mlsCallSession.fleet.test.ts"
 GROUPSCOPE_SPEC = "components/rtc/mlsCallSession.groupscope.test.ts"
 SERVEGUARD_SPEC = "components/rtc/mlsCallSession.serveguard.test.ts"
+RESUME_SPEC = "components/rtc/mlsCallSession.resume.test.ts"
+MAILBOX_SPEC = "components/rtc/mlsCallSession.mailbox.test.ts"
 REJOIN_POLICY_SPEC = "components/rtc/mlsRejoinPolicy.test.ts"
 INBOUND_BUFFER_SPEC = "components/client/mlsInboundBuffer.test.ts"
+RESUME_KEEP_SPEC = "components/client/mlsResumeKeep.test.ts"
 ALL_SPECS = [POLICY_SPEC, HEAL_SPEC, JOINRACE_SPEC]
 
 
@@ -764,6 +769,26 @@ def apply(mutation: Mutation) -> str:
                 f"MUTATION {mutation.id}: search string is ambiguous "
                 f"({count} matches) in {mutation.file} — refusing to guess."
             )
+        # 🔴 MFR-n3 (2026-09-27): every search begins at the START of a line.
+        # "Exactly once" is not enough on its own: a search written for a line
+        # at one indentation also matches, once, as the tail of a line nested
+        # one level deeper, and then mutates a substring of a line it does not
+        # name. Measured twice on this branch before it was a rule here: the
+        # merge fix pass found `late-welcome-resets-latch` inserting a
+        # mis-indented line and `repause-order-inverted` matching an 8-space
+        # search inside a 10-space line, both through a check that lived
+        # only in a scratch script. A search that needs only part of a line
+        # carries the whole line's leading text instead.
+        at = mutated.index(search)
+        if at > 0 and mutated[at - 1] != "\n":
+            line = mutated.count("\n", 0, at) + 1
+            raise SystemExit(
+                f"MUTATION {mutation.id}: search string starts mid-line "
+                f"(line {line} of {mutation.file}, column "
+                f"{at - mutated.rfind(chr(10), 0, at)}) — anchor it at the "
+                f"start of its line; refusing to mutate a substring.\n"
+                f"  looked for: {search!r}"
+            )
         mutated = mutated.replace(search, replace)
     path.write_text(mutated, encoding="utf-8")
     return original
@@ -810,6 +835,15 @@ def preflight(mutations: list[Mutation]) -> list[str]:
                 problems.append(
                     f"{m.id}: edit {n} occurs {count} time(s) in {m.file}, "
                     f"not exactly once: {search[:120]!r}"
+                )
+                break
+            # The start-of-line rule `apply` enforces (MFR-n3), checked here
+            # too: without it this passed twelve entries `apply` refuses.
+            at = mutated.index(search)
+            if at > 0 and mutated[at - 1] != "\n":
+                problems.append(
+                    f"{m.id}: edit {n} starts mid-line in {m.file}: "
+                    f"{search[:120]!r}"
                 )
                 break
             if search == replace:
@@ -1172,8 +1206,12 @@ MUTATIONS += [
         # named promise with its own two catches, so the old
         # `await publication.pauseUpstream();` line no longer exists. Same
         # site, same defect — `detaching` is now fed by a RESUME.
-        search="""        detaching = publication.pauseUpstream();""",
-        replace="""        detaching = publication.resumeUpstream();""",
+        # Indentation corrected 2026-09-27 (merge fix pass, MFG): the line
+        # sits at 10 spaces, so the 8-space search matched a substring of
+        # it. The mutated file is byte-identical either way; the search now
+        # names the whole line.
+        search="""          detaching = publication.pauseUpstream();""",
+        replace="""          detaching = publication.resumeUpstream();""",
         specs=[GATE_SPEC],
     ),
     Mutation(
@@ -2213,10 +2251,29 @@ MUTATIONS += [
         # `#toActive()` that now follows the currency check runs on every
         # honest Welcome join as well. Same defect, same one-line insertion.
         # Measured after the re-anchor: resecure 5b and 3 go red (2 of 23).
-        search="""      this.#joinedGeneration = this.#establishGeneration;
+        # Checked at the merge wave (2026-09-27): NOT moved. The merge took
+        # the re-anchor above; the line still occurs once, in the adopt
+        # block, and MS2's `#resumeAdopting` guard (below the currency
+        # record) does not reach it. Re-measured: resecure 3 and 5b (2 of 23).
+        # Re-anchored at the merge fix pass (2026-09-27, MFG). MWA-m1 moved
+        # the `#joinedGeneration` write inside `if (this.#resumeAdopting !==
+        # outcome.group_id)`, so the line is 8-space indented and the old
+        # 6-space search still matched once, but as a SUBSTRING of it, and
+        # inserted a mis-indented line. The insertion stays right after the
+        # write, now inside the guard: that is where an ordinary Welcome,
+        # the late one included, is adopted as a join, while a Welcome in a
+        # resume's adopt window joins nothing and is the resume's to judge.
+        # The stamp line above the write is taken too, so the search starts
+        # at a line start and occurs once. Re-measured: resecure 3 and 5b (2
+        # of 23), the same as the 6-space substring and as an unconditional
+        # insertion after the `#groupId` write, so the guard does not change
+        # what this entry measures.
+        search="""        this.#joinTimeline?.stamp("welcomeAdopted");
+        this.#joinedGeneration = this.#establishGeneration;
 """,
-        replace="""      this.#joinedGeneration = this.#establishGeneration;
-      this.#resetRotationState();
+        replace="""        this.#joinTimeline?.stamp("welcomeAdopted");
+        this.#joinedGeneration = this.#establishGeneration;
+        this.#resetRotationState();
 """,
         specs=[RESECURE_SPEC],
     ),
@@ -3607,12 +3664,20 @@ MUTATIONS += [
         # Re-measured 2026-09-26 (fix pass 1): killed by 24 of 33: B3, C1,
         # C1b, C1r, C2, C2b, C3, C3b, C4, C6, C7, C7b, C8, C9, D1, and all
         # nine fix-pass cases (R1a, R1b, R1c, C1r+, E1, E2, E3, E4, N1).
-        search="""      this.#welcomeCurrency = {
-        groupId: outcome.group_id,
-        epoch: outcome.epoch,
-        generation: this.#establishGeneration,
-      };""",
-        replace="""      this.#toActive();""",
+        # Re-anchored at the merge fix pass (2026-09-27, MFG). MWA-m1 moved
+        # the currency record, with the `welcomeAdopted` stamp and the
+        # `#joinedGeneration` write, inside `if (this.#resumeAdopting !==
+        # outcome.group_id)`, so the block is 8-space indented and the old
+        # search matched nothing. Same edit, same site: an ordinary Welcome
+        # (the only kind that records the check) goes active instead.
+        # Re-measured: killed by the same 24 of 33, and by 4 of 68 resume
+        # cases ((w) tail non-ok and short, (z18), (z19)).
+        search="""        this.#welcomeCurrency = {
+          groupId: outcome.group_id,
+          epoch: outcome.epoch,
+          generation: this.#establishGeneration,
+        };""",
+        replace="""        this.#toActive();""",
         specs=[DRAINFAIL_SPEC],
         must_red=[DRAINFAIL_SPEC],
     ),
@@ -3622,17 +3687,24 @@ MUTATIONS += [
         file=SESSION,
         # Re-measured 2026-09-26 (fix pass 1): killed by 17 of 33: C1, C1r, C3,
         # C3b, C4, C6, C7, C8, C9, R1a, R1b, R1c, C1r+, E1, E2, E3 and E4.
-        search="""      this.#welcomeCurrency = {
-        groupId: outcome.group_id,
-        epoch: outcome.epoch,
-        generation: this.#establishGeneration,
-      };""",
-        replace="""      this.#toActive();
-      this.#welcomeCurrency = {
-        groupId: outcome.group_id,
-        epoch: outcome.epoch,
-        generation: this.#establishGeneration,
-      };""",
+        # Re-anchored at the merge fix pass (2026-09-27, MFG), for the reason
+        # on `welcome-currency-skipped` above: the block is now 8-space
+        # indented inside the `#resumeAdopting` guard. Same edit, same site.
+        # Re-measured: killed by 23 of 33, not the 17 above: A1, A2, A3, B3,
+        # C1, C1r, C2, C2b, C3, C3b, C4, C6, C7, C8, C9, R1a, R1b, R1c, C1r+,
+        # E1, E2, E3 and E4. Also red in escape, heal, joinrace, resecure,
+        # resume (13 of 68), serveguard and timeline.
+        search="""        this.#welcomeCurrency = {
+          groupId: outcome.group_id,
+          epoch: outcome.epoch,
+          generation: this.#establishGeneration,
+        };""",
+        replace="""        this.#toActive();
+        this.#welcomeCurrency = {
+          groupId: outcome.group_id,
+          epoch: outcome.epoch,
+          generation: this.#establishGeneration,
+        };""",
         specs=[DRAINFAIL_SPEC],
         must_red=[DRAINFAIL_SPEC],
     ),
@@ -3777,16 +3849,24 @@ MUTATIONS += [
     ),
     Mutation(
         id="own-send-key-epoch-unchecked",
-        what="the caught-up install is judged on the install counter and the fence alone, not on OUR send key's epoch (LDA-M1): an install that left our send key on the older epoch still reads as installed, and the session goes green publishing under a key a removed member holds",
+        what="the caught-up install is judged on the install counter and the fence alone, not on OUR send key's epoch (LDA-M1, FA-B1): an install that left our send key on the older epoch still reads as installed, and the session — a late-drained Welcome's catch-up, or a resume — goes green publishing under a key a removed member holds",
         file=SESSION,
         # Measured 2026-09-26 (fix pass 1): killed by E2 alone (1 of 33).
+        # 🔴 FOLDED at the merge wave (2026-09-27). The rejoin-resume branch
+        # carried `resume-own-key-epoch-unchecked`, the same search (plus a
+        # final newline) and the same replace against its verbatim copy of
+        # `#installCaughtUpKeys`. The merge kept ONE body with two callers
+        # (`#confirmWelcomeCurrency` and the resume's `#catchUp`), so the
+        # two ids mutated one line; they are one entry now, pinned on both
+        # specs, and each spec was measured to kill it ON ITS OWN: drainfail
+        # E2 (1 of 33), resume (u) "FA-B1, LDA-M1" (1 of 63).
         search="""      this.#installEpoch === epoch &&
       this.#ownSendKeyEpoch === epoch
     );""",
         replace="""      this.#installEpoch === epoch
     );""",
-        specs=[DRAINFAIL_SPEC],
-        must_red=[DRAINFAIL_SPEC],
+        specs=[DRAINFAIL_SPEC, RESUME_SPEC],
+        must_red=[DRAINFAIL_SPEC, RESUME_SPEC],
     ),
     Mutation(
         id="currency-expired-flag-dropped",
@@ -3948,8 +4028,15 @@ MUTATIONS += [
         id="wipe-token-dep-ignored",
         what="the session spends the module-level startup-wipe token instead of its page's own, so a reloaded page shares one Set with every other session and skips the wipe its fresh page owes",
         file=SESSION,
-        search="""const tokens = this.#deps.startupWipeTokens ?? startupWipedChannels;""",
-        replace="""const tokens = startupWipedChannels;""",
+        # Re-anchored 2026-09-27 (MFR-m1 fix pass, MRG): the search now
+        # carries its line's indentation, the one entry the start-of-line
+        # rule in `apply` refused. Same line, same edit; re-measured killed
+        # by the same 2 of 31 fleet cases ("each page has its own
+        # startup-wipe token", "no lockout").
+        search="""    const tokens = this.#deps.startupWipeTokens ?? startupWipedChannels;
+""",
+        replace="""    const tokens = startupWipedChannels;
+""",
         specs=[FLEET_SPEC],
         must_red=[FLEET_SPEC],
     ),
@@ -4241,6 +4328,1519 @@ MUTATIONS += [
         ],
         specs=[SERVEGUARD_SPEC, FLEET_SPEC],
         must_red=[SERVEGUARD_SPEC, FLEET_SPEC],
+    ),
+]
+
+
+# --- Rejoin resume, wave 2: the resume foundations ---------------------------
+#
+# Wave 2 was inert in the session (`resumePrefetch` was accepted and ignored
+# until wave 3, whose entries follow this block), so what is measured here is
+# the three pure modules wave 3 stands on, each loadable, so each rule is
+# reachable: `resumeDecision` and `recencyValid` in `mlsRejoinPolicy.ts` (the
+# go/no-go and the recency record's validity); `KeptLocalGroups` and
+# `prefetchResume` in `components/client/mlsResumeKeep.ts` (keep, claim,
+# hand-back, cleanup, and the read-only prefetch); and `mlsHoldVerdict` in
+# `mlsInboundBuffer.ts` (what the bridge does with an MLS envelope before a
+# sink exists). Every entry is
+# `must_red` on the ONE spec that owns its rule. The bridge (`e2ee.ts`) and
+# host (`state.tsx`) wiring cannot be loaded by `node --test` and has no
+# entry.
+
+MUTATIONS += [
+    # ---- resumeDecision ------------------------------------------------------
+    #
+    # Rules 2 to 8, 9's upper bound, and 10's length check and contiguity
+    # each have an entry (6, 8, 9's upper bound and 10's length since the
+    # wave-2 fix pass, audit W2-m3). NOT entered here, and not claimed to be
+    # measured by this table: rule 1 (`p === null`). Dropping it does not
+    # resume anything: the next rule to read `p` throws on `null`, so the
+    # mutant is a crash in the caller, not the defect the rule exists for.
+    Mutation(
+        id="resume-ignores-open-group",
+        what="`resumeDecision` drops rule 4, so a resume proceeds whatever group the DS's open-group GET names, or none at all — the DS verdict the resume rests on (D2) is never consulted, and a moved or hostile DS's answer is resumed over",
+        file=REJOIN_POLICY,
+        # The rule's line dropped whole (newline included) so the mutant is
+        # still well-formed TS.
+        search="""  if (!(p.openGroupId !== null && p.openGroupId === p.groupId)) return "join";
+""",
+        replace="",
+        specs=[REJOIN_POLICY_SPEC],
+        must_red=[REJOIN_POLICY_SPEC],
+    ),
+    Mutation(
+        id="resume-ignores-pending-commit",
+        what="`resumeDecision` drops rule 7, so a device with its own commit still pending natively resumes, and the next inbound commit poisons the group it just resumed (audit B3)",
+        file=REJOIN_POLICY,
+        search="""  if (p.pendingCommit !== null) return "join";
+""",
+        replace="",
+        specs=[REJOIN_POLICY_SPEC],
+        must_red=[REJOIN_POLICY_SPEC],
+    ),
+    Mutation(
+        id="resume-ignores-startup",
+        what="`resumeDecision` drops rule 2, so a rejoin-fresh, poisoned-successor or re-upgrade establish — all sharing the 409/rejoin route — adopts held state instead of re-enrolling (audit M6, R2-m7)",
+        file=REJOIN_POLICY,
+        search="""  if (!isStartup) return "join";
+""",
+        replace="",
+        specs=[REJOIN_POLICY_SPEC],
+        must_red=[REJOIN_POLICY_SPEC],
+    ),
+    Mutation(
+        id="resume-ignores-prefetch-age",
+        what="`resumeDecision` drops rule 3 on BOTH sides, so a prefetch of any age resumes — one gathered before a long stall, or one a clock that ran backwards makes read as from the future — on a DS verdict that may be long stale (R2-m1)",
+        file=REJOIN_POLICY,
+        # Both lines, so no dead `ageMs` is left behind.
+        search="""  const ageMs = nowMs - p.fetchedAtMs;
+  if (!(ageMs >= 0 && ageMs <= LOCAL_GROUP_KEEP_MS)) return "join";
+""",
+        replace="",
+        specs=[REJOIN_POLICY_SPEC],
+        must_red=[REJOIN_POLICY_SPEC],
+    ),
+    Mutation(
+        id="resume-ignores-channel-binding",
+        what="`resumeDecision` drops rule 5, so a resume is bound to neither the channel the GET was made for nor the channel native holds the group for — a group held for one channel is resumed into another (the T-15 binding on this route, R2-m1)",
+        file=REJOIN_POLICY,
+        # Rule 5 is TWO lines and the entry drops both (see `also`): the
+        # defect its name states is the binding gone. Measured 2026-09-26 on
+        # a copy of the tree: dropping EITHER line alone is also red on the
+        # policy spec (one failing case each), so neither half is unpinned —
+        # but this entry cannot see a future spec edit that loses one half's
+        # case while keeping the other's.
+        search="""  if (p.queriedChannelId !== intendedChannelId) return "join";
+""",
+        replace="",
+        also=[
+            (
+                """  if (p.localChannelId !== intendedChannelId) return "join";
+""",
+                "",
+            ),
+        ],
+        specs=[REJOIN_POLICY_SPEC],
+        must_red=[REJOIN_POLICY_SPEC],
+    ),
+    Mutation(
+        id="resume-ignores-contiguity",
+        what="`resumeDecision` keeps rule 10's length check but drops its contiguity loop, so a commit list of the right LENGTH is accepted whatever epochs it carries — a hostile DS padding or reordering the list passes on the count alone (R-W2-5)",
+        file=REJOIN_POLICY,
+        # The LOOP, not the length check: the length check alone is the
+        # pre-R-W2-5 rule, and dropping it too would measure a different
+        # (grosser) defect under this name.
+        search="""  for (let i = 0; i < p.commits.length; i++) {
+    if (p.commits[i].epoch !== p.localEpoch + 1 + i) return "join";
+  }
+""",
+        replace="",
+        specs=[REJOIN_POLICY_SPEC],
+        must_red=[REJOIN_POLICY_SPEC],
+    ),
+    # ---- resumeDecision, the wave-2 fix pass (audit W2-m3) -------------------
+    #
+    # The four rules the wave-2 table left unpinned. The auditor killed each
+    # by hand; these entries make that a standing measurement.
+    Mutation(
+        id="resume-ignores-local-state",
+        what="`resumeDecision` drops rule 6, so a group native holds as POISONED, or one whose own roster no longer names this device, is resumed — a device the group removed adopts it as if it were still a member",
+        file=REJOIN_POLICY,
+        # The rule is ONE line with both conjuncts, dropped whole. Measured
+        # 2026-09-26 on a copy of the tree: dropping EITHER conjunct alone is
+        # also red on the policy spec (one failing case each), so neither half
+        # is unpinned.
+        search="""  if (!(p.localState === "active" && p.selfInLocalRoster)) return "join";
+""",
+        replace="",
+        specs=[REJOIN_POLICY_SPEC],
+        must_red=[REJOIN_POLICY_SPEC],
+    ),
+    Mutation(
+        id="resume-ignores-own-commit",
+        what="`resumeDecision` drops rule 8, so a fetched commit this device authored and never merged is accepted for catch-up as though a peer sent it — the other half of audit B3",
+        file=REJOIN_POLICY,
+        search="""  if (p.commits.some((c) => c.committerIsSelf)) return "join";
+""",
+        replace="",
+        specs=[REJOIN_POLICY_SPEC],
+        must_red=[REJOIN_POLICY_SPEC],
+    ),
+    Mutation(
+        id="resume-lag-bound-inclusive",
+        what="rule 9's upper bound admits `RESUME_MAX_LAG` itself, so a held group exactly at the lag the live session calls desync is caught up by a resume instead of abandoned for a clean join",
+        file=REJOIN_POLICY,
+        # The boundary, not the whole bound: `<=` is the smallest edit that
+        # breaks it, and the spec's lag-12 case kills it. Dropping the bound
+        # outright is grosser and is killed by the same case.
+        search="""  if (!(lag >= 0 && lag < RESUME_MAX_LAG)) return "join";""",
+        replace="""  if (!(lag >= 0 && lag <= RESUME_MAX_LAG)) return "join";""",
+        specs=[REJOIN_POLICY_SPEC],
+        must_red=[REJOIN_POLICY_SPEC],
+    ),
+    Mutation(
+        id="resume-ignores-commit-count",
+        what="`resumeDecision` drops rule 10's length check and keeps the contiguity loop, so a DS returning FEWER commits than the lag passes as long as the ones it did send are in order — the resume catches up short of the current epoch (audit M4)",
+        file=REJOIN_POLICY,
+        # The length line alone; `resume-ignores-contiguity` above drops the
+        # loop alone. Each half of rule 10 is pinned by its own entry.
+        search="""  if (p.commits.length !== lag) return "join";
+""",
+        replace="",
+        specs=[REJOIN_POLICY_SPEC],
+        must_red=[REJOIN_POLICY_SPEC],
+    ),
+    # 🔴 NOT AN ENTRY, and recorded rather than silently absent: dropping
+    # `lag >= 0` from rule 9 alone (`lag < RESUME_MAX_LAG` kept). It is an
+    # EQUIVALENT mutant — rule 10's `commits.length !== lag` already refuses a
+    # negative lag, because no list has a negative length — so every input
+    # answers the same and no spec can turn it red (measured by the lane that
+    # wrote the spec, 2026-09-25). An entry for it could only ever be
+    # `expect="green"`, an admission dressed as a measurement. The conjunct
+    # stays in the source as the rule's own statement of intent.
+    Mutation(
+        id="recency-always-valid",
+        what="`recencyValid` answers true for any record — absent, naming another group, or of any age — so a hostile DS can steer a resume into an OLDER group this device still holds, and whatever a dead page left on disk is resumable forever (D7, audit M1)",
+        file=REJOIN_POLICY,
+        search="""  if (rec === null || rec.groupId !== groupId) return false;
+  const ageMs = nowMs - rec.at;
+  return ageMs >= 0 && ageMs <= LOCAL_GROUP_KEEP_MS;""",
+        replace="""  return true;""",
+        specs=[REJOIN_POLICY_SPEC],
+        must_red=[REJOIN_POLICY_SPEC],
+    ),
+    # ---- the kept-group registry --------------------------------------------
+    Mutation(
+        id="keep-handback-rearms-full-ms",
+        what="a handed-back claim re-arms its keep timer for the keep's FULL `ms` from now instead of the time left to its ORIGINAL deadline, so every claim a superseded prefetch hands back stretches the keep, and repeated claims hold a hung-up call's group on disk indefinitely (R2-B1)",
+        file=RESUME_KEEP,
+        # Two edits: `keep` records its `ms` on the entry, and `handBack`
+        # re-arms with it. The past-deadline branch is kept, so this measures
+        # the re-arm duration alone. (A literal `10_000` in place of
+        # `remaining` would also drop that branch, and — the spec keeps at
+        # 5 000 ms — re-arm at twice the keep: a grosser defect than this
+        # one's name.)
+        search="""    this.#byChannel.set(channelId, entry);
+    this.#arm(entry, ms);""",
+        replace="""    this.#byChannel.set(channelId, entry);
+    (entry as unknown as { ms: number }).ms = ms;
+    this.#arm(entry, ms);""",
+        also=[
+            (
+                """        this.#arm(entry, remaining);""",
+                """        this.#arm(entry, (entry as unknown as { ms: number }).ms);""",
+            ),
+        ],
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    Mutation(
+        id="keep-release-keeps-entry",
+        what="`release` leaves the entry tracked, so a group the session ADOPTED is still deleted under the call — by its keep timer, or by a later hand-back of its claim re-arming that timer (R2-B1 gap 1)",
+        file=RESUME_KEEP,
+        # Anchored with the comment line above it: `this.#deleteEntries(
+        # groupId);` alone also occurs in `keep`, `cleanup` and `#delete`.
+        # Rewording that comment hard-errors this entry; it fails loud, never
+        # silently.
+        search="""    // the group afterwards; a later keep of it starts a fresh entry.
+    this.#deleteEntries(groupId);""",
+        replace="""    // the group afterwards; a later keep of it starts a fresh entry.
+    void groupId;""",
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    Mutation(
+        id="keep-claim-ignores-inflight",
+        what="`claim` grants a group whose cleanup has already started, so a superseding connect resumes a group that is halfway off the disk",
+        file=RESUME_KEEP,
+        search="""    if (this.isInFlight(entry.groupId)) return null;
+""",
+        replace="",
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    Mutation(
+        id="keep-recency-ignores-inflight",
+        what="`recencyCandidate` offers a group whose cleanup is in flight, so a resume with no kept entry to claim (a Ctrl+R) adopts a group the native delete is removing",
+        file=RESUME_KEEP,
+        search="""    if (rec === null || this.isInFlight(rec.groupId)) return null;""",
+        replace="""    if (rec === null) return null;""",
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    Mutation(
+        id="keep-cleanup-keeps-recency",
+        what="`cleanup` leaves the group's recency record behind, so a group deleted from disk — by expiry, a superseded or refused keep, discard-all or a leave — is still offered as a recency candidate (R2-B1 gaps 3 and 4)",
+        file=RESUME_KEEP,
+        search="""      clearResumeRecordsForGroup(this.#deps.storage, groupId);
+      await this.#deps.deleteLocal(groupId);""",
+        replace="""      await this.#deps.deleteLocal(groupId);""",
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    Mutation(
+        id="prefetch-abort-no-handback",
+        what="the prefetch's abort listener does not hand the claim back, so a superseded connect's claim stays taken: the kept group's timer is never re-armed, the superseding connect cannot claim it, and it is neither resumed nor deleted until the page dies (R2-B1 gap 2)",
+        file=RESUME_KEEP,
+        search="""    if (claim !== null) deps.kept.handBack(claim.token);""",
+        replace="""    void claim;""",
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    # ---- the kept-group registry, the wave-2 fix pass ------------------------
+    #
+    # W2-m3's fifth pin (the prefetch's failure-path cleanup), then the W2-m1 /
+    # W2-m2 / F1-R1 changes: `release` reporting an in-flight group,
+    # `recencyCandidate` refusing a group a live entry names, `discardChannel`,
+    # and `cleanup` handing a later caller the pending delete.
+    Mutation(
+        id="prefetch-giveup-no-cleanup",
+        what="the prefetch's failure path returns `null` without cleaning its candidate, so a group an old shell, a non-ok commits fetch or a failed recency check gave up on stays on disk for the join path's create to trip over (W2-m3)",
+        file=RESUME_KEEP,
+        # The awaited cleanup line alone; its `try`/`catch` is left with an
+        # empty body, which is still well-formed.
+        search="""      await deps.kept.cleanup(groupId);
+""",
+        replace="",
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    Mutation(
+        id="keep-release-ignores-inflight",
+        what="`release` answers true while the group's cleanup is in flight, so an adopter is told the group is its own while the native delete is removing it (W2-m2)",
+        file=RESUME_KEEP,
+        search="""    return !this.isInFlight(groupId);""",
+        replace="""    return true;""",
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    Mutation(
+        id="keep-recency-ignores-entries",
+        what="`recencyCandidate` offers a group a live keep entry still names, so a resume adopts it with no claim and that entry's timer deletes it under the call (W2-m2)",
+        file=RESUME_KEEP,
+        # The line alone: `#hasEntry(rec.groupId)` also occurs in
+        # `discardChannel`, as a ternary, which this window cannot match.
+        search="""    if (this.#hasEntry(rec.groupId)) return null;
+""",
+        replace="",
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    Mutation(
+        id="keep-discard-channel-skips-claimed",
+        what="`discardChannel` cleans only UNCLAIMED entries for the channel, so a group a null prefetch left claimed survives the join path's discard and is still on disk when the create runs (W2-m1)",
+        file=RESUME_KEEP,
+        search="""      if (entry.channelId === channelId) groups.add(entry.groupId);""",
+        replace="""      if (entry.channelId === channelId && entry.claimToken === null)
+        groups.add(entry.groupId);""",
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    Mutation(
+        id="keep-discard-channel-skips-inflight",
+        what="`discardChannel` does not route a group whose delete is already running through `cleanup`, so `cleanup`'s pending path never drops what still names the group: a record on ANOTHER channel naming it survives the discard, and can offer the group as a recency candidate once its delete settles (F1-R1). Since fix pass 2 the WAIT on that delete is `#withPending`'s, so this no longer settles early",
+        file=RESUME_KEEP,
+        # Anchored with the comment line above it: the bare `const pending =
+        # [...groups].map(...)` line also occurs in `discardAll`.
+        search="""    // A group whose delete is pending gets that delete back from `cleanup`.
+    const pending = [...groups].map((g) => this.cleanup(g));""",
+        replace="""    // A group whose delete is pending gets that delete back from `cleanup`.
+    const pending = [...groups]
+      .filter((g) => !this.isInFlight(g))
+      .map((g) => this.cleanup(g));""",
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    Mutation(
+        id="keep-cleanup-ignores-pending",
+        what="`cleanup` of a group whose delete is already running starts a SECOND native delete instead of returning the pending one, and the first one's settling clears the in-flight mark while the second still runs (F1-R1)",
+        file=RESUME_KEEP,
+        search="""    if (pending !== undefined) {""",
+        replace="""    if (pending !== undefined && false) {""",
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    # The next line was unreached by any keep-spec case when the entries above
+    # were written (dropped alone, it left the spec green); the spec gained a
+    # case for it, and this entry pins it.
+    Mutation(
+        id="keep-cleanup-pending-keeps-recency",
+        what="`cleanup` of a group whose delete is already running leaves the records naming it, so a record written while the delete runs outlives it and the deleted group can be offered as a recency candidate afterwards (F1-R1)",
+        file=RESUME_KEEP,
+        # Two lines: `clearResumeRecordsForGroup(this.#deps.storage,
+        # groupId);` alone also occurs in `#delete` (the path
+        # `keep-cleanup-keeps-recency` breaks), so the pending path's
+        # `return pending;` is what tells them apart.
+        search="""      clearResumeRecordsForGroup(this.#deps.storage, groupId);
+      return pending;""",
+        replace="""      return pending;""",
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    # 🔴 RETIRED, and recorded rather than silently absent:
+    # `keep-discard-channel-skips-running` (fix pass, 2026-09-26) dropped
+    # `discardChannel`'s wait on a record's group whose delete was running
+    # while ANOTHER channel's entry named it. Fix pass 2 made that wait dead
+    # code and deleted it, so the anchor is gone. Two changes made it dead: a
+    # keep of a group whose delete is pending is now refused (W2R-n1), so an
+    # entry can name an in-flight group only through the re-entry the keep
+    # spec builds (a delete started from inside `keep`); and `#withPending`
+    # makes every discard wait on EVERY delete pending at the call (W2R-m1),
+    # whatever does or does not still name the group. That wait is pinned by
+    # `keep-discard-waits-attributable-only` below.
+    # ---- the kept-group registry, fix pass 2 (W2R-m1, W2R-n1) --------------
+    Mutation(
+        id="keep-discard-waits-attributable-only",
+        what="`discardAll` and `discardChannel` wait only on the cleanups they started, not on every delete already pending, so a discard resolves while a delete it cannot attribute (a keep expiry, a hand-back past its deadline, a superseded keep or a prefetch's give-up, all of which drop the group's entries and records when they start) is still running natively, and a join can race it (W2R-m1)",
+        file=RESUME_KEEP,
+        search="""    return [...new Set([...started, ...this.#pending.values()])];""",
+        replace="""    return started;""",
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    Mutation(
+        id="keep-accepts-inflight-keep",
+        what="`keep` of a group whose delete is pending creates an entry anyway, so the entry outlives that delete and is claimable once it settles, naming a group no longer on disk (W2R-n1)",
+        file=RESUME_KEEP,
+        # The refusal block dropped whole (newline included); the comment
+        # above it is left, and the keep falls through to its normal path.
+        # Re-anchored 2026-09-26 (resume wave 3): `keep` now answers whether
+        # it kept, so the refusal's `return;` is `return false;`. Same block,
+        # same defect.
+        search="""    if (this.isInFlight(groupId)) {
+      console.info("[mls] keep refused: the group's delete is pending", {
+        groupId,
+        channelId,
+      });
+      return false;
+    }
+""",
+        replace="",
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    # ---- the pre-sink hold verdict ------------------------------------------
+    Mutation(
+        id="hold-verdict-ignores-disabled",
+        what="a disabled bridge still HOLDS MLS envelopes before a sink exists, so a later call is handed envelopes this bridge will never ack (W1R-m4)",
+        file=INBOUND_BUFFER,
+        search="""  if (i.enabled === false) return "drop";
+""",
+        replace="",
+        specs=[INBOUND_BUFFER_SPEC],
+        must_red=[INBOUND_BUFFER_SPEC],
+    ),
+    Mutation(
+        id="hold-verdict-ignores-device",
+        what="an envelope addressed to ANOTHER device of this account is held and handed to this device's session when its sink registers (W1R-m1)",
+        file=INBOUND_BUFFER,
+        search="""  if (i.ownDeviceId && i.ownDeviceId !== i.recipientDeviceId) return "drop";
+""",
+        replace="",
+        specs=[INBOUND_BUFFER_SPEC],
+        must_red=[INBOUND_BUFFER_SPEC],
+    ),
+]
+
+
+# --- Rejoin resume, wave 3: the resume itself --------------------------------
+#
+# The session now RESUMES. The startup establish (and only it) reads the
+# host's prefetch, bounded by `RESUME_PREFETCH_WAIT_MS`; on a `"resume"`
+# decision it adopts the held group (only if `releaseKeptGroup` answers
+# true), clears the group's native downgrade grant, catches the fetched
+# commits up under the lock, checks native, and goes active with an explicit
+# key install — no intent, no create, no commit. Anything short of that takes
+# the join path in its binding order: abort the prefetch, clean up the
+# candidate (step 6), discard the channel's kept groups (both bounded by
+# `KEPT_DISCARD_WAIT_MS`, LOUD past it, never the ladder), then today's
+# ladder. A hang-up KEEPS its group for `LOCAL_GROUP_KEEP_MS` (grant cleared
+# first), `keep` answers whether it kept, and a `removed_self` dropped while
+# another group action runs is recorded and re-checked against native when
+# that action ends.
+#
+# Most entries are `must_red` on `mlsCallSession.resume.test.ts`, which runs
+# the REAL `KeptLocalGroups` and `prefetchResume` behind the harness bridge,
+# so the registry and prefetch entries below are reachable from it too. Each
+# entry names the case(s) measured to kill it, and lists only the spec files
+# measured red under it.
+
+MUTATIONS += [
+    # ---- the resume branch --------------------------------------------------
+    Mutation(
+        id="resume-always-join",
+        what="the startup establish reads every decision as `join`, so a reload or a hang-up → rejoin inside the keep abandons the held group and re-enrols through today's ladder — the 11 s rejoin this wave removes",
+        file=SESSION,
+        search="""    if (prefetch === null || decision !== "resume") {""",
+        replace="""    if (true) {""",
+        # Killed by 41 of the resume spec's 63 cases (re-measured at the
+        # merge wave, 2026-09-27; 18 of 36 at wave 3). The wave-3 eighteen:
+        # every case that expects a resume ((a), (a′, i′), (b), (b′), (d)'s
+        # lag-11 half, (e′) moot, (f), (g), the (i′) re-keep and racing
+        # connects, (i″), (q)), every one whose setup resumes first ((h′),
+        # (m)), and the ones that assert the step-6 order against a candidate
+        # that now never reaches adoption ((e, e″), (e′, e″), (h), (t)). Since
+        # then: both (u), both (v), all seven (w), (x), (y), (z1)–(z9) and
+        # (z14), each of which drives a candidate through the adopt.
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-keys-install-dropped",
+        what="the resume no longer installs the current epoch's keys explicitly, so a catch-up that processed nothing (native fired no keys-changed) goes active with the new worker holding no frame key",
+        file=SESSION,
+        # Re-anchored 2026-09-26 (resume fix pass, FA-B1). The explicit
+        # install was an un-awaited `void this.onLocalKeysChanged(groupId,
+        # prefetch.currentEpoch);` AFTER `#toActive()`; that line is gone.
+        # The install is now awaited inside `#catchUp`, before anything goes
+        # active, through `#installCaughtUpKeys`, whose answer decides
+        # between active and the fallback. Same defect, expressed at the new
+        # site: the install is skipped and read as done. Distinct from
+        # `resume-install-fail-goes-active` below (there the install RUNS and
+        # its answer is ignored) and the resume twin of the late-drain
+        # branch's `catchup-activates-before-key-install` (whose anchor
+        # names `currentEpoch`, not `confirmed`, so the two never collide).
+        # Killed by 14 resume cases before the fix pass, (a) first: a resume
+        # that applied nothing never installs the current epoch's key, and
+        # the seat's mode never reaches `e2ee`.
+        # Re-measured at the re-anchor: killed by 18 of 49 resume cases, (a)
+        # first; the four new install cases ((u) ×2, (v) ×2) among them.
+        search="""      const installed = await this.#installCaughtUpKeys(groupId, confirmed);
+""",
+        replace="""      const installed = true;
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-startup-check-dropped",
+        what="every establish that holds a prefetch takes the resume branch, not only the one `start()` names, so a rejoin-fresh, successor or re-upgrade establish re-reads the startup's prefetch and runs its abort, release and discard (audit M6)",
+        file=SESSION,
+        # The `startup` PARAMETER, which only `start()` passes true: dropping
+        # it is the defect. `resumeDecision`'s own `isStartup` rule (fed
+        # `#startupEstablish`) still answers `join` for a re-establish, so no
+        # resume happens — what the (m) case catches is the join path's
+        # abort, release and discard running on an establish that is not the
+        # startup's.
+        search="""    if (startup && this.#deps.resumePrefetch !== undefined) {""",
+        replace="""    if (this.#deps.resumePrefetch !== undefined) {""",
+        # Killed by (m) and (h′): each asserts that a re-establish takes no
+        # abort, no `releaseKeptGroup` and no `discardKeptForChannel`.
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- the removed-self record (resume plan step 4, R2-M3) ----------------
+    Mutation(
+        id="removed-self-record-replayed-blindly",
+        what="a `removed_self` dropped mid-action is replayed when the action ends without asking native, so a removal the resume made moot — native still lists this device — tears down the group the device just resumed",
+        file=SESSION,
+        search="""    void this.#confirmRemovedSelf(record);""",
+        replace="""    void record;
+    this.#scheduleGroupAction(() => this.#onRemovedSelf(), "removed_self");""",
+        # Killed by the two (e′) cases that act at the action's end: the moot
+        # one (the replay tears the resumed group down) and the
+        # acted-on one (its `acting on a removal dropped mid-action` line is
+        # the re-check's, which the replay skips). The (e″) cases stay green
+        # by design: step 6 forgets the record before any action ends, so
+        # there is nothing left to replay.
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="removed-self-record-never-acted-on",
+        what="the record of a `removed_self` dropped mid-action is never taken when the action ends, so a device the group removed while its join ladder waited stays in a group native no longer seats it in",
+        file=SESSION,
+        search="""        this.#actOnRemovedSelfRecord();
+""",
+        replace="",
+        # Killed by the same two (e′) cases from the other side: the acted-on
+        # one (the group is never left, and the device never re-intents) and
+        # the moot one (the re-check's `moot` line never comes).
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="step6-forget-dropped",
+        what="step 6 no longer forgets the candidate's removed-self record, before or after its delete, so a removal dropped during the resume survives the cleanup and is acted on against the fallback that re-entered the SAME DS group id (R2-M3)",
+        file=SESSION,
+        # Both sites in `#joinWithoutResume`, each anchored on its
+        # neighbouring line: the call before the delete and the one after
+        # it are the same text. Both are dropped, as the wave-3 audit
+        # measured it (W3-m1); a single-site drop is not measured here.
+        # Killed by (e, e″) and (e′, e″).
+        search="""      this.#forgetRemovedSelf(candidate);
+      await this.#awaitJoinPathDelete(""",
+        replace="""      await this.#awaitJoinPathDelete(""",
+        also=[
+            (
+                """      this.#forgetRemovedSelf(candidate);
+      if (this.#pendingIdentityFetch === candidate) {""",
+                """      if (this.#pendingIdentityFetch === candidate) {""",
+            ),
+        ],
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- the join path (Wave-3 folds, binding order) ------------------------
+    Mutation(
+        id="join-path-skips-abort",
+        what="the join path no longer aborts the prefetch, so an abandoned prefetch keeps running under the fallback: its claim is never handed back and its `giveUp` can delete the group the fallback joined under the same DS group id (W2R-M1)",
+        file=SESSION,
+        # The 4-space call with its next line: the two `"stop"` exits in
+        # `#startupResume` carry the same call at 6 spaces, which contains
+        # the bare 4-space line as a substring.
+        search="""    this.#deps.abortResumePrefetch?.();
+    const live = () =>""",
+        replace="""    const live = () =>""",
+        # Killed by the 7 resume cases that assert the join path's abort:
+        # (d), (e, e″), (h), (j), both (p) and (r).
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="join-path-skips-discard",
+        what="the join path no longer discards the channel's kept groups, so a group a null prefetch left on disk (claimed elsewhere) is still there when the ladder creates or joins the same group id (W2-m1)",
+        file=SESSION,
+        search="""    await this.#awaitJoinPathDelete(
+      this.#deps.bridge.discardKeptForChannel(this.#deps.channelId),
+      "the channel's kept local groups",
+    );
+""",
+        replace="",
+        # Killed by 6 resume cases: the null-prefetch (p), (r), (s), (j)'s
+        # byte-for-byte prefix, (l)'s stale record and (i′)'s in-flight
+        # expiry.
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="discard-timeout-falls-through",
+        what="a join-path delete that did not finish inside `KEPT_DISCARD_WAIT_MS` is logged and the ladder runs anyway, re-entering a group id whose local delete is still running — the fallback's group can be deleted under it",
+        file=SESSION,
+        search="""      throw new Error(
+        `MLS call join refused: deleting ${what} did not finish — joining ` +
+          `now could re-enter a group whose local delete is still running.`,
+      );
+""",
+        replace="",
+        # Killed by (s) alone: not loud at the bound, and the ladder runs.
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- adoption -------------------------------------------------------------
+    Mutation(
+        id="adopt-ignores-release-false",
+        what="the resume adopts even when `releaseKeptGroup` answers false, so a candidate whose delete is already in flight is adopted and deleted under the call (W2-m2)",
+        file=SESSION,
+        search="""    if (!this.#deps.bridge.releaseKeptGroup(groupId)) {""",
+        replace="""    if (!(this.#deps.bridge.releaseKeptGroup(groupId) || true)) {""",
+        # Killed by (t) alone: the in-flight candidate is adopted (its grant
+        # clear runs) instead of taking step 6.
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-release-never-called",
+        what="`releaseKeptGroup` is never called, at the adopt or at step 6, so the kept entry the resume adopted keeps its timer and deletes the live group under the call (R2-B1)",
+        file=SESSION,
+        # Both call sites, and the adopt no longer refuses either: never
+        # called means never answered.
+        search="""    if (!this.#deps.bridge.releaseKeptGroup(groupId)) {""",
+        replace="""    if (false) {""",
+        also=[
+            (
+                """      this.#deps.bridge.releaseKeptGroup(candidate);
+""",
+                "",
+            ),
+        ],
+        # Killed by 4 resume cases: (a) and (a′, i′) assert the adopt's
+        # release, (j) the step-6 release in its byte-for-byte prefix, and
+        # (t) the adoption of an in-flight candidate.
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-skips-grant-clear",
+        what="the resume adopts without clearing the group's native downgrade grant, so a Ctrl+R after a confirmed downgrade enables on the dead page's grant (W2-M3)",
+        file=SESSION,
+        search="""    try {
+      await this.#deps.bridge.callClearDowngrade(groupId);
+    } catch (error) {
+      console.warn("[mls] resume: downgrade grant clear failed", error);
+      const miss: ResumeMiss = { cause: "grant_clear_failed" };
+      return (
+        this.#loudVeto(groupId, miss) ??
+        this.#noResume(generation, groupId, miss)
+      );
+    }
+""",
+        replace="",
+        # Killed by (q) (enabled on a live grant) and (a) (the clear's place
+        # between the release and the key install).
+        # Re-anchored 2026-09-26 (resume fix pass, FA-m3): the failed clear
+        # no longer returns `#joinWithoutResume` directly but through
+        # `#noResume`, which logs the fallback cause first and then takes the
+        # same join path. Only the catch's return changed; the whole
+        # try/catch is still dropped, so the adopt still skips the clear.
+        # Re-measured at the re-anchor: killed by (a) and (q), 2 of 49.
+        # Re-anchored 2026-09-27 (MFR-m1 fix pass, MRG): the catch now asks
+        # `#loudVeto` before `#noResume`, and the try/catch moved into
+        # `#resumeAdopt` at the same indentation. The whole try/catch is
+        # still dropped. Re-measured: killed by 14 of 75, (a), (q), (z6),
+        # (z7), (z15)–(z17), (z19)–(z24) and (z26): the cases that drive
+        # their verdict from inside the clear lose that await with it.
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- dispose: keep vs discard -------------------------------------------
+    Mutation(
+        id="dispose-discard-ignored",
+        what="`dispose({ discard: true })` (sign-out) keeps the group like a hang-up and writes its recency record, so a signed-out device's call group stays on disk and resumable",
+        file=SESSION,
+        search="""    if (opts?.discard) {""",
+        replace="""    if (false) {""",
+        # Killed by the resume spec's discarding hang-up (its direct
+        # `dispose({ discard: true })` half is kept and recorded) and by the
+        # mailbox spec's sign-out hang-up. Each pinned on its own.
+        specs=[RESUME_SPEC, MAILBOX_SPEC],
+        must_red=[RESUME_SPEC, MAILBOX_SPEC],
+    ),
+    Mutation(
+        id="keep-skips-grant-clear",
+        what="a hang-up keeps its group without clearing the native downgrade grant, so the kept row keeps the grant alive for the channel's next call (R2-M1)",
+        file=SESSION,
+        search="""    void this.#deps.bridge
+      .callClearDowngrade(groupId)
+      .catch((error: unknown) => {
+        console.warn("[mls] downgrade grant clear at hang-up failed", error);
+      });
+""",
+        replace="",
+        # Killed by (i″) and by the mailbox spec's same-page hang-up → rejoin
+        # case. Each pinned on its own.
+        specs=[RESUME_SPEC, MAILBOX_SPEC],
+        must_red=[RESUME_SPEC, MAILBOX_SPEC],
+    ),
+    # ---- the rejoin serve's roster read (W15R-m1) ---------------------------
+    Mutation(
+        id="serve-rejoin-no-postawait-recheck",
+        what="`#serveRejoin` no longer re-checks generation and group after its `callState` await, so a read that straddled a re-establish or a group change retires or schedules against the LIVE group's reservations and ledger",
+        file=SESSION,
+        # The check occurs TWICE (the read's success path and its catch), so
+        # each is anchored with the line above it and both are dropped.
+        search="""      const state = await this.#deps.bridge.callState(this.#groupId);
+      if (this.#serveOutlivedRead(request, scheduledGeneration)) return;
+""",
+        replace="""      const state = await this.#deps.bridge.callState(this.#groupId);
+""",
+        also=[
+            (
+                """    } catch {
+      if (this.#serveOutlivedRead(request, scheduledGeneration)) return;
+""",
+                """    } catch {
+""",
+            ),
+        ],
+        # Killed by all four of the serve-guard spec's straddling reads
+        # (answers or throws, after a same-group re-entry or a reset gap).
+        specs=[SERVEGUARD_SPEC],
+        must_red=[SERVEGUARD_SPEC],
+    ),
+    # ---- the prefetch and the kept-group registry ---------------------------
+    Mutation(
+        id="resume-fetch-failure-reads-caught-up",
+        what="a failed commits fetch (the DS's 404, a 500) is read as nothing missed, so the prefetch hands the session a resumable candidate at the device's own epoch instead of cleaning it up — a DS that refuses the catch-up gets a resume at a stale epoch",
+        file=RESUME_KEEP,
+        search="""    const fetched = await deps.fetchCommits(candidate, state.epoch + 1, signal);""",
+        replace="""    const fetched = await deps
+      .fetchCommits(candidate, state.epoch + 1, signal)
+      .catch(() => ({
+        kind: "ok" as const,
+        body: { commits: [] as C[], current_epoch: state.epoch },
+      }));""",
+        # The harness runs the REAL `prefetchResume`, and a 404 reaches it the
+        # way `#apiMls` delivers one: THROWN (`requestFetchCommits`). So the
+        # defect is that rejection read as an empty, current list. Killed by
+        # both (c) cases, the 404 and the 500.
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="prefetch-giveup-ignores-abort",
+        what="an aborted prefetch's `giveUp` still cleans its candidate up, so a prefetch the join path abandoned can delete the group the fallback just joined under the same DS group id (W2S-m1)",
+        file=RESUME_KEEP,
+        search="""    if (signal?.aborted) return null;
+""",
+        replace="",
+        # Killed by the keep spec's two abort cases (before the reads, during
+        # the commits fetch), by the resume spec's racing connects (i′) and
+        # by one mailbox case. Each pinned on its own. The mailbox spec used
+        # to HANG under this mutant past `SPEC_TIMEOUT_S`; the wave-3 fix
+        # pass (W3-m2) made it fail on an assertion in seconds instead, so
+        # it is listed now.
+        specs=[RESUME_KEEP_SPEC, RESUME_SPEC, MAILBOX_SPEC],
+        must_red=[RESUME_KEEP_SPEC, RESUME_SPEC, MAILBOX_SPEC],
+    ),
+    Mutation(
+        id="keep-returns-true-always",
+        what="`keep` answers true on both refusals, so a hang-up whose keep was refused writes a recency record naming a group that is already on its way off the disk",
+        file=RESUME_KEEP,
+        search="""      return false;
+    }
+    if (this.#refused) {
+      this.#cleanupLogged(groupId, "keep refused");
+      return false;
+    }""",
+        replace="""      return true;
+    }
+    if (this.#refused) {
+      this.#cleanupLogged(groupId, "keep refused");
+      return true;
+    }""",
+        # Killed by 9 keep-spec cases (every asserted refusal), by the resume
+        # spec's sign-out case and by the mailbox spec's sign-out hang-up (a
+        # keep after the sign-out answers true). Each pinned on its own.
+        specs=[RESUME_KEEP_SPEC, RESUME_SPEC, MAILBOX_SPEC],
+        must_red=[RESUME_KEEP_SPEC, RESUME_SPEC, MAILBOX_SPEC],
+    ),
+    Mutation(
+        id="discard-channel-ignores-entries",
+        what="`discardChannel` deletes its record's group even when ANOTHER channel's live keep entry names it, deleting a group that entry is still keeping (W2S-m2)",
+        file=RESUME_KEEP,
+        search="""      rec !== null && !this.#hasEntry(rec.groupId) ? rec.groupId : null;""",
+        replace="""      rec !== null ? rec.groupId : null;""",
+        # Killed by the keep spec's W2S-m2 case (the other channel's entry
+        # NOT mid-delete, claimed or not), which the wave-2 spec lacked.
+        specs=[RESUME_KEEP_SPEC],
+        must_red=[RESUME_KEEP_SPEC],
+    ),
+    Mutation(
+        id="keep-consumed-per-group",
+        what="the registry marks a released (adopted) group consumed by GROUP ID instead of dropping its entry, so a later keep of that group — the next hang-up after a resume — never expires and the group outlives its keep (R2-B1 gap 1)",
+        file=RESUME_KEEP,
+        # Not a session edit: the session holds no keep state at all (its
+        # only keep-side act is the `keepLocalGroup` call in `dispose`). The
+        # state is `KeptLocalGroups`', and this is the defect the R2-B1
+        # re-check named ("per keep ENTRY, not per group, else a later keep
+        # of G never expires"), built at its two sites: `release` marks the
+        # group, and `#expire` refuses a marked group's timer.
+        search="""    this.#deleteEntries(groupId);
+    return !this.isInFlight(groupId);""",
+        replace="""    this.#deleteEntries(groupId);
+    ((this as unknown as { consumed?: Set<string> }).consumed ??=
+      new Set()).add(groupId);
+    return !this.isInFlight(groupId);""",
+        also=[
+            (
+                """    if (entry.timer !== slot || !this.#entries.has(entry)) return;""",
+                """    if (entry.timer !== slot || !this.#entries.has(entry)) return;
+    if (
+      (this as unknown as { consumed?: Set<string> }).consumed?.has(
+        entry.groupId,
+      )
+    )
+      return;""",
+            ),
+        ],
+        # Killed by the resume spec's (i′) "resume, then hang up" (the new
+        # keep never expires) and by the keep spec's release case ("a later
+        # keep of that group expires normally"). Each pinned on its own.
+        specs=[RESUME_SPEC, RESUME_KEEP_SPEC],
+        must_red=[RESUME_SPEC, RESUME_KEEP_SPEC],
+    ),
+]
+
+
+# --- Rejoin resume, final-audit fix pass: install, tail, veto, fence ---------
+#
+# The final cross-cutting audit (2026-09-26) found the resume going active
+# BEFORE its keys installed (FA-B1: a keys-changed for an intermediate epoch
+# landing mid-catch-up turns the explicit install into an Add-grace one, and
+# the gate opens on a send key a member the catch-up removed still holds), and
+# a commit dropped as another group's between the prefetch GET and the adopt
+# never retried (FA-M1: the seat publishes one epoch behind). The fix: the
+# install is awaited under `#catchUp`'s lock and judged by
+# `#installCaughtUpKeys` (the install counter moved, the fence is ours, and
+# OUR send key is at the confirmed epoch) before anything goes active, and a
+# failed install falls back; a non-terminal foreign drop of the candidate is
+# recorded in `#resumeForeignDrops` and buys ONE tail fetch before the final
+# native check, whose failure falls back. The audit also found the W1-m1 veto
+# unpinned (FA-m2), and the fix pass fenced a stale keys-changed push of a
+# deleted candidate's old incarnation (`#staleKeysFence`, FAF-S2).
+#
+# Appended here, after the wave-3 block, on purpose: the late-drain branch's
+# block sits mid-file (ahead of the wave-1 block), so the end of the file
+# keeps these entries out of its merge window.
+#
+# Every entry is `must_red` on the resume spec, and the cases named are the
+# ones measured red under it.
+
+MUTATIONS += [
+    # ---- FA-B1: the install before active -----------------------------------
+    Mutation(
+        id="resume-active-before-install",
+        what="the resume goes active BEFORE the caught-up keys install (FA-B1): the install still runs, but while it is pending the session is green and a reconcile can empty the gate under the send key of an epoch a member the catch-up removed still holds (locked decision 3)",
+        file=SESSION,
+        # The resume twin of the late-drain branch's `catchup-install-reorder`
+        # (different anchor: `confirmed`, not `currentEpoch`).
+        # Measured 2026-09-26: killed by 4 of 49: both (u) FA-B1 cases (the
+        # interleave, whose sampled monitor sees the gate open on the older
+        # send key, and the LDA-M1 shape) and both (v) install failures.
+        search="""      const installed = await this.#installCaughtUpKeys(groupId, confirmed);
+""",
+        replace="""      this.#toActive();
+      const installed = await this.#installCaughtUpKeys(groupId, confirmed);
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # `resume-own-key-epoch-unchecked` was here. FOLDED at the merge wave
+    # (2026-09-27) into the late-drain block's `own-send-key-epoch-unchecked`,
+    # which now pins BOTH `DRAINFAIL_SPEC` and `RESUME_SPEC`: after the merge
+    # there is one `#installCaughtUpKeys`, and the two entries mutated the
+    # same bytes with the same replace. The resume half of it — (u) "FA-B1,
+    # LDA-M1" kills it on its own — is recorded on that entry.
+    Mutation(
+        id="resume-install-fail-goes-active",
+        what="a caught-up install that failed its checks is ignored and the resume goes active anyway, instead of falling back to the join ladder: green on a group whose frame key is missing or older than the confirmed epoch",
+        file=SESSION,
+        # Measured 2026-09-26: killed by 3 of 49: (u) "FA-B1, LDA-M1" and
+        # both (v) install failures.
+        # Re-anchored at the merge wave (2026-09-27). The merge brought the
+        # late-drain branch's `#confirmWelcomeCurrency`, the second caller of
+        # the one `#installCaughtUpKeys`, and it opens its own check with the
+        # same `if (!installed) {` line, so the bare line matched TWICE. The
+        # search now takes the resume-only warn line that follows it. Same
+        # edit, same site. Re-measured: killed by 4 of 63: (u) "FA-B1,
+        # LDA-M1", both (v), and (z14) (a failed install never stamps
+        # `resumed`, which this mutant lets the resume reach).
+        search="""      if (!installed) {
+        console.warn("[mls] resume: the caught-up keys did not install", {
+""",
+        replace="""      if (!installed && false) {
+        console.warn("[mls] resume: the caught-up keys did not install", {
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- FA-M1: a commit dropped between the prefetch GET and the adopt -----
+    Mutation(
+        id="resume-foreign-drop-unrecorded",
+        what="a non-terminal foreign drop of the startup's candidate is not recorded (FA-M1), so a commit that landed between the prefetch GET and the adopt is never fetched: the resume confirms at the prefetch's epoch and the seat publishes one epoch behind the group until something else heals it",
+        file=SESSION,
+        # Measured 2026-09-26: killed by 4 of 49: (w) FA-M1 (one tail GET
+        # catches the seat up), both (w) tail failures (non-ok, short) and
+        # (w) F1. The same four as `resume-tail-skipped` below: the record is
+        # read only by the tail's condition, so the two are behaviourally
+        # equivalent today. Both are kept, one per half (the write, the read),
+        # so a later second reader of the record cannot leave either unpinned.
+        search="""        if (!foreign.ack && this.#startupEstablish) {
+          this.#resumeForeignDrops.add(envelope.group_id);
+        }
+""",
+        replace="",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-tail-skipped",
+        what="the recorded foreign drop never triggers the tail fetch (FA-M1): the record is kept and cleared but nothing reads it, so the resume confirms at the prefetch's epoch with the dropped commit missing",
+        file=SESSION,
+        # Measured 2026-09-26: killed by the same 4 of 49 as
+        # `resume-foreign-drop-unrecorded` above.
+        search="""      if (this.#resumeForeignDrops.has(groupId)) {
+        const tail = await this.#catchUpTail(p, stale);
+""",
+        replace="""      if (this.#resumeForeignDrops.has(groupId) && false) {
+        const tail = await this.#catchUpTail(p, stale);
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-tail-failure-kept",
+        what="a tail fetch that failed (a throw, a non-ok answer, a 404, a short or lagging page) is ignored and the resume goes on at the prefetch's epoch, instead of falling back: active behind the DS on exactly the path that knows it missed a commit",
+        file=SESSION,
+        # Measured 2026-09-26: killed by 3 of 49: both (w) tail failures
+        # (non-ok, short) and (w) F1.
+        search="""        if ("cause" in tail) return tail;
+        confirmed = tail.epoch;
+""",
+        replace="""        if (!("cause" in tail)) confirmed = tail.epoch;
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- FA-m2: the W1-m1 veto ----------------------------------------------
+    Mutation(
+        id="w1m1-veto-disabled",
+        what="the resume no longer vetoes on a LOUD foreign drop of its candidate (W1-m1): an envelope of the group the drain destroyed is gone for good, and the resume goes active on a group state that is missing it",
+        file=SESSION,
+        # Unpinned until the fix pass: the final audit disabled this veto and
+        # every spec stayed green (FA-m2).
+        # Measured 2026-09-26: killed by (x) W1-m1 alone (1 of 49).
+        search="""      if (this.#loudForeignDrops.has(groupId)) {
+""",
+        replace="""      if (this.#loudForeignDrops.has(groupId) && false) {
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- FAF-S2: the stale keys-changed fence --------------------------------
+    Mutation(
+        id="resume-stale-push-unfenced",
+        what="a keys-changed push of a startup-deleted group's old incarnation, landing after the join ladder re-entered the same group id, is acted on: `#installEpoch` was reset, so it passes the epoch check, reads frame keys from the deleted row, and the clean rejoin ends in re-securing and loud. Every startup delete is fenced: the resume candidate its fallback deleted (pre-existing on the `catch_up_stopped` fallback; FAF-S2), the kept groups the join path's discard deletes, and the groups the NON-resume startup's `#startupWipe` deletes (FAR-m2)",
+        file=SESSION,
+        # Measured 2026-09-26: killed by 3 of 49: (w) F1, F2 and F3.
+        # Re-anchored at the merge wave (2026-09-27). MS2 item 5 (FAR-m2)
+        # turned `#staleKeysFence` from one `{ groupId, epoch }` record, its
+        # floor frozen when the delete began, into a Set of fenced group ids
+        # whose floor is read from `#startupAppliedEpochs` when the push
+        # lands, so the check is now `floor !== undefined && epoch <= floor`
+        # and the old line matches nothing. Same defect: the fence never
+        # drops a push. Re-measured: killed by 9 of 63: (w) F1, F2 and F3,
+        # (z1), and (z9)–(z13).
+        # `what` widened at the merge fix pass (2026-09-27, MFG; MWA-n3): it
+        # named only the resume candidate, while the line guards every
+        # fenced group. Re-measured: the same 9 of 68, (z10) and (z11) being
+        # the `#startupWipe` cases.
+        search="""    if (floor !== undefined && epoch <= floor) {
+""",
+        replace="""    if (false) {
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+]
+
+
+# --- Rejoin resume, merge wave: MS2 items and FAR-m3 --------------------------
+#
+# The merge with main (the late-drain guard, `b1c39d6e`) put the resume and
+# the late drain in one session, and MS2 closed where they meet: a failed gap
+# refetch under a catch-up commit is a stop, never clean (item 1); a Welcome
+# adopted inside the resume's adopt window arms no currency check (item 2); a
+# re-secure raised by the drain inside that window vetoes the resume (item 3,
+# LDA-n3); the `retry` arm never re-queues a catch-up's synthetic (item 4, LD
+# note 8); the stale-keys fence reads its floor live and covers every startup
+# delete, `#startupWipe` included (item 5, FAR-m2); `resumed` is stamped only
+# once the resume stands (item 6, FAR-n1). FAR-m3 pinned three rules the resume
+# already had and no entry reached: the foreign-apply floor, the tail's lag
+# bound from the HELD epoch, and the tail's own-commit rule.
+#
+# Every entry is `must_red` on the resume spec, whose (z1)–(z14) cases were
+# written for these rules; each count below is measured, with the full suite
+# loaded, against the 63-case spec. Two PAIRS are equivalent today — the same
+# kill for the same reason — and both halves are kept because each guards a
+# different line (the flag's write and its read), so a second reader of either
+# flag cannot leave one of them unpinned: `resume-adopt-welcome-arms-currency`
+# / `resume-adopting-never-set` (z6), and `catch-up-synthetic-requeued` /
+# `resume-catching-up-never-set` (z8). The first pair was split at the merge
+# fix pass (MWA-m1 widened the guard `#resumeAdopting` is read by);
+# `resume-adopting-never-set` now pairs with
+# `resume-adopt-welcome-guard-bypassed` in the fix-pass block below.
+#
+# 🔴 Two entries pin a CLASSIFICATION, not a fail-open:
+# `catch-up-refetch-failure-uncounted` and `resume-tail-refetch-reason-lost`.
+# Under either the resume still falls back (a rethrow ends it
+# `catch_up_threw`, a mislabel `tail_failed`/`not_applied`); what they break is
+# the cause the fallback's log line and `resumeJoinCause` report, which MS2
+# item 1 made part of the contract.
+
+MUTATIONS += [
+    # ---- FAR-m3: the three resume rules no entry reached --------------------
+    Mutation(
+        id="resume-foreign-apply-floor-unrecorded",
+        what="a commit of a startup group applied as ANOTHER group's (a post-GET commit drained before the adopt, or one native applied while the group's delete ran) is not recorded in `#startupAppliedEpochs` (FAR-m3): the fence floor misses that epoch, and after the fallback re-enters the same group id, native's keys-changed for it passes the fence and reads frame keys from the deleted row",
+        file=SESSION,
+        # Measured 2026-09-27: killed by 6 of 63: (z1) (the lag-0 foreign
+        # apply must fence at C+1) and (z9)–(z13) (every floor an apply
+        # raised during a delete).
+        search="""      if (foreign.kind === "processed") this.#noteStartupApplied(foreign);
+""",
+        replace="",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-tail-held-lag-unbounded",
+        what="the resume tail is held only to `lag >= 0` from native's epoch, not to `RESUME_MAX_LAG` from the HELD epoch (FAR-m3): a tail that carries the group past the lag the live session calls desync is applied, so a resume catches up further than the prefetch itself was allowed to",
+        file=SESSION,
+        # Measured 2026-09-27: killed by (z2) alone (1 of 63).
+        search="""    if (!(lag >= 0 && current - p.localEpoch < RESUME_MAX_LAG)) {
+""",
+        replace="""    if (!(lag >= 0)) {
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-tail-own-commit-applied",
+        what="a tail page carrying a commit of this device's own is applied (FAR-m3): the prefetch's own-commit rule does not hold for the tail, and the resume re-applies a commit native already staged as ours",
+        file=SESSION,
+        # Measured 2026-09-27: killed by (z3) alone (1 of 63).
+        search="""      return failed("own_commit", { from, current });
+""",
+        replace="",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- MS2 item 1: a failed gap refetch is not clean ----------------------
+    Mutation(
+        id="catch-up-refetch-failure-uncounted",
+        what="a gap refetch that failed under a resume catch-up commit is not counted, so `#consumeCatchUp` cannot tell it from any other throw and rethrows it: the resume ends `catch_up_threw` instead of `catch_up_stopped` / `tail_failed` (`gap_refetch_failed`) (MS2 item 1; fail-closed, the cause is what breaks)",
+        file=SESSION,
+        # Measured 2026-09-27: killed by (z4) and (z5) (2 of 63).
+        search="""      this.#gapRefetchFailures++;
+""",
+        replace="",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-tail-refetch-reason-lost",
+        what="the resume tail reports a failed gap refetch under one of its commits as `not_applied` (MS2 item 1; fail-closed, the reason is what breaks)",
+        file=SESSION,
+        # Measured 2026-09-27: killed by (z5) alone (1 of 63).
+        search="""          result === "gap_refetch_failed" ? result : "not_applied",
+""",
+        replace="""          "not_applied",
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- MS2 item 2: the resume's adopt arms no currency check --------------
+    Mutation(
+        id="resume-adopt-welcome-arms-currency",
+        what="a Welcome for the candidate adopted INSIDE the resume's adopt window records a Welcome currency check (MS2 item 2): `#pump` runs it beside the resume, and its `#toActive()` can go active on a verdict the resume has not reached",
+        file=SESSION,
+        # Measured 2026-09-27: killed by (z6) alone (1 of 63).
+        # Re-anchored at the merge fix pass (2026-09-27, MFG). MWA-m1 removed
+        # the set-then-null guard this entry deleted: the record is now
+        # written only inside `if (this.#resumeAdopting !==
+        # outcome.group_id)`. Same defect, re-introduced as an insertion: the
+        # record is written for EVERY adopted Welcome, just before the wait
+        # resolves, so an adopt-window Welcome arms the check (an ordinary
+        # one writes the same record twice). The stamp and `#joinedGeneration`
+        # stay guarded; those are the MWA-m1 entries' to pin. Re-measured:
+        # killed by (z6) alone (1 of 68). No longer equivalent to
+        # `resume-adopting-never-set` (the block note).
+        search="""      if (verdict.resolveWait) this.#welcomeWait?.resolve(true);
+""",
+        replace="""      this.#welcomeCurrency = {
+        groupId: outcome.group_id,
+        epoch: outcome.epoch,
+        generation: this.#establishGeneration,
+      };
+      if (verdict.resolveWait) this.#welcomeWait?.resolve(true);
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-adopting-never-set",
+        what="`#resumeAdopting` is never set at the adopt, so the Welcome arm's guard never matches and a Welcome adopted inside the adopt window arms a currency check beside the resume (MS2 item 2), and stamps `welcomeAdopted` and writes `#joinedGeneration`, which outlive a fallback (MWA-m1)",
+        file=SESSION,
+        # Measured 2026-09-27: killed by (z6) alone (1 of 63). Equivalent
+        # today to `resume-adopt-welcome-arms-currency` (the block note).
+        # Re-measured at the merge fix pass (2026-09-27, MFG): killed by
+        # (z6), (z15) and (z16) (3 of 68), since MWA-m1's guard now covers
+        # the stamp and `#joinedGeneration` as well. Equivalent today to
+        # `resume-adopt-welcome-guard-bypassed`, no longer to
+        # `resume-adopt-welcome-arms-currency` (the block note).
+        search="""    this.#groupId = groupId;
+    this.#resumeAdopting = groupId;
+""",
+        replace="""    this.#groupId = groupId;
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- MS2 item 3: a re-secure inside the adopt window vetoes (LDA-n3) ----
+    Mutation(
+        id="resume-active-over-resecure",
+        what="a re-secure raised inside the adopt window (a DS 404 on a gap refetch the drain ran) no longer vetoes the resume — only a terminal session does — so it goes active over `resecuring`, and the fresh rejoin the 404 asked for, dropped by the single-flight, never runs: green on a group the DS may no longer list this device in (MS2 item 3, LDA-n3)",
+        file=SESSION,
+        # Measured 2026-09-27: killed by (z7) alone (1 of 63).
+        search="""    if (this.#state === "resecuring") {
+      console.warn("[mls] resume vetoed""",
+        replace="""    if (this.#terminal()) {
+      console.warn("[mls] resume vetoed""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- MS2 item 4: a catch-up synthetic is never re-queued (LD note 8) ----
+    Mutation(
+        id="catch-up-synthetic-requeued",
+        what="the drain's `retry` arm re-queues a resume catch-up's synthetic (LD note 8): the catch-up already stopped on it and fell back, possibly into the SAME group id, and the re-queued old commit drains into the new incarnation (MS2 item 4)",
+        file=SESSION,
+        # Measured 2026-09-27: killed by (z8) alone (1 of 63). Equivalent
+        # today to `resume-catching-up-never-set` (the block note).
+        search="""        if (!(this.#resumeCatchingUp && envelope.id.startsWith("mls-synth:")))
+          this.#scheduleRetry(envelope);
+""",
+        replace="""        this.#scheduleRetry(envelope);
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-catching-up-never-set",
+        what="`#resumeCatchingUp` is never set under `#catchUp`'s lock, so the `retry` arm's guard never recognises a catch-up's synthetic and re-queues it into the fallback (MS2 item 4)",
+        file=SESSION,
+        # Measured 2026-09-27: killed by (z8) alone (1 of 63). Equivalent
+        # today to `catch-up-synthetic-requeued` (the block note).
+        search="""    this.#resumeCatchingUp = true;
+""",
+        replace="",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- MS2 item 5 (FAR-m2): the stale-keys fence --------------------------
+    Mutation(
+        id="stale-fence-floor-frozen-at-delete",
+        what="a fenced group's applies never raise its floor, not even one the delete raced (the deleted incarnation's), so the floor stays where the fence found it and that apply's keys-changed passes the fence after the ladder re-enters the group id (MS2 item 5, FAR-m2: the floor is read live)",
+        file=SESSION,
+        # Measured 2026-09-27: killed by (z11) alone (1 of 63). Only
+        # `#startupWipe` fences a group BEFORE its delete is awaited; the
+        # resume fallback fences after the candidate's delete, so (z9)'s
+        # raced apply still counts under this mutant.
+        search="""    if (fenced && outcome.group_id === this.#groupId) return;
+""",
+        replace="""    if (fenced) return;
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="stale-fence-counts-new-incarnation",
+        what="once the ladder re-enters a fenced group id, the NEW incarnation's applies still raise the floor its own keys-changed is checked against, so the fence drops the new incarnation's legitimate pushes (MS2 item 5, FAR-m2: never drop a new incarnation's push)",
+        file=SESSION,
+        # Measured 2026-09-27: killed by 14 of 63 resume cases ((e, e″),
+        # (e′, e″), (h), (w) F1–F3, (z1)–(z3), (z9)–(z13)) and by the mailbox
+        # spec's W1 (1 of 13). Each pinned on its own.
+        search="""    if (fenced && outcome.group_id === this.#groupId) return;
+""",
+        replace="",
+        specs=[RESUME_SPEC, MAILBOX_SPEC],
+        must_red=[RESUME_SPEC, MAILBOX_SPEC],
+    ),
+    Mutation(
+        id="startup-wipe-unfenced",
+        what="the NON-resume startup's `#startupWipe` no longer fences the groups it deletes, so native's keys-changed for a commit the old incarnation applied, landing after the ladder re-enters the same group id, reads frame keys from the deleted row: re-securing, then loud (MS2 item 5, FAR-m2)",
+        file=SESSION,
+        # Measured 2026-09-27: killed by (z10) and (z11) (2 of 63).
+        search="""        // still raises the floor (`#noteStartupApplied`).
+        this.#staleKeysFence.add(groupId);
+""",
+        replace="""        // still raises the floor (`#noteStartupApplied`).
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-fallback-discard-unfenced",
+        what="the resume's fallback (`#joinWithoutResume`) fences nothing — neither the candidate it deleted nor the kept groups the discard deletes — so an old incarnation's in-flight keys-changed reaches the new one after the ladder re-enters the same group id (MS2 item 5, FAR-m2)",
+        file=SESSION,
+        # Measured 2026-09-27: killed by 7 of 63: (w) F1, F2 and F3, (z1),
+        # (z9), (z12) and (z13).
+        search="""    for (const groupId of this.#startupAppliedEpochs.keys()) {
+      this.#staleKeysFence.add(groupId);
+    }
+""",
+        replace="",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="stale-fence-floor-pruned-at-window",
+        what="the startup window's close clears a FENCED group's floor with every other entry, so an old push landing after the establish returned finds no floor and passes the fence (MS2 item 5, FAR-m2: a fenced floor outlives the window)",
+        file=SESSION,
+        # Measured 2026-09-27: killed by (z13) alone (1 of 63).
+        search="""          if (!this.#staleKeysFence.has(groupId)) {
+            this.#startupAppliedEpochs.delete(groupId);
+          }
+""",
+        replace="""          this.#startupAppliedEpochs.delete(groupId);
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- MS2 item 6 (FAR-n1): `resumed` only once the resume stands ---------
+    Mutation(
+        id="resume-stamped-before-install",
+        what="`resumed` is stamped before the caught-up keys install again (FAR-n1, the pre-fix order): a resume that fails its install check still leaves a `resumed` stamp on the fallback's timeline, and a resume's `resumed` time excludes the install",
+        file=SESSION,
+        # Both halves of the move: the stamp leaves `#startupResume` (after
+        # the install check and the veto) and returns ahead of the install in
+        # `#catchUp`. Measured 2026-09-27: killed by (a) (the stamp chain
+        # `keysInstalled < resumed`) and (z14) (2 of 63).
+        # Re-anchored 2026-09-27 (MFR-m1 fix pass, MRG): MFR-m1 put the
+        # `latchedBefore` read (`ownLatch`) between the `catchUpDone` stamp
+        # and the install, so the second edit carries that line and still
+        # stamps `resumed` right after `catchUpDone`, ahead of the install.
+        # Re-measured: killed by (a) and (z14), 2 of 75.
+        search="""    this.#joinTimeline?.stamp("resumed");
+    const epoch = outcome.epoch;
+""",
+        replace="""    const epoch = outcome.epoch;
+""",
+        also=[
+            (
+                """      this.#joinTimeline?.stamp("catchUpDone");
+      const latchedBefore = this.#loudLatched;
+""",
+                """      this.#joinTimeline?.stamp("catchUpDone");
+      this.#joinTimeline?.stamp("resumed");
+      const latchedBefore = this.#loudLatched;
+""",
+            ),
+        ],
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+]
+
+
+# --- Rejoin resume, merge fix pass: the adopt window (MWA-m1, n1, n2) --------
+#
+# The merge-wave audit found what the resume's adopt window leaves behind for
+# the join ladder and for a later Welcome. MWA-m1: a Welcome adopted inside
+# the window wrote `#joinedGeneration` (and stamped `welcomeAdopted`), so on a
+# fallback the ladder read itself joined and stopped before its first intent,
+# a silent amber wedge; all three writes, the currency record included, now
+# sit inside `if (this.#resumeAdopting !== outcome.group_id)`. MWA-n1: the
+# veto now fires on `failed` or the loud latch, ahead of the re-secure check,
+# and STOPS (`#resumeStopped`, `loud_during_adopt`) rather than falling back,
+# because the fallback's reset clears the latch. MWA-n2: the three resets
+# that close the window (success, `#noResume`, `#resumeStopped`) were
+# unpinned or pinned only incidentally.
+#
+# Every entry is `must_red` on the resume spec, whose (z15)–(z19) were written
+# for these rules; each count is measured, with the full suite loaded, against
+# the 68-case spec. `resume-adopt-welcome-guard-bypassed` is equivalent today
+# to `resume-adopting-never-set` (z6, z15, z16): the guard's read and the
+# flag's write, both kept for the reason in the merge-wave block's note.
+#
+# 🔴 KNOWN NON-ENTRY, recorded rather than silently absent:
+# `resume-veto-ignores-failed` — the veto reading only the latch
+# (`if (this.#loudLatched)`, dropping `this.#state === "failed" ||`). Measured
+# green in every session spec. It cannot redden: the only writer of `failed`
+# is `#onLoud`, which latches in the same step, so inside the adopt window
+# `failed` never comes without the latch. The term stays as defence against
+# a future writer of `failed` that does not latch. Re-measured 2026-09-27
+# (MFR-m1 fix pass, MRG) on the veto's new home, `#loudVeto`'s
+# `if (!this.#loudLatched) return null;`: green in all 12 session specs.
+#
+# 🔴 THREE MORE KNOWN NON-ENTRIES since the MFR-m1 fix pass (MFR-n2):
+# `resume-success-keeps-adopt-window`, `resume-fallback-keeps-adopt-window`
+# and `resume-stop-keeps-adopt-window`, each dropping one of the three resets
+# listed above. Retired, not lost: `#startupResume` now runs the whole window
+# (`#resumeAdopt`) inside a `try/finally` that clears `#resumeAdopting` on
+# every exit, so each dropped reset is re-done by the `finally` before
+# `#startupResume` returns. Measured 2026-09-27 against the 75-case resume
+# spec and the 11 other session specs: all three green everywhere. The
+# success and stop resets are followed only by synchronous code, then the
+# `await`'s own resumption into the `finally`. The fallback's reset leaves
+# the flag set for longer, across
+# `#joinWithoutResume`'s bounded delete of that same candidate; the ladder's
+# create, intent and Welcome back all run in `#establishWithGeneration`
+# after `#startupResume` has returned, so none of them sees it. What pins
+# the window closing now is the `finally` itself:
+# `resume-adopt-window-finally-reset-dropped` below. The three resets stay in
+# the session as the exits' own bookkeeping; the `finally` is the guarantee.
+
+MUTATIONS += [
+    # ---- MWA-m1: an adopt-window Welcome leaves nothing for the ladder ------
+    Mutation(
+        id="resume-adopt-welcome-marks-joined",
+        what="a Welcome adopted inside the resume's adopt window writes `#joinedGeneration` (MWA-m1): on a fallback the join ladder reads itself joined at its loop head and stops before its first intent, amber with no owner and nothing loud, a silent wedge",
+        file=SESSION,
+        # Measured 2026-09-27 (merge fix pass): killed by (z15) and (z16) (2
+        # of 68).
+        search="""      if (this.#resumeAdopting !== outcome.group_id) {
+""",
+        replace="""      this.#joinedGeneration = this.#establishGeneration;
+      if (this.#resumeAdopting !== outcome.group_id) {
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-adopt-welcome-stamps-adopted",
+        what="a Welcome adopted inside the resume's adopt window stamps `welcomeAdopted` (MWA-m1): the first stamp wins, so after a fallback the join timeline reports the adopt-window Welcome, ahead of the fallback's own create, instead of the Welcome that joined (telemetry, not a fail-open)",
+        file=SESSION,
+        # Measured 2026-09-27 (merge fix pass): killed by (z16) alone (1 of
+        # 68), whose `createRouted < welcomeAdopted` is the check.
+        search="""      if (this.#resumeAdopting !== outcome.group_id) {
+""",
+        replace="""      this.#joinTimeline?.stamp("welcomeAdopted");
+      if (this.#resumeAdopting !== outcome.group_id) {
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-adopt-welcome-guard-bypassed",
+        what="the adopt-window guard always passes, so a Welcome for the candidate adopted inside the resume's adopt window stamps, writes `#joinedGeneration` and records a currency check: MWA-m1's wedge and MS2 item 2's second path to active, together",
+        file=SESSION,
+        # Measured 2026-09-27 (merge fix pass): killed by (z6), (z15) and
+        # (z16) (3 of 68). Equivalent today to `resume-adopting-never-set`
+        # (the block note).
+        search="""      if (this.#resumeAdopting !== outcome.group_id) {
+""",
+        replace="""      if (true) {
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- MWA-n1: a loud verdict inside the window vetoes, and stays loud ----
+    Mutation(
+        id="resume-veto-ignores-loud-latch",
+        what="the adopt-window veto reads only `failed`, not the loud latch (MWA-n1): a `#latchLoud` raised inside the window vetoes nothing, and the resume goes `#toActive` over it, active while the latch holds",
+        file=SESSION,
+        # Measured 2026-09-27 (merge fix pass): killed by (z17) and (z19) (2
+        # of 68). Its twin on the `failed` term is the non-entry in the
+        # block note.
+        # Re-anchored 2026-09-27 (MFR-m1 fix pass, MRG): the veto moved into
+        # `#loudVeto` as an early `return null`, so the mutant drops the
+        # latch term there. Same meaning, and wider reach, since every miss
+        # out of the window now asks the same veto. Re-measured: killed by 8
+        # of 75, (z17), (z19)–(z24) and (z26).
+        search="""    if (this.#state !== "failed" && !this.#loudLatched) return null;
+""",
+        replace="""    if (this.#state !== "failed") return null;
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-loud-veto-falls-back",
+        what="a loud veto inside the adopt window falls back to the join ladder (`#noResume`) instead of stopping (MWA-n1): the fallback's `#resetGroupBuffers` clears the latch, so the loud verdict is dropped and the ladder runs as if it never happened",
+        file=SESSION,
+        # Measured 2026-09-27 (merge fix pass): killed by (z17) and (z19) (2
+        # of 68). The cause stays `loud_during_adopt`, so only the path is
+        # mutated, not the log line.
+        # Re-anchored 2026-09-27 (MFR-m1 fix pass, MRG): the stop is now
+        # `#loudVeto`'s one return. `#loudVeto` has no `generation`, so the
+        # mutant passes `#establishGeneration`, which is the resume's own
+        # while the veto can run (a superseded resume stops before it). The
+        # promise it returns is non-null, so every caller takes it as the
+        # veto's answer and awaits the fallback. Re-measured: killed by 7 of
+        # 75, (z17) and (z19)–(z24).
+        search="""    return this.#resumeStopped(groupId, { cause: "loud_during_adopt", detail });
+""",
+        replace="""    return this.#noResume(this.#establishGeneration, groupId, {
+      cause: "loud_during_adopt",
+      detail,
+    }) as never;
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+]
+
+
+# --- Rejoin resume, MFR-m1 fix pass: a loud latch wins over a miss ----------
+#
+# The merge-fix re-audit (MFR-m1) found the loud veto consulted only after a
+# CLEAN catch-up: a latch raised inside the adopt window followed by a
+# catch-up, tail or install miss took `#noResume`, whose fallback reset
+# CLEARS the latch, so a hostile-DS signal went red to amber and the ladder
+# ran over it. Now every miss out of the window (the grant clear, the
+# catch-up, its tail, the install check) asks `#loudVeto` first, except a
+# latch the miss raised itself: `ResumeMiss.ownLatch`, set when the resume's
+# own key install first raises the latch (a missing local frame key, spec
+# (v)), which the fallback's fresh join is the recovery for. MFR-n2 put the
+# window in a `try/finally`, so a throw out of it closes it too; that retired
+# the three per-exit reset mutants (the previous block's note).
+#
+# Every entry is `must_red` on the resume spec, whose (z20)–(z26) were
+# written for these rules ((z25), a miss with no latch still falls back,
+# passes on the pre-fix session by design and is pinned by the older
+# fallback entries). Each count is measured, with the full suite loaded,
+# against the 75-case spec.
+
+MUTATIONS += [
+    # ---- MFR-m1: the loud veto runs before any miss's fallback -------------
+    Mutation(
+        id="resume-miss-falls-back-over-loud-latch",
+        what="a catch-up, tail or install miss out of the adopt window falls back without asking the loud veto (MFR-m1, the pre-fix precedence): the fallback's reset clears a latch raised inside the window, so the seat goes red to amber and the ladder runs over a hostile-DS signal",
+        file=SESSION,
+        # Measured 2026-09-27 (MFR-m1 fix pass, MRG): killed by (z20),
+        # (z21), (z22) and (z23), 4 of 75.
+        search="""      const vetoed = outcome.ownLatch ? null : this.#loudVeto(groupId, outcome);
+      return vetoed ?? this.#noResume(generation, groupId, outcome);
+""",
+        replace="""      return this.#noResume(generation, groupId, outcome);
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-grant-clear-miss-falls-back-over-loud-latch",
+        what="a failed downgrade-grant clear falls back without asking the loud veto (MFR-m1): a latch standing when the clear fails is cleared by the fallback's reset instead of stopping loud",
+        file=SESSION,
+        # Measured 2026-09-27 (MFR-m1 fix pass, MRG): killed by (z24) alone,
+        # 1 of 75. (z24)'s latch fires just before the adoption, so it pins
+        # the grant-clear path's precedence, not a latch raised mid-clear.
+        search="""      return (
+        this.#loudVeto(groupId, miss) ??
+        this.#noResume(generation, groupId, miss)
+      );
+""",
+        replace="""      return this.#noResume(generation, groupId, miss);
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- MFR-m1: only the install's own latch may fall back ----------------
+    Mutation(
+        id="resume-own-latch-vetoes",
+        what="`ownLatch` is ignored, so the latch the resume's own key install raises (a missing local frame key) vetoes too: the seat stops loud where the fallback's fresh join was its recovery, a permanent red for a local fault",
+        file=SESSION,
+        # Measured 2026-09-27 (MFR-m1 fix pass, MRG): killed by (v) (the
+        # install's missing frame key) and (z23) (its second half: the
+        # install's latch alone falls back and reaches e2ee), 2 of 75.
+        search="""      const vetoed = outcome.ownLatch ? null : this.#loudVeto(groupId, outcome);
+""",
+        replace="""      const vetoed = this.#loudVeto(groupId, outcome);
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    Mutation(
+        id="resume-own-latch-claims-any-latch",
+        what="`ownLatch` is set by any latch standing after the install, not only one the install raised: a latch raised inside the window before the install, then an install miss, falls back and the reset clears it (MFR-m1 through the exception)",
+        file=SESSION,
+        # Measured 2026-09-27 (MFR-m1 fix pass, MRG): killed by (z22) and
+        # (z23), 2 of 75.
+        search="""          ownLatch: !latchedBefore && this.#loudLatched,
+""",
+        replace="""          ownLatch: this.#loudLatched,
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
+    ),
+    # ---- MFR-n2: every exit, a throw included, closes the adopt window -----
+    Mutation(
+        id="resume-adopt-window-finally-reset-dropped",
+        what="the adopt window's `finally` no longer clears `#resumeAdopting` (MFR-n2): a throw out of the window skips every exit's own reset, so a later Welcome back into the same group id is read as an adopt-window Welcome and never checked current",
+        file=SESSION,
+        # Measured 2026-09-27 (MFR-m1 fix pass, MRG): killed by (z26) alone,
+        # 1 of 75. (z26) reddens inside its `welcomeBack` step (the seat is
+        # `resecuring`), before its named assertion; the count is the same.
+        search="""      // exits keep their own resets, which run first; a throw skips them.
+      this.#resumeAdopting = null;
+    }
+""",
+        replace="""      // exits keep their own resets, which run first; a throw skips them.
+    }
+""",
+        specs=[RESUME_SPEC],
+        must_red=[RESUME_SPEC],
     ),
 ]
 
@@ -4899,8 +6499,12 @@ MUTATIONS += [
         id="state-member-gate-default-open",
         what="the member gate's default answers 'not gated', so a Voice built before `setMemberGate` runs follows a move into any checked channel (FE2A-1 b, fail open)",
         file=STATE,
-        search="""#memberGate: (channel: Channel) => boolean = () => true;""",
-        replace="""#memberGate: (channel: Channel) => boolean = () => false;""",
+        # Re-anchored at MERGE-2 (2026-09-29, M2G): `apply` refuses a search
+        # that starts mid-line (MFR-n3), so the search and replace now carry
+        # the line's leading text. Same line, same edit: the mutated file is
+        # byte-identical to the old mid-line form.
+        search="""  #memberGate: (channel: Channel) => boolean = () => true;""",
+        replace="""  #memberGate: (channel: Channel) => boolean = () => false;""",
         specs=[STATE_WIRING_SPEC],
         must_red=[STATE_WIRING_SPEC],
     ),
@@ -4924,8 +6528,12 @@ MUTATIONS += [
         id="state-member-gate-inverted",
         what="the handler inverts the member gate, so a move follows exactly into the channels whose check this member has NOT passed (FE2A-1 d)",
         file=STATE,
-        search="""destination !== undefined && this.#memberGate(destination);""",
-        replace="""destination !== undefined && !this.#memberGate(destination);""",
+        # Re-anchored at MERGE-2 (2026-09-29, M2G): `apply` refuses a search
+        # that starts mid-line (MFR-n3), so the search and replace now carry
+        # the line's leading text. Same line, same edit: the mutated file is
+        # byte-identical to the old mid-line form.
+        search="""    const gated = destination !== undefined && this.#memberGate(destination);""",
+        replace="""    const gated = destination !== undefined && !this.#memberGate(destination);""",
         specs=[STATE_WIRING_SPEC],
         must_red=[STATE_WIRING_SPEC],
     ),
@@ -4995,9 +6603,13 @@ MUTATIONS += [
         id="state-m3-identity-always-bare",
         what="M3's expected identity is always the bare user id, so a device seat keeps a bare token and connects as an identity it did not ask for (SEC5-1)",
         file=STATE,
-        search="""          ? `${selfUserId}:${e2eeDeviceId}`
+        # Re-anchored at MERGE-2 (2026-09-29, M2G): `apply` refuses a search
+        # that starts mid-line (MFR-n3), so the search and replace now carry
+        # the line's leading text. Same line, same edit: the mutated file is
+        # byte-identical to the old mid-line form.
+        search="""              ? `${selfUserId}:${e2eeDeviceId}`
 """,
-        replace="""          ? selfUserId
+        replace="""              ? selfUserId
 """,
         specs=[STATE_WIRING_SPEC],
         must_red=[STATE_WIRING_SPEC],
@@ -5172,8 +6784,12 @@ MUTATIONS += [
         id="state-attempt-drops-latched-reason",
         what="`connect()` stops handing `#connectAttempt` the latched reason, so a dropped move token can no longer answer from the refusal it bypassed (F4)",
         file=STATE,
-        search="""return await this.#connectAttempt(channel, auth, opts, latchedReason);""",
-        replace="""return await this.#connectAttempt(channel, auth, opts);""",
+        # Re-anchored at MERGE-2 (2026-09-29, M2G): `apply` refuses a search
+        # that starts mid-line (MFR-n3), so the search and replace now carry
+        # the line's leading text. Same line, same edit: the mutated file is
+        # byte-identical to the old mid-line form.
+        search="""      return await this.#connectAttempt(channel, auth, opts, latchedReason);""",
+        replace="""      return await this.#connectAttempt(channel, auth, opts);""",
         specs=[STATE_WIRING_SPEC],
         must_red=[STATE_WIRING_SPEC, MOVE_POLICY_SPEC, VOICE_REJOIN_SPEC],
     ),
@@ -5237,8 +6853,12 @@ MUTATIONS += [
         id="move-decision-step4-device-match",
         what="step 4 goes back to the device match: a fresh marker on a seat whose token was not minted for it follows the move a sibling session was kicked for (F1, D1)",
         file=MOVE_POLICY,
-        search="""const labelMatches = nonceGate ? nonceMatches : tokenProvesSeat;""",
-        replace="""const labelMatches = nonceGate ? nonceMatches : deviceMatches;""",
+        # Re-anchored at MERGE-2 (2026-09-29, M2G): `apply` refuses a search
+        # that starts mid-line (MFR-n3), so the search and replace now carry
+        # the line's leading text. Same line, same edit: the mutated file is
+        # byte-identical to the old mid-line form.
+        search="""  const labelMatches = nonceGate ? nonceMatches : tokenProvesSeat;""",
+        replace="""  const labelMatches = nonceGate ? nonceMatches : deviceMatches;""",
         specs=[MOVE_POLICY_SPEC],
         must_red=[MOVE_POLICY_SPEC],
     ),
@@ -5246,8 +6866,12 @@ MUTATIONS += [
         id="move-decision-bare-identity-proves-seat",
         what="the token proof drops the device-qualified identity conjunct, so a bare seat's fresh marker plus a bare token follows a move with a live mic (FE2A-2)",
         file=MOVE_POLICY,
-        search="""world.tokenForThisConnection && world.lastIdentityIsDevice;""",
-        replace="""world.tokenForThisConnection;""",
+        # Re-anchored at MERGE-2 (2026-09-29, M2G): `apply` refuses a search
+        # that starts mid-line (MFR-n3), so the search and replace now carry
+        # the line's leading text. Same line, same edit: the mutated file is
+        # byte-identical to the old mid-line form.
+        search="""    !!world.token && world.tokenForThisConnection && world.lastIdentityIsDevice;""",
+        replace="""    !!world.token && world.tokenForThisConnection;""",
         specs=[MOVE_POLICY_SPEC],
         must_red=[MOVE_POLICY_SPEC],
     ),
@@ -5264,8 +6888,12 @@ MUTATIONS += [
         id="move-decision-gate-ignored",
         what="the ladder ignores the destination's gate, so a move follows into a channel whose age, password or spoiler check this member has not passed (FE0-3)",
         file=MOVE_POLICY,
-        search="""const gatedDestination = world.destinationKnown && world.destinationGated;""",
-        replace="""const gatedDestination = false;""",
+        # Re-anchored at MERGE-2 (2026-09-29, M2G): `apply` refuses a search
+        # that starts mid-line (MFR-n3), so the search and replace now carry
+        # the line's leading text. Same line, same edit: the mutated file is
+        # byte-identical to the old mid-line form.
+        search="""  const gatedDestination = world.destinationKnown && world.destinationGated;""",
+        replace="""  const gatedDestination = false;""",
         specs=[MOVE_POLICY_SPEC],
         must_red=[MOVE_POLICY_SPEC],
     ),
@@ -5307,8 +6935,12 @@ MUTATIONS += [
         id="move-decision-negative-marker-age-fresh",
         what="a marker stamped in the future (negative age) counts as fresh, so a clock skew makes a stale drop follow the move (FE2WA-3)",
         file=MOVE_POLICY,
-        search="""markerAgeMs >= 0 &&""",
-        replace="""markerAgeMs >= -Infinity &&""",
+        # Re-anchored at MERGE-2 (2026-09-29, M2G): `apply` refuses a search
+        # that starts mid-line (MFR-n3), so the search and replace now carry
+        # the line's leading text. Same line, same edit: the mutated file is
+        # byte-identical to the old mid-line form.
+        search="""    markerAgeMs >= 0 &&""",
+        replace="""    markerAgeMs >= -Infinity &&""",
         specs=[MOVE_POLICY_SPEC],
         must_red=[MOVE_POLICY_SPEC],
     ),
@@ -5316,8 +6948,12 @@ MUTATIONS += [
         id="move-decision-negative-replaced-age-fresh",
         what="a replaced connection stamped in the future counts as fresh, so the S-a record matches under clock skew (FE2WA-3)",
         file=MOVE_POLICY,
-        search="""replacedAgeMs >= 0 &&""",
-        replace="""replacedAgeMs >= -Infinity &&""",
+        # Re-anchored at MERGE-2 (2026-09-29, M2G): `apply` refuses a search
+        # that starts mid-line (MFR-n3), so the search and replace now carry
+        # the line's leading text. Same line, same edit: the mutated file is
+        # byte-identical to the old mid-line form.
+        search="""      replacedAgeMs >= 0 &&""",
+        replace="""      replacedAgeMs >= -Infinity &&""",
         specs=[MOVE_POLICY_SPEC],
         must_red=[MOVE_POLICY_SPEC],
     ),
@@ -5325,8 +6961,12 @@ MUTATIONS += [
         id="move-decision-empty-from-acts",
         what="an event with an empty `from` is no longer ignored, so a move naming no source channel is acted on (FE2WA-4)",
         file=MOVE_POLICY,
-        search="""if (!world.from)""",
-        replace="""if (false)""",
+        # Re-anchored at MERGE-2 (2026-09-29, M2G): `apply` refuses a search
+        # that starts mid-line (MFR-n3), so the search and replace now carry
+        # the line's leading text. Same line, same edit: the mutated file is
+        # byte-identical to the old mid-line form.
+        search="""  if (!world.from)""",
+        replace="""  if (false)""",
         specs=[MOVE_POLICY_SPEC],
         must_red=[MOVE_POLICY_SPEC],
     ),
@@ -5616,8 +7256,12 @@ function isGatedFor(
         id="afk-settings-gate-rule-inverted",
         what="the AFK-channel-can't-gain-a-check rule is inverted, so every OTHER channel's checks are disabled and the AFK channel's are open",
         file=CHANNEL_OVERVIEW,
-        search="""const afkBlocksGate = (gateIsOn: boolean) => isDesignatedAfk() && !gateIsOn;""",
-        replace="""const afkBlocksGate = (gateIsOn: boolean) => !isDesignatedAfk() && !gateIsOn;""",
+        # Re-anchored at MERGE-2 (2026-09-29, M2G): `apply` refuses a search
+        # that starts mid-line (MFR-n3), so the search and replace now carry
+        # the line's leading text. Same line, same edit: the mutated file is
+        # byte-identical to the old mid-line form.
+        search="""  const afkBlocksGate = (gateIsOn: boolean) => isDesignatedAfk() && !gateIsOn;""",
+        replace="""  const afkBlocksGate = (gateIsOn: boolean) => !isDesignatedAfk() && !gateIsOn;""",
         specs=[AFK_CHANNEL_SETTINGS_SPEC],
         must_red=[AFK_CHANNEL_SETTINGS_SPEC],
     ),
@@ -5625,8 +7269,12 @@ function isGatedFor(
         id="afk-settings-make-afk-ungated",
         what="Make AFK Channel is enabled on a checked channel, so the backend refusal is the only thing stopping it",
         file=CHANNEL_OVERVIEW,
-        search="""isDisabled={afkSaving() || gateBlocksAfk()}""",
-        replace="""isDisabled={afkSaving()}""",
+        # Re-anchored at MERGE-2 (2026-09-29, M2G): `apply` refuses a search
+        # that starts mid-line (MFR-n3), so the search and replace now carry
+        # the line's leading text. Same line, same edit: the mutated file is
+        # byte-identical to the old mid-line form.
+        search="""              isDisabled={afkSaving() || gateBlocksAfk()}""",
+        replace="""              isDisabled={afkSaving()}""",
         specs=[AFK_CHANNEL_SETTINGS_SPEC],
         must_red=[AFK_CHANNEL_SETTINGS_SPEC],
     ),

@@ -40,6 +40,7 @@ import type {
   Message,
 } from "stoat.js";
 
+import type { ResumeCommitRef, ResumePrefetch } from "../rtc/mlsRejoinPolicy";
 import {
   type CallRosterOutcome,
   type RatelimitTransportOptions,
@@ -53,8 +54,17 @@ import { classifyEnvelopeError } from "./mlsEnvelopeClassify";
 import {
   type MlsBufferedEnvelope,
   inboundRoute,
+  mlsHoldVerdict,
   MlsInboundBuffer,
 } from "./mlsInboundBuffer";
+import {
+  type ResumeClaim,
+  type ResumeStorage,
+  clearResumeRecord as clearStoredResumeRecord,
+  KeptLocalGroups,
+  prefetchResume as runResumePrefetch,
+  writeResumeRecord,
+} from "./mlsResumeKeep";
 import { IS_OVERLAY_WINDOW, IS_POPOUT_WINDOW } from "./popout";
 
 /** Author id used for locally-injected system/marker messages */
@@ -1146,6 +1156,20 @@ function createNativeTransport(): NativeTransport {
   return new CapacitorTransport();
 }
 
+/**
+ * Where the MLS resume records live: `sessionStorage`, which survives a
+ * Ctrl+R of this tab and nothing wider. Reaching it can throw (a sandboxed
+ * frame, storage disabled); that reads as `null`, which means no record and
+ * so no resume.
+ */
+function resumeRecordStorage(): ResumeStorage | null {
+  try {
+    return globalThis.sessionStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export class E2EEBridge implements E2EEAdapter {
   #client: Client;
   #transport: NativeTransport;
@@ -1522,6 +1546,9 @@ export class E2EEBridge implements E2EEAdapter {
     // Nothing the signed-in account's call could use: the store holding the
     // groups these envelopes name is somebody else's.
     this.#mlsBuffer.clear();
+    // The same goes for any group kept for a resume, and for the records
+    // naming one. Not sticky: an owner check that later matches keeps again.
+    void this.#kept.discardAll();
 
     // The stored value is WHEN, not WHO: the owner's id has no reader left
     // now that the destructive control does not key off this flag, and the
@@ -4027,6 +4054,11 @@ export class E2EEBridge implements E2EEAdapter {
     // Held MLS envelopes name groups the wipe just destroyed; the next call
     // must not be fed them.
     this.#mlsBuffer.clear();
+    // Kept groups went with the store; drop their entries and every resume
+    // record so nothing tries to resume one. Their native deletes are
+    // skipped now the store is gone (`#deleteLocalGroup`). Not sticky: a
+    // re-enabled device keeps again.
+    void this.#kept.discardAll();
 
     // Zero the status snapshot SYNCHRONOUSLY (diff-review HIGH-1): the
     // steps below are network round-trips, and the DELETE's own-device
@@ -4538,26 +4570,56 @@ export class E2EEBridge implements E2EEAdapter {
   #mlsBuffer = new MlsInboundBuffer();
 
   /**
-   * Hand one MLS envelope to the active sink, or hold it until one exists.
+   * Where the resume records live (`resumeRecordStorage`); `null` means no
+   * record can be written or read, so nothing is ever resumed.
+   */
+  readonly #resumeStorage: ResumeStorage | null = resumeRecordStorage();
+
+  /**
+   * Call groups kept on disk after a hang-up so a quick rejoin can resume
+   * them, the resume claim on them, and the recency records (join-latency
+   * plan, "Dispose / keep"). The lifecycle is the pure `mlsResumeKeep.ts`;
+   * this binds it to the wall clock (a record must survive Ctrl+R),
+   * `setTimeout`, `sessionStorage` and the native delete. Every cleanup of a
+   * call group, `callLeaveCleanup` included, goes through it.
+   */
+  readonly #kept = new KeptLocalGroups({
+    now: () => Date.now(),
+    setTimer: (fn, ms) => setTimeout(fn, ms),
+    clearTimer: (handle) =>
+      clearTimeout(handle as ReturnType<typeof setTimeout>),
+    deleteLocal: (groupId) => this.#deleteLocalGroup(groupId),
+    storage: this.#resumeStorage,
+    newToken: () => globalThis.crypto?.randomUUID?.() ?? ulid(),
+  });
+
+  /**
+   * Hand one MLS envelope to the active sink, hold it until one exists, or
+   * drop it (`mlsHoldVerdict`). Dropping acks nothing: the copy stays queued
+   * in its device's server-side mailbox.
    *
-   * Only this device's copies are held. A live MLS push goes to the
+   * The live sink gets every copy and filters them itself. With no sink,
+   * only this device's copies are held. A live MLS push goes to the
    * recipient's user channel (delta `commits_submit.rs` publishes each
    * device's copy with `.private(user)`), so every session of the account
    * receives the copies addressed to all of its devices; held, the other
    * devices' copies would only fill the 512-envelope cap ahead of ours.
-   * Dropping one acks nothing — it belongs to another device's mailbox.
    * While this device's id is not yet known everything is held, and the
-   * session's own recipient filter drops the rest at flush. The live sink
-   * still gets every copy and filters them itself.
+   * session's own recipient filter drops the rest at flush. While E2EE is
+   * disabled here nothing is held: a disabled bridge must not hand a later
+   * call envelopes it will never ack.
    */
   #deliverMlsEnvelope(event: MlsBufferedEnvelope): void {
-    if (this.#mlsSink) {
-      this.#mlsSink(event);
-      return;
-    }
-    const ownDeviceId = this.status.get("state")?.device_id;
-    if (ownDeviceId && event.recipientDeviceId !== ownDeviceId) return;
-    this.#mlsBuffer.push(event);
+    const sink = this.#mlsSink;
+    const status = this.status.get("state");
+    const verdict = mlsHoldVerdict({
+      sinkPresent: sink !== null,
+      enabled: status?.enabled,
+      ownDeviceId: status?.device_id,
+      recipientDeviceId: event.recipientDeviceId,
+    });
+    if (verdict === "sink") sink?.(event);
+    else if (verdict === "hold") this.#mlsBuffer.push(event);
   }
 
   /**
@@ -4727,15 +4789,161 @@ export class E2EEBridge implements E2EEAdapter {
     return this.#invoke("e2ee_call_commit_lost", { groupId });
   }
 
-  // (`reconcilePendingCommit` / `callPendingCommitEpoch` were deleted —
-  // rejoin plan Q3: dead code with no valid call site. Post-wipe the staged
-  // commit lives in group-scoped state the wipe destroys, pre-wipe it
-  // salvages state about to be discarded, and its `dsWonEpoch` input has no
-  // source. The native `e2ee_call_pending_commit_epoch` op remains.)
+  // (`reconcilePendingCommit` stays deleted — rejoin plan Q3: its
+  // `dsWonEpoch` input has no source, and a dangling staged commit is never
+  // merged or rebased from here.)
 
-  /** Wipe local MLS state for a call group. */
+  /**
+   * The epoch this device's own staged commit for `groupId` would establish
+   * (native `current_epoch + 1`), or `null` when nothing is staged. Read-only
+   * natively. A staged commit is persisted, so it survives a reload; the
+   * resume prefetch reads it because a group with one must not be resumed
+   * (join-latency audit B3): that group takes the join path, which deletes
+   * it, staged commit and all, never merging it blind. Throws when the group
+   * is not held.
+   */
+  callPendingCommitEpoch(groupId: string): Promise<number | null> {
+    return this.#invoke("e2ee_call_pending_commit_epoch", { groupId });
+  }
+
+  /**
+   * Wipe local MLS state for a call group. Goes through the kept-group
+   * registry's single cleanup path (R-W2-2): the group leaves any keep entry,
+   * is marked in flight and loses its resume records BEFORE the native
+   * delete, so no resume can claim a group that is halfway off the disk.
+   */
   callLeaveCleanup(groupId: string): Promise<void> {
-    return this.#invoke("e2ee_call_leave_cleanup", { groupId });
+    return this.#kept.cleanup(groupId);
+  }
+
+  /**
+   * The native delete behind every call-group cleanup. The native op opens
+   * the engine, and opening a store that is not there CREATES it (desktop
+   * `with_engine`, which is not on the never-provision surface) — so a delete
+   * that runs after a wipe, such as a keep expiring or the wipe path's own
+   * discard, would bring back the store the user just destroyed and make a
+   * key-backup restore refuse it. No store means no group to delete, so an
+   * unprovisioned device skips the native call.
+   */
+  async #deleteLocalGroup(groupId: string): Promise<void> {
+    if (!(await this.#isProvisioned())) return;
+    await this.#invoke("e2ee_call_leave_cleanup", { groupId });
+  }
+
+  /**
+   * Keep a hung-up call's group on disk for `ms` so a quick rejoin can resume
+   * it; it is deleted when that runs out. Refused, and the group deleted at
+   * once, while E2EE is not enabled here, while either ownership latch is
+   * set, or for good once `discardKeptLocalGroups` has run.
+   *
+   * `true` when a keep entry now exists: the caller may write the resume
+   * record. `false` when the keep was refused, by any rule above or because
+   * the group's delete is already in flight: the group is being, or will be,
+   * deleted, so no resume record may name it.
+   */
+  keepLocalGroup(groupId: string, channelId: string, ms: number): boolean {
+    if (
+      this.status.get("state")?.enabled !== true ||
+      this.deviceOwnedElsewhere.has("state") ||
+      this.storeOwnedByAnotherAccount.has("state")
+    ) {
+      this.#kept.cleanup(groupId).catch((error: unknown) => {
+        console.warn("[mls] refused keep: cleanup failed", {
+          groupId,
+          error,
+        });
+      });
+      return false;
+    }
+    return this.#kept.keep(groupId, channelId, ms);
+  }
+
+  /**
+   * Claim the channel's kept group for a resume: its expiry is suspended at
+   * its original deadline until the claim is handed back or the group is
+   * released. `null` when there is nothing claimable.
+   */
+  claimKeptLocalGroup(channelId: string): ResumeClaim | null {
+    return this.#kept.claim(channelId);
+  }
+
+  /**
+   * Stop tracking `groupId` without deleting it — the session adopted it or
+   * is about to delete it itself. No timer of the registry touches it after.
+   * `false` when the group's cleanup is already in flight (W2-m2): it is on
+   * its way off the disk, so an adopter must not resume it and takes the
+   * join path instead.
+   */
+  releaseKeptGroup(groupId: string): boolean {
+    return this.#kept.release(groupId);
+  }
+
+  /**
+   * Gather, read-only, what the session's resume decision needs for
+   * `channelId` (join-latency plan, "Prefetch"): the claimed kept group or
+   * the recency record's group, its native state and staged commit, the
+   * channel's open group and the commits since the local epoch. The DS
+   * requests ride `signal`. Never rejects; `null` when there is no candidate,
+   * no signed-in device, or the prefetch was aborted or failed (a failed
+   * candidate is deleted first).
+   */
+  prefetchResume(
+    channelId: string,
+    signal?: AbortSignal,
+  ): Promise<ResumePrefetch<MlsCommitInfo & ResumeCommitRef> | null> {
+    const userId = this.#client.user?.id;
+    const deviceId = this.status.get("state")?.device_id;
+    return runResumePrefetch<MlsCommitInfo>(
+      {
+        kept: this.#kept,
+        storage: this.#resumeStorage,
+        now: () => Date.now(),
+        self: userId && deviceId ? { userId, deviceId } : null,
+        openGroup: (id, s) => this.mlsOpenGroup(id, s),
+        callState: (g) => this.callState(g),
+        pendingCommitEpoch: (g) => this.callPendingCommitEpoch(g),
+        fetchCommits: (g, from, s) => this.mlsFetchCommits(g, from, s),
+      },
+      channelId,
+      signal,
+    );
+  }
+
+  /** Record that `groupId` was live for `channelId` at `epoch`, now. */
+  touchResumeRecord(channelId: string, groupId: string, epoch: number): void {
+    writeResumeRecord(this.#resumeStorage, channelId, {
+      groupId,
+      epoch,
+      at: Date.now(),
+    });
+  }
+
+  clearResumeRecord(channelId: string): void {
+    clearStoredResumeRecord(this.#resumeStorage, channelId);
+  }
+
+  /**
+   * Sign-out: delete every kept group and every resume record, and refuse
+   * keeps for the rest of this bridge's life. Never rejects.
+   */
+  discardKeptLocalGroups(): Promise<void> {
+    this.#kept.setKeepsRefused(true);
+    return this.#kept.discardAll();
+  }
+
+  /**
+   * Delete every kept group for `channelId` — claimed or not — plus the group
+   * its resume record names when no keep entry holds it, and clear that
+   * record (W2-m1). A startup join that is not resuming runs this before it
+   * creates or joins: a prefetch that came back null can still leave the
+   * channel's kept group on disk while the startup wipe's token is spent,
+   * and its keep timer (suspended, if another attempt holds the claim) need
+   * not fire before the join's Welcome for that same group arrives — which
+   * native refuses while the group is held. Keeps stay allowed afterwards.
+   * Never rejects.
+   */
+  discardKeptForChannel(channelId: string): Promise<void> {
+    return this.#kept.discardChannel(channelId);
   }
 
   /**
@@ -5093,32 +5301,46 @@ export class E2EEBridge implements E2EEAdapter {
    * `GET /mls/groups/<id>/commits?from_epoch=` — gap refetch for a desynced
    * member (requires GROUP membership server-side). Ascending by epoch;
    * `current_epoch` lets a caught-up caller confirm it is current. `groupId`
-   * is 64 lowercase hex chars, so it needs no URL encoding.
+   * is 64 lowercase hex chars, so it needs no URL encoding. `signal`, when
+   * given, replaces the active call's disposal signal (the resume prefetch
+   * runs before its session exists).
    */
   mlsFetchCommits(
     groupId: string,
     fromEpoch: number,
+    signal?: AbortSignal,
   ): Promise<MlsHttpResult<ResponseFetchMlsCommits>> {
     return this.#apiMls(
       "GET",
       `/mls/groups/${groupId}/commits?from_epoch=${fromEpoch}`,
+      undefined,
+      { transport: { signal } },
     );
   }
 
   /**
    * `GET /mls/channels/<id>/open_group` — the pre-join / in-call probe (6.5,
    * FE-7): does the channel have an open MLS group (i.e. is the call E2EE)?
-   * Returns the group summary, or null on 404 / feature-off / any error (a
-   * plain call). `channelId` is a ULID, so no URL encoding is needed.
+   * Returns the group summary, or null on 404 (no open group) and on a 400
+   * `FeatureDisabled` (media E2EE off). Anything else THROWS, as `#apiMls`
+   * does: any other non-2xx, a 429 past its bound, the request deadline, an
+   * abort, a network error. The resume prefetch counts a throw as a failed
+   * prefetch and deletes its candidate (unless its signal was aborted: then
+   * nothing is deleted and a claim is handed back). `channelId` is a ULID,
+   * so no URL encoding is needed. `signal`, when given, replaces the active
+   * call's disposal signal (the resume prefetch runs before its session
+   * exists).
    */
   async mlsOpenGroup(
     channelId: string,
+    signal?: AbortSignal,
   ): Promise<{ group_id: string; member_count: number } | null> {
     const res = await this.#apiMls<{
       group_id: string;
       member_count: number;
     }>("GET", `/mls/channels/${channelId}/open_group`, undefined, {
       notFoundOutcome: true,
+      transport: { signal },
     });
     return res.kind === "ok" ? res.body : null;
   }

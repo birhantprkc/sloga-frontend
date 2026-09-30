@@ -163,11 +163,29 @@ async function peerAnnouncesPlaintext(world: World): Promise<void> {
  * question every site here asks. The harness journals no effect list, so
  * this log is the only place the effect is visible. The CONTROL specs prove
  * the witness fires for a native confirm, so a zero here is evidence.
+ *
+ * Attempts, not deliveries, on purpose for 7 and 8: native refuses an
+ * announce the user never confirmed natively (`mls_not_confirmed`), so an
+ * app-route announce would never be DELIVERED and a delivery count would
+ * stay zero with the defect present.
  */
 function watchAnnounces(world: World): () => number {
   const armedAt = world.bridgeCalls.length;
   return () =>
     world.bridgeCalls.slice(armedAt).filter((n) => n === "callAnnounce").length;
+}
+
+/**
+ * The witness for an announce that REACHED the DS: the ctl payloads
+ * `mlsSendCtl` relayed after arming, by group. Native builds one only over
+ * the grant its dialog's Ok marked, so where `watchAnnounces` asks "did the
+ * session try", this asks "did the harness's grant model let the native
+ * route through" (W2R-m2: a model that never marked the grant kept every
+ * attempt count green).
+ */
+function watchDeliveries(world: World): () => string[] {
+  const armedAt = world.sentCtl.length;
+  return () => world.sentCtl.slice(armedAt).map((p) => p.group_id);
 }
 
 // ---- 1. The terminus the button was dead under --------------------------------
@@ -217,6 +235,7 @@ test("2a — with a usable group the native dialog runs exactly once, and Ok con
   await declareMix(world);
   assert.equal(world.session.confirmReachable(), true);
   assert.equal(world.session.hasUsableGroup(), true);
+  const delivered = watchDeliveries(world);
 
   await world.session.confirmPlaintext(MIX_NAMES);
   await flush();
@@ -231,6 +250,10 @@ test("2a — with a usable group the native dialog runs exactly once, and Ok con
   assert.deepEqual(world.session.callMode(), interludeVia("native"));
   assert.deepEqual([...world.gate], [], "the confirm left a reason held");
   assert.equal(world.publishing(), true);
+  // The Ok marked native's grant, so the confirm's announce was built and
+  // relayed: DELIVERED, not merely attempted (W2R-m2).
+  assert.equal(world.native.downgradeConfirmed(world.channelId), true);
+  assert.deepEqual(delivered(), [GROUP], "the native Ok's announce never left");
 });
 
 test("2b — a DECLINED native dialog changes nothing: no interlude, the pause and the escape both stand (kills escape-declined-routes-to-app)", async (t) => {
@@ -553,12 +576,14 @@ test("7 CONTROL — the announce witness fires for a NATIVE confirm on the same 
   await bringUpCreator(t, world);
   await latchLoud(t, world);
   const announces = watchAnnounces(world);
+  const delivered = watchDeliveries(world);
 
   await world.session.confirmPlaintext(NO_NAMES);
   await flush();
   assert.equal(world.confirmDowngrades(), 1);
   assert.deepEqual(world.session.callMode(), interludeVia("native"));
   assert.equal(announces(), 1, "the witness cannot see an announce at all");
+  assert.deepEqual(delivered(), [GROUP], "the attempt was never delivered");
 });
 
 // ---- 8. ME-4: only a NATIVE confirm re-announces on an epoch advance ---------
@@ -613,6 +638,7 @@ test("8 CONTROL — a NATIVELY-confirmed interlude re-announces on every epoch a
   assert.equal(world.confirmDowngrades(), 1);
   assert.deepEqual(world.session.callMode(), interludeVia("native"));
   const announces = watchAnnounces(world);
+  const delivered = watchDeliveries(world);
 
   await world.commit(1);
   assert.deepEqual(world.session.callMode(), interludeVia("native"));
@@ -624,4 +650,6 @@ test("8 CONTROL — a NATIVELY-confirmed interlude re-announces on every epoch a
     2,
     "ME-4 did not re-announce on the second advance",
   );
+  // The grant outlives the epoch advances: each re-announce reached the DS.
+  assert.deepEqual(delivered(), [GROUP, GROUP], "a re-announce was refused");
 });

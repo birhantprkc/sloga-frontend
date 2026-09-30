@@ -120,6 +120,7 @@ import {
   rotationWindowMs,
 } from "./mlsCallModePolicy";
 import {
+  type DrainAction,
   drainAction,
   shouldParkForPendingFetch,
   spliceParkedAfterWelcome,
@@ -137,9 +138,14 @@ import {
   welcomeCurrencyVerdict,
 } from "./mlsRefetchPolicy";
 import {
+  type ResumeCommitRef,
+  type ResumePrefetch,
+  LOCAL_GROUP_KEEP_MS,
+  RESUME_MAX_LAG,
   admitInProgressVerdict,
   rejoinReintentWindowMs,
   rejoinServeAction,
+  resumeDecision,
   serveTargetStillStale,
   startupWipeTargets,
   welcomeVerdict,
@@ -264,9 +270,11 @@ const LAG_WARN_THRESHOLD = 8;
 /**
  * Receiver-lag desync threshold (plan §1.5; pinned to native keys.rs:44 —
  * strictly < the 16-slot keyring wrap). At/above this the local group state is
- * discarded and we rejoin fresh, never plaintext.
+ * discarded and we rejoin fresh, never plaintext. One source with the resume
+ * policy's lag bound: a lag the live session calls desync is never one a
+ * resume may catch up (R-W2-5).
  */
-const LAG_DESYNC_THRESHOLD = 12;
+const LAG_DESYNC_THRESHOLD = RESUME_MAX_LAG;
 
 // ---- Roster reconciliation (step 5; plan §1.4 / §3.4) ----------------------
 
@@ -274,9 +282,11 @@ const LAG_DESYNC_THRESHOLD = 12;
  * Leave-grace (plan §1.4): a participant that disconnects is not removed from
  * the MLS group for this long, so a transient reconnect does not churn a
  * remove+rejoin. Must be < `GHOST_DIVERGENCE_MS` (the fast path for a clean
- * disconnect vs the slow backstop for an unexplained ghost leaf).
+ * disconnect vs the slow backstop for an unexplained ghost leaf). One source
+ * with how long a hung-up call's local group is kept (resume plan D1): for
+ * that long the peers keep this device's leaf anyway (R-W2-5).
  */
-const LEAVE_GRACE_MS = 10_000;
+const LEAVE_GRACE_MS = LOCAL_GROUP_KEEP_MS;
 /**
  * How long a call-membership change this device OBSERVED counts as possibly
  * still landing (`#membershipChangeObserved`): the leave-grace every member
@@ -353,6 +363,40 @@ const ADMIT_GRACE_MAX_MS = 60_000;
 const GHOST_DIVERGENCE_MS = 30_000;
 /** Periodic reconciliation tick — a safety net over the event-driven path. */
 const RECONCILE_INTERVAL_MS = 5_000;
+
+// ---- Resume (join-latency phase 2; resume plan "The resume path") ---------
+
+/**
+ * How long the startup establish waits for the host's resume prefetch before
+ * it stops waiting and joins (W2-n3, W2R-M1). Tied to the join budget, not to
+ * the transport's 45 s request deadline: a hung DS read must never make a
+ * rejoin slower than the join it replaces by more than this.
+ *
+ * Must stay below `NEGOTIATING_FAILSAFE_MS`. The fail-safe reads only
+ * `#dsVerdictSeen`, which a resume sets on its decision, and the wait is the
+ * first thing the startup establish does (it no longer waits for KeyPackage
+ * enrolment first), so the wait always ends — in a decision or in the join
+ * path — before the fail-safe can read a healthy resume as a silent DS.
+ *
+ * That guarantee covers the RESUME path only. A startup that joins without a
+ * "resume" decision has no DS verdict until its create answers (step 6 has
+ * one: the decision set it), and after a full 3 s wait the kept-group
+ * discard (up to `KEPT_DISCARD_WAIT_MS`), the KeyPackage enrolment and the
+ * create share the ~2 s left before the fail-safe fires. Missing that shows
+ * amber at 5 s and fails closed: the fail-safe only holds the gate, and the
+ * establish still in flight is an owner (`#resecuringHasOwner`), so the
+ * re-securing backstop does not go loud while the join finishes.
+ */
+const RESUME_PREFETCH_WAIT_MS = 3_000;
+/**
+ * Bound on each delete the join path awaits before its first request: the
+ * failed candidate's cleanup and the channel's kept-group discard (Wave-3
+ * folds (b)). A native delete can hang, and the discard waits on every delete
+ * pending anywhere (W2R-m1). Past the bound the establish fails LOUD and never
+ * falls through into the ladder: the ladder may re-enter the very group id
+ * whose delete is still running, and lose the group it joins.
+ */
+const KEPT_DISCARD_WAIT_MS = 5_000;
 
 // ---- Enable + lifecycle (step 6; plan §1.4 / §3.4) -------------------------
 
@@ -1086,7 +1130,170 @@ export interface MlsCallSessionDeps {
    * stands for.
    */
   startupWipeTokens?: Set<string>;
+  /**
+   * The host's resume prefetch for this channel, started before the room
+   * connects and never awaited there (plan: "The resume path"). Only the
+   * startup establish reads it, for at most `RESUME_PREFETCH_WAIT_MS`
+   * (`#startupResume`). Present, `start()` enrolls KeyPackages beside the
+   * establish instead of before it, and a startup that does not resume
+   * discards the channel's kept groups before it joins. Absent ⇒ no resume
+   * is ever attempted and the startup runs today's ladder unchanged.
+   */
+  resumePrefetch?: Promise<ResumePrefetch<
+    MlsCommitInfo & ResumeCommitRef
+  > | null>;
+  /**
+   * Aborts THIS attempt's resume prefetch (W2R-M1). The session calls it
+   * first, synchronously, on every join path the startup establish takes
+   * while the prefetch may still be running (its bounded wait timing out, a
+   * `"join"` decision, the step-6 fallback), and never reads the prefetch
+   * again after. Aborting makes `prefetchResume` hand its claim back and
+   * skip `giveUp`'s cleanup, so an abandoned prefetch can never delete the
+   * group the fallback just joined under the same DS group id. Absent ⇒ no
+   * prefetch was started.
+   */
+  abortResumePrefetch?: () => void;
 }
+
+/** What the resume prefetch hands the session: commits carry their bodies. */
+type SessionResumePrefetch = ResumePrefetch<MlsCommitInfo & ResumeCommitRef>;
+
+/**
+ * Why a startup establish did not resume, named by its one
+ * `[mls] startup establish: no resume` line (FA-m3). `superseded`: the
+ * session closed or a newer establish took over. `loud_during_adopt`: the
+ * session went `failed` or latched loud inside the adopt window, and stays
+ * loud (MWA-n1). Both stop; every other cause falls back to the join ladder
+ * (`#joinWithoutResume`).
+ */
+type ResumeMissCause =
+  | "superseded"
+  | "prefetch_none"
+  | "prefetch_failed"
+  | "prefetch_timeout"
+  | "not_startup"
+  | "prefetch_stale"
+  | "open_group_mismatch"
+  | "channel_mismatch"
+  | "held_group_unusable"
+  | "own_commit_pending"
+  | "own_commit_fetched"
+  | "lag_out_of_range"
+  | "commits_mismatch"
+  | "policy_join"
+  | "candidate_being_deleted"
+  | "grant_clear_failed"
+  | "catch_up_stopped"
+  | "loud_foreign_drop"
+  | "native_unconfirmed"
+  | "catch_up_threw"
+  | "tail_failed"
+  | "install_check_failed"
+  | "resecure_during_adopt"
+  | "loud_during_adopt";
+
+/** A resume that did not happen: the cause, with numbers and ids only. */
+type ResumeMiss = {
+  cause: ResumeMissCause;
+  detail?: Record<string, string | number | boolean | null>;
+  /**
+   * The loud latch was first raised by this miss's own work: the resume's
+   * key install (`#catchUp`), e.g. a removed leaf's missing frame key
+   * (`#onRotationError`). That latch is the abandoned candidate's, so the
+   * fallback's fresh join may clear it; every other latch vetoes (MFR-m1).
+   */
+  ownLatch?: boolean;
+};
+
+/**
+ * The first `resumeDecision` rule `p` fails, for the fallback-cause line
+ * (FA-m3). A log reader only: the decision stays `resumeDecision`'s, and
+ * this walks its rules in the same order so the line names the one that
+ * decided. `policy_join` means no mirrored rule failed, so the policy
+ * gained a rule this mirror lacks.
+ */
+function resumeJoinCause(
+  p: SessionResumePrefetch,
+  intendedChannelId: string,
+  isStartup: boolean,
+  nowMs: number,
+): ResumeMiss {
+  const ageMs = nowMs - p.fetchedAtMs;
+  const lag = p.currentEpoch - p.localEpoch;
+  const numbers = {
+    ageMs,
+    localEpoch: p.localEpoch,
+    dsEpoch: p.currentEpoch,
+    fetched: p.commits.length,
+  };
+  if (!isStartup) return { cause: "not_startup", detail: numbers };
+  if (!(ageMs >= 0 && ageMs <= LOCAL_GROUP_KEEP_MS)) {
+    return { cause: "prefetch_stale", detail: numbers };
+  }
+  if (!(p.openGroupId !== null && p.openGroupId === p.groupId)) {
+    return {
+      cause: "open_group_mismatch",
+      detail: { ...numbers, openGroupId: p.openGroupId },
+    };
+  }
+  if (
+    p.queriedChannelId !== intendedChannelId ||
+    p.localChannelId !== intendedChannelId
+  ) {
+    return {
+      cause: "channel_mismatch",
+      detail: {
+        ...numbers,
+        queriedChannelId: p.queriedChannelId,
+        localChannelId: p.localChannelId,
+      },
+    };
+  }
+  if (!(p.localState === "active" && p.selfInLocalRoster)) {
+    return {
+      cause: "held_group_unusable",
+      detail: {
+        ...numbers,
+        localState: p.localState,
+        selfInLocalRoster: p.selfInLocalRoster,
+      },
+    };
+  }
+  if (p.pendingCommit !== null) {
+    return {
+      cause: "own_commit_pending",
+      detail: { ...numbers, pendingCommit: p.pendingCommit },
+    };
+  }
+  if (p.commits.some((c) => c.committerIsSelf)) {
+    return { cause: "own_commit_fetched", detail: numbers };
+  }
+  if (!(lag >= 0 && lag < RESUME_MAX_LAG)) {
+    return { cause: "lag_out_of_range", detail: { ...numbers, lag } };
+  }
+  if (
+    p.commits.length !== lag ||
+    p.commits.some((c, i) => c.epoch !== p.localEpoch + 1 + i)
+  ) {
+    return { cause: "commits_mismatch", detail: { ...numbers, lag } };
+  }
+  return { cause: "policy_join", detail: numbers };
+}
+
+/**
+ * What `#consume` did with one envelope. Only the resume catch-up reads it
+ * (audit M4); every other caller awaits and ignores it. `applied` and
+ * `duplicate` are the clean outcomes. `seen` is the in-session dedup skip,
+ * `foreign` another group's envelope (group scoping), `dropped` a terminal
+ * drop native acked; the rest name the drain action that was taken.
+ */
+type ConsumeResult =
+  | "seen"
+  | "foreign"
+  | "applied"
+  | "duplicate"
+  | "dropped"
+  | Exclude<DrainAction["do"], "ack">;
 
 /** One staged own commit awaiting arbitration (native pending mirror). */
 interface StagedCommit {
@@ -1230,6 +1437,101 @@ export class MlsCallSession {
   #joinedGeneration = -1;
   /** Whether `#establish` is currently running (suppresses the F3 alarm). */
   #establishInFlight = false;
+  /**
+   * The startup establish's window (resume plan audit M6 / R2-m7): set by
+   * `start()`, before the sink registers, and cleared when the establish
+   * `start()` scheduled finishes. Only that establish may resume; the
+   * rejoin-fresh, successor and re-upgrade establishes share the 409 route
+   * and must never adopt held state. `start()` names its establish
+   * explicitly (`#establish(…, true)`), because a re-establish the startup
+   * ladder runs itself (`#rejoinFresh` on a closed group) runs INSIDE this
+   * window.
+   */
+  #startupEstablish = false;
+  /**
+   * Groups a loud-classified drop destroyed an envelope of while it was still
+   * "another group" during the startup window (W1-m1). An unrepeatable
+   * envelope of the resume candidate lost before adoption leaves the held
+   * state unprovable, so the resume is vetoed (→ step 6). Cleared with the
+   * window.
+   */
+  #loudForeignDrops = new Set<string>();
+  /**
+   * Groups an envelope of which took a NON-terminal foreign disposition (a
+   * gap, an identity fetch, a transient error) during the startup window
+   * (FA-M1). Such an envelope stays unacked in the mailbox and nothing
+   * redelivers it before a reconnect, so for the resume candidate it is a
+   * commit the prefetch may have missed: its catch-up then fetches once
+   * more from native's epoch (`#catchUpTail`). Cleared on every exit of the
+   * resume path and with the window.
+   */
+  #resumeForeignDrops = new Set<string>();
+  /**
+   * The highest epoch native applied for each group during the startup
+   * window, read from every processed outcome `#consume` sees (another
+   * group's included): the epochs native can still push keys-changed for on
+   * this page. The stale-keys fence's floor, read when a push lands
+   * (`#staleKeysFence`), so a fenced group's entry outlives the window;
+   * every other entry is cleared with it.
+   */
+  #startupAppliedEpochs = new Map<string, number>();
+  /**
+   * Groups a startup delete removed (FA-S2, FAR-m2): every group
+   * `#startupWipe` sweeps, fenced before its delete is awaited, and, on the
+   * resume's fallback (`#joinWithoutResume`), every group this page applied
+   * commits to (the candidate and the kept groups the discard deletes),
+   * fenced before the ladder runs. The ladder may re-enter the SAME DS group
+   * id while native's pushes for commits the old incarnation applied are
+   * still in flight: with `#installEpoch` reset, the group-id and epoch
+   * checks both pass, and the frame-key read hits the deleted row
+   * (re-securing, then loud). A push for a fenced group at or below its
+   * floor, `#startupAppliedEpochs` read when the push lands (an envelope
+   * native applied during the delete await raises it), is dropped. A push
+   * of the new incarnation is always above it: the DS's epochs for one group
+   * id only rise, a Welcome into it comes after everything this device
+   * applied there, and nothing native applies for the group once it is live
+   * again raises the floor
+   * (`#noteStartupApplied`). Unfenced by the new incarnation's first
+   * install, which moves `#installEpoch` past the floor so the monotonic
+   * check covers the rest.
+   */
+  #staleKeysFence = new Set<string>();
+  /**
+   * Set while `#catchUp` holds the lock: every `#consume` then is the resume
+   * catch-up's, or nested under it. Read by the drain's `retry` arm, which
+   * never re-queues such a synthetic (LD note 8).
+   */
+  #resumeCatchingUp = false;
+  /**
+   * Every gap refetch that failed (`#gapRefetchFailed`), counted before a
+   * synthetic's failure is rethrown: the resume catch-up tells a failed
+   * refetch under one of its commits from any other throw by it.
+   */
+  #gapRefetchFailures = 0;
+  /**
+   * The group a startup resume has adopted and not yet finished with (set
+   * with the adoption, cleared on every exit of `#startupResume` after it).
+   * A Welcome for it arms no currency check: the resume confirms currency
+   * itself (the prefetch's DS epoch, then native's) and only its verdict may
+   * go active (MS2 item 2).
+   */
+  #resumeAdopting: string | null = null;
+  /**
+   * `start()`'s KeyPackage enrolment when it runs beside a resume (R2-m4):
+   * the resume needs none, and a startup that joins awaits this before its
+   * first intent. Null when `start()` awaited enrolment itself.
+   */
+  #keyPackagesPending: Promise<void> | null = null;
+  /**
+   * A `removed_self` whose `#onRemovedSelf` was DROPPED because another group
+   * action was running (resume plan step 4): the group it named and the
+   * establish generation then live. Acted on when the running action ends,
+   * and then only if that group is still ours and native says this device is
+   * out of it — never replayed blind. Forgotten on any leave or cleanup of
+   * that group (R2-M3), so a join that re-enters the same DS group id is
+   * never torn down by it.
+   */
+  #removedSelfRecord: { groupId: string; generation: number } | null = null;
   /**
    * A Welcome adopted but not yet confirmed current by the DS (W2-M2). Set
    * by `#onEpochAdvanced`'s welcome arm in place of `#toActive`; `#pump`
@@ -1712,6 +2014,9 @@ export class MlsCallSession {
    */
   async start(): Promise<void> {
     if (this.#state !== "starting") return;
+    // The window opens before the sink does: the drain flushed at
+    // registration can already carry the resume candidate's envelopes.
+    this.#startupEstablish = true;
     this.#unregisterSink = this.#deps.bridge.registerMlsSink(this.#onSink, {
       signal: this.#abort.signal,
       onRatelimited: () => {
@@ -1725,20 +2030,40 @@ export class MlsCallSession {
     const timeline = new JoinTimeline("joiner");
     this.#joinTimeline = timeline;
     timeline.stamp("start");
-    try {
-      await this.#ensureKeyPackages();
-      timeline.stamp("keyPackagesPut");
-      if (this.#terminal()) return;
-    } catch (error) {
-      this.#onLoud(error);
-      return;
+    if (this.#deps.resumePrefetch !== undefined) {
+      // R2-m4: a resume sends no intent and needs no KeyPackage, so the
+      // enrolment round trip runs beside the establish instead of ahead of
+      // it. A startup that joins awaits it before its first intent, which
+      // is where a rate-limited publish still fails loud, as below.
+      const pending = this.#ensureKeyPackages().then(() => {
+        timeline.stamp("keyPackagesPut");
+      });
+      pending.catch((error: unknown) => {
+        console.warn(
+          "[mls] KeyPackage enrolment beside a resume failed",
+          error,
+        );
+      });
+      this.#keyPackagesPending = pending;
+    } else {
+      try {
+        await this.#ensureKeyPackages();
+        timeline.stamp("keyPackagesPut");
+        if (this.#terminal()) return;
+      } catch (error) {
+        this.#onLoud(error);
+        return;
+      }
     }
     // §4.1 M2: the startup establish runs INSIDE the group-action
     // single-flight. The sink is already registered above, so a live-pushed
     // envelope draining into surviving local state mid-establish could
     // schedule `#onRemovedSelf` — single-flight (plus the §4.2 generation
     // guard) keeps that from starting a second concurrent establish.
-    this.#scheduleGroupAction(() => this.#establish(), "establish");
+    this.#scheduleGroupAction(
+      () => this.#establish(undefined, true),
+      "establish",
+    );
   }
 
   /**
@@ -1921,13 +2246,23 @@ export class MlsCallSession {
   }
 
   /**
-   * Tear the session down (call end): local leave-cleanup, timers, and sink.
+   * Tear the session down (call end): timers, sink, and the local group.
    * There is NO self-Remove — RFC 9420/OpenMLS forbid removing one's own
    * leaf (CannotRemoveSelf); peers' SFU-departure leave-grace removal (or
    * the DS rejoin affordance, for a still-connected device) clears our
    * roster entry.
+   *
+   * The local group a hang-up leaves is KEPT for `LOCAL_GROUP_KEEP_MS` so a
+   * quick rejoin can resume it (resume plan D1), not deleted: its native
+   * downgrade grant is cleared first (R2-M1 — a kept row would keep it
+   * alive for the channel's next call), then the bridge keeps it, and only
+   * a keep the bridge accepted is recorded as recent (Wave-3 folds (c)). A
+   * group this establish never joined (a join still waiting for its
+   * Welcome, a resume not yet caught up, a create not yet routed) has
+   * nothing to resume and is deleted as before. `discard: true` (sign-out)
+   * deletes the group at once and clears the channel's recency record.
    */
-  dispose(): void {
+  dispose(opts?: { discard?: boolean }): void {
     if (this.#state === "closed") return;
     // Emit the R-1/R-2 session summary (§7.3) before tearing down.
     const summary = this.#foldTimelines(this.#metrics.summary());
@@ -1978,7 +2313,34 @@ export class MlsCallSession {
 
     const groupId = this.#groupId;
     this.#groupId = null;
-    if (groupId) void this.#teardownGroup(groupId);
+    if (opts?.discard) {
+      this.#deps.bridge.clearResumeRecord(this.#deps.channelId);
+      if (groupId) void this.#teardownGroup(groupId);
+      return;
+    }
+    if (!groupId) return;
+    if (this.#joinedGeneration !== this.#establishGeneration) {
+      void this.#teardownGroup(groupId);
+      return;
+    }
+    void this.#deps.bridge
+      .callClearDowngrade(groupId)
+      .catch((error: unknown) => {
+        console.warn("[mls] downgrade grant clear at hang-up failed", error);
+      });
+    const kept = this.#deps.bridge.keepLocalGroup(
+      groupId,
+      this.#deps.channelId,
+      LOCAL_GROUP_KEEP_MS,
+    );
+    // A refused keep has already been deleted by the bridge: record nothing.
+    if (kept) {
+      this.#deps.bridge.touchResumeRecord(
+        this.#deps.channelId,
+        groupId,
+        Math.max(0, this.#installEpoch),
+      );
+    }
   }
 
   async #teardownGroup(groupId: string): Promise<void> {
@@ -2057,8 +2419,11 @@ export class MlsCallSession {
 
   // ---- Create-or-join -------------------------------------------------------
 
-  /** Register (or, on a create-race, join) the call's MLS group. */
-  async #establish(supersedes?: string): Promise<void> {
+  /**
+   * Register (or, on a create-race, join) the call's MLS group. `startup` is
+   * passed by `start()` alone: only that establish may resume.
+   */
+  async #establish(supersedes?: string, startup = false): Promise<void> {
     if (this.#terminal()) return;
     // §4.2: every establish entry point gets a fresh generation. Everything
     // scheduled by THIS establish (the join loop, the Welcome wait) captures
@@ -2072,7 +2437,7 @@ export class MlsCallSession {
     this.#joinTimeline.stamp("start");
     this.#establishInFlight = true;
     try {
-      await this.#establishWithGeneration(generation, supersedes);
+      await this.#establishWithGeneration(generation, supersedes, startup);
     } finally {
       // Only the LIVE establish clears the flag — a superseded outer
       // establish returning late must not un-suppress the F3 alarm while the
@@ -2080,13 +2445,31 @@ export class MlsCallSession {
       if (generation === this.#establishGeneration) {
         this.#establishInFlight = false;
       }
+      if (startup) {
+        this.#startupEstablish = false;
+        this.#loudForeignDrops.clear();
+        this.#resumeForeignDrops.clear();
+        // A fenced group's floor outlives the window (FAR-m2).
+        for (const groupId of this.#startupAppliedEpochs.keys()) {
+          if (!this.#staleKeysFence.has(groupId)) {
+            this.#startupAppliedEpochs.delete(groupId);
+          }
+        }
+      }
     }
   }
 
   async #establishWithGeneration(
     generation: number,
-    supersedes?: string,
+    supersedes: string | undefined,
+    startup: boolean,
   ): Promise<void> {
+    // The resume branch sits BEFORE `callCreate`: a resume mints no group,
+    // sends no intent and no commit (resume plan D2, D6). Anything short of
+    // a resume comes back here and runs today's ladder from the top.
+    if (startup && this.#deps.resumePrefetch !== undefined) {
+      if ((await this.#startupResume(generation)) !== "join") return;
+    }
     // Native mints a local epoch-0 group + fires keys-changed(0). On a create
     // race (or a plaintext/feature-off verdict) we leave-clean this orphan.
     const created = await this.#deps.bridge.callCreate(
@@ -2204,9 +2587,14 @@ export class MlsCallSession {
    * the wipe. Failure is LOUD-logged and degrades safely (M6): the
    * page-lifetime token is spent only on a fully successful wipe, the ladder
    * proceeds as today, and §4.3's honest self-enrolment check catches a
-   * broken store loudly. Never burns `MAX_REESTABLISH`.
+   * broken store loudly. Never burns `MAX_REESTABLISH`. A startup RESUME
+   * spares the group it is adopting (`spareGroupId`); every other group of
+   * the channel is wiped as before.
    */
-  async #startupWipe(orphanGroupId: string | null): Promise<void> {
+  async #startupWipe(
+    orphanGroupId: string | null,
+    spareGroupId: string | null = null,
+  ): Promise<void> {
     const tokens = this.#deps.startupWipeTokens ?? startupWipedChannels;
     if (tokens.has(this.#deps.channelId)) return;
     let localGroupIds: string[];
@@ -2227,10 +2615,16 @@ export class MlsCallSession {
       localGroupIds,
       orphanGroupId,
       tokenSpent: tokens.has(this.#deps.channelId),
+      spareGroupId,
     });
     if (targets.length === 0) return;
     try {
       for (const groupId of targets) {
+        this.#forgetRemovedSelf(groupId);
+        // FAR-m2: the ladder may re-enter this group id. Fenced before the
+        // delete is awaited; an envelope of it native applies meanwhile
+        // still raises the floor (`#noteStartupApplied`).
+        this.#staleKeysFence.add(groupId);
         // Direct — NOT `#safeLeave` (M6: a swallowed wipe failure would spend
         // nothing but also tell nobody; this path must degrade loudly).
         await this.#deps.bridge.callLeaveCleanup(groupId);
@@ -2249,11 +2643,612 @@ export class MlsCallSession {
     }
   }
 
+  // ---- Resume (join-latency phase 2; resume plan "Session" steps 1–6) -------
+
+  /**
+   * The startup establish's resume branch. `"resumed"`: the held group was
+   * adopted and caught up. `"join"`: run today's create ladder from the top;
+   * every join-path precondition is already met (`#joinWithoutResume`).
+   * `"stop"`: the session closed or was superseded meanwhile.
+   *
+   *  1. The host's prefetch, bounded by `RESUME_PREFETCH_WAIT_MS`, feeds
+   *     `resumeDecision`; past the bound it reads as no prefetch.
+   *  2. On `"resume"` the open-group GET is the DS verdict (D2); the startup
+   *     wipe spares the candidate; the bridge stops tracking it, and it is
+   *     adopted only if its delete is not already running (W2-m2); its
+   *     native downgrade grant is cleared before anything can enable (W2-M3:
+   *     a reload never ran `dispose`, and native outlived the page).
+   *  3. The fetched commits are applied, once more from native's epoch if
+   *     an envelope of the group was dropped as another group's meanwhile
+   *     (FA-M1), native confirms, and the confirmed epoch's keys, our send
+   *     key included, are installed before anything can go active (FA-B1,
+   *     `#catchUp`).
+   *  5. Caught up and installed: enrolment is proven for this generation
+   *     (F2), the session goes active and recency is refreshed. From here
+   *     the unchanged fail-closed path enables: `rosterConsistent`, then
+   *     `#evaluateEnable`, then `#enable`.
+   *  6. Anything else abandons the candidate and joins.
+   *
+   * Every exit other than a resume logs its cause once (FA-m3, `#noResume`,
+   * `#resumeStopped`).
+   *
+   * No join intent, no create and no commit on this branch, ever: a resume
+   * that cannot be completed is abandoned, never repaired.
+   */
+  async #startupResume(
+    generation: number,
+  ): Promise<"resumed" | "join" | "stop"> {
+    const waited = await this.#awaitResumePrefetch();
+    this.#joinTimeline?.stamp("prefetchDone");
+    if (this.#terminal() || generation !== this.#establishGeneration) {
+      this.#deps.abortResumePrefetch?.();
+      return this.#resumeStopped(null);
+    }
+    const prefetch = "cause" in waited ? null : waited;
+    const nowMs = Date.now();
+    const decision = resumeDecision(
+      prefetch,
+      this.#deps.channelId,
+      this.#startupEstablish,
+      nowMs,
+    );
+    if (prefetch === null || decision !== "resume") {
+      return this.#noResume(
+        generation,
+        prefetch?.groupId ?? null,
+        prefetch === null
+          ? "cause" in waited
+            ? waited
+            : { cause: "prefetch_none" }
+          : resumeJoinCause(
+              prefetch,
+              this.#deps.channelId,
+              this.#startupEstablish,
+              nowMs,
+            ),
+      );
+    }
+    const groupId = prefetch.groupId;
+    // The GET named this group for the chosen channel: a DS answer exactly
+    // as a create's 409 is, and what the T0d fail-safe waits for (D2).
+    this.#dsVerdictSeen = true;
+    await this.#startupWipe(null, groupId);
+    if (this.#terminal() || generation !== this.#establishGeneration) {
+      this.#deps.abortResumePrefetch?.();
+      return this.#resumeStopped(groupId);
+    }
+    // No await between the release and the adoption: once released, no
+    // bridge timer can touch the group, and from the adoption on a close
+    // deletes it (`dispose` keeps only a joined group).
+    if (!this.#deps.bridge.releaseKeptGroup(groupId)) {
+      console.warn("[mls] resume candidate is being deleted", { groupId });
+      return this.#noResume(generation, groupId, {
+        cause: "candidate_being_deleted",
+      });
+    }
+    // FA-n1: the one `#groupId` change that skips `#resetGroupBuffers`, and
+    // safe only here. This session has held no group before (the startup
+    // establish), so the reset has no previous group's state to clear: the
+    // rotation state is untouched (`onLocalKeysChanged` ignores a group that
+    // is not `#groupId`), nothing staged, no admits or identity fetches of a
+    // group. What the buffers do hold was gathered while no group was live
+    // and must survive: `#inbound` can carry this group's queued live
+    // envelopes, and `#seen` only acked foreign ULIDs.
+    this.#groupId = groupId;
+    this.#resumeAdopting = groupId;
+    try {
+      return await this.#resumeAdopt(generation, prefetch);
+    } finally {
+      // MFR-n2: every exit closes the adopt window, a throw included. The
+      // exits keep their own resets, which run first; a throw skips them.
+      this.#resumeAdopting = null;
+    }
+  }
+
+  /**
+   * The adopt window of `#startupResume` (steps 2–6 from the adoption on):
+   * `#resumeAdopting` names the candidate throughout, and the caller's
+   * `finally` clears it on every exit (MFR-n2).
+   *
+   * MFR-m1: a loud verdict raised inside the window wins over every miss.
+   * Each miss out of it (the grant clear, the catch-up, its tail, the
+   * install check) asks `#loudVeto` first and falls back only when it
+   * declines, because the fallback's reset would clear the latch. The one
+   * latch that does not veto is a miss's own (`ResumeMiss.ownLatch`): the
+   * resume's key install raising it is that install failing, and the
+   * fallback's fresh join is its recovery. The install runs under the
+   * catch-up's lock, so no envelope's verdict can land inside it.
+   */
+  async #resumeAdopt(
+    generation: number,
+    prefetch: SessionResumePrefetch,
+  ): Promise<"resumed" | "join" | "stop"> {
+    const groupId = prefetch.groupId;
+    try {
+      await this.#deps.bridge.callClearDowngrade(groupId);
+    } catch (error) {
+      console.warn("[mls] resume: downgrade grant clear failed", error);
+      const miss: ResumeMiss = { cause: "grant_clear_failed" };
+      return (
+        this.#loudVeto(groupId, miss) ??
+        this.#noResume(generation, groupId, miss)
+      );
+    }
+    if (this.#terminal() || generation !== this.#establishGeneration) {
+      return this.#resumeStopped(groupId);
+    }
+    const outcome = await this.#catchUp(prefetch, generation);
+    this.#joinTimeline?.stamp("catchUpDone");
+    if (this.#terminal() || generation !== this.#establishGeneration) {
+      return this.#resumeStopped(groupId);
+    }
+    if ("cause" in outcome) {
+      const vetoed = outcome.ownLatch ? null : this.#loudVeto(groupId, outcome);
+      return vetoed ?? this.#noResume(generation, groupId, outcome);
+    }
+    // MWA-n1: a clean catch-up is vetoed too, ahead of the re-secure check.
+    const vetoed = this.#loudVeto(groupId, null);
+    if (vetoed !== null) return vetoed;
+    // LDA-n3: the drain shares this window. A DS 404 on a gap refetch of
+    // the adopted group re-secures the session and asks for a fresh rejoin
+    // (`#resecureAndRejoin`), which the single-flight drops while this
+    // establish runs; anything else that leaves the session re-securing is
+    // as unresolved. `#toActive` over it would enable a group the DS may no
+    // longer list this device in: vetoed, and the join path runs.
+    if (this.#state === "resecuring") {
+      console.warn("[mls] resume vetoed: re-secured during the adoption", {
+        groupId,
+      });
+      return this.#noResume(generation, groupId, {
+        cause: "resecure_during_adopt",
+      });
+    }
+    // FAR-n1: only now, the install check and the veto passed, so a
+    // `resumed` stamp is a resume that happened and its time includes the
+    // install.
+    this.#joinTimeline?.stamp("resumed");
+    const epoch = outcome.epoch;
+    this.#joinedGeneration = generation; // enrolment proof, as a Welcome's
+    this.#toActive();
+    // The keys installed before `active`, so the reconcile their install
+    // kicked was refused by `#evaluateEnable` (not active).
+    if (this.#hasLocalKey && !this.#e2eeEnabled) void this.reconcileNow();
+    this.#resumeForeignDrops.clear();
+    this.#resumeAdopting = null;
+    this.#touchResumeRecord(groupId, epoch);
+    console.info("[mls] resumed the held call group", {
+      groupId,
+      fromEpoch: prefetch.localEpoch,
+      epoch,
+    });
+    return "resumed";
+  }
+
+  /**
+   * MWA-n1, MFR-m1: a loud verdict raised inside the adopt window, `failed`
+   * (`#onLoud`) or any latch (`#latchLoud`), vetoes the resume, whether the
+   * catch-up was clean or `miss` names why it was not. It stops instead of
+   * falling back: `#noResume`'s fallback resets the group
+   * (`#resetGroupBuffers`), and that reset clears the latch. So the session
+   * stays where the verdict put it, loud with the gate held, and never
+   * `#toActive`. The candidate stays adopted but not joined, so a close
+   * deletes it. Null when nothing is loud: the caller goes on.
+   */
+  #loudVeto(groupId: string, miss: ResumeMiss | null): "stop" | null {
+    if (this.#state !== "failed" && !this.#loudLatched) return null;
+    const detail = { state: this.#state, miss: miss?.cause ?? null };
+    console.warn("[mls] resume vetoed: went loud during the adoption", {
+      groupId,
+      ...detail,
+    });
+    return this.#resumeStopped(groupId, { cause: "loud_during_adopt", detail });
+  }
+
+  /**
+   * A startup establish that falls back to the join ladder: its one cause
+   * line (FA-m3; numbers and ids only, never key material), then
+   * `#joinWithoutResume`.
+   */
+  #noResume(
+    generation: number,
+    candidate: string | null,
+    miss: ResumeMiss,
+  ): Promise<"join" | "stop"> {
+    console.info("[mls] startup establish: no resume", {
+      cause: miss.cause,
+      candidate,
+      ...miss.detail,
+    });
+    this.#resumeForeignDrops.clear();
+    this.#resumeAdopting = null;
+    return this.#joinWithoutResume(generation, candidate);
+  }
+
+  /**
+   * A startup resume that ends without the join ladder: the session's close
+   * or a newer establish ended it (`superseded`), or it went loud inside the
+   * adopt window (`loud_during_adopt`, MWA-n1).
+   */
+  #resumeStopped(
+    candidate: string | null,
+    miss: ResumeMiss = { cause: "superseded" },
+  ): "stop" {
+    console.info("[mls] startup establish: no resume", {
+      cause: miss.cause,
+      candidate,
+      ...miss.detail,
+    });
+    this.#resumeForeignDrops.clear();
+    this.#resumeAdopting = null;
+    return "stop";
+  }
+
+  /**
+   * The host's prefetch, or why there is none (FA-m3): it resolved null (no
+   * candidate, or the host's prefetch gave up and logged why), it rejected,
+   * `RESUME_PREFETCH_WAIT_MS` passed first, or the session closed first.
+   * Whatever it resolves to after that is never read: the join path aborts
+   * it (W2S-n1).
+   */
+  async #awaitResumePrefetch(): Promise<SessionResumePrefetch | ResumeMiss> {
+    const prefetch = this.#deps.resumePrefetch;
+    if (prefetch === undefined) return { cause: "prefetch_none" };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
+    const bound = new Promise<ResumeMiss>((resolve) => {
+      timer = setTimeout(() => {
+        console.warn("[mls] resume prefetch not back in time — joining", {
+          waitedMs: RESUME_PREFETCH_WAIT_MS,
+        });
+        resolve({
+          cause: "prefetch_timeout",
+          detail: { waitedMs: RESUME_PREFETCH_WAIT_MS },
+        });
+      }, RESUME_PREFETCH_WAIT_MS);
+      this.#timers.add(timer);
+      onAbort = () => resolve({ cause: "superseded" });
+      this.#abort.signal.addEventListener("abort", onAbort, { once: true });
+    });
+    try {
+      return await Promise.race([
+        prefetch.then(
+          (p): SessionResumePrefetch | ResumeMiss =>
+            p ?? { cause: "prefetch_none" },
+          (error: unknown): ResumeMiss => {
+            console.warn("[mls] resume prefetch failed", error);
+            return { cause: "prefetch_failed" };
+          },
+        ),
+        bound,
+      ]);
+    } finally {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        this.#timers.delete(timer);
+      }
+      if (onAbort) this.#abort.signal.removeEventListener("abort", onAbort);
+    }
+  }
+
+  /**
+   * Resume step 3 (audit M4, R2-m6), under the lock so no live envelope of
+   * the group interleaves. Each fetched commit goes through `#consume` in
+   * order; only `applied` or `duplicate` (a drained copy may have applied it
+   * first) lets the next one run. Then no envelope of the group may have been
+   * destroyed by a loud drop before its adoption (W1-m1), and native must
+   * show this device in the group, active, at the DS's current epoch — the
+   * check that catches a removal applied before the adoption, when the
+   * drained `removed_self` was still "another group" and only acked. If an
+   * envelope of the group took a non-terminal drop as another group's before
+   * the adoption, one tail fetch from native's epoch runs first and the DS
+   * epoch to confirm is the tail's (FA-M1, `#catchUpTail`). A gap refetch
+   * that failed under a fetched commit stops the catch-up like any other
+   * unclean result (`#consumeCatchUp`); any other throw is a failure too.
+   *
+   * Then, still under the lock, the confirmed epoch's keys are installed,
+   * our send key included, IMMEDIATELY (FA-B1): a keys-changed push for an
+   * intermediate epoch may already have installed an older send key, and
+   * the explicit install would otherwise classify as the last commit's
+   * Add-grace and leave that key in place, held by a member a Remove in the
+   * catch-up took out. Resolves to the confirmed epoch only once that
+   * install is a fact (`#installCaughtUpKeys`); the caller goes active only
+   * then. `catchUpDone` is stamped before the install; `resumed` only once
+   * the resume stands (`#startupResume`, FAR-n1).
+   */
+  async #catchUp(
+    p: SessionResumePrefetch,
+    generation: number,
+  ): Promise<{ epoch: number } | ResumeMiss> {
+    const groupId = p.groupId;
+    const stale = () =>
+      this.#terminal() ||
+      generation !== this.#establishGeneration ||
+      this.#groupId !== groupId;
+    const stopped: ResumeMiss = {
+      cause: "catch_up_stopped",
+      detail: { stale: true },
+    };
+    const release = await this.#lock.acquire();
+    this.#resumeCatchingUp = true;
+    try {
+      for (const info of p.commits) {
+        if (stale()) return stopped;
+        const result = await this.#consumeCatchUp(info);
+        if (result !== "applied" && result !== "duplicate") {
+          console.warn("[mls] resume catch-up stopped", {
+            groupId,
+            epoch: info.epoch,
+            result,
+          });
+          return {
+            cause: "catch_up_stopped",
+            detail: { epoch: info.epoch, result },
+          };
+        }
+      }
+      if (stale()) return stopped;
+      if (this.#loudForeignDrops.has(groupId)) {
+        console.warn(
+          "[mls] resume vetoed: a loud drop destroyed an envelope of the group",
+          { groupId },
+        );
+        return { cause: "loud_foreign_drop" };
+      }
+      let confirmed = p.currentEpoch;
+      if (this.#resumeForeignDrops.has(groupId)) {
+        const tail = await this.#catchUpTail(p, stale);
+        if ("cause" in tail) return tail;
+        confirmed = tail.epoch;
+      }
+      const state = await this.#deps.bridge.callState(groupId);
+      const selfPresent = state.members.some(
+        (m) =>
+          m.user_id === this.#deps.userId &&
+          m.device_id === this.#deps.deviceId,
+      );
+      if (
+        !selfPresent ||
+        state.epoch !== confirmed ||
+        state.state !== "active"
+      ) {
+        console.warn("[mls] resume catch-up not confirmed by native state", {
+          groupId,
+          selfPresent,
+          epoch: state.epoch,
+          dsEpoch: confirmed,
+          state: state.state,
+        });
+        return {
+          cause: "native_unconfirmed",
+          detail: {
+            selfPresent,
+            epoch: state.epoch,
+            dsEpoch: confirmed,
+            state: state.state,
+          },
+        };
+      }
+      if (stale()) return stopped;
+      this.#joinTimeline?.stamp("catchUpDone");
+      const latchedBefore = this.#loudLatched;
+      const installed = await this.#installCaughtUpKeys(groupId, confirmed);
+      if (stale()) return stopped;
+      if (!installed) {
+        console.warn("[mls] resume: the caught-up keys did not install", {
+          groupId,
+          epoch: confirmed,
+          installEpoch: this.#installEpoch,
+          ownSendKeyEpoch: this.#ownSendKeyEpoch,
+        });
+        return {
+          cause: "install_check_failed",
+          detail: {
+            epoch: confirmed,
+            installEpoch: this.#installEpoch,
+            ownSendKeyEpoch: this.#ownSendKeyEpoch,
+          },
+          ownLatch: !latchedBefore && this.#loudLatched,
+        };
+      }
+      return { epoch: confirmed };
+    } catch (error) {
+      console.warn("[mls] resume catch-up failed", error);
+      return { cause: "catch_up_threw" };
+    } finally {
+      this.#resumeCatchingUp = false;
+      release();
+    }
+  }
+
+  /**
+   * One fetched commit of a resume catch-up (`#catchUp`, `#catchUpTail`),
+   * through `#consume`. A gap refetch that failed under it is a RESULT,
+   * `gap_refetch_failed`, never counted clean: `#gapRefetchFailed` rethrows
+   * a synthetic's failure to its inline caller, and this caller turns it
+   * into the stop the catch-up's rules already make of every result but
+   * `applied` and `duplicate` (LDA-n3). Any other throw propagates.
+   */
+  async #consumeCatchUp(
+    info: MlsCommitInfo,
+  ): Promise<ConsumeResult | "gap_refetch_failed"> {
+    const failures = this.#gapRefetchFailures;
+    try {
+      return await this.#consume(this.#synthEnvelope(info));
+    } catch (error) {
+      if (this.#gapRefetchFailures === failures) throw error;
+      console.warn("[mls] resume catch-up: a gap refetch failed", error);
+      return "gap_refetch_failed";
+    }
+  }
+
+  /**
+   * FA-M1: the tail of a resume catch-up, run under `#catchUp`'s lock when
+   * an envelope of the candidate took a non-terminal foreign drop before the
+   * adoption. Such a commit is not in the prefetch when it landed after the
+   * GET, and it is never redelivered before a reconnect, so without this the
+   * seat would go active an epoch behind the DS. ONE fetch from native's
+   * epoch, held to the rules the prefetch's own commits were (lag within
+   * `RESUME_MAX_LAG` of the held epoch, exactly the missing epochs in order,
+   * none of them ours), then applied through the same `#consume` path.
+   * Resolves to the tail's `current_epoch`, which native must then show.
+   * Any failure falls back to the join: never active behind.
+   */
+  async #catchUpTail(
+    p: SessionResumePrefetch,
+    stale: () => boolean,
+  ): Promise<{ epoch: number } | ResumeMiss> {
+    const groupId = p.groupId;
+    const failed = (
+      reason: string,
+      numbers: Record<string, number> = {},
+    ): ResumeMiss => {
+      console.warn("[mls] resume tail fetch failed", {
+        groupId,
+        reason,
+        ...numbers,
+      });
+      return { cause: "tail_failed", detail: { reason, ...numbers } };
+    };
+    const stopped: ResumeMiss = {
+      cause: "catch_up_stopped",
+      detail: { stale: true },
+    };
+    let from: number;
+    let res: Awaited<ReturnType<E2EEBridge["mlsFetchCommits"]>>;
+    try {
+      from = (await this.#deps.bridge.callState(groupId)).epoch;
+      if (stale()) return stopped;
+      res = await this.#deps.bridge.mlsFetchCommits(groupId, from + 1);
+    } catch (error) {
+      console.warn("[mls] resume tail fetch threw", error);
+      return { cause: "tail_failed", detail: { reason: "threw" } };
+    }
+    if (stale()) return stopped;
+    if (res.kind !== "ok") return failed(res.kind, { from });
+    const { commits, current_epoch: current } = res.body;
+    const lag = current - from;
+    if (!(lag >= 0 && current - p.localEpoch < RESUME_MAX_LAG)) {
+      return failed("lag", { from, current });
+    }
+    if (
+      commits.length !== lag ||
+      commits.some((c, i) => c.epoch !== from + 1 + i)
+    ) {
+      return failed("short", { from, current, fetched: commits.length });
+    }
+    if (
+      commits.some(
+        (c) =>
+          c.committer.user_id === this.#deps.userId &&
+          c.committer.device_id === this.#deps.deviceId,
+      )
+    ) {
+      return failed("own_commit", { from, current });
+    }
+    for (const info of commits) {
+      const result = await this.#consumeCatchUp(info);
+      if (stale()) return stopped;
+      if (result !== "applied" && result !== "duplicate") {
+        return failed(
+          result === "gap_refetch_failed" ? result : "not_applied",
+          { from, current, epoch: info.epoch },
+        );
+      }
+    }
+    console.info("[mls] resume tail applied", {
+      groupId,
+      from,
+      epoch: current,
+    });
+    return { epoch: current };
+  }
+
+  /**
+   * The join path of a startup establish that does not resume, in the
+   * binding order (Wave-3 folds), all before the ladder's first request:
+   *  (1) the prefetch is aborted, synchronously and first: a claim handed
+   *      back after the discard below would re-arm a timer that can delete
+   *      the group the join re-enters, and nothing it resolves to is read;
+   *  (2) step 6, when there was a candidate: the bridge stops tracking it,
+   *      the session lets go of it through the group reset (the wave-1.5 map
+   *      invariant), and its recency record is cleared and its delete marked
+   *      in flight before the delete is awaited — never an intent before
+   *      that delete completes;
+   *  (3) the channel's kept groups are discarded: a null prefetch can still
+   *      leave one on disk (W2-m1);
+   *  (4) KeyPackage enrolment, when it ran beside the resume.
+   * (2) and (3) are bounded, and go LOUD past the bound or on a failed
+   * delete, never into the ladder (`KEPT_DISCARD_WAIT_MS`).
+   */
+  async #joinWithoutResume(
+    generation: number,
+    candidate: string | null,
+  ): Promise<"join" | "stop"> {
+    this.#deps.abortResumePrefetch?.();
+    const live = () =>
+      !this.#terminal() && generation === this.#establishGeneration;
+    if (candidate !== null) {
+      this.#deps.bridge.releaseKeptGroup(candidate);
+      if (this.#groupId === candidate) {
+        this.#groupId = null;
+        this.#resetGroupBuffers();
+      }
+      this.#deps.bridge.clearResumeRecord(this.#deps.channelId);
+      this.#forgetRemovedSelf(candidate);
+      await this.#awaitJoinPathDelete(
+        this.#deps.bridge.callLeaveCleanup(candidate),
+        `the resume candidate ${candidate}`,
+      );
+      this.#forgetRemovedSelf(candidate);
+      if (this.#pendingIdentityFetch === candidate) {
+        this.#pendingIdentityFetch = null;
+        this.#parkedDuringFetch = [];
+        this.#identityFetchGen++;
+      }
+      if (!live()) return "stop";
+    }
+    // FA-S2 / FAR-m2: after the reset (which zeroes `#installEpoch`), every
+    // group this page applied commits to is fenced, so no old incarnation's
+    // in-flight keys-changed reaches a new one: the candidate deleted above
+    // and the channel's kept groups the discard deletes, whose ids only the
+    // bridge knows. None is live here, and no floor is frozen here.
+    for (const groupId of this.#startupAppliedEpochs.keys()) {
+      this.#staleKeysFence.add(groupId);
+    }
+    await this.#awaitJoinPathDelete(
+      this.#deps.bridge.discardKeptForChannel(this.#deps.channelId),
+      "the channel's kept local groups",
+    );
+    if (!live()) return "stop";
+    if (this.#keyPackagesPending) await this.#keyPackagesPending;
+    return live() ? "join" : "stop";
+  }
+
+  /** A delete the join path must see finish first: bounded, LOUD otherwise. */
+  async #awaitJoinPathDelete(
+    pending: Promise<void>,
+    what: string,
+  ): Promise<void> {
+    try {
+      await this.#withTimeout(pending, KEPT_DISCARD_WAIT_MS);
+    } catch (error) {
+      console.error("[mls] join path: a local delete did not finish", {
+        what,
+        error,
+      });
+      throw new Error(
+        `MLS call join refused: deleting ${what} did not finish — joining ` +
+          `now could re-enter a group whose local delete is still running.`,
+      );
+    }
+  }
+
   /**
    * Whether `generation`'s join already completed. Sound as a stop condition
    * because `#joinedGeneration` is written only by a natively processed
-   * Welcome for the live group (`#onEpochAdvanced`) or by our own DS-`Created`
-   * group.
+   * Welcome for the live group (`#onEpochAdvanced`), by our own DS-`Created`
+   * group, or by a startup resume as it goes active. A Welcome processed
+   * inside the resume's adopt window writes nothing (MWA-m1).
    */
   #joinedIn(generation: number): boolean {
     return this.#joinedGeneration === generation;
@@ -2782,6 +3777,7 @@ export class MlsCallSession {
     const scheduledGeneration = this.#establishGeneration;
     try {
       const state = await this.#deps.bridge.callState(this.#groupId);
+      if (this.#serveOutlivedRead(request, scheduledGeneration)) return;
       if (
         !state.members.some(
           (m) =>
@@ -2798,6 +3794,7 @@ export class MlsCallSession {
           m.device_id === this.#deps.deviceId,
       );
     } catch {
+      if (this.#serveOutlivedRead(request, scheduledGeneration)) return;
       this.#retireRejoinServe(key);
       return;
     }
@@ -2823,6 +3820,36 @@ export class MlsCallSession {
     }, leafStaggerDelayMs(leaf));
     this.#scheduledAdmits.set(key, timer);
     this.#timers.add(timer);
+  }
+
+  /**
+   * W15R-m1: whether a rejoin serve's schedule-time roster read straddled a
+   * re-establish or a group change. Every such change ran
+   * `#resetGroupBuffers`, which already dropped this serve's reserved key
+   * with the old group's maps; the maps now belong to the live group, where
+   * the same key can name a newer serve's reservation or ledger entry. So the
+   * serve ends here and touches neither `#scheduledAdmits` nor the ledger —
+   * neither to retire itself nor to schedule a timer against a roster read
+   * of a group it no longer serves.
+   */
+  #serveOutlivedRead(
+    request: MlsJoinRequest,
+    scheduledGeneration: number,
+  ): boolean {
+    if (
+      scheduledGeneration === this.#establishGeneration &&
+      request.group_id === this.#groupId
+    ) {
+      return false;
+    }
+    console.info("[mls] rejoin serve outlived its group during the read", {
+      target: `${request.user_id}:${request.device_id}`,
+      group: request.group_id,
+      liveGroup: this.#groupId,
+      scheduledGeneration,
+      liveGeneration: this.#establishGeneration,
+    });
+    return true;
   }
 
   /** A rejoin serve reached a terminal exit: drop its dedup key AND its ledger entry. */
@@ -3461,11 +4488,12 @@ export class MlsCallSession {
    * Process one envelope. Called ONLY while holding the lock (the pump, or an
    * inline rebase/gap-refetch that already holds it) — it never touches the
    * lock itself, which is what keeps the inline rebase deadlock-free (NEW-2).
+   * Resolves to what it did (`ConsumeResult`) for the resume catch-up.
    */
-  async #consume(envelope: MlsEnvelope): Promise<void> {
+  async #consume(envelope: MlsEnvelope): Promise<ConsumeResult> {
     if (this.#seen.has(envelope.id)) {
       this.#metrics.recordDedupSkip(); // ULID dedup (drain-vs-live-push race)
-      return;
+      return "seen";
     }
 
     // Group scoping (audit M2): an envelope for a group other than the live
@@ -3486,6 +4514,7 @@ export class MlsCallSession {
         envelope,
         this.#deps.userId,
       );
+      if (foreign.kind === "processed") this.#noteStartupApplied(foreign);
       if (foreign.kind === "drop" && foreign.loud) {
         // A loud-classified drop consumed an unrepeatable envelope; it says
         // nothing about OUR group, so it latches nothing, but it is never
@@ -3497,6 +4526,11 @@ export class MlsCallSession {
           contentType: envelope.content_type,
           reason: foreign.reason,
         });
+        // W1-m1: if this is the startup's resume candidate, not yet adopted,
+        // its held state is no longer provable: the resume is vetoed.
+        if (this.#startupEstablish) {
+          this.#loudForeignDrops.add(envelope.group_id);
+        }
       } else {
         console.info("[mls] envelope for another group", {
           group: envelope.group_id,
@@ -3506,13 +4540,19 @@ export class MlsCallSession {
           disposition: foreign.kind,
           acked: foreign.ack,
         });
+        // FA-M1: a non-terminal drop stays unacked and is not redelivered
+        // before a reconnect. For the startup's resume candidate that can be
+        // a commit its prefetch missed, so its catch-up fetches once more.
+        if (!foreign.ack && this.#startupEstablish) {
+          this.#resumeForeignDrops.add(envelope.group_id);
+        }
       }
       if (foreign.ack) {
         this.#seen.add(envelope.id);
         this.#retries.delete(envelope.id);
         this.#deps.bridge.ackEnvelopes([envelope.id]);
       }
-      return;
+      return "foreign";
     }
 
     // H1: if this commit lands on the epoch our OWN commit is staged for, clear
@@ -3531,6 +4571,7 @@ export class MlsCallSession {
       envelope,
       this.#deps.userId,
     );
+    if (disp.kind === "processed") this.#noteStartupApplied(disp);
     const action = drainAction(
       disp,
       this.#retries.get(envelope.id) ?? 0,
@@ -3573,7 +4614,8 @@ export class MlsCallSession {
             this.#onEpochAdvanced(disp.outcome);
           }
         }
-        return;
+        if (disp.kind !== "processed") return "dropped";
+        return disp.outcome.kind === "duplicate" ? "duplicate" : "applied";
       }
       case "ack_removed_self": {
         // L5: emit_keys_changed still fires on the commit that removed us — ack
@@ -3581,7 +4623,7 @@ export class MlsCallSession {
         this.#seen.add(envelope.id);
         this.#deps.bridge.ackEnvelopes([envelope.id]);
         this.#scheduleGroupAction(() => this.#onRemovedSelf(), "removed_self");
-        return;
+        return "ack_removed_self";
       }
       case "gap_refetch": {
         // Do NOT ack (invariant 10). Fetch the missing epochs and feed them
@@ -3592,7 +4634,7 @@ export class MlsCallSession {
         this.#metrics.recordGapRefetch();
         if (await this.#gapRefetchFailed(envelope, action.fromEpoch))
           this.#scheduleRetry(envelope);
-        return;
+        return "gap_refetch";
       }
       case "escalate_desync":
         // Park bound exceeded — discard local state + rejoin fresh, never
@@ -3603,7 +4645,7 @@ export class MlsCallSession {
           () => this.#rejoinFresh("epoch gap did not resolve"),
           "rejoin_fresh:epoch_gap",
         );
-        return;
+        return "escalate_desync";
       case "successor": {
         this.#seen.add(envelope.id);
         this.#deps.bridge.ackEnvelopes([envelope.id]);
@@ -3611,7 +4653,7 @@ export class MlsCallSession {
           () => this.#poisonedSuccessor(),
           "poisoned_successor:drain",
         );
-        return;
+        return "successor";
       }
       case "fetch_identity": {
         // Leaf-verify fix (audit MED-3): do NOT ack, keep OFF #seen so the
@@ -3668,7 +4710,7 @@ export class MlsCallSession {
           void this.#pump();
         }, 0);
         this.#timers.add(timer);
-        return;
+        return "fetch_identity";
       }
       case "rejoin_fresh":
         // No progress after a reconcile (audit MED-1): a bare ack-drop would
@@ -3681,7 +4723,7 @@ export class MlsCallSession {
           () => this.#rejoinFresh(action.reason),
           "rejoin_fresh:drain",
         );
-        return;
+        return "rejoin_fresh";
       case "retry": {
         // Transient — do NOT ack; bump the counter and re-drain after a
         // backoff (bounded → ack+drop-as-poison at the cap). Kept OFF #seen so
@@ -3691,8 +4733,14 @@ export class MlsCallSession {
           envelope.id,
           (this.#retries.get(envelope.id) ?? 0) + 1,
         );
-        this.#scheduleRetry(envelope);
-        return;
+        // LD note 8: never a resume catch-up's synthetic. The catch-up stops
+        // on this result and falls back, possibly into the SAME group id,
+        // where the re-queued old commit would drain into the new
+        // incarnation. Any other inline caller's synthetic is still re-queued:
+        // its refetch has no other retry.
+        if (!(this.#resumeCatchingUp && envelope.id.startsWith("mls-synth:")))
+          this.#scheduleRetry(envelope);
+        return "retry";
       }
       case "ack_drop_poison": {
         // carried item 4: an unrecognised terminal error can't spin forever.
@@ -3713,7 +4761,7 @@ export class MlsCallSession {
             disp.error,
           );
         }
-        return;
+        return "ack_drop_poison";
       }
     }
   }
@@ -3804,6 +4852,7 @@ export class MlsCallSession {
       await this.#gapRefetchInline(fromEpoch);
       return false;
     } catch (error) {
+      this.#gapRefetchFailures++;
       if (envelope.id.startsWith("mls-synth:")) throw error;
       console.warn(
         "[mls] gap refetch failed — the envelope stays unacked and is retried",
@@ -4035,12 +5084,19 @@ export class MlsCallSession {
   }
 
   /**
-   * Install `epoch`'s keys, the LOCAL send key included, now. Awaited under
-   * the lock: `onLocalKeysChanged` never takes it and never waits on the
-   * pump. `#lastInbound` names only the last commit the catch-up applied, not
-   * the jump from the installed key, which spans the whole catch-up and may
-   * span a Remove; cleared, the classifier falls to its fail-safe (C1):
+   * Install `epoch`'s keys, the LOCAL send key included, now, before the
+   * caller goes active. Two callers, each after a catch-up it applied: the
+   * Welcome currency check (`#confirmWelcomeCurrency`, the epoch the DS
+   * confirmed) and the resume (`#catchUp`, the epoch its prefetch or tail
+   * confirmed). Both hold the lock, and awaiting this there is safe:
+   * `onLocalKeysChanged` never takes it and never waits on the pump.
+   * `#lastInbound` names only the last commit the catch-up applied, not the
+   * jump from the installed key, which spans the whole catch-up and may span
+   * a Remove; cleared, the classifier falls to its fail-safe (C1):
    * Remove-immediate, never an Add-grace that keeps the old send key.
+   * `#lastOwnWon` is left alone: the resume branch stages and wins no commit
+   * of its own, and on either path the `#ownSendKeyEpoch` check below refuses
+   * a deferred install whatever classified it.
    *
    * True when nothing can publish under an older key: the install landed (the
    * counter moved, the fence is still `epoch`, and OUR send key is `epoch`'s
@@ -4107,6 +5163,24 @@ export class MlsCallSession {
     this.#latchLoud(new Error(ENCRYPTION_UNCONFIRMED), "control");
   }
 
+  /**
+   * Record an epoch native applied during the startup window (FA-S2). A
+   * fenced group counts only while it is not the live group: until the
+   * ladder re-enters it, what native applies for it is the deleted
+   * incarnation's (an apply the delete raced); from the re-entry on it is
+   * the new incarnation's, which must never raise the floor its own
+   * keys-changed is checked against (FAR-m2).
+   */
+  #noteStartupApplied({ outcome }: { outcome: MlsProcessOutcome }): void {
+    if (!this.#startupEstablish) return;
+    const fenced = this.#staleKeysFence.has(outcome.group_id);
+    if (fenced && outcome.group_id === this.#groupId) return;
+    const prior = this.#startupAppliedEpochs.get(outcome.group_id);
+    if (prior === undefined || outcome.epoch > prior) {
+      this.#startupAppliedEpochs.set(outcome.group_id, outcome.epoch);
+    }
+  }
+
   #synthEnvelope(info: MlsCommitInfo): MlsEnvelope {
     // A commit synthesized from MlsCommitInfo (409-Lost body / gap-refetch).
     // Native dedups by (group, epoch), so the synthetic id is only our own
@@ -4154,6 +5228,15 @@ export class MlsCallSession {
         groupId: this.#groupId,
         generation: this.#establishGeneration,
       });
+      // …except a removal of THIS device, which is recorded rather than lost
+      // (resume plan step 4): the running action's end re-checks it against
+      // native truth instead of replaying it (`#actOnRemovedSelfRecord`).
+      if (kind === "removed_self" && this.#groupId !== null) {
+        this.#removedSelfRecord = {
+          groupId: this.#groupId,
+          generation: this.#establishGeneration,
+        };
+      }
       return;
     }
     this.#groupActionPending = true;
@@ -4172,6 +5255,7 @@ export class MlsCallSession {
         this.#onLoud(error);
       } finally {
         this.#groupActionPending = false;
+        this.#actOnRemovedSelfRecord();
       }
     }, 0);
     this.#timers.add(timer);
@@ -4181,11 +5265,48 @@ export class MlsCallSession {
     this.#scheduleGroupAction(() => this.#rejoinFresh(reason));
   }
 
+  /**
+   * A group action ended: take the `removed_self` it caused to be dropped,
+   * if any. It is acted on only if its group is still ours AND native says
+   * this device is out of it (a resume's catch-up or a fallback join can
+   * make an old removal moot); otherwise it is forgotten.
+   */
+  #actOnRemovedSelfRecord(): void {
+    const record = this.#removedSelfRecord;
+    if (record === null) return;
+    this.#removedSelfRecord = null;
+    void this.#confirmRemovedSelf(record);
+  }
+
+  async #confirmRemovedSelf(record: {
+    groupId: string;
+    generation: number;
+  }): Promise<void> {
+    if (this.#terminal() || this.#groupId !== record.groupId) return;
+    const present = await this.#selfInRoster();
+    if (this.#terminal() || this.#groupId !== record.groupId) return;
+    if (present) {
+      console.info("[mls] dropped removal is moot: still in the group", record);
+      return;
+    }
+    console.warn("[mls] acting on a removal dropped mid-action", record);
+    this.#scheduleGroupAction(() => this.#onRemovedSelf(), "removed_self");
+  }
+
+  /** Any leave or cleanup of `groupId` ends its dropped removal (R2-M3). */
+  #forgetRemovedSelf(groupId: string): void {
+    if (this.#removedSelfRecord?.groupId === groupId) {
+      this.#removedSelfRecord = null;
+    }
+  }
+
   async #onRemovedSelf(): Promise<void> {
-    // The group removed us (L5). Leave-clean first, then decide.
+    // The group removed us (L5). Leave-clean first, then decide. Nothing of
+    // it may be resumed: its recency record goes before the delete (D7).
     const groupId = this.#groupId;
     this.#groupId = null;
     this.#resetGroupBuffers();
+    this.#deps.bridge.clearResumeRecord(this.#deps.channelId);
     if (groupId) await this.#safeLeave(groupId);
 
     // AUD-HIGH-1: if this device is STILL an SFU participant, the removal
@@ -4210,6 +5331,7 @@ export class MlsCallSession {
     const old = this.#groupId;
     this.#groupId = null;
     this.#resetGroupBuffers();
+    this.#deps.bridge.clearResumeRecord(this.#deps.channelId); // D7
     if (old) {
       // Local wipe only — we can never remove our own stale leaf
       // (CannotRemoveSelf). Convergence is the DS rejoin affordance's job:
@@ -4268,6 +5390,8 @@ export class MlsCallSession {
     const old = this.#groupId;
     this.#groupId = null;
     this.#resetGroupBuffers();
+    // A poisoned group is never resumable (D7).
+    this.#deps.bridge.clearResumeRecord(this.#deps.channelId);
     this.#toResecuring("poisoned epoch — migrating to a successor group");
     this.#dropModeToNegotiating(); // §4.4/M3 — same shape as #rejoinFresh
 
@@ -4368,18 +5492,27 @@ export class MlsCallSession {
         generation: this.#establishGeneration,
         waitInstalled: verdict.resolveWait,
       });
-      this.#joinTimeline?.stamp("welcomeAdopted");
       this.#groupId = outcome.group_id;
-      this.#joinedGeneration = this.#establishGeneration;
-      // W2-M2: NOT `#toActive` yet. Native accepts a Welcome sealed to any
-      // held KeyPackage for any intent on the group, so a late-drained one
-      // can adopt a stale epoch. `#pump` asks the DS right after this
-      // envelope, under the lock, and only its answer goes active.
-      this.#welcomeCurrency = {
-        groupId: outcome.group_id,
-        epoch: outcome.epoch,
-        generation: this.#establishGeneration,
-      };
+      // Not while a startup resume adopts this group: its own verdict
+      // decides, and it writes `#joinedGeneration` itself when it goes
+      // active. A currency check here could go active beside it (MS2 item
+      // 2). A `#joinedGeneration` here would outlive a fallback: its ladder
+      // would read itself joined at the loop head and stop before its first
+      // intent, amber with no owner (MWA-m1). A `welcomeAdopted` stamp here
+      // would win over the fallback's own (first stamp wins).
+      if (this.#resumeAdopting !== outcome.group_id) {
+        this.#joinTimeline?.stamp("welcomeAdopted");
+        this.#joinedGeneration = this.#establishGeneration;
+        // W2-M2: NOT `#toActive` yet. Native accepts a Welcome sealed to any
+        // held KeyPackage for any intent on the group, so a late-drained one
+        // can adopt a stale epoch. `#pump` asks the DS right after this
+        // envelope, under the lock, and only its answer goes active.
+        this.#welcomeCurrency = {
+          groupId: outcome.group_id,
+          epoch: outcome.epoch,
+          generation: this.#establishGeneration,
+        };
+      }
       if (verdict.resolveWait) this.#welcomeWait?.resolve(true);
     }
     // Every applied commit of OUR group reaches here: live pushes, the 409
@@ -4451,6 +5584,23 @@ export class MlsCallSession {
     // L5: suppress keys-changed for a group we've left (removed_self cleared
     // #groupId); and ignore an unrelated group.
     if (this.#terminal() || groupId !== this.#groupId) return;
+    // FA-S2: a push of a deleted startup group's old incarnation, landing
+    // after the ladder re-entered the same group id. The floor is read now,
+    // not when the delete began (FAR-m2). Checked before `#cancelGrace` for
+    // order only, not protection (FAR-n2): while this group is fenced
+    // nothing of it has installed since its reset, so no grace timer is
+    // pending and the two placements are equivalent.
+    const floor = this.#staleKeysFence.has(groupId)
+      ? this.#startupAppliedEpochs.get(groupId)
+      : undefined;
+    if (floor !== undefined && epoch <= floor) {
+      console.info("[mls] keys-changed dropped: the deleted group's", {
+        groupId,
+        epoch,
+        floor,
+      });
+      return;
+    }
     // Native epochs are monotonic per group; ignore a stale/reordered lower one
     // (an equal epoch is an idempotent reconnect re-assert, allowed).
     if (epoch < this.#installEpoch) return;
@@ -4476,6 +5626,8 @@ export class MlsCallSession {
       this.#hasLocalKey,
     );
     this.#installEpoch = epoch;
+    // Past the floor (checked above): the monotonic check now covers it.
+    this.#staleKeysFence.delete(groupId);
     this.#openRotationWindow(timing);
 
     let frameKeys: MlsFrameKeys;
@@ -4544,6 +5696,8 @@ export class MlsCallSession {
         );
         this.#scheduleGraceLocal(frameKeys, identity, epoch);
       }
+      // D7: the group was live here at this epoch, as of now.
+      this.#touchResumeRecord(groupId, epoch);
     } catch (error) {
       this.#onRotationError(error);
     }
@@ -6054,6 +7208,11 @@ export class MlsCallSession {
       const timer = setTimeout(() => {
         this.#timers.delete(timer);
         if (this.#reconcileTimer === timer) this.#reconcileTimer = null;
+        // D7: while active, the live group stays resumable for a quick
+        // rejoin (a tick is half the record's freshness bound).
+        if (this.#state === "active" && this.#groupId) {
+          this.#touchResumeRecord(this.#groupId, this.#installEpoch);
+        }
         // Chain the next tick only after this reconcile settles; the enabled
         // flag (cleared by #stopReconcile) prevents a stale re-arm.
         void this.reconcileNow().finally(tick);
@@ -7004,11 +8163,28 @@ export class MlsCallSession {
   // ---- Small utilities ------------------------------------------------------
 
   async #safeLeave(groupId: string): Promise<void> {
+    this.#forgetRemovedSelf(groupId);
     try {
       await this.#deps.bridge.callLeaveCleanup(groupId);
     } catch (error) {
       console.error("[mls] leave-cleanup failed", error);
     }
+  }
+
+  /**
+   * Refresh the channel's recency record (D7) for `groupId` at `epoch`, only
+   * while it is this session's live group and this establish joined it: a
+   * record is what lets a later page resume the group, so it never names a
+   * group this device is not provably in.
+   */
+  #touchResumeRecord(groupId: string, epoch: number): void {
+    if (this.#terminal() || groupId !== this.#groupId) return;
+    if (this.#joinedGeneration !== this.#establishGeneration) return;
+    this.#deps.bridge.touchResumeRecord(
+      this.#deps.channelId,
+      groupId,
+      Math.max(0, epoch),
+    );
   }
 
   async #withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {

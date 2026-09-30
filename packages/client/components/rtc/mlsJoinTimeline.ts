@@ -41,6 +41,12 @@ export type JoinRole = "joiner" | "admitter";
 export type JoinStamp =
   | "start"
   | "keyPackagesPut"
+  // Resume branch (join-latency phase 2): a startup establish that adopts
+  // the kept local group instead of re-enrolling. It sits before
+  // `callCreate`, and a seat that resumed never sends a join intent.
+  | "prefetchDone"
+  | "resumed"
+  | "catchUpDone"
   | "createRouted"
   | "wipeDone"
   | "reconcileDone"

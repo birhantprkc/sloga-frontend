@@ -189,7 +189,7 @@ test("fleet: one advance fires every seat's timers, and nothing fires without it
   }
 });
 
-test("fleet: each page has its own startup-wipe token — one seat's reload does not spend another's", async (t) => {
+test("fleet: each page has its own startup-wipe token — one seat's wipe-rejoin does not spend another's", async (t) => {
   const channel = "ch-fleet-tokens";
   const fleet = newFleet(t, [SELF, PEER, THIRD], channel);
   await fleet.bringUp();
@@ -201,7 +201,10 @@ test("fleet: each page has its own startup-wipe token — one seat's reload does
   // whether GROUP was wiped, from here on.
   const peerMark = peer.leaveCleanups.length;
 
-  await fleet.reload(PEER);
+  // `wipeRejoin`, not `reload`: a reload now resumes the held group, and a
+  // resume spares it from the wipe and spends no token, so only today's
+  // wipe-and-rejoin still reaches the token this case is about (W1-n4).
+  await fleet.wipeRejoin(PEER);
   await advance(t, 1);
   assert.ok(
     peer.leaveCleanups.slice(peerMark).includes(GROUP),
@@ -212,11 +215,11 @@ test("fleet: each page has its own startup-wipe token — one seat's reload does
   await advance(t, REJOIN_SERVE_SUPPRESS_MS + 5_000);
 
   // THIRD's page dies next. Its fresh page must wipe on its OWN token, as if
-  // PEER's reload had never happened. (The behaviour is asserted before the
-  // Sets, so a session that ignores its dep fails on the wipe it skipped.)
+  // PEER's wipe-rejoin had never happened. (The behavior is asserted before
+  // the Sets, so a session that ignores its dep fails on the wipe it skipped.)
   assert.equal(third.leaveCleanups.includes(GROUP), false);
   const thirdMark = third.leaveCleanups.length;
-  await fleet.reload(THIRD);
+  await fleet.wipeRejoin(THIRD);
   await advance(t, 1);
   assert.ok(
     third.leaveCleanups.slice(thirdMark).includes(GROUP),

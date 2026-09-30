@@ -411,7 +411,7 @@ interface PoisonedMerge {
   release: () => void;
   /** The pending commit native holds for GROUP from here on. */
   held: MlsSubmitCommit;
-  /** Whether the merge was refused (the one-shot throw fired). */
+  /** Whether the merge was refused (the scripted rejection was taken). */
   fired: () => boolean;
 }
 
@@ -430,12 +430,11 @@ interface PoisonedMerge {
  * (whose reset clears it) as a 0 ms group action, which the fake clock holds
  * until the next tick, and releases the lock to the queued drain first.
  *
- * The world has no way to script a `callCommitWon` rejection, so this puts
- * one in native's staged-commit slot instead: a copy of the staged commit
- * whose `epoch`, which the stub reads to check the won epoch, throws
- * `MlsPoisonedEpoch` once. The copy is what native holds from then on, so
- * "our pending commit was not discarded" reads as that exact object still
- * being there.
+ * `failCommitWonOnce` scripts the refusal: the next `callCommitWon` rejects
+ * with `MlsPoisonedEpoch` before it checks or merges anything, so native's
+ * staged-commit slot keeps the very object the admit staged, and "our
+ * pending commit was not discarded" reads as that exact object still being
+ * there.
  */
 async function stageThenPoisonTheMerge(
   t: TestContext,
@@ -445,24 +444,12 @@ async function stageThenPoisonTheMerge(
   await world.joinRequest(THIRD);
   await advance(t, 1); // the admit's 0 ms leaf stagger: stage, then submit
   assert.equal(world.submits(), 1, "the admit never submitted");
-  const staged = world.stagedCommits.get(GROUP);
-  assert.ok(staged !== undefined && staged !== "left", "nothing was staged");
-  assert.equal(staged.epoch, 1);
+  const held = world.stagedCommits.get(GROUP);
+  assert.ok(held !== undefined && held !== "left", "nothing was staged");
+  assert.equal(held.epoch, 1);
 
-  let armed = true;
-  const held: MlsSubmitCommit = { ...staged };
-  Object.defineProperty(held, "epoch", {
-    enumerable: true,
-    get: () => {
-      if (armed) {
-        armed = false;
-        throw poisonedEpoch(GROUP, 1);
-      }
-      return staged.epoch;
-    },
-  });
-  world.stagedCommits.set(GROUP, held);
-  return { release, held, fired: () => !armed };
+  world.failCommitWonOnce(poisonedEpoch(GROUP, 1));
+  return { release, held, fired: () => world.commitWonFailure === null };
 }
 
 test("another group's commit at our staged epoch does not discard our pending commit", async (t) => {

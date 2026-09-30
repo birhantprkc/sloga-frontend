@@ -175,3 +175,28 @@ test("the role is echoed in the summary", () => {
   admit.restart();
   assert.equal(admit.summary().role, "admitter");
 });
+
+test("the resume stamps are recorded like any other stage", () => {
+  // The resume path (resume plan) stamps these on the joiner. They must read
+  // against the same t0 as the rest of the join; the order is whatever order
+  // they were taken in, as for every other stage.
+  let t = 2_000;
+  const tl = new JoinTimeline("joiner", () => t);
+  tl.stamp("start");
+  t = 2_041.27;
+  tl.stamp("prefetchDone");
+  t = 2_088.5;
+  tl.stamp("resumed");
+  t = 2_310.04;
+  tl.stamp("catchUpDone");
+  assert.deepEqual(tl.summary().stamps, [
+    { name: "start", ms: 0 },
+    { name: "prefetchDone", ms: 41.3 },
+    { name: "resumed", ms: 88.5 },
+    { name: "catchUpDone", ms: 310 },
+  ]);
+  assert.equal(tl.elapsedTo("prefetchDone"), 2_041.27 - 2_000);
+  assert.equal(tl.elapsedTo("resumed"), 88.5);
+  assert.equal(tl.elapsedTo("catchUpDone"), 2_310.04 - 2_000);
+  assert.equal(tl.summary().totalMs, 310);
+});
