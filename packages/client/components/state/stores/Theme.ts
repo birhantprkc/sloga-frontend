@@ -20,9 +20,10 @@ export type TypeTheme = {
   /**
    * Base theme preset
    *
-   * "stoat" is Sloga's hand-tuned palette; "you" generates the whole scheme
-   * from the accent/contrast/variant controls. The appearance menu only shows
-   * those controls under "you", because under "stoat" they have nothing to do.
+   * "stoat" is Sloga's hand-tuned palette, recoloured by `slogaAccent`; "you"
+   * generates the whole scheme from the m3 accent/contrast/variant controls.
+   * The appearance menu shows the accent swatches under both, and contrast and
+   * variant only under "you", because the Sloga palette pins what they change.
    */
   preset: "stoat" | "you";
 
@@ -37,6 +38,16 @@ export type TypeTheme = {
    * Light/dark mode
    */
   mode: "light" | "dark" | "system";
+
+  /**
+   * Accent
+   * (Sloga)
+   *
+   * Separate from `m3Accent` on purpose: installs from before the Sloga preset
+   * existed still carry the old Material You default (#FF5733) there, never
+   * chosen by anyone, and reading it here would turn them orange on update.
+   */
+  slogaAccent: string;
 
   /**
    * Accent
@@ -165,6 +176,7 @@ export class Theme extends AbstractStore<"theme", TypeTheme> {
       presetMigrated: true,
       mode: "dark",
 
+      slogaAccent: BRAND_ACCENT,
       m3Accent: BRAND_ACCENT,
       m3Contrast: 0.0,
       m3Variant: BRAND_VARIANT,
@@ -213,6 +225,21 @@ export class Theme extends AbstractStore<"theme", TypeTheme> {
 
     if (typeof input.m3Contrast === "number") {
       data.m3Contrast = input.m3Contrast;
+    }
+
+    // Anchored, unlike the m3 check below: this one was never loose, so there
+    // is no stored value to grandfather. Stored as six-digit hex, the only
+    // form `<input type="color">` accepts (anything else opens it at black);
+    // eight digits are refused because the scheme generator reads them as
+    // AARRGGBB, so an opaque #RRGGBBFF would come out a different colour.
+    if (
+      typeof input.slogaAccent === "string" &&
+      /^#(?:[0-9a-fA-F]{3}){1,2}$/.test(input.slogaAccent)
+    ) {
+      data.slogaAccent =
+        input.slogaAccent.length === 4
+          ? "#" + [...input.slogaAccent.slice(1)].map((c) => c + c).join("")
+          : input.slogaAccent;
     }
 
     if (
@@ -300,15 +327,15 @@ export class Theme extends AbstractStore<"theme", TypeTheme> {
     // preset it did not recognise returned undefined and took the whole UI
     // down rather than falling back.
     //
-    // Sloga seeds its base scheme from fixed brand values rather than the
-    // user's — the accent/contrast/variant controls are hidden under this
-    // preset precisely because they do not apply. The roles the brand palette
+    // Sloga seeds its base scheme from its own accent and the fixed brand
+    // contrast and variant — those two controls are hidden under this preset
+    // because the brand palette pins what they would change. The roles it
     // leaves alone (error, outline, inverse) are still derived from these.
     return opts.preset === "stoat"
       ? {
           ...common,
           preset: "stoat",
-          accent: BRAND_ACCENT,
+          accent: opts.slogaAccent,
           contrast: 0,
           variant: BRAND_VARIANT,
         }
@@ -349,6 +376,25 @@ export class Theme extends AbstractStore<"theme", TypeTheme> {
    */
   setPreset(preset: TypeTheme["preset"]) {
     this.set("preset", preset);
+  }
+
+  /**
+   * Get the accent of the active preset
+   */
+  get accent() {
+    return this.preset === "stoat" ? this.get().slogaAccent : this.m3Accent;
+  }
+
+  /**
+   * Set the accent of the active preset
+   * @param accent Accent
+   */
+  setAccent(accent: string) {
+    if (this.preset === "stoat") {
+      this.set("slogaAccent", accent);
+    } else {
+      this.setM3Accent(accent);
+    }
   }
 
   /**
