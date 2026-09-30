@@ -52,8 +52,20 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //   the miss fell back to a normal secure join.
   //   Hence "usually", and not "near-instant": click to call-ready is
   //   still a few seconds; only the encryption step is fast.
-  // - LEFT OUT on purpose: audio link embeds (on main, but dark until the
-  //   january flag flips; add a bullet then).
+  // - Audio link embeds (flag ON 2026-09-30 03:40Z on january, verified
+  //   through app.sloga.gg; wording from the audio session). Direct links to
+  //   audio files the host serves as audio only (MP3, M4A/AAC, WAV, Ogg/Opus,
+  //   FLAC, WebM audio); not pages with a player, playlists, AIFF/WMA/MIDI or
+  //   generic downloads. New links only. No player in encrypted chats (the
+  //   server can't see the link). Files over the cap (50 MB, deliberately not
+  //   printed) and slow or cold hosts (the preview gives up after ~10 s) get
+  //   no player. Ogg/Opus/WebM may not play on iPhone/iPad. Never say "every
+  //   audio link" or "plays everywhere", and never say Sloga doesn't see the
+  //   link: our server fetches it; only the host never sees the listener.
+  //   Editing a message re-embeds it (message_edit re-queues process_embeds),
+  //   and the flag flipped BEFORE the release, so never write "links posted
+  //   before this update". Page links (SoundCloud, YouTube) keep their old
+  //   preview; do not list them as "just the link".
   {
     id: "sloga-2026-09-29",
     title: "Patch Notes",
@@ -84,6 +96,11 @@ export const CHANGELOGS: ChangelogResponse[] = [
 - **Recordings leave out the sound of screen shares you aren't watching.**
 - **Hide participants without video.** A new button in the call view keeps only the people with their camera or a share on, so the video gets more room. A note shows how many people are hidden; click it to show everyone again. Sloga remembers the choice on this device.
 - **With it on, a new share no longer takes over the view** while two or more videos are showing; they sit side by side at the same size.
+
+### 🎵 Messages
+- **Links to audio files now play right in chat.** Paste a direct link to an MP3, M4A, WAV, Ogg, Opus, FLAC or WebM audio file and it shows up as a player, the same way an uploaded audio file does. You can usually skip around in the track, and the audio streams through Sloga, so the site hosting the file never sees who is listening.
+- **Where there's no player, just the link:** in encrypted chats, in messages sent before audio links were turned on (editing the message can add one), on very large files, on files the site sends as a plain download, and sometimes when the site hosting the file is slow to answer. People on an older version of Sloga also see just the link.
+- **Links to a web page with a player on it, like SoundCloud or YouTube, keep the preview they had before.** If the site later deletes the file, the card keeps the link but can't play it. In Safari and on iPhone and iPad, Ogg, Opus and WebM files may not play.
 
 ### 🔐 Encrypted calls
 - **Rejoining an encrypted call is now much faster.** If you hang up and rejoin within about 10 seconds, Sloga usually picks up where you left off instead of re-securing the whole call. When it does, your call is encrypted again in under a second, and nobody else in the call gets re-keyed.
