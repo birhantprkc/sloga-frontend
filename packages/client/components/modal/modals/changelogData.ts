@@ -44,10 +44,16 @@ export const CHANGELOGS: ChangelogResponse[] = [
   //   directive, not signed in.
   // - Referral colors (536a2332): never viewed in a browser; the red may be
   //   low-contrast in dark mode (open audit note).
+  // - Encrypted-call resume (fix/mls-rejoin-resume-w2, landed 2026-09-30):
+  //   hang-up then rejoin within ~10 s only. 🔴 Never mention page reloads
+  //   or Ctrl+R (a reload did not resume in live tests, 0 of 4: the app does
+  //   not rejoin by itself after a reload) and never quote "0 s" or any
+  //   measured number. Live legs on the final tip: 6 of 7 rejoins resumed;
+  //   the miss fell back to a normal secure join.
+  //   Hence "usually", and not "near-instant": click to call-ready is
+  //   still a few seconds; only the encryption step is fast.
   // - LEFT OUT on purpose: audio link embeds (on main, but dark until the
-  //   january flag flips; add a bullet then) and the encrypted-call resume
-  //   (fix/mls-rejoin-resume-w2, inbox entry 1) until it lands on main.
-  //   Never mention reloads, Ctrl+R or "0 s" for the resume.
+  //   january flag flips; add a bullet then).
   {
     id: "sloga-2026-09-29",
     title: "Patch Notes",
@@ -78,6 +84,9 @@ export const CHANGELOGS: ChangelogResponse[] = [
 - **Recordings leave out the sound of screen shares you aren't watching.**
 - **Hide participants without video.** A new button in the call view keeps only the people with their camera or a share on, so the video gets more room. A note shows how many people are hidden; click it to show everyone again. Sloga remembers the choice on this device.
 - **With it on, a new share no longer takes over the view** while two or more videos are showing; they sit side by side at the same size.
+
+### 🔐 Encrypted calls
+- **Rejoining an encrypted call is now much faster.** If you hang up and rejoin within about 10 seconds, Sloga usually picks up where you left off instead of re-securing the whole call. When it does, your call is encrypted again in under a second, and nobody else in the call gets re-keyed.
 
 ### 🔔 Fixes
 - **Encrypted calls recover more reliably when you join while the call is changing.** If the server could not supply some of the call's security updates, Sloga now re-secures the call instead of getting stuck. A device that joins late now confirms it has the call's latest keys before showing the call as encrypted. If it cannot confirm them, it says so rather than showing green.
