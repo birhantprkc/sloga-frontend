@@ -5,8 +5,8 @@
 // before (P2-4: no lead, no floor); a tick gap is missing evidence and never
 // idle time (and withdraws a standing claim, P2-18); anything not provably
 // armed is disarmed; the refresh cadence; `idle_for` is a whole, non-negative
-// number of seconds (P2-18); only `IsBot` and `NotAVoiceChannel` latch a
-// connection off outright (P2-6).
+// number of seconds (P2-18); only `IsBot`, `NotAVoiceChannel` and `NotOwner`
+// latch a connection off outright (P2-6, merge slice F11).
 //
 // 🔴 Every assertion calls the production function. Nothing here re-types the
 // rule it is checking — a spec that restates the logic passes a revert.
@@ -317,8 +317,11 @@ test("idleForSeconds reads a non-finite result as 0, never NaN", () => {
 
 // --- Failure disposition (P2-6) ---------------------------------------------
 
-test("the latch set is exactly IsBot and NotAVoiceChannel", () => {
-  assert.deepEqual([...IDLE_LATCH_ERRORS], ["IsBot", "NotAVoiceChannel"]);
+test("the latch set is exactly IsBot, NotAVoiceChannel and NotOwner", () => {
+  assert.deepEqual(
+    [...IDLE_LATCH_ERRORS],
+    ["IsBot", "NotAVoiceChannel", "NotOwner"],
+  );
 });
 
 test("IsBot and NotAVoiceChannel latch on the first failure", () => {
@@ -326,6 +329,15 @@ test("IsBot and NotAVoiceChannel latch on the first failure", () => {
   assert.equal(idleFailureDisposition("IsBot", 1), "latch");
   assert.equal(idleFailureDisposition("NotAVoiceChannel", 0), "latch");
   assert.equal(idleFailureDisposition("NotAVoiceChannel", 1), "latch");
+});
+
+test("NotOwner latches on the first failure", () => {
+  // 🔴 The beacon answers 403 `NotOwner` to every session that is not the one
+  // recorded for the call, and keeps answering it until that session joins
+  // again. Backing off would only re-send a refused PUT every minute until
+  // the consecutive limit.
+  assert.equal(idleFailureDisposition("NotOwner", 0), "latch");
+  assert.equal(idleFailureDisposition("NotOwner", 1), "latch");
 });
 
 test("every other failure backs off until the consecutive limit, then latches", () => {
@@ -340,6 +352,7 @@ test("every other failure backs off until the consecutive limit, then latches", 
     "MissingPermission",
     "TooManyRequests",
     "isbot",
+    "notowner",
   ]) {
     for (let n = 0; n < IDLE_MAX_CONSECUTIVE_FAILURES; n++) {
       assert.equal(

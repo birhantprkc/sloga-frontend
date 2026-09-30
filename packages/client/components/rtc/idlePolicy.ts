@@ -67,13 +67,24 @@ export const IDLE_MAX_CONSECUTIVE_FAILURES = 3;
 
 /**
  * Error types that stop this connection posting at once (P2-6): no retry can
- * ever succeed for a bot or for a channel that is not a call. Every other
- * refusal — `NotInVoiceChannel` (webhook lag), `InvalidOperation` (a config
- * change racing the tick), a 429 — is plausibly transient and backs off.
+ * ever succeed for a bot (400 `IsBot`), for a channel that is not a call
+ * (400 `NotAVoiceChannel`), or from a session that is not the one recorded as
+ * owning the member's seat in the call (403 `NotOwner`: another tab or
+ * device, a call joined before the record existed, or no session of the
+ * user's own). `NotOwner` stays true for that session until it joins again.
+ * Every other refusal — `NotInVoiceChannel` (webhook lag),
+ * `InvalidOperation` (a config change racing the tick), a 429 — is plausibly
+ * transient and backs off.
+ *
+ * A 403 (or a 401) here cannot sign the user out: the beacon is a raw
+ * `fetch` in `state.tsx`, outside the stoat.js client, and the session ends
+ * only on the event socket's `InvalidSession` / `Logout`.
+ * `afkWireContract.test.ts` pins this set against the backend.
  */
 export const IDLE_LATCH_ERRORS: readonly string[] = [
   "IsBot",
   "NotAVoiceChannel",
+  "NotOwner",
 ];
 
 /**

@@ -25,12 +25,15 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  type ChipPublication,
   type ChipRoom,
   type ChipSources,
   chipInputsFrom,
+  chipPublicationsOf,
   chipStateFrom,
   observedEncryptionMap,
   publishingIdentities,
+  shareOnlyDeclarationContradicts,
 } from "./chipInputs.ts";
 import {
   type ChipLatch,
@@ -374,9 +377,10 @@ test("🔴 chipStateFrom assembles AND judges, so no ChipInputs escapes", () => 
 // --- the derivation the literal used to hide ---------------------------------
 
 test("🔴 our OWN screen leg is excluded from the publishers gate (b) judges", () => {
-  // §6.7: this device minted the leg's key and does not subscribe to it, so
-  // LiveKit never reports a status for it. Judging it would pin the sharer's
-  // own phone amber for the whole share.
+  // §6.7: this device minted the leg's key and does not subscribe to it. Kept
+  // by the F7 ruling until a live Android leg shows whether this webview sees
+  // a status for its own leg within the admit grace; until then, judging it
+  // could pin the sharer's own phone amber for the whole share.
   const leg = `${ME}:screen`;
   assert.deepEqual(
     publishingIdentities(
@@ -457,16 +461,406 @@ test("no room at all: nothing is publishing and our declaration is vacuous", () 
 test("🔴 an identity with no observed status is LEFT OUT of the map, not defaulted", () => {
   // Entering it as true manufactures a green; entering it as false
   // manufactures a red. Absence is neither.
-  const observed = observedEncryptionMap([ME, BOB], (id) =>
-    id === ME ? true : undefined,
+  const observed = observedEncryptionMap(
+    [ME, BOB],
+    (id) => (id === ME ? true : undefined),
+    [],
   );
   assert.deepEqual([...observed], [[ME, true]]);
   assert.equal(observed.has(BOB), false);
 });
 
 test("observedEncryptionMap keeps a FALSE status rather than dropping it", () => {
-  const observed = observedEncryptionMap([BOB], () => false);
+  const observed = observedEncryptionMap([BOB], () => false, []);
   assert.deepEqual([...observed], [[BOB, false]]);
+});
+
+// --- F2: the one-way share-only contradiction --------------------------------
+//
+// LiveKit reads a remote participant as encrypted whenever its declaration is
+// not NONE, so a missing field or an unknown value reads green. For a
+// participant whose ONLY publications are shares nobody here watches, the
+// decode witness never sees a frame, so nothing else can catch that lie. The
+// contradiction may only turn "encrypted" into "not encrypted", never back.
+
+const GCM = 1;
+const NONE = 0;
+
+/** A share we neither asked for nor hold: the case gate (d) cannot see. */
+const unwatched = (over: Partial<ChipPublication> = {}): ChipPublication => ({
+  source: "screen_share",
+  desired: false,
+  subscribed: false,
+  encryption: GCM,
+  ...over,
+});
+
+/**
+ * The whole assembly with Bob publishing exactly `publications` and LiveKit
+ * reporting `status` for him. Asserts, for EVERY case, that the contradiction
+ * never touched the publisher set, then hands back what it did to Bob.
+ */
+const judgeBob = (
+  publications: ChipPublication[],
+  status: boolean | undefined,
+) => {
+  const inputs = chipInputsFrom(
+    sources({
+      room: () =>
+        room({
+          participants: [
+            { identity: ME, publicationCount: 1 },
+            {
+              identity: BOB,
+              publicationCount: Math.max(publications.length, 1),
+              publications,
+            },
+          ],
+        }),
+      observedEncryption: (id) =>
+        id === ME ? true : id === BOB ? status : undefined,
+    }),
+  );
+  assert.deepEqual(inputs.publishingIdentities, [ME, BOB]);
+  // Never collateral: our own entry is exactly what LiveKit said.
+  assert.equal(inputs.observedEncrypted.get(ME), true);
+  return {
+    has: inputs.observedEncrypted.has(BOB),
+    bob: inputs.observedEncrypted.get(BOB),
+    chip: chipState(inputs),
+  };
+};
+
+test("F2: all-unwatched shares declared GCM keep an observed TRUE", () => {
+  const r = judgeBob(
+    [unwatched(), unwatched({ source: "screen_share_audio" })],
+    true,
+  );
+  assert.equal(r.bob, true);
+  assert.equal(r.chip, "e2ee");
+});
+
+test("🔴 F2: all-unwatched shares declared NONE turn an observed TRUE false", () => {
+  const r = judgeBob([unwatched({ encryption: NONE })], true);
+  assert.equal(r.bob, false);
+  assert.equal(r.chip, "resecuring");
+});
+
+test("🔴 F2: a MISSING declaration contradicts, though LiveKit reads it encrypted", () => {
+  // `undefined !== NONE`, so LiveKit's own reading is "encrypted". This is
+  // the case a `!== NONE` comparison here would wave through.
+  const r = judgeBob([unwatched({ encryption: undefined })], true);
+  assert.equal(r.bob, false);
+  assert.equal(r.chip, "resecuring");
+});
+
+test("🔴 F2: an UNKNOWN enum value contradicts, compared exactly with GCM", () => {
+  for (const encryption of [2, 7, -1]) {
+    const r = judgeBob([unwatched({ encryption })], true);
+    assert.equal(r.bob, false, `encryption ${encryption}`);
+  }
+});
+
+test("🔴 F2: ONE non-GCM share among unwatched shares is enough", () => {
+  const r = judgeBob(
+    [
+      unwatched(),
+      unwatched({ source: "screen_share_audio", encryption: undefined }),
+    ],
+    true,
+  );
+  assert.equal(r.bob, false);
+});
+
+test("F2: with NO observed status, a NONE declaration enters false", () => {
+  const r = judgeBob([unwatched({ encryption: NONE })], undefined);
+  assert.equal(r.has, true);
+  assert.equal(r.bob, false);
+});
+
+test("🔴 F2 is ONE-WAY: no observed status plus GCM stays ABSENT, not promoted", () => {
+  // This is not the wave-2.5 declaration fallback: a GCM declaration is not
+  // evidence, and must not stand in for a measurement that never came.
+  const r = judgeBob([unwatched()], undefined);
+  assert.equal(r.has, false);
+  assert.equal(r.chip, "resecuring");
+});
+
+test("🔴 F2 is ONE-WAY: an observed FALSE plus GCM stays false", () => {
+  const r = judgeBob([unwatched()], false);
+  assert.equal(r.bob, false);
+  assert.equal(r.chip, "resecuring");
+});
+
+test("F2: a DESIRED or SUBSCRIBED share is the witness's to judge, not this rule's", () => {
+  const cases: ChipPublication[][] = [
+    [unwatched({ encryption: NONE, desired: true })],
+    [unwatched({ encryption: NONE, subscribed: true })],
+    [unwatched({ encryption: NONE, desired: true, subscribed: true })],
+    // Not ALL unwatched: one watched share lets the witness see Bob.
+    [
+      unwatched({ encryption: NONE }),
+      unwatched({ source: "screen_share_audio", desired: true }),
+    ],
+  ];
+  for (const publications of cases) {
+    const r = judgeBob(publications, true);
+    assert.equal(r.bob, true, JSON.stringify(publications));
+  }
+});
+
+test("F2: a mic (or camera) beside the share leaves the reading untouched", () => {
+  for (const source of ["microphone", "camera"]) {
+    const r = judgeBob(
+      [
+        unwatched({ source, desired: true, subscribed: true }),
+        unwatched({ encryption: NONE }),
+      ],
+      true,
+    );
+    assert.equal(r.bob, true, source);
+  }
+  // Even an unwatched mic is not a share: the rule is scoped to shares.
+  const r = judgeBob(
+    [unwatched({ source: "microphone" }), unwatched({ encryption: NONE })],
+    true,
+  );
+  assert.equal(r.bob, true);
+});
+
+test("F2: zero publications, or none supplied, leave the reading untouched", () => {
+  assert.equal(judgeBob([], true).bob, true);
+  assert.equal(judgeBob([], undefined).has, false);
+  assert.equal(
+    shareOnlyDeclarationContradicts({ identity: BOB, publicationCount: 1 }),
+    false,
+  );
+  const observed = observedEncryptionMap([BOB], () => true, [
+    { identity: BOB, publicationCount: 1 },
+  ]);
+  assert.deepEqual([...observed], [[BOB, true]]);
+});
+
+test("F2: a participant gate (b) does not judge gains no entry", () => {
+  // Our own screen leg is excluded from the publisher set (§6.7). The rule
+  // only rewrites identities that set already holds, and never adds one.
+  const leg = `${ME}:screen`;
+  const inputs = chipInputsFrom(
+    sources({
+      room: () =>
+        room({
+          participants: [
+            { identity: ME, publicationCount: 1 },
+            {
+              identity: leg,
+              publicationCount: 1,
+              publications: [unwatched({ encryption: NONE })],
+            },
+          ],
+        }),
+    }),
+  );
+  assert.deepEqual(inputs.publishingIdentities, [ME]);
+  assert.equal(inputs.observedEncrypted.has(leg), false);
+});
+
+// --- chipPublicationsOf: the F2 mapping that used to sit in state.tsx --------
+//
+// `state.tsx` reduces each remote publication to a `ChipPublication` for F2.
+// Inline there, one token (`desired: true`, or a dropped `subscribed`)
+// switched F2 off for every participant with every gate green, because
+// `node --test` cannot load that file. These pin the mapping field for field.
+
+/**
+ * A stand-in for `RemoteTrackPublication`. There, `isDesired` and
+ * `isSubscribed` are prototype GETTERS, so a mapping that spread the
+ * publication instead of reading each field would silently lose both.
+ */
+class FakePub {
+  readonly source: string;
+  readonly trackInfo?: { encryption?: number };
+  #desired: boolean;
+  #subscribed: boolean;
+
+  constructor(
+    source: string,
+    desired: boolean,
+    subscribed: boolean,
+    trackInfo?: { encryption?: number },
+  ) {
+    this.source = source;
+    this.#desired = desired;
+    this.#subscribed = subscribed;
+    if (trackInfo) this.trackInfo = trackInfo;
+  }
+
+  get isDesired(): boolean {
+    return this.#desired;
+  }
+
+  get isSubscribed(): boolean {
+    return this.#subscribed;
+  }
+}
+
+test("🔴 chipPublicationsOf maps each publication field for field, in order", () => {
+  // Every desired/subscribed combination, so a swapped, constant or dropped
+  // field changes at least one row.
+  assert.deepEqual(
+    chipPublicationsOf([
+      new FakePub("screen_share", false, false, { encryption: GCM }),
+      new FakePub("screen_share_audio", true, false, { encryption: GCM }),
+      new FakePub("microphone", false, true, { encryption: GCM }),
+      new FakePub("camera", true, true, { encryption: GCM }),
+    ]),
+    [
+      {
+        source: "screen_share",
+        desired: false,
+        subscribed: false,
+        encryption: GCM,
+      },
+      {
+        source: "screen_share_audio",
+        desired: true,
+        subscribed: false,
+        encryption: GCM,
+      },
+      {
+        source: "microphone",
+        desired: false,
+        subscribed: true,
+        encryption: GCM,
+      },
+      { source: "camera", desired: true, subscribed: true, encryption: GCM },
+    ],
+  );
+});
+
+test("🔴 chipPublicationsOf: a MISSING trackInfo gives encryption undefined", () => {
+  // Never a default: F2 compares with exactly GCM, so a defaulted GCM would
+  // wave a dropped declaration through. The key is still present, exactly as
+  // the inline mapping produced it.
+  const absent = chipPublicationsOf([
+    { source: "screen_share", isDesired: false, isSubscribed: false },
+  ]);
+  assert.deepEqual(absent, [
+    {
+      source: "screen_share",
+      desired: false,
+      subscribed: false,
+      encryption: undefined,
+    },
+  ]);
+  assert.equal(Object.hasOwn(absent[0], "encryption"), true);
+  assert.deepEqual(
+    chipPublicationsOf([
+      {
+        source: "screen_share",
+        isDesired: false,
+        isSubscribed: false,
+        trackInfo: undefined,
+      },
+    ])[0].encryption,
+    undefined,
+  );
+  assert.equal(
+    chipPublicationsOf([new FakePub("screen_share", false, false)])[0]
+      .encryption,
+    undefined,
+  );
+});
+
+test("🔴 chipPublicationsOf: a trackInfo WITHOUT encryption gives undefined", () => {
+  assert.equal(
+    chipPublicationsOf([new FakePub("screen_share", false, false, {})])[0]
+      .encryption,
+    undefined,
+  );
+});
+
+test("chipPublicationsOf passes GCM, and every other value, through untouched", () => {
+  // Judging the value is `shareOnlyDeclarationContradicts`'s job; the mapping
+  // must not normalize NONE or an unknown enum value into anything else.
+  for (const encryption of [GCM, NONE, 2, 7, -1]) {
+    assert.equal(
+      chipPublicationsOf([
+        new FakePub("screen_share", false, false, { encryption }),
+      ])[0].encryption,
+      encryption,
+    );
+  }
+});
+
+test("chipPublicationsOf of an empty iterable is an empty array", () => {
+  assert.deepEqual(chipPublicationsOf([]), []);
+  assert.deepEqual(chipPublicationsOf(new Map<string, FakePub>().values()), []);
+});
+
+test("chipPublicationsOf reads a Map-values iterator, as trackPublications.values() is", () => {
+  const trackPublications = new Map([
+    ["TR_a", new FakePub("screen_share", false, false, { encryption: GCM })],
+    ["TR_b", new FakePub("microphone", true, true)],
+  ]);
+  assert.deepEqual(chipPublicationsOf(trackPublications.values()), [
+    {
+      source: "screen_share",
+      desired: false,
+      subscribed: false,
+      encryption: GCM,
+    },
+    {
+      source: "microphone",
+      desired: true,
+      subscribed: true,
+      encryption: undefined,
+    },
+  ]);
+});
+
+test("🔴 end to end: an unwatched share with NO declaration contradicts through chipPublicationsOf", () => {
+  // The inline mapping's failure mode, driven through the real rule: with
+  // `desired: true` hardcoded, or `subscribed` dropped, the first assertion
+  // or one of the watched controls below flips.
+  const bob = (pub: FakePub) => ({
+    identity: BOB,
+    publicationCount: 1,
+    publications: chipPublicationsOf(new Map([["TR_s", pub]]).values()),
+  });
+  assert.equal(
+    shareOnlyDeclarationContradicts(
+      bob(new FakePub("screen_share", false, false)),
+    ),
+    true,
+  );
+  // ...and the whole assembly reads Bob not-encrypted, though LiveKit said
+  // encrypted.
+  const r = judgeBob(
+    chipPublicationsOf([new FakePub("screen_share", false, false)]),
+    true,
+  );
+  assert.equal(r.bob, false);
+  assert.equal(r.chip, "resecuring");
+  // The same share, watched in either sense, is the witness's to judge.
+  assert.equal(
+    shareOnlyDeclarationContradicts(
+      bob(new FakePub("screen_share", true, false)),
+    ),
+    false,
+  );
+  assert.equal(
+    shareOnlyDeclarationContradicts(
+      bob(new FakePub("screen_share", false, true)),
+    ),
+    false,
+  );
+  // ...and unwatched but declared GCM, nothing contradicts.
+  assert.equal(
+    shareOnlyDeclarationContradicts(
+      bob(new FakePub("screen_share", false, false, { encryption: GCM })),
+    ),
+    false,
+  );
 });
 
 // --- the mechanical contract -------------------------------------------------

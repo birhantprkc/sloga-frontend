@@ -16,6 +16,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
+import ts from "typescript";
+
+import {
+  bodiesAfter,
+  bodyFrom,
+  codeOf,
+  countWired,
+} from "../../components/rtc/sourcePins.harness.ts";
 import {
   type AfkTimeoutChoice,
   AFK_TIMEOUT_FALLBACK,
@@ -274,16 +282,88 @@ test("channel settings call the shared designation and timeout mappers", () => {
 });
 
 /**
- * Crude comment stripper. The null-pointer scan below has to read code, not
- * prose: both surfaces carry a comment explaining why `afk_channel_id: null`
- * is forbidden, and a scan that cannot tell the warning from the offense fires
- * on its own documentation. The JSX marker scan deliberately does NOT use this
- * — its marker lives inside a `{/* … *\/}` comment.
+ * `source` with every comment blanked and every other character left as it
+ * was. The null-pointer scan below has to read code, not prose: both surfaces
+ * carry a comment explaining why `afk_channel_id: null` is forbidden, and a
+ * scan that cannot tell the warning from the offense fires on its own
+ * documentation. The JSX marker scan deliberately does NOT use this — its
+ * marker lives inside a `{/* … *\/}` comment.
+ *
+ * 🔴 The comments are the ones the TypeScript parser finds, not a regex's
+ * guess. This was `/\/\*[\s\S]*?\*\//g`, which read Overview.tsx's
+ * `accept="image/*"` as the opening of a block comment and deleted everything
+ * up to the next `*\/`: 363 lines, the password, announcement, spoiler and
+ * mature sections among them, so the null-pointer scan never saw them. A
+ * hand-written lexer that knows quotes and templates still cannot read these
+ * files: an apostrophe in JSX text ("can't") opens a "string" that runs to
+ * the next quote (see `sourcePins.harness.ts`). The parser knows which is
+ * which, strings, templates, regexes and JSX text included.
+ *
+ * Each comment character becomes a space and newlines stay, so the result
+ * lines up with the source, offset for offset and line for line.
  */
 function stripComments(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/^[ \t]*\/\/.*$/gm, "");
+  const file = ts.createSourceFile(
+    "surface.tsx",
+    source,
+    ts.ScriptTarget.Latest,
+    false,
+    ts.ScriptKind.TSX,
+  );
+  // A file the parser had to recover from has no trustworthy comment ranges,
+  // so it is refused, not scanned. `parseDiagnostics` is not in the public
+  // typings; if a TypeScript upgrade renames it, this fails loudly.
+  const { parseDiagnostics } = file as unknown as {
+    parseDiagnostics?: readonly ts.Diagnostic[];
+  };
+  assert.ok(
+    Array.isArray(parseDiagnostics),
+    "typescript no longer exposes parseDiagnostics on a SourceFile",
+  );
+  assert.deepEqual(
+    parseDiagnostics.map((d) =>
+      ts.flattenDiagnosticMessageText(d.messageText, " "),
+    ),
+    [],
+    "a scanned surface does not parse as TSX, so its comments can't be told from its code",
+  );
+  // Every comment sits in the trivia after some token, or at the start of the
+  // file. JSX text is not trivia: a `//` there is text the user sees, so the
+  // position a JSX text starts at is never scanned for comments.
+  const after = new Set<number>([0]);
+  const jsxTextAt = new Set<number>();
+  const visit = (node: ts.Node): void => {
+    if (
+      node.kind >= ts.SyntaxKind.FirstJSDocNode &&
+      node.kind <= ts.SyntaxKind.LastJSDocNode
+    )
+      return;
+    if (node.kind === ts.SyntaxKind.JsxText) jsxTextAt.add(node.pos);
+    const children = node.getChildren(file);
+    if (children.length === 0) after.add(node.end);
+    for (const child of children) visit(child);
+  };
+  visit(file);
+  const comments = new Map<number, number>();
+  for (const at of after) {
+    if (jsxTextAt.has(at)) continue;
+    // Trailing ranges are the comments on the token's own line, leading
+    // ranges the ones after it; between them, all of the trivia.
+    for (const range of [
+      ...(ts.getTrailingCommentRanges(source, at) ?? []),
+      ...(ts.getLeadingCommentRanges(source, at) ?? []),
+    ])
+      comments.set(range.pos, range.end);
+  }
+  let out = "";
+  let at = 0;
+  for (const [pos, end] of [...comments].sort((a, b) => a[0] - b[0])) {
+    assert.ok(pos >= at, `overlapping comment ranges at ${pos}`);
+    out +=
+      source.slice(at, pos) + source.slice(pos, end).replace(/[^\r\n]/g, " ");
+    at = end;
+  }
+  return out + source.slice(at);
 }
 
 test("🔴 no surface writes a null AFK pointer", () => {
@@ -297,6 +377,69 @@ test("🔴 no surface writes a null AFK pointer", () => {
       /afk_channel_id\s*:\s*(null|undefined)/.test(stripComments(source)),
       false,
       `${name} clears the AFK channel with a null field — that is a 200 that changes nothing`,
+    );
+  }
+});
+
+test("the comment stripper blanks comments only, never strings, templates or JSX text", () => {
+  const source = [
+    'const icon = <input accept="image/*" />;',
+    "const kept = afkAfterTheAttribute;",
+    "const tpl = `/* ${'*/'} // not a comment`;",
+    "const text = <p>can't // still text</p>;",
+    "const shown = <p> // shown to the user</p>;",
+    "const tail = 1; // a trailing note",
+    "/* a block note",
+    "   afk_channel_id: null */",
+    "const jsx = <div>{/* afk_channel_id: undefined */}</div>;",
+    "const last = 2;",
+  ].join("\n");
+  const code = stripComments(source);
+  assert.equal(code.length, source.length);
+  assert.equal(code.split("\n").length, source.split("\n").length);
+  for (const kept of [
+    'accept="image/*"',
+    "const kept = afkAfterTheAttribute;",
+    "`/* ${'*/'} // not a comment`",
+    "<p>can't // still text</p>",
+    "<p> // shown to the user</p>",
+    "const tail = 1;",
+    "const last = 2;",
+  ])
+    assert.ok(code.includes(kept), `the stripper dropped code: ${kept}`);
+  for (const gone of ["a trailing note", "a block note", "afk_channel_id"])
+    assert.ok(!code.includes(gone), `a comment survived: ${gone}`);
+  // Where the parser had to guess, the comments can't be trusted: refused.
+  assert.throws(
+    () => stripComments("const broken = <div>;\n// afk_channel_id: null"),
+    /does not parse as TSX/,
+  );
+});
+
+test("🔴 the null-pointer scan reads all of Overview.tsx, its later sections included", () => {
+  // Code from the span the old stripper deleted (from `accept="image/*"` to
+  // the AFK preset comment), and from after it. Each must survive stripping
+  // exactly as often as it occurs in the file, or the scan is blind there.
+  const code = stripComments(CHANNEL_OVERVIEW);
+  assert.equal(code.length, CHANNEL_OVERVIEW.length);
+  const count = (text: string, needle: string) => text.split(needle).length - 1;
+  for (const anchor of [
+    'accept="image/*"',
+    "onPress={setChannelPassword}",
+    "onPress={toggleAnnouncement}",
+    "onPress={toggleSpoiler}",
+    'type: "channel_toggle_mature",',
+    "<Show when={canConfigureAfk()}>",
+    "control={afkTimeoutControl}",
+  ]) {
+    assert.ok(
+      count(CHANNEL_OVERVIEW, anchor) > 0,
+      `Overview.tsx lost ${anchor}`,
+    );
+    assert.equal(
+      count(code, anchor),
+      count(CHANNEL_OVERVIEW, anchor),
+      `stripping comments removed code from Overview.tsx: ${anchor}`,
     );
   }
 });
@@ -565,17 +708,16 @@ test("channel settings seed the select with Never for a timeout-less server", ()
   );
 });
 
-test("the AFK section says members who can't connect won't be moved, once", () => {
-  // I-18: the sweep skips a member the AFK channel refuses. Static copy, no
-  // designation-time check (that would be false confidence).
-  const line = "Members who can't connect to this channel won't be moved.";
+test("channel settings never claim members who can't connect won't be moved", () => {
+  // The AFK sweep follows moderator admission rules (ruling 2026-09-27): it
+  // moves an idle member even without Connect on the AFK channel. The old
+  // line "Members who can't connect to this channel won't be moved." (I-18)
+  // became false and was removed; this keeps it from coming back.
   const flat = (text: string) => text.replace(/\s+/g, " ");
-  const count = (text: string) => flat(text).split(line).length - 1;
-  assert.equal(count(afkSection(CHANNEL_OVERVIEW)), 1);
   assert.equal(
-    count(CHANNEL_OVERVIEW),
-    1,
-    "the line appears outside the AFK section",
+    /can't connect to this channel/i.test(flat(CHANNEL_OVERVIEW)),
+    false,
+    "Overview.tsx still says members who can't connect won't be moved",
   );
 });
 
@@ -680,5 +822,122 @@ test("the create dialog sends the parsed choice through the pure builder", () =>
     code.includes("afk_timeout_never"),
     false,
     "CreateChannel.tsx writes afk_timeout_never itself instead of via the builder",
+  );
+});
+
+// --- The AFK channel and client checks (wave BG, FE-2 lane B5) ---------------
+//
+// The AFK channel can't carry an age, password or spoiler check: the idle
+// sweep moves members into it without asking. The backend refuses both
+// directions, and Overview.tsx mirrors it so the controls say why instead of
+// failing. The whole file does not lex (its JSX text holds apostrophes), so
+// the functions are read from their own heads on (`bodyFrom`) and the JSX
+// with its whitespace squeezed out.
+
+/**
+ * Overview.tsx with its JSX comments and whole-line comments removed, then
+ * every whitespace run. Not `stripComments`: that blanks the comment inside a
+ * JSX `{/* … *\/}` but keeps the braces, where this drops the whole
+ * expression. (When this was written `stripComments` was still a regex that
+ * read `accept="image/*"` as a comment opener; it no longer is.)
+ */
+const OVERVIEW_JSX = CHANNEL_OVERVIEW.replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
+  .replace(/^[ \t]*\/\/.*$/gm, "")
+  .replace(/\s+/g, "");
+
+/** Overview.tsx with every whitespace run made one space. */
+const OVERVIEW_FLAT = CHANNEL_OVERVIEW.replace(/\s+/g, " ");
+
+/** The one statement `head` starts in Overview.tsx, up to its first `;`. */
+function overviewStatement(head: string): string {
+  const found = CHANNEL_OVERVIEW.split(head).length - 1;
+  assert.equal(found, 1, `Overview.tsx holds this ${found} times: ${head}`);
+  const code = codeOf(CHANNEL_OVERVIEW.slice(CHANNEL_OVERVIEW.indexOf(head)));
+  return code.slice(0, code.indexOf(";") + 1);
+}
+
+test("the spoiler and password saves surface a refusal and always clear their saving flag", () => {
+  for (const [head, saving] of [
+    ["async function toggleSpoiler() {", "setSpoilerSaving"],
+    ["async function setChannelPassword() {", "setPwSaving"],
+  ] as const) {
+    const body = bodyFrom("Overview.tsx", CHANNEL_OVERVIEW, head);
+    const caught = bodiesAfter(body, "catch (error) {");
+    assert.equal(caught.length, 1, `${head} catches`);
+    assert.equal(countWired(caught[0], "showError(error);"), 1, head);
+    // The flag is set before the try and cleared only in a `finally` that
+    // closes the function, so neither a refusal nor a throw leaves it set.
+    assert.ok(
+      body.indexOf(`${saving}(true)`) < body.indexOf("try{"),
+      `${head} sets its flag first`,
+    );
+    assert.ok(
+      body.endsWith(`finally{${saving}(false)}`),
+      `${head} ends in finally { ${saving}(false); }`,
+    );
+    assert.equal(countWired(body, `${saving}(false)`), 1, head);
+  }
+});
+
+test("a checked channel can't be made the AFK channel, and the AFK channel can't gain a check", () => {
+  assert.equal(
+    overviewStatement("const gateBlocksAfk = () =>"),
+    codeOf(
+      "const gateBlocksAfk = () => !isDesignatedAfk() && channelHasClientGate(props.channel);",
+    ),
+  );
+  // Asked per check, so a check that is on can always be turned off.
+  assert.equal(
+    overviewStatement("const afkBlocksGate = ("),
+    codeOf(
+      "const afkBlocksGate = (gateIsOn: boolean) => isDesignatedAfk() && !gateIsOn;",
+    ),
+  );
+  for (const [control, wiring] of [
+    [
+      "Make AFK Channel",
+      "onPress={toggleAfkChannel}isDisabled={afkSaving()||gateBlocksAfk()}",
+    ],
+    [
+      "Mark as Spoiler",
+      "onPress={toggleSpoiler}isDisabled={spoilerSaving()||afkBlocksGate(props.channel.isSpoiler)}",
+    ],
+    [
+      "Set Password",
+      "onPress={setChannelPassword}isDisabled={pwSaving()||(!pwInput().trim()&&!existingHash)||(!!pwInput().trim()&&afkBlocksGate(hasPassword()))}",
+    ],
+    [
+      "Mark as Mature",
+      'type:"channel_toggle_mature",channel:props.channel,})}isDisabled={afkBlocksGate(props.channel.mature)}',
+    ],
+  ])
+    assert.equal(
+      OVERVIEW_JSX.split(wiring).length - 1,
+      1,
+      `"${control}" is disabled by the AFK rule: ${wiring}`,
+    );
+});
+
+test("each refused control says why, in a lingui message", () => {
+  const n4a =
+    "A channel with an age, password or spoiler check can't be the AFK channel. Remove the check first.";
+  const n4b =
+    "This is the server's AFK channel, so it can't have an age, password or spoiler check. Choose another AFK channel first.";
+  const shown = (when: string, text: string) =>
+    `<Show when={${when}}> <Text> <Trans> ${text} </Trans> </Text> </Show>`;
+  const count = (text: string) => OVERVIEW_FLAT.split(text).length - 1;
+  assert.equal(count(shown("gateBlocksAfk()", n4a)), 1, "N4a");
+  assert.equal(count(n4a), 1, "N4a appears once");
+  for (const gate of [
+    "hasPassword()",
+    "props.channel.isSpoiler",
+    "props.channel.mature",
+  ])
+    assert.equal(count(shown(`afkBlocksGate(${gate})`, n4b)), 1, gate);
+  assert.equal(count(n4b), 3, "N4b beside each of the three controls");
+  // N4a sits in the AFK section, next to the button it explains.
+  assert.equal(
+    afkSection(CHANNEL_OVERVIEW).replace(/\s+/g, " ").split(n4a).length - 1,
+    1,
   );
 });

@@ -294,6 +294,15 @@ export interface TypeVoice extends TypeVoiceOverlay {
    */
   joinVoiceOnDoubleClick: boolean;
 
+  /**
+   * Hide call-grid tiles for participants who have no live video. The store
+   * only holds the preference; what counts as live video, and the fallback
+   * when nobody has any, belong to the call view. OFF by default.
+   * Device-local, like the rest of this store (it is not in the `Sync`
+   * store list).
+   */
+  hideNonVideoParticipants: boolean;
+
   // The six in-game overlay keys come from `TypeVoiceOverlay` (./voiceOverlay)
   // so their defaults and clamps can be unit-tested without loading the store.
 
@@ -374,6 +383,7 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
       audioNormalization: false,
       audioNormalizationStrength: NORMALIZER_DEFAULT_STRENGTH,
       joinVoiceOnDoubleClick: true,
+      hideNonVideoParticipants: false,
       ...defaultOverlaySettings(),
       userVolumes: {},
       userMutes: {},
@@ -527,6 +537,10 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
 
     if (typeof input.joinVoiceOnDoubleClick === "boolean") {
       data.joinVoiceOnDoubleClick = input.joinVoiceOnDoubleClick;
+    }
+
+    if (typeof input.hideNonVideoParticipants === "boolean") {
+      data.hideNonVideoParticipants = input.hideNonVideoParticipants;
     }
 
     if (typeof input.screenShareAudio === "boolean") {
@@ -863,6 +877,11 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
     this.set("joinVoiceOnDoubleClick", value);
   }
 
+  /** Set whether the call grid hides participants without live video */
+  set hideNonVideoParticipants(value: boolean) {
+    this.set("hideNonVideoParticipants", value);
+  }
+
   /** Set the screenshare privacy shield */
   set screenShareShield(value: boolean) {
     this.set("screenShareShield", value);
@@ -1134,6 +1153,13 @@ export class Voice extends AbstractStore<"voice", TypeVoice> {
    * fallback is what existing installs read. */
   get joinVoiceOnDoubleClick(): boolean {
     return this.get().joinVoiceOnDoubleClick ?? true;
+  }
+
+  /** Get whether the call grid hides participants without live video
+   * (default off). A stored profile from before this key existed has no
+   * value for it, so the fallback is what existing installs read. */
+  get hideNonVideoParticipants(): boolean {
+    return this.get().hideNonVideoParticipants ?? false;
   }
 
   /** Get the screenshare privacy shield (default off: it redraws the share

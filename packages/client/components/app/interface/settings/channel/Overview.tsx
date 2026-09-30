@@ -13,6 +13,7 @@ import {
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import type { API } from "stoat.js";
 
+import { channelHasClientGate } from "../../../../../src/interface/channels/memberGate";
 import {
   afkDesignationEdit,
   afkTimeoutChoice,
@@ -80,6 +81,30 @@ export default function ChannelOverview(props: ChannelSettingsProps) {
   const isDesignatedAfk = () =>
     isAfkChannel(props.channel.server?.afkChannelId, props.channel.id);
 
+  /**
+   * 🔴 The AFK channel can't be behind an age, password or spoiler check. The
+   * idle sweep moves members into it without asking, including members who
+   * never passed the check. The backend refuses both directions: designating
+   * a checked channel answers `InvalidProperty`, and an edit that turns a
+   * check ON for the designated channel answers `InvalidOperation`, for the
+   * owner too. These mirror it so the controls say why instead of failing.
+   * Turning a check OFF is always allowed.
+   *
+   * `channelHasClientGate` mirrors the backend's `Channel::has_client_gate`.
+   */
+  const gateBlocksAfk = () =>
+    !isDesignatedAfk() && channelHasClientGate(props.channel);
+
+  /**
+   * Whether the control that turns one check ON is refused. Asked per check,
+   * so a check that is on can always be turned off. The backend refuses only
+   * an edit that takes the channel from no check at all to some check, so on
+   * an AFK channel that already carries one (reachable only through a race
+   * between two admins) this refuses a second check the server would allow.
+   * That is the fail-closed side.
+   */
+  const afkBlocksGate = (gateIsOn: boolean) => isDesignatedAfk() && !gateIsOn;
+
   /* eslint-disable solid/reactivity */
   // Initial value only. Seeded from the timeout the SERVER already holds, not
   // from a constant: designating a channel without naming a timeout makes the
@@ -107,8 +132,8 @@ export default function ChannelOverview(props: ChannelSettingsProps) {
    * mapper. A clear written as `afk_channel_id: null` is answered with a 200
    * and changes nothing, which is indistinguishable from success here.
    *
-   * 🔴 Unlike the announcement, spoiler and calls toggles in this file, this
-   * one catches. Those are `try { … } finally { setSaving(false) }` with no
+   * 🔴 Unlike the announcement and calls toggles in this file, this one
+   * catches. Those are `try { … } finally { setSaving(false) }` with no
    * error path, so a refused edit flips the label back and says nothing at
    * all. That is not safe to copy onto a route whose whole point is that a
    * permission refusal is possible.
@@ -195,15 +220,24 @@ export default function ChannelOverview(props: ChannelSettingsProps) {
   }
 
   const [spoilerSaving, setSpoilerSaving] = createSignal(false);
+  const [spoilerFailed, setSpoilerFailed] = createSignal(false);
 
-  /** Toggle this channel's click-to-reveal spoiler flag. */
+  /**
+   * Toggle this channel's click-to-reveal spoiler flag. Catches, like the AFK
+   * toggle: marking the AFK channel as a spoiler is refused by the backend,
+   * and a refusal must not look like nothing happened.
+   */
   async function toggleSpoiler() {
     setSpoilerSaving(true);
+    setSpoilerFailed(false);
     try {
       await props.channel.edit({
         // stoat-api predates `spoiler` — pass it through verbatim.
         spoiler: !props.channel.isSpoiler,
       } as never);
+    } catch (error) {
+      setSpoilerFailed(true);
+      showError(error);
     } finally {
       setSpoilerSaving(false);
     }
@@ -282,22 +316,44 @@ export default function ChannelOverview(props: ChannelSettingsProps) {
   const [pwStatus, setPwStatus] = createSignal<"idle" | "saved" | "removed">(
     "idle",
   );
+  const [pwFailed, setPwFailed] = createSignal(false);
 
+  /**
+   * Whether the channel has a password now. Read live for the AFK rule;
+   * `existingHash` above is taken once, when the page opens.
+   */
+  const hasPassword = () =>
+    !!parseChannelPassword(props.channel.description).passwordHash;
+
+  /**
+   * Set, change or remove the channel password. Catches, and clears the
+   * saving flag in `finally`: setting a password on the AFK channel is
+   * refused by the backend, and without both a refusal was invisible and
+   * left the buttons disabled for good. The typed password is kept on a
+   * failure so the user can try again.
+   */
   async function setChannelPassword() {
     const pw = pwInput().trim();
     setPwSaving(true);
-    const hash = pw ? await hashPassword(pw) : null;
-    const newDesc = hash
-      ? buildDescriptionWithHash(cleanDescription, hash)
-      : cleanDescription;
-    await props.channel.edit({
-      description: newDesc || undefined,
-      remove: newDesc ? [] : ["Description"],
-    });
-    setPwInput("");
-    setPwStatus(pw ? "saved" : "removed");
-    setPwSaving(false);
-    setTimeout(() => setPwStatus("idle"), 2500);
+    setPwFailed(false);
+    try {
+      const hash = pw ? await hashPassword(pw) : null;
+      const newDesc = hash
+        ? buildDescriptionWithHash(cleanDescription, hash)
+        : cleanDescription;
+      await props.channel.edit({
+        description: newDesc || undefined,
+        remove: newDesc ? [] : ["Description"],
+      });
+      setPwInput("");
+      setPwStatus(pw ? "saved" : "removed");
+      setTimeout(() => setPwStatus("idle"), 2500);
+    } catch (error) {
+      setPwFailed(true);
+      showError(error);
+    } finally {
+      setPwSaving(false);
+    }
   }
 
   /* eslint-disable solid/reactivity */
@@ -503,7 +559,11 @@ export default function ChannelOverview(props: ChannelSettingsProps) {
           />
           <Button
             onPress={setChannelPassword}
-            isDisabled={pwSaving() || (!pwInput().trim() && !existingHash)}
+            isDisabled={
+              pwSaving() ||
+              (!pwInput().trim() && !existingHash) ||
+              (!!pwInput().trim() && afkBlocksGate(hasPassword()))
+            }
           >
             <Switch
               fallback={
@@ -535,6 +595,19 @@ export default function ChannelOverview(props: ChannelSettingsProps) {
             </Button>
           </Show>
         </div>
+        <Show when={afkBlocksGate(hasPassword())}>
+          <Text>
+            <Trans>
+              This is the server's AFK channel, so it can't have an age,
+              password or spoiler check. Choose another AFK channel first.
+            </Trans>
+          </Text>
+        </Show>
+        <Show when={pwFailed()}>
+          <Text>
+            <Trans>That change was not saved.</Trans>
+          </Text>
+        </Show>
       </Column>
 
       <Show when={props.channel.type === "TextChannel" && canManageChannel()}>
@@ -575,7 +648,12 @@ export default function ChannelOverview(props: ChannelSettingsProps) {
             </Trans>
           </Text>
           <div>
-            <Button onPress={toggleSpoiler} isDisabled={spoilerSaving()}>
+            <Button
+              onPress={toggleSpoiler}
+              isDisabled={
+                spoilerSaving() || afkBlocksGate(props.channel.isSpoiler)
+              }
+            >
               <Switch fallback={<Trans>Mark as Spoiler</Trans>}>
                 <Match when={props.channel.isSpoiler}>
                   <Trans>Remove Spoiler Mark</Trans>
@@ -583,6 +661,19 @@ export default function ChannelOverview(props: ChannelSettingsProps) {
               </Switch>
             </Button>
           </div>
+          <Show when={afkBlocksGate(props.channel.isSpoiler)}>
+            <Text>
+              <Trans>
+                This is the server's AFK channel, so it can't have an age,
+                password or spoiler check. Choose another AFK channel first.
+              </Trans>
+            </Text>
+          </Show>
+          <Show when={spoilerFailed()}>
+            <Text>
+              <Trans>That change was not saved.</Trans>
+            </Text>
+          </Show>
         </Column>
       </Show>
 
@@ -673,6 +764,7 @@ export default function ChannelOverview(props: ChannelSettingsProps) {
                 channel: props.channel,
               })
             }
+            isDisabled={afkBlocksGate(props.channel.mature)}
           >
             <Switch fallback={<Trans>Mark as Mature</Trans>}>
               <Match when={props.channel.mature}>
@@ -681,6 +773,14 @@ export default function ChannelOverview(props: ChannelSettingsProps) {
             </Switch>
           </Button>
         </div>
+        <Show when={afkBlocksGate(props.channel.mature)}>
+          <Text>
+            <Trans>
+              This is the server's AFK channel, so it can't have an age,
+              password or spoiler check. Choose another AFK channel first.
+            </Trans>
+          </Text>
+        </Show>
       </Column>
 
       <Show when={canConfigureAfk()}>
@@ -729,12 +829,6 @@ export default function ChannelOverview(props: ChannelSettingsProps) {
             </MenuItem>
           </Form2.Select>
 
-          <Text>
-            <Trans>
-              Members who can't connect to this channel won't be moved.
-            </Trans>
-          </Text>
-
           <Show when={!isDesignatedAfk()}>
             <Text>
               <Trans>
@@ -746,7 +840,10 @@ export default function ChannelOverview(props: ChannelSettingsProps) {
           </Show>
 
           <Row>
-            <Button onPress={toggleAfkChannel} isDisabled={afkSaving()}>
+            <Button
+              onPress={toggleAfkChannel}
+              isDisabled={afkSaving() || gateBlocksAfk()}
+            >
               <Switch fallback={<Trans>Make AFK Channel</Trans>}>
                 <Match when={isDesignatedAfk()}>
                   <Trans>Stop being the AFK Channel</Trans>
@@ -765,6 +862,15 @@ export default function ChannelOverview(props: ChannelSettingsProps) {
               <CircularProgress />
             </Show>
           </Row>
+
+          <Show when={gateBlocksAfk()}>
+            <Text>
+              <Trans>
+                A channel with an age, password or spoiler check can't be the
+                AFK channel. Remove the check first.
+              </Trans>
+            </Text>
+          </Show>
 
           <Show when={afkFailed()}>
             <Text>

@@ -9,8 +9,15 @@
  * session's own device, the connection nonce the event names and the four
  * this session holds (its live one, its drop marker's, the one it is dialing,
  * and the one its rejoin replaced) with the replaced drop's time, whether the
- * destination is known, the node's URL) and hands the plain values in; every
- * rule below is called by production and never re-typed there.
+ * destination is known, whether it is gated for this member, the node's URL,
+ * the token, whether that token was minted for this connection's own
+ * identity, and whether that identity is device-qualified) and hands the
+ * plain values in; every rule below is called by production and never
+ * re-typed there.
+ *
+ * On the wire the event is `UserMoveVoiceChannel`; stoat.js re-emits it to
+ * this client as `voiceMoveRequested` (`VoiceMoveRequest`), with every absent,
+ * null or empty optional field normalized to `undefined`.
  *
  * 🔴 Why a gate exists at all. The backend emits `UserMoveVoiceChannel`
  * PRIVATELY to the moved user (`.private(target.id.clone())`) from ONE place,
@@ -36,6 +43,15 @@
  * user is actually sitting in front of. That makes the gate below the single
  * most load-bearing rule in this slice, which is why it is a pure function
  * with a spec rather than four lines inside a 9.8k-line class.
+ *
+ * 🔴 The merged backend narrows that delivery: it publishes the move to the
+ * ONE session recorded as owning the user's participant in `from`, and mints
+ * a token only for that session's recorded seat kind (a bare token for a bare
+ * seat, a device token for a device seat, none at all when it cannot tell).
+ * The gate below is kept whole anyway. This client can meet an older delta
+ * (a rollback below the merge), where every session still receives the
+ * event, and the rules cost nothing on the narrowed path: the one addressed
+ * session still passes them.
  *
  * 🔴 THE DEVICE TEST IS INERT ON A LARGE FRACTION OF SEATS, and the rules
  * below are shaped around that rather than around the happy case. A LiveKit
@@ -113,13 +129,22 @@ export type MoveIgnoreReason =
 export type MoveFailReason =
   /** The destination channel is not resolvable on this client. */
   | "unknown-channel"
-  /** The event carried no usable connect URL. */
-  | "no-url"
   /**
-   * This session holds a fresh involuntary-drop marker for `from`, but joined
-   * with a BARE identity, so neither it nor the server can say whether the
-   * token was minted for it. The move is not redeemed automatically; the user
-   * is told, and offered the destination to join by hand.
+   * The destination carries a client-side gate (age, password or spoiler)
+   * that this member has not passed on this device. The move is not followed
+   * and the destination is NOT put on the call card: a card's Rejoin would
+   * join the channel straight past the gate. The user is told to open the
+   * channel, pass the check, and join from there.
+   */
+  | "gated-destination"
+  /**
+   * This session holds a fresh involuntary-drop marker for `from`, no nonce
+   * gate applies, and it cannot show that the token was minted for its own
+   * DEVICE-QUALIFIED identity: it joined bare, or the event carries no token
+   * for the identity it last connected as. Neither it nor the server can then
+   * say whether this session is the one that was moved. The move is not
+   * followed automatically; the user is told, and offered the destination to
+   * join by hand.
    */
   | "unverified-session"
   /**
@@ -157,7 +182,15 @@ export type MoveFailReason =
 export type MoveDecision =
   | { action: "ignore"; reason: MoveIgnoreReason }
   | { action: "fail-loud"; reason: MoveFailReason }
-  | { action: "move"; url: string; token: string; to: string };
+  /** Follow the move with the event's pre-minted token (the token arm). */
+  | { action: "move"; url: string; token: string; to: string }
+  /**
+   * Follow the move through the regular join route, with no pre-minted
+   * credential (the tokenless arm): the event carried no token, a token not
+   * minted for this connection, or no usable URL to dial it at. The join
+   * route checks the seat binding itself.
+   */
+  | { action: "join"; to: string };
 
 /** Everything the decision needs, as plain values. */
 export interface MoveWorld {
@@ -177,12 +210,44 @@ export interface MoveWorld {
    * also carries `node`, which is a node NAME and is NOT connectable: the
    * server filters private nodes out of what it advertises, so a client
    * cannot resolve one itself. That is why the event carries both.
+   * `undefined` when the node has no public URL; the move then takes the
+   * tokenless `join` arm.
    */
   url: string | undefined;
-  /** The pre-minted move token from the event. */
-  token: string;
+  /**
+   * The pre-minted move token from the event, or `undefined` when the server
+   * minted none for this session (its normal answer whenever it cannot tie a
+   * token to the recorded seat). A live SFU credential: passed through on a
+   * `move`, never logged.
+   */
+  token: string | undefined;
+  /**
+   * Whether `token` was minted for the identity THIS connection last joined
+   * as, and for `to`: its `sub` claim equals that identity and its `room`
+   * claim equals the destination (`moveTokenUsable` in `voiceMovePolicy.ts`,
+   * computed by `state.tsx`). `false` when there is no token. The claims are
+   * read, not verified; the SFU verifies the signature. This is an
+   * addressing label, like the device test, not an authorization. Step 4
+   * reads it as proof, and the token arm reads it so that a token minted
+   * for another identity is never passed through (it answers `join`).
+   */
+  tokenForThisConnection: boolean;
+  /**
+   * Whether the identity THIS connection last joined as is device-qualified
+   * (`{user}:{device}`), rather than the bare `{user}`. Together with
+   * `tokenForThisConnection` it is the gate-inactive proof of step 4; see
+   * `moveDecision` for why a bare identity is not enough there.
+   */
+  lastIdentityIsDevice: boolean;
   /** Whether the destination channel resolves on this client. */
   destinationKnown: boolean;
+  /**
+   * Whether the destination carries a client-side gate (age, password or
+   * spoiler) this member has not passed on this device. `state.tsx` passes
+   * `false` when the destination is unknown; this module ignores it then
+   * anyway, since there is no channel to gate.
+   */
+  destinationGated: boolean;
   /**
    * The channel this session was in when the SFU dropped it WITHOUT the user
    * asking, and when that happened (ms epoch). `undefined` when this session
@@ -352,8 +417,9 @@ export const MOVE_PRECONNECT_BUDGET_MS = 3000;
 export const MOVE_TOKEN_SKEW_ALLOWANCE_MS = 2_000;
 
 /**
- * How long after an involuntary drop a DEVICE-MATCHED session still answers to
- * a move for the channel it was dropped from, in ms.
+ * How long after an involuntary drop a VERIFIED session (matching nonce, or a
+ * token for its own device-qualified identity) still answers to a move for
+ * the channel it was dropped from, in ms.
  *
  * The arithmetic, because the number looks arbitrary and is not:
  *
@@ -376,9 +442,10 @@ export const MOVE_TOKEN_SKEW_ALLOWANCE_MS = 2_000;
  * available against it on a seat whose device could not be named.
  *
  * That lever is gone because the hole it was shrinking is gone. A MOVE is now
- * reachable off a marker ONLY on a session that positively matched the device
- * the token was minted for; a session that cannot show its device does not
- * fall back into it, it fails loud (`unverified-session`). A forged marker
+ * reachable off a marker ONLY on a session whose nonce matches the moved
+ * connection's, or that holds a token minted for its own device-qualified
+ * identity; a session that can show neither does not fall back into it, it
+ * fails loud (`unverified-session`). A forged marker
  * therefore no longer buys an unattended seat a move at ANY window size, so
  * sizing this number against forgery is sizing it against nothing.
  *
@@ -485,15 +552,17 @@ export const MOVE_NOTICE_WINDOW_MS = 60_000;
  *          event names the REPLACED nonce,
  *          its drop inside
  *          `MOVE_VERIFIED_WINDOW_MS`      -> addressed, on to feasibility
- *          `MOVE_NOTICE_WINDOW_MS`        -> fail-loud / stale-notice
+ *          `MOVE_NOTICE_WINDOW_MS`        -> fail-loud / stale-notice (G)
  *      otherwise                          -> fail-loud / moved-elsewhere
  *   3. in `from` now                      -> addressed, on to feasibility
  *   4. marker FRESH and the label MATCHES
- *      (nonce when the gate is active,
- *      device when it is not)             -> addressed, on to feasibility
- *   5. marker FRESH, gate inactive,
- *      device UNKNOWN                     -> fail-loud / unverified-session
- *   6. marker names `from`, but STALE     -> fail-loud / stale-notice
+ *      (nonce when the gate is active;
+ *      when it is not, a non-empty token
+ *      for this connection AND a device-
+ *      qualified identity)                -> addressed, on to feasibility
+ *   5. marker FRESH, gate inactive, and
+ *      that proof ABSENT                  -> fail-loud / unverified-session (G)
+ *   6. marker names `from`, but STALE     -> fail-loud / stale-notice (G)
  *   7. otherwise                          -> ignore    / other-channel |
  *                                                        not-in-call
  *
@@ -501,8 +570,17 @@ export const MOVE_NOTICE_WINDOW_MS = 60_000;
  * window):
  *
  *   destination unresolvable            -> fail-loud / unknown-channel
- *   no usable URL                       -> fail-loud / no-url
- *   otherwise                           -> move
+ *   destination gated for this member   -> fail-loud / gated-destination
+ *   a token minted for THIS connection
+ *   AND a usable URL                    -> move (the token arm)
+ *   otherwise                           -> join (the tokenless arm)
+ *
+ * Ahead of all of it, step 0: an empty `from` names no channel, and answers
+ * step 7's silent ignore.
+ *
+ * (G): when the destination resolves AND is gated for this member, these
+ * three loud arms answer `gated-destination` instead; see the gate note
+ * below.
  *
  * with the marker terms and the nonce gate being
  *
@@ -516,15 +594,23 @@ export const MOVE_NOTICE_WINDOW_MS = 60_000;
  *                       it is CONNECTED to `from`, `lastInvoluntaryConnNonce`
  *                       when `markerNamesSource`, and none otherwise
  *
- * With the gate inactive on every clause, the ladder is exactly the
- * seven-step device ladder this module shipped before the nonce existed, with
- * the same answer in every world. The spec pins that against a fingerprint of
- * the old ladder's answers.
+ * With the gate inactive on every clause, the ladder is the seven-step device
+ * ladder this module shipped before the nonce existed, with two changes that
+ * are each a ruling (FE-2, AFK x voice-move): step 4's gate-inactive proof is
+ * a token for this connection on a device-qualified identity rather than a
+ * device match, and a URL-less or token-less addressed move is the tokenless
+ * `join` rather than `no-url`. Fed the old ladder's inputs (a token present
+ * and minted for this connection, a device-qualified identity exactly when
+ * the device matched, no gate), it gives the old answer in every world,
+ * `no-url` reading as `join`. The spec pins that against fingerprints of the old
+ * ladders' answers, and traces every other difference to one of the rulings.
  *
- * 🔴 STEP 1 AND THE NONCE TEST ARE THE ONLY UNFORGEABLE TESTS HERE. Every
- * other addressing signal below is this session's own account of its own
- * history. `deviceId` and `connNonce` are the server's account of whose
- * credential this is. LiveKit identities are `user:device`, and the move
+ * 🔴 STEP 1, THE NONCE TEST AND STEP 4's TOKEN TEST ARE THE ONLY SIGNALS
+ * HERE THAT THIS SESSION DID NOT WRITE ITSELF. Every other addressing signal
+ * below is this session's own account of its own history. `deviceId`,
+ * `connNonce` and the token's `sub` claim (read through
+ * `tokenForThisConnection`) are the server's account of whose credential
+ * this is. LiveKit identities are `user:device`, and the move
  * token is minted for exactly one of them
  * (`move_user_to_voice_channel_expecting` picks the moved connection out of
  * the old room's participant list and derives the device from that
@@ -660,6 +746,52 @@ export const MOVE_NOTICE_WINDOW_MS = 60_000;
  * nobody is sitting at. The AFK sweep is a timer, so a move landing inside the
  * window is a schedule, not a coincidence.
  *
+ * So with the nonce gate inactive, step 4 takes a fresh marker as addressing
+ * this session ONLY when both of these hold (FE-2 ruling D1, as amended by
+ * FE2A-2, which fails closed):
+ *
+ *   - `tokenForThisConnection`: the event carries a token whose `sub` claim
+ *     is the identity this connection last joined as, and whose `room` claim
+ *     is `to`; and
+ *   - `lastIdentityIsDevice`: that identity is device-qualified,
+ *     `{user}:{device}`.
+ *
+ * On a device seat that is exactly the old device match plus a token this
+ * session can actually redeem: the server derives `device_id` and the token's
+ * identity from the same recorded seat. It REPLACES the device match rather
+ * than sitting beside it because a matching device with no usable token has
+ * nothing to follow the move with on the marker path except a tokenless join,
+ * and a tokenless join off a marker is precisely the handoff forgery above.
+ *
+ * 🔴 A BARE identity is refused here even when the token matches it. The
+ * merged backend sends neither `conn_nonce` nor `device_id` with a BARE mint,
+ * so on a bare seat the nonce gate is always off, and a bare token's `sub` is
+ * `{user}`, which EVERY bare seat of this user shares. A bare seat that a
+ * handoff kicked moments before the move holds a fresh marker and a token
+ * whose `sub` equals its own last identity, so `tokenForThisConnection` alone
+ * would let it follow with a live microphone (the F1-class double
+ * redemption). A fresh marker on a bare identity with no nonce is therefore
+ * `unverified-session`, loud, exactly as it was before the merge. The path
+ * that retires this for bare seats is the server sending the source
+ * connection's `conn_nonce` with bare mints too, which puts them under the
+ * nonce gate; that is a backend change, not this module's.
+ *
+ * A device-qualified identity holding a BARE token lands in step 5 as well:
+ * the token names `{user}`, not this connection's `{user}:{device}`, so it is
+ * not this connection's credential, and redeeming it would present an
+ * identity this session did not join as. The same holds for a device seat the
+ * event carries no token for at all.
+ *
+ * 🔴 There is NO disconnect-reason filter, and that is deliberate. The
+ * voice-move branch obeyed a dropped session only when the SDK reported
+ * `PARTICIPANT_REMOVED`; `state.tsx` records this marker on EVERY
+ * involuntary drop (a `PARTICIPANT_REMOVED`, a duplicate-identity kick by the
+ * user's own other session, a transport death, an unknown reason), because
+ * the removal a move causes can also arrive with no reason at all and fail
+ * OPEN into a rejoin of the old channel. Telling the moved connection from a
+ * kicked sibling is the nonce gate's job, and the token proof's where no
+ * nonce exists; `MoveWorld` carries no reason, so none can be consulted.
+ *
  * The fallback also buys nothing to offset that. With a BARE identity only one
  * session of this user can be in `from` at a time — LiveKit would already have
  * evicted any other on duplicate identity — so for exactly the seats where the
@@ -679,8 +811,9 @@ export const MOVE_NOTICE_WINDOW_MS = 60_000;
  *
  * Say the trade plainly, because it is a real one: web, the Electron/Linux
  * shell and unenrolled users get a MANUAL Rejoin exactly where a native E2EE
- * seat gets an AUTOMATIC move. That asymmetry is accepted here because the
- * failure it replaces is unattended audio in a room nobody is in.
+ * seat gets an AUTOMATIC move, whenever the SFU dropped them before the move
+ * landed and no nonce is available. That asymmetry is accepted here because
+ * the failure it replaces is unattended audio in a room nobody is in.
  *
  * The addressing label that is not the E2EE device id now exists: the
  * per-connection nonce. `create_token` mints one into every connection's
@@ -730,20 +863,49 @@ export const MOVE_NOTICE_WINDOW_MS = 60_000;
  * error toast about a call it is not in — a user being moved would get one
  * real move and N spurious errors, one per signed-in device. `ignore` is
  * silent by design. Steps 5 and 6 and `moved-elsewhere` sit on the addressing
- * side of that line on purpose: they outrank `unknown-channel` and `no-url`
- * because a session that cannot prove it was the target, that is past the
- * point of acting, or that was positively not the target must not be told WHY
- * it could not carry out a move it was never going to carry out.
+ * side of that line on purpose: they outrank `unknown-channel` because a
+ * session that cannot prove it was the target, that is past the point of
+ * acting, or that was positively not the target must not be told WHY it could
+ * not carry out a move it was never going to carry out.
  *
  * `already-there` is an ignore rather than a no-op move because redeeming a
  * token for the room we are already in is a reconnect: it tears down a healthy
  * room and re-races our own identity for nothing.
  *
- * `unknown-channel` and `no-url` are LOUD on purpose. Past the addressing
- * tests this session really was the target, so the move is going to happen
- * server-side whatever the client does — the user is already out of the old
- * channel. Failing silently there strands them looking at a call they are no
- * longer in.
+ * `unknown-channel` is LOUD on purpose. Past the addressing tests this
+ * session really was the target, so the move is going to happen server-side
+ * whatever the client does — the user is already out of the old channel.
+ * Failing silently there strands them looking at a call they are no longer
+ * in.
+ *
+ * 🔴 A GATED DESTINATION IS NEVER JOINED, AND NEVER CARDED. When the
+ * destination carries an age, password or spoiler check this member has not
+ * passed on this device, following the move would put them in the call
+ * straight past it, and so would the Rejoin on any card that names the
+ * destination. So `gated-destination` answers every addressed shape after
+ * `unknown-channel` (there is no channel to gate when it is unknown), AND it
+ * outranks the three loud arms that would card the destination: step 5, step
+ * 6 and the Nb `stale-notice`. It never outranks an `ignore`, `already-there`
+ * or `moved-elsewhere`: none of those names the destination, and a session
+ * that was not addressed must stay as quiet about the gate as about anything
+ * else. The gate is this device's own UI state, so a move into a gated
+ * channel always leaves the old call (the server moved the user regardless);
+ * what it decides is only that the client does not follow.
+ *
+ * 🔴 THE TOKENLESS ARM. An addressed session follows with the event's token
+ * only when there is one AND a usable URL to dial it at; otherwise it answers
+ * `join`, and `state.tsx` joins `to` through the regular join route, which
+ * mints its own credential and checks the seat binding itself. A missing URL
+ * used to be `no-url`, a loud failure (FE-2 ruling D2 retired it): the server
+ * has already moved the user, and the join route can reach the destination
+ * whether or not the event named a node URL.
+ *
+ * 🔴 A TOKEN THAT IS NOT THIS CONNECTION'S IS NEVER PASSED THROUGH (FE2WA-9,
+ * fail-closed). The token arm needs `tokenForThisConnection` as well as a
+ * token and a URL, on every addressed shape — including step 3, where a
+ * device seat can be handed a bare token. Such a session answers `join` and
+ * follows as the identity it actually holds. `state.tsx`'s pre-connect check
+ * (M3) drops a mismatched token too; this module no longer relies on it.
  *
  * A whitespace-only URL counts as absent: a node row with a blank URL reaches
  * `room.connect()` as a malformed endpoint and fails far from here, with an
@@ -753,8 +915,9 @@ export const MOVE_NOTICE_WINDOW_MS = 60_000;
 export function moveDecision(world: MoveWorld): MoveDecision {
   // Did the server name a device at all, and is it ours? The two questions are
   // separate and the difference is load-bearing: `deviceKnown` false means
-  // NOBODY can be verified on this event, which is a property of the seat's
-  // bare identity and not a fact about this session.
+  // step 1 has nobody to exclude on this event, which is a property of the
+  // moved seat's bare identity and not a fact about this session. Only step 1
+  // reads these; step 4 reads the token instead (see `tokenProvesSeat`).
   const deviceKnown = world.deviceId !== undefined;
   const deviceMatches = deviceKnown && world.deviceId === world.sessionDeviceId;
 
@@ -783,9 +946,16 @@ export function moveDecision(world: MoveWorld): MoveDecision {
   // …and recent enough that a move can still be attempted: even allowing for
   // the pre-connect budget and the unmeasured mint/handshake skew, the token
   // should still have life left in it.
+  //
+  // 🔴 A NEGATIVE age is not fresh (FE2WA-3). A marker stamped in the future
+  // means the wall clock stepped back since the drop, so its age is unknown,
+  // not small. It stays `markerNamesSource` (still under the notice bound),
+  // so the session gets the `stale-notice` card rather than an automatic
+  // move on a token of unknown age: fail closed, but not silent.
   const markerIsFresh =
     markerNamesSource &&
     markerAgeMs !== undefined &&
+    markerAgeMs >= 0 &&
     markerAgeMs < MOVE_VERIFIED_WINDOW_MS;
 
   // Which of this session's nonces the event's is compared against. The
@@ -805,20 +975,67 @@ export function moveDecision(world: MoveWorld): MoveDecision {
   const nonceGate = !!world.connNonce && !!sessionSideNonce;
   const nonceMatches = nonceGate && world.connNonce === sessionSideNonce;
 
+  // Step 4's proof when the nonce gate is inactive (D1 as amended by FE2A-2):
+  // an actual, non-empty token (FE2WA-2), minted for the identity this
+  // connection last joined as, AND that identity device-qualified. A bare
+  // identity never satisfies it, because a bare token's `sub` is shared by
+  // every bare seat of this user. A flag claiming "for this connection" with
+  // no token beside it proves nothing: there is no credential to have been
+  // minted for anyone.
+  const tokenProvesSeat =
+    !!world.token && world.tokenForThisConnection && world.lastIdentityIsDevice;
+
+  // The destination resolves and carries a client-side gate this member has
+  // not passed. An unknown destination has nothing to gate, so the flag is
+  // read only beside `destinationKnown`.
+  const gatedDestination = world.destinationKnown && world.destinationGated;
+
   // The feasibility tail every ADDRESSED shape ends in, written once so that
   // steps 3 and 4 and the S-a arms below cannot drift apart.
   const addressed = (): MoveDecision => {
     if (!world.destinationKnown)
       return { action: "fail-loud", reason: "unknown-channel" };
-    if (!world.url || world.url.trim().length === 0)
-      return { action: "fail-loud", reason: "no-url" };
-    return {
-      action: "move",
-      url: world.url,
-      token: world.token,
-      to: world.to,
-    };
+    if (gatedDestination)
+      return { action: "fail-loud", reason: "gated-destination" };
+    // The token arm needs both halves of the credential AND a token minted
+    // for this connection (FE2WA-9); anything less is the tokenless arm,
+    // through the regular join route. A token that is not this connection's
+    // is never passed through, on any shape.
+    if (
+      world.token &&
+      world.tokenForThisConnection &&
+      world.url &&
+      world.url.trim().length > 0
+    )
+      return {
+        action: "move",
+        url: world.url,
+        token: world.token,
+        to: world.to,
+      };
+    return { action: "join", to: world.to };
   };
+
+  // A loud arm that would put the destination on the call card, whose Rejoin
+  // joins it: a gated destination must not be carded, so the gate outranks
+  // it (steps 5 and 6 and the Nb stale arm, and nothing else).
+  const cardsDestination = (
+    reason: "unverified-session" | "stale-notice",
+  ): MoveDecision =>
+    gatedDestination
+      ? { action: "fail-loud", reason: "gated-destination" }
+      : { action: "fail-loud", reason };
+
+  // Step 0 (FE2WA-4): an event with an empty `from` names no source channel,
+  // so no session can have been in it, and the channel and marker comparisons
+  // below would otherwise match an empty `currentChannelId` or marker against
+  // it. It never acts, and it answers what step 7 answers for a session that
+  // was not in the channel moved from: silent.
+  if (!world.from)
+    return {
+      action: "ignore",
+      reason: world.callState === "CONNECTED" ? "other-channel" : "not-in-call",
+    };
 
   // Step 1, ahead of every local test: the token names a device, and it is
   // not ours. Nothing else about this session's history can override that,
@@ -852,52 +1069,56 @@ export function moveDecision(world: MoveWorld): MoveDecision {
       return addressed();
     // S-a (v), step Nb: the named connection is the ghost this session's
     // CONNECTED rejoin replaced, aged from the ORIGINAL drop on the marker's
-    // own two windows. Past the notice window it stays `moved-elsewhere`.
+    // own two windows. Past the notice window it stays `moved-elsewhere`. A
+    // negative age (a drop stamped in the future) is not fresh, exactly as
+    // for the marker: `stale-notice`, never a move (FE2WA-3).
     const replacedAgeMs =
       connectedToSource &&
       world.connNonce === world.replacedConnNonce &&
       world.replacedLeftAt !== undefined
         ? world.now - world.replacedLeftAt
         : undefined;
-    if (replacedAgeMs !== undefined && replacedAgeMs < MOVE_VERIFIED_WINDOW_MS)
+    if (
+      replacedAgeMs !== undefined &&
+      replacedAgeMs >= 0 &&
+      replacedAgeMs < MOVE_VERIFIED_WINDOW_MS
+    )
       return addressed();
     if (replacedAgeMs !== undefined && replacedAgeMs < MOVE_NOTICE_WINDOW_MS)
-      return { action: "fail-loud", reason: "stale-notice" };
+      return cardsDestination("stale-notice");
     return { action: "fail-loud", reason: "moved-elsewhere" };
   }
 
   // Steps 3 and 4 — the two addressed shapes, and the only ones that may act.
   // Step 4 accepts the claim only with the proof beside it: the nonce when the
-  // gate is active (and unequal already returned above), the device when it
-  // is not.
-  const labelMatches = nonceGate ? nonceMatches : deviceMatches;
+  // gate is active (and unequal already returned above); when it is not, a
+  // token for this connection on a device-qualified identity.
+  const labelMatches = nonceGate ? nonceMatches : tokenProvesSeat;
   if (connectedToSource || (markerIsFresh && labelMatches)) return addressed();
 
   // Step 5. The marker says we were the one moved and nothing here can confirm
-  // or deny it, because the event names no device id (the token was minted
-  // for a bare identity), so there is nothing to match. Refuse to redeem the
-  // token — an unattended seat holding a handoff's marker would otherwise
-  // publish a microphone into an empty room — and say so out loud, so the
-  // session that really was moved gets a Rejoin instead of silence. See the
-  // 🔴 note above for the trade this encodes and the per-connection nonce that
-  // retires it wherever both sides carry one.
+  // it: there is no nonce to compare, and no token minted for this
+  // connection's own device-qualified identity (a bare seat, a bare token, or
+  // no token at all). Refuse to follow — an unattended seat holding a
+  // handoff's marker would otherwise publish a microphone into an empty room
+  // — and say so out loud, so the session that really was moved gets a Rejoin
+  // instead of silence. See the 🔴 note above for the trade this encodes and
+  // the per-connection nonce that retires it wherever both sides carry one.
   //
-  // With the gate inactive, `!deviceKnown` is the whole remaining case: step 1
-  // already returned for a named device that is not ours, and a named device
-  // that IS ours took step 4 above, so a fresh marker reaching this line can
-  // only be an unverifiable seat. With the gate active a fresh marker never
-  // gets here (equal took step 4, unequal returned inside the gate-active
-  // test above, S-a arms included), and
-  // `!nonceGate` says so rather than leaving it to the order of the arms.
-  if (markerIsFresh && !nonceGate && !deviceKnown)
-    return { action: "fail-loud", reason: "unverified-session" };
+  // With the gate inactive, `!tokenProvesSeat` is the whole remaining case: a
+  // fresh marker WITH the proof took step 4 above. With the gate active a
+  // fresh marker never gets here (equal took step 4, unequal returned inside
+  // the gate-active test above, S-a arms included), and `!nonceGate` says so
+  // rather than leaving it to the order of the arms.
+  if (markerIsFresh && !nonceGate && !tokenProvesSeat)
+    return cardsDestination("unverified-session");
 
   // Step 6. Inside the notice window, past the verified one: too late to act,
   // on EITHER population — the verified session whose token is past relying
   // on, and the unverifiable one alike. Both are, or recently were, dialing
   // the old channel back, so silence here reverses the moderator with nobody
   // told.
-  if (markerNamesSource) return { action: "fail-loud", reason: "stale-notice" };
+  if (markerNamesSource) return cardsDestination("stale-notice");
 
   // Step 7.
   return {

@@ -67,6 +67,18 @@
 // drop clock and not from the mint, and `MOVE_TOKEN_SKEW_ALLOWANCE_MS` is the
 // reservation for the difference.
 //
+// 🔴 FE-2 (the AFK x voice-move merge) changed two answers by ruling and
+// added three inputs. Step 4's gate-inactive proof is a token minted for this
+// connection (`tokenForThisConnection`) on a device-qualified identity
+// (`lastIdentityIsDevice`) instead of a device match (D1, as amended by
+// FE2A-2); a URL-less or token-less addressed move is the tokenless `join`
+// instead of `no-url` (D2); and a destination gated for this member is
+// `gated-destination`, which also replaces the loud arms that would card it.
+// The old fingerprints are NOT re-captured. The sweeps feed the new ladder
+// the old ladder's inputs (the LEGACY EMBEDDING, see `sweepWorlds`) and must
+// reproduce the old fingerprints with `join` read back as `no-url`; every
+// other difference is traced, world by world, to exactly one of the rulings.
+//
 // 🔴 Every assertion calls `moveDecision`. Nothing here re-types the rule it
 // is checking — a spec that restates its subject passes a revert.
 import assert from "node:assert/strict";
@@ -132,6 +144,12 @@ const NO_SA = {
  * row of the "gate inactive => the old answer" truth table, with its expected
  * value unchanged. It carries no S-a field either, so every case written
  * before S-a asserts what it asserted at 16734940.
+ *
+ * FE-2: the default seat is a DEVICE seat holding a token minted for it —
+ * identity `{user}:DEVICE`, a token whose `sub` is that identity, and no gate
+ * on the destination. That is the world in which the old device match and
+ * the new token proof agree, so every pre-existing case keeps its answer
+ * unless it spoils one of the new fields on purpose.
  */
 const decide = (world: Partial<MoveWorld> = {}) =>
   moveDecision({
@@ -141,7 +159,10 @@ const decide = (world: Partial<MoveWorld> = {}) =>
     to: TO,
     url: NODE_URL,
     token: TOKEN,
+    tokenForThisConnection: true,
+    lastIdentityIsDevice: true,
     destinationKnown: true,
+    destinationGated: false,
     lastInvoluntaryChannelId: undefined,
     lastInvoluntaryLeftAt: undefined,
     deviceId: DEVICE,
@@ -170,8 +191,18 @@ const droppedFrom = (channel: string, agoMs: number) => ({
  * A seat that joined with a BARE LiveKit identity — web, the Electron/Linux
  * shell, an unenrolled user — so the event names no device and this session
  * presented none. The common case, not the exotic one.
+ *
+ * FE-2: its last identity is the bare `{user}`, and the default token stays
+ * "for this connection" — a bare token's `sub` is `{user}` too, which is
+ * exactly why FE2A-2 does not let that match address a marker. Every
+ * `unverified-session` case below therefore holds BECAUSE the identity is
+ * bare, not because the token is missing.
  */
-const UNVERIFIED = { deviceId: undefined, sessionDeviceId: undefined };
+const UNVERIFIED = {
+  deviceId: undefined,
+  sessionDeviceId: undefined,
+  lastIdentityIsDevice: false,
+};
 
 /** Not connected to anything, which is what the marker steps require. */
 const OFF_CALL = { callState: "DISCONNECTED", currentChannelId: undefined };
@@ -236,10 +267,22 @@ test("🔴 step 1 outranks every other rule in the module", () => {
     { from: FROM, to: FROM, currentChannelId: FROM },
     { destinationKnown: false },
     { url: undefined },
+    { token: undefined },
+    { destinationGated: true },
     { destinationKnown: false, url: "   ", from: FROM, to: FROM },
     { ...OFF_CALL, ...droppedFrom(FROM, 250) },
     { ...OFF_CALL, ...droppedFrom(FROM, STALE_MS) },
     { ...OFF_CALL, destinationKnown: false, ...droppedFrom(FROM, 250) },
+    { ...OFF_CALL, destinationGated: true, ...droppedFrom(FROM, 250) },
+    { ...OFF_CALL, destinationGated: true, ...droppedFrom(FROM, STALE_MS) },
+    // A token that IS this connection's cannot outvote step 1 either: in
+    // this world the event names a device that is not ours.
+    {
+      ...OFF_CALL,
+      tokenForThisConnection: true,
+      lastIdentityIsDevice: true,
+      ...droppedFrom(FROM, 250),
+    },
   ])
     assert.deepEqual(
       decide({ ...spoiled, deviceId: DEVICE, sessionDeviceId: OTHER_DEVICE }),
@@ -373,7 +416,7 @@ test("the drop marker needs channel, a timestamp and the notice window together"
   assert.deepEqual(decide({ ...OFF_CALL, ...droppedFrom(FROM, 250) }), MOVED);
 });
 
-test("step 4 — a dropped session that MATCHES the token's device is addressed", () => {
+test("step 4 — a dropped session holding a token for its own device identity is addressed", () => {
   // The bug this gate was rewritten for. `move_user_to_voice_channel` used to
   // call `voice_client.remove_user(...)` first and publish
   // `UserMoveVoiceChannel` only afterwards, which lost this race every single
@@ -395,9 +438,10 @@ test("step 4 — a dropped session that MATCHES the token's device is addressed"
     decide({ ...OFF_CALL, destinationKnown: false, ...droppedFrom(FROM, 250) }),
     { action: "fail-loud", reason: "unknown-channel" },
   );
+  // D2: a URL-less addressed move is the tokenless join, not `no-url`.
   assert.deepEqual(
     decide({ ...OFF_CALL, url: "   ", ...droppedFrom(FROM, 250) }),
-    { action: "fail-loud", reason: "no-url" },
+    { action: "join", to: TO },
   );
 });
 
@@ -449,6 +493,8 @@ test("🔴 step 5 never answers `move`, on any spoiling of the rest of the world
     { url: undefined },
     { url: ` ${NODE_URL} ` },
     { token: "" },
+    { token: undefined, tokenForThisConnection: false },
+    { url: undefined, token: undefined, tokenForThisConnection: false },
     { callState: "IDLE" },
     { currentChannelId: ELSEWHERE },
   ]) {
@@ -518,9 +564,10 @@ test("🔴 step 6 — a marker past the verified window is a stale-notice, on BO
 
 test("🔴 step 6 never answers `move`, and outranks the feasibility answers", () => {
   // The same two duties step 5 carries. A session past the acceptance window
-  // must not redeem a dead token, and must not be told `unknown-channel` or
-  // `no-url` either — those read as "you were moved and something broke",
-  // when what is true is that the notice arrived too late to follow.
+  // must not redeem a dead token, and must not be told `unknown-channel` —
+  // that reads as "you were moved and something broke", when what is true is
+  // that the notice arrived too late to follow. Nor may it take the tokenless
+  // `join`: too late is too late, with or without a token.
   for (const spoiled of [
     {},
     { destinationKnown: false },
@@ -528,6 +575,7 @@ test("🔴 step 6 never answers `move`, and outranks the feasibility answers", (
     { url: "   " },
     { destinationKnown: false, url: undefined },
     { token: "" },
+    { token: undefined, tokenForThisConnection: false },
   ])
     for (const devices of [{}, UNVERIFIED]) {
       const decision = decide({
@@ -609,9 +657,12 @@ test("🔴 the web-handoff forgery is refused: an unverified idle seat never MOV
     currentChannelId: FROM,
     ...UNVERIFIED,
   });
+  // FE2A-2: the idle web seat's bare token even names its own identity —
+  // `{user}` is every bare seat's identity — and that is still not enough.
   const idleWebSeat = decide({
     ...OFF_CALL,
     ...UNVERIFIED,
+    tokenForThisConnection: true,
     ...droppedFrom(FROM, 500),
   });
   // The seat actually in `from` moves: with a bare identity step 3 is EXACT,
@@ -870,18 +921,20 @@ test("🔴 a session in another channel outranks both failure reasons too", () =
   );
 });
 
-test("🔴 step 5 outranks unknown-channel and no-url", () => {
-  // PRECEDENCE, and it decides WHICH loud answer the user gets. A session
-  // that cannot prove it was the target must not be told why it failed to
-  // carry out a move it was never allowed to carry out: `unknown-channel` and
-  // `no-url` both read as "you were moved and something broke", which for an
-  // idle seat holding a handoff's marker is a lie. The reason must stay the
-  // one that is true — we cannot tell whether this was you.
+test("🔴 step 5 outranks unknown-channel and the tokenless join", () => {
+  // PRECEDENCE, and it decides WHICH answer the user gets. A session that
+  // cannot prove it was the target must not be told why it failed to carry
+  // out a move it was never allowed to carry out: `unknown-channel` reads as
+  // "you were moved and something broke", which for an idle seat holding a
+  // handoff's marker is a lie. Nor may it take the tokenless `join`, which
+  // would be the same forgery by the regular join route. The reason must stay
+  // the one that is true — we cannot tell whether this was you.
   for (const spoiled of [
     { destinationKnown: false },
     { url: undefined },
     { url: "   " },
     { destinationKnown: false, url: undefined },
+    { token: undefined, tokenForThisConnection: false },
   ])
     assert.deepEqual(
       decide({
@@ -894,23 +947,29 @@ test("🔴 step 5 outranks unknown-channel and no-url", () => {
     );
 });
 
-test("unknown-channel is reported before no-url", () => {
-  // Both spoiled: the more specific answer wins, and a client that cannot
-  // resolve the channel would not have a node URL to resolve either.
-  assert.deepEqual(decide({ destinationKnown: false, url: undefined }), {
-    action: "fail-loud",
-    reason: "unknown-channel",
-  });
+test("unknown-channel is reported before the tokenless join", () => {
+  // Both spoiled: the more specific answer wins. A client that cannot
+  // resolve the channel has nothing to join either, with or without a token.
+  for (const spoiled of [
+    { url: undefined },
+    { token: undefined },
+    { url: undefined, token: undefined },
+  ])
+    assert.deepEqual(decide({ destinationKnown: false, ...spoiled }), {
+      action: "fail-loud",
+      reason: "unknown-channel",
+    });
 });
 
-test("an absent, empty or whitespace-only URL fails loud as no-url", () => {
-  // A blank node URL reaches `room.connect()` as a malformed endpoint and
-  // fails far from here with an SDK error that names nothing.
+test("D2 — an absent, empty or whitespace-only URL takes the tokenless join, not no-url", () => {
+  // Retargeted from `no-url` by FE-2 ruling D2. A blank node URL still must
+  // not reach `room.connect()` — it is a malformed endpoint that fails far
+  // from here with an SDK error that names nothing — but the server has
+  // already moved the user, and the regular join route reaches the
+  // destination without the event's URL. The `join` carries `to` and
+  // NOTHING else: no URL, and above all no token.
   for (const url of [undefined, "", "   ", "\t\n"]) {
-    assert.deepEqual(decide({ url }), {
-      action: "fail-loud",
-      reason: "no-url",
-    });
+    assert.deepEqual(decide({ url }), { action: "join", to: TO });
   }
 });
 
@@ -932,16 +991,23 @@ test("a padded but non-empty URL is passed through verbatim, not trimmed", () =>
   });
 });
 
-test("an empty token still moves — emptiness is the server's to report", () => {
-  // Only the URL is checked for usability. A token this client cannot judge
-  // is rejected by the SFU with a real reason; guessing here would turn an
-  // authoritative refusal into a vague local one.
-  assert.deepEqual(decide({ token: "" }), {
-    action: "move",
-    url: NODE_URL,
-    token: "",
-    to: TO,
-  });
+test("D2 — an absent or empty token takes the tokenless join; it is no longer handed to the SFU", () => {
+  // Retargeted from "an empty token still moves" by FE-2 ruling D2. The
+  // merged backend leaves the token out whenever it cannot tie one to the
+  // recorded seat, so an absent token is the server's ordinary answer, not a
+  // malformed one: the addressed session joins `to` through the regular join
+  // route, which mints its own credential and checks the binding itself. An
+  // empty string is the same absence (stoat.js normalizes it to `undefined`,
+  // and this module does not rely on that).
+  for (const token of [undefined, ""]) {
+    assert.deepEqual(decide({ token }), { action: "join", to: TO });
+    // Whatever the token-for-this-connection flag claims: it cannot conjure
+    // a credential that is not there.
+    assert.deepEqual(decide({ token, tokenForThisConnection: true }), {
+      action: "join",
+      to: TO,
+    });
+  }
 });
 
 // --- The per-connection nonce --------------------------------------------
@@ -1181,14 +1247,17 @@ test("🔴 G1 — a nonce on ONE side only leaves the old answer exactly as it w
 
 test("🔴 moved-elsewhere outranks the feasibility answers and never moves", () => {
   // It sits on the addressing side of the line: a session that was positively
-  // NOT the target must not be told `unknown-channel` or `no-url`, which read
-  // as "you were moved and something broke".
+  // NOT the target must not be told `unknown-channel`, which reads as "you
+  // were moved and something broke", nor take the tokenless `join`, nor be
+  // told the destination is gated (it was never going to go there).
   for (const spoiled of [
     { destinationKnown: false },
     { url: undefined },
     { url: "   " },
     { destinationKnown: false, url: undefined },
     { token: "" },
+    { token: undefined, tokenForThisConnection: false },
+    { destinationGated: true },
   ])
     for (const shape of [
       { sessionConnNonce: OTHER_NONCE },
@@ -1339,9 +1408,13 @@ test("🔴 S-a (ii) — a rejoin still DIALING `from` moves when the event names
   });
   for (const url of [undefined, "", "  "])
     assert.deepEqual(decide({ ...dialing(250), url }), {
-      action: "fail-loud",
-      reason: "no-url",
+      action: "join",
+      to: TO,
     });
+  assert.deepEqual(decide({ ...dialing(250), token: undefined }), {
+    action: "join",
+    to: TO,
+  });
 });
 
 test("🔴 S-a (ii) — adversarial: only THIS session's own dialing connection is addressed", () => {
@@ -1451,8 +1524,8 @@ test("🔴 S-a (v) — a CONNECTED rejoin answers a late event naming the ghost 
     reason: "unknown-channel",
   });
   assert.deepEqual(decide({ ...rejoined(250), url: "  " }), {
-    action: "fail-loud",
-    reason: "no-url",
+    action: "join",
+    to: TO,
   });
   // …and the stale arm outranks it, as step 6 does.
   assert.deepEqual(
@@ -1542,6 +1615,568 @@ test("🔴 S-a never outranks already-there, and never touches an EQUAL-nonce an
   );
 });
 
+// --- FE-2: the token proof, the tokenless arm and the gated destination -----
+//
+// `seat(identity, tokenSub)` models what `state.tsx` resolves for a seat: the
+// identity this connection last joined as (`{user}` or `{user}:{device}`),
+// and the `sub` claim of the token the event carries (`undefined` when it
+// carries none). The event names a device exactly when the token is a device
+// token (the server derives both from the same recorded seat). This is a
+// fixture for the INPUTS, not a restatement of the rule under test.
+
+const USER = "01JUSERAAAAAAAAAAAAAAAAAAA";
+const DEVICE_ID = `${USER}:${DEVICE}`;
+const OTHER_DEVICE_ID = `${USER}:${OTHER_DEVICE}`;
+
+const seat = (identity: string, tokenSub: string | undefined) => ({
+  sessionDeviceId: identity.includes(":") ? identity.split(":")[1] : undefined,
+  deviceId: tokenSub?.includes(":") ? tokenSub.split(":")[1] : undefined,
+  token: tokenSub === undefined ? undefined : TOKEN,
+  tokenForThisConnection: tokenSub !== undefined && tokenSub === identity,
+  lastIdentityIsDevice: identity.includes(":"),
+});
+
+const UNVERIFIED_SESSION: MoveDecision = {
+  action: "fail-loud",
+  reason: "unverified-session",
+};
+const JOINED: MoveDecision = { action: "join", to: TO };
+const GATED: MoveDecision = {
+  action: "fail-loud",
+  reason: "gated-destination",
+};
+
+test("🔴 FE2A-2 — a fresh marker on a BARE identity with a matching bare token and no nonce is unverified-session", () => {
+  // The amended D1, and the reason it was amended. The merged backend sends
+  // no `conn_nonce` and no `device_id` with a bare mint, so the nonce gate is
+  // off on every bare seat, and a bare token's `sub` is `{user}` — the
+  // identity EVERY bare seat of this user shares. A bare seat kicked by a
+  // handoff a moment before the move holds a fresh marker and a token whose
+  // `sub` equals its own last identity. Letting that address it would follow
+  // the move with a live microphone: the F1-class double redemption.
+  for (const callState of ["DISCONNECTED", "RECONNECTING", "CONNECTING"])
+    for (const ago of [0, 250, MOVE_VERIFIED_WINDOW_MS - 1]) {
+      const world = {
+        callState,
+        currentChannelId: callState === "DISCONNECTED" ? undefined : FROM,
+        ...seat(USER, USER),
+        ...droppedFrom(FROM, ago),
+      };
+      // The fixture really is the "matching bare token" shape.
+      assert.equal(world.tokenForThisConnection, true);
+      assert.equal(world.lastIdentityIsDevice, false);
+      assert.deepEqual(
+        decide(world),
+        UNVERIFIED_SESSION,
+        `${callState} ${ago}`,
+      );
+    }
+});
+
+test("🔴 FE2A-2 — a fresh marker with a device token for `U:D` on identity `U:D` and no nonce MOVES", () => {
+  // The device seat the rule is for: the token names exactly the identity
+  // this connection joined as, and that identity names a device. This is
+  // the old device match plus a credential this session can redeem.
+  for (const callState of ["DISCONNECTED", "RECONNECTING"])
+    assert.deepEqual(
+      decide({
+        callState,
+        currentChannelId: callState === "DISCONNECTED" ? undefined : FROM,
+        ...seat(DEVICE_ID, DEVICE_ID),
+        ...droppedFrom(FROM, 250),
+      }),
+      MOVED,
+      callState,
+    );
+});
+
+test("🔴 FE2A-10 — a fresh marker with a BARE token on identity `U:D`, no nonce and no device, is unverified-session", () => {
+  // The token names `{user}`; this connection joined as `{user}:{device}`.
+  // It is not this connection's credential, and redeeming it would present
+  // an identity this session did not join as. Loud, and no microphone.
+  const world = {
+    ...OFF_CALL,
+    ...seat(DEVICE_ID, USER),
+    ...droppedFrom(FROM, 250),
+  };
+  assert.equal(world.deviceId, undefined);
+  assert.equal(world.tokenForThisConnection, false);
+  assert.deepEqual(decide(world), UNVERIFIED_SESSION);
+});
+
+test("🔴 FE2A-10 / FE2WA-9 — CONNECTED to `from` with a BARE token on a device identity is the tokenless `join`", () => {
+  // Step 3 is exact on its own, so the connected seat is addressed whatever
+  // the token says. But the token is NOT this connection's credential: it
+  // names `{user}`, this connection joined as `{user}:{device}`. Ruling
+  // FE2WA-9 (fail-closed): such a token is never passed through, so the seat
+  // follows through the regular join route as the identity it holds.
+  // (`state.tsx`'s M3 check would drop it too; this module no longer
+  // depends on that.) Rewritten from the FE2A-10 expectation of `move`.
+  assert.deepEqual(decide({ ...seat(DEVICE_ID, USER) }), JOINED);
+  // Every addressed shape, not just step 3: a foreign token on the Na and
+  // Nb (verified) arms joins too, and never reaches the SFU.
+  for (const world of [dialing(250), rejoined(250)])
+    assert.deepEqual(
+      decide({ ...world, tokenForThisConnection: false }),
+      JOINED,
+      JSON.stringify(world),
+    );
+  // And its own token, with a URL, is still the token arm.
+  assert.deepEqual(decide({ ...seat(DEVICE_ID, DEVICE_ID) }), MOVED);
+});
+
+test("🔴 FE2WA-2 — the step-4 proof needs an ACTUAL token: a 'for this connection' flag with no token is unverified-session", () => {
+  // Fresh marker, device-qualified identity, the flag claiming the token is
+  // this connection's — and no token at all, or an empty one. There is no
+  // credential to have been minted for anyone, so nothing proves the marker:
+  // loud, no microphone, and in particular NOT the tokenless join that a
+  // proof-less marker would otherwise buy.
+  for (const token of [undefined, ""])
+    for (const callState of ["DISCONNECTED", "RECONNECTING"])
+      for (const ago of [0, 250, MOVE_VERIFIED_WINDOW_MS - 1]) {
+        const decision = decide({
+          callState,
+          currentChannelId: callState === "DISCONNECTED" ? undefined : FROM,
+          token,
+          tokenForThisConnection: true,
+          lastIdentityIsDevice: true,
+          ...NO_NONCES,
+          ...droppedFrom(FROM, ago),
+        });
+        const where = `${JSON.stringify(token)} ${callState} ${ago}`;
+        assert.notEqual(decision.action, "join", where);
+        assert.deepEqual(decision, UNVERIFIED_SESSION, where);
+      }
+  // The nonce still addresses a tokenless marker: THAT is the tokenless
+  // join off a marker, and it is proved by the connection, not the flag.
+  assert.deepEqual(
+    decide({
+      ...OFF_CALL,
+      token: undefined,
+      tokenForThisConnection: true,
+      connNonce: NONCE,
+      lastInvoluntaryConnNonce: NONCE,
+      ...droppedFrom(FROM, 250),
+    }),
+    JOINED,
+  );
+});
+
+test("🔴 FE2WA-3 — a marker or replaced drop stamped in the FUTURE is not fresh: stale-notice, never a move", () => {
+  // The wall clock stepped back after the drop, so `now - leftAt` is
+  // negative and the drop's real age is unknown. Ported from voice-move's
+  // "a removal stamped in the future does not obey": it must not buy an
+  // automatic move on a token of unknown age. It is still a marker for
+  // `from` under the notice bound, so it is told (`stale-notice`) rather
+  // than silenced — fail closed, not quiet.
+  for (const ago of [-1, -250, -MOVE_VERIFIED_WINDOW_MS, -3_600_000]) {
+    // The marker, on both populations and on the nonce-proved shape.
+    for (const shape of [
+      { ...OFF_CALL },
+      { ...OFF_CALL, ...UNVERIFIED },
+      { callState: "RECONNECTING", currentChannelId: FROM },
+      {
+        ...OFF_CALL,
+        ...UNVERIFIED,
+        connNonce: NONCE,
+        lastInvoluntaryConnNonce: NONCE,
+      },
+    ])
+      assert.deepEqual(
+        decide({ ...shape, ...droppedFrom(FROM, ago) }),
+        STALE_NOTICE,
+        `${ago} ${JSON.stringify(shape)}`,
+      );
+    // The Nb replaced drop, on the marker's own terms.
+    assert.deepEqual(decide(rejoined(ago)), STALE_NOTICE, String(ago));
+  }
+  // Age zero is fresh; the boundary is `>= 0`, not `> 0`.
+  assert.deepEqual(decide({ ...OFF_CALL, ...droppedFrom(FROM, 0) }), MOVED);
+  assert.deepEqual(decide(rejoined(0)), MOVED);
+});
+
+test("🔴 FE2WA-4 — an empty `from` never acts, even against an empty channel or marker", () => {
+  // Ported from voice-move's "an empty `from` never obeys, even against an
+  // empty live channel". An empty `from` names no channel, so no session was
+  // in it; it answers step 7's silent ignore, whatever else would match.
+  const empty = { from: "" };
+  for (const [shape, reason] of [
+    [{ callState: "CONNECTED", currentChannelId: "" }, "other-channel"],
+    [{ callState: "CONNECTED", currentChannelId: FROM }, "other-channel"],
+    [{ ...OFF_CALL, ...droppedFrom("", 250) }, "not-in-call"],
+    [
+      {
+        callState: "RECONNECTING",
+        currentChannelId: "",
+        ...droppedFrom("", 0),
+      },
+      "not-in-call",
+    ],
+    // Every nonce and S-a label matching, which would otherwise address it.
+    [
+      {
+        ...OFF_CALL,
+        ...droppedFrom("", 250),
+        connNonce: NONCE,
+        lastInvoluntaryConnNonce: NONCE,
+      },
+      "not-in-call",
+    ],
+    [{ ...rejoined(250), currentChannelId: "" }, "other-channel"],
+    // Nothing else can speak first, `already-there` and `other-device`
+    // included.
+    [{ callState: "CONNECTED", currentChannelId: "", to: "" }, "other-channel"],
+    [{ ...OFF_CALL, sessionDeviceId: OTHER_DEVICE }, "not-in-call"],
+  ] as [Partial<MoveWorld>, string][])
+    assert.deepEqual(
+      decide({ ...shape, ...empty }),
+      { action: "ignore", reason },
+      JSON.stringify(shape),
+    );
+});
+
+test("🔴 voice-move's PARTICIPANT_REMOVED-only filter is retired: the nonce gate tells the moved connection from a kicked sibling", () => {
+  // voice-move obeyed a dropped session only when the SDK's disconnect
+  // reason was `PARTICIPANT_REMOVED`. `state.tsx` records the involuntary
+  // drop marker for EVERY reason instead (a removal can arrive with no
+  // reason and fail open into a rejoin of the old channel), so this module
+  // is handed no reason at all. What separates a sibling kicked by the
+  // user's own other session from the moved connection is the nonce — and,
+  // with no nonce, the token proof (the F1 tests above).
+  const dropped = { ...OFF_CALL, ...droppedFrom(FROM, 250), connNonce: NONCE };
+  assert.deepEqual(
+    decide({ ...dropped, lastInvoluntaryConnNonce: OTHER_NONCE }),
+    MOVED_ELSEWHERE,
+  );
+  assert.deepEqual(
+    decide({ ...dropped, lastInvoluntaryConnNonce: NONCE }),
+    MOVED,
+  );
+  // And there is no reason input to consult: no `MoveWorld` field names a
+  // reason, and the module's code (comments stripped) never mentions the
+  // SDK's disconnect reasons.
+  const source = stripComments(
+    readFileSync(new URL("./movePolicy.ts", import.meta.url), "utf8"),
+  );
+  const world =
+    /export interface MoveWorld \{([\s\S]*?)\n\}/.exec(source)?.[1] ?? "";
+  assert.ok(world.includes("tokenForThisConnection:"), "MoveWorld not found");
+  assert.doesNotMatch(world, /reason/i);
+  assert.doesNotMatch(source, /PARTICIPANT_REMOVED|DisconnectReason/);
+});
+
+test("🔴 a marker needs the TOKEN proof when no nonce applies: marker + no token is unverified-session", () => {
+  // A device seat the server minted nothing for: a device match with
+  // nothing to redeem. On the marker path the only way on would be a
+  // tokenless join off an unproven marker, which is the handoff forgery.
+  // The event still names this device (after `seat`, which would clear it).
+  const world = {
+    ...OFF_CALL,
+    ...seat(DEVICE_ID, undefined),
+    deviceId: DEVICE,
+    ...droppedFrom(FROM, 250),
+  };
+  // Under the pre-FE-2 ladder this device match MOVED; that is the change.
+  assert.equal(world.deviceId, world.sessionDeviceId);
+  assert.deepEqual(decide(world), UNVERIFIED_SESSION);
+});
+
+test("🔴 a bare seat with a matching bare token moves off a marker ONLY under a matching nonce", () => {
+  // §2's "marker + bare matching token -> move", as FE2A-2 leaves it: the
+  // token alone is refused (above); the nonce gate is what addresses a bare
+  // seat off a marker, and it replaces the token proof when it is active.
+  const bare = {
+    ...OFF_CALL,
+    ...seat(USER, USER),
+    ...droppedFrom(FROM, 250),
+  };
+  assert.deepEqual(decide(bare), UNVERIFIED_SESSION);
+  assert.deepEqual(
+    decide({ ...bare, connNonce: NONCE, lastInvoluntaryConnNonce: NONCE }),
+    MOVED,
+  );
+  assert.deepEqual(
+    decide({
+      ...bare,
+      connNonce: NONCE,
+      lastInvoluntaryConnNonce: OTHER_NONCE,
+    }),
+    { action: "fail-loud", reason: "moved-elsewhere" },
+  );
+});
+
+test("🔴 the tokenless `join` in every addressed shape", () => {
+  // CONNECTED to `from`, device and bare: the in-call seat follows with or
+  // without a credential.
+  for (const identity of [DEVICE_ID, USER]) {
+    assert.deepEqual(decide({ ...seat(identity, undefined) }), JOINED);
+    assert.deepEqual(decide({ ...seat(identity, identity), url: "" }), JOINED);
+  }
+  // Marker + matching nonce, on a bare seat the server minted no token for.
+  const markerNonce = {
+    ...OFF_CALL,
+    ...seat(USER, undefined),
+    connNonce: NONCE,
+    lastInvoluntaryConnNonce: NONCE,
+    ...droppedFrom(FROM, 250),
+  };
+  assert.deepEqual(decide(markerNonce), JOINED);
+  // Marker + token proof, with no URL to dial the token at.
+  const markerToken = {
+    ...OFF_CALL,
+    ...seat(DEVICE_ID, DEVICE_ID),
+    ...droppedFrom(FROM, 250),
+  };
+  assert.deepEqual(decide(markerToken), MOVED);
+  for (const url of [undefined, "", "  "])
+    assert.deepEqual(decide({ ...markerToken, url }), JOINED);
+  // …but a marker with NO token and no nonce is not addressed at all.
+  assert.deepEqual(
+    decide({ ...markerToken, ...seat(DEVICE_ID, undefined) }),
+    UNVERIFIED_SESSION,
+  );
+});
+
+test("🔴 F1 (voice-move) — a device kicked by the user's own other session does not follow that session's move", () => {
+  // `join_call` with `force_disconnect` from the user's other session removes
+  // this one, which then holds a fresh marker for `from` through nobody's
+  // move. A move for the OTHER session carries a token for THAT session's
+  // identity, never this one's. Following it would rejoin with the mic live
+  // and kick the session the user is actually in. Every shape of "this seat"
+  // x "the other seat's token", at every fresh age, on both the dropped and
+  // the fail-open rejoin shape: never a move, never a tokenless join.
+  const cases: [string, string | undefined, MoveDecision][] = [
+    // Another device's token: step 1 excludes it, silently.
+    [DEVICE_ID, OTHER_DEVICE_ID, { action: "ignore", reason: "other-device" }],
+    [USER, OTHER_DEVICE_ID, { action: "ignore", reason: "other-device" }],
+    // A bare token on a device seat: not this connection's credential.
+    [DEVICE_ID, USER, UNVERIFIED_SESSION],
+    // A bare token on a bare seat: the shared `{user}` (FE2A-2).
+    [USER, USER, UNVERIFIED_SESSION],
+    // No token at all: nothing proves the marker.
+    [DEVICE_ID, undefined, UNVERIFIED_SESSION],
+    [USER, undefined, UNVERIFIED_SESSION],
+  ];
+  for (const [identity, tokenSub, expected] of cases)
+    for (const callState of ["DISCONNECTED", "RECONNECTING"])
+      for (const ago of [0, 250, MOVE_VERIFIED_WINDOW_MS - 1]) {
+        const decision = decide({
+          callState,
+          currentChannelId: callState === "DISCONNECTED" ? undefined : FROM,
+          ...seat(identity, tokenSub),
+          ...droppedFrom(FROM, ago),
+        });
+        const where = `${identity} ${tokenSub} ${callState} ${ago}`;
+        assert.notEqual(decision.action, "move", where);
+        assert.notEqual(decision.action, "join", where);
+        assert.deepEqual(decision, expected, where);
+      }
+});
+
+test("🔴 F1 (voice-move) — RECONNECTING into the source follows only with a token for this connection", () => {
+  // The fail-open rejoin shape. With the proof it follows; without it, it is
+  // loud and publishes nothing — including the device match that USED to
+  // move here with no usable token.
+  const reconnecting = {
+    callState: "RECONNECTING",
+    currentChannelId: FROM,
+    ...droppedFrom(FROM, 1_000),
+  };
+  assert.deepEqual(
+    decide({ ...reconnecting, ...seat(DEVICE_ID, DEVICE_ID) }),
+    MOVED,
+  );
+  // The event still names this device, so the old device match holds; the
+  // token is absent or bare, so the new proof does not.
+  for (const tokenSub of [undefined, USER]) {
+    const world = {
+      ...reconnecting,
+      ...seat(DEVICE_ID, tokenSub),
+      deviceId: DEVICE,
+    };
+    assert.equal(world.deviceId, world.sessionDeviceId);
+    assert.deepEqual(decide(world), UNVERIFIED_SESSION, String(tokenSub));
+  }
+});
+
+test("🔴 F1 (voice-move) — by state and token: CONNECTED always follows, a marker only with the proof", () => {
+  // A fresh marker for `from` and `currentChannelId === from` in every state.
+  // CONNECTED retires the marker and is step 3 (addressed, token or not —
+  // but a token that is not this connection's is never passed through, so
+  // it follows by the tokenless join, FE2WA-9); every other state is the
+  // marker shape, addressed only with the proof.
+  for (const callState of [
+    "READY",
+    "DISCONNECTED",
+    "CONNECTING",
+    "CONNECTED",
+    "RECONNECTING",
+  ])
+    for (const tokenForThisConnection of [false, true]) {
+      const decision = decide({
+        callState,
+        currentChannelId: FROM,
+        tokenForThisConnection,
+        ...droppedFrom(FROM, 250),
+      });
+      assert.deepEqual(
+        decision,
+        tokenForThisConnection
+          ? MOVED
+          : callState === "CONNECTED"
+            ? JOINED
+            : UNVERIFIED_SESSION,
+        `${callState} token=${tokenForThisConnection}`,
+      );
+    }
+});
+
+test("🔴 gated-destination — the full precedence table", () => {
+  // The gate answers every addressed shape after `unknown-channel`, AND it
+  // replaces the three loud arms that would card the destination (step 5,
+  // step 6, the Nb stale arm): a card's Rejoin joins straight past the gate.
+  // It never outranks an ignore, `already-there`, `moved-elsewhere` or
+  // `unknown-channel`, and it is never read for an unknown destination.
+  // Each row: [shape, answer ungated, answer gated].
+  const stale = {
+    ...OFF_CALL,
+    ...droppedFrom(FROM, STALE_MS),
+  };
+  const rows: [string, Partial<MoveWorld>, MoveDecision, MoveDecision][] = [
+    // Addressed: the feasibility tail.
+    ["step 3, token arm", {}, MOVED, GATED],
+    ["step 3, tokenless", { token: undefined }, JOINED, GATED],
+    ["step 3, no URL", { url: undefined }, JOINED, GATED],
+    [
+      "step 4, token proof",
+      { ...OFF_CALL, ...droppedFrom(FROM, 250) },
+      MOVED,
+      GATED,
+    ],
+    [
+      "step 4, matching nonce",
+      {
+        ...OFF_CALL,
+        ...UNVERIFIED,
+        connNonce: NONCE,
+        lastInvoluntaryConnNonce: NONCE,
+        ...droppedFrom(FROM, 250),
+      },
+      MOVED,
+      GATED,
+    ],
+    ["Na, dialing", dialing(250), MOVED, GATED],
+    ["Nb, verified", rejoined(250), MOVED, GATED],
+    // The carding loud arms.
+    [
+      "step 5",
+      { ...OFF_CALL, ...UNVERIFIED, ...droppedFrom(FROM, 250) },
+      UNVERIFIED_SESSION,
+      GATED,
+    ],
+    ["step 6, device seat", stale, STALE_NOTICE, GATED],
+    ["step 6, bare seat", { ...stale, ...UNVERIFIED }, STALE_NOTICE, GATED],
+    [
+      "step 6, matching nonce",
+      { ...stale, connNonce: NONCE, lastInvoluntaryConnNonce: NONCE },
+      STALE_NOTICE,
+      GATED,
+    ],
+    ["Nb, stale", rejoined(STALE_MS), STALE_NOTICE, GATED],
+    // Never outranked: an unknown destination has nothing to gate.
+    [
+      "unknown-channel",
+      { destinationKnown: false },
+      { action: "fail-loud", reason: "unknown-channel" },
+      { action: "fail-loud", reason: "unknown-channel" },
+    ],
+    [
+      "step 5, destination unknown",
+      {
+        ...OFF_CALL,
+        ...UNVERIFIED,
+        destinationKnown: false,
+        ...droppedFrom(FROM, 250),
+      },
+      UNVERIFIED_SESSION,
+      UNVERIFIED_SESSION,
+    ],
+    [
+      "step 6, destination unknown",
+      { ...stale, destinationKnown: false },
+      STALE_NOTICE,
+      STALE_NOTICE,
+    ],
+    // Never outranked: the arms that do not name the destination.
+    [
+      "moved-elsewhere, connected",
+      { connNonce: NONCE, sessionConnNonce: OTHER_NONCE },
+      MOVED_ELSEWHERE,
+      MOVED_ELSEWHERE,
+    ],
+    [
+      "moved-elsewhere, stale marker",
+      { ...stale, connNonce: NONCE, lastInvoluntaryConnNonce: OTHER_NONCE },
+      MOVED_ELSEWHERE,
+      MOVED_ELSEWHERE,
+    ],
+    [
+      "moved-elsewhere, Nb past the notice window",
+      rejoined(MOVE_NOTICE_WINDOW_MS),
+      MOVED_ELSEWHERE,
+      MOVED_ELSEWHERE,
+    ],
+    [
+      "already-there",
+      { from: FROM, to: FROM },
+      { action: "ignore", reason: "already-there" },
+      { action: "ignore", reason: "already-there" },
+    ],
+    [
+      "already-there, fresh marker",
+      { ...OFF_CALL, ...droppedFrom(FROM, 250), to: FROM },
+      { action: "ignore", reason: "already-there" },
+      { action: "ignore", reason: "already-there" },
+    ],
+    [
+      "other-device",
+      { sessionDeviceId: OTHER_DEVICE },
+      { action: "ignore", reason: "other-device" },
+      { action: "ignore", reason: "other-device" },
+    ],
+    [
+      "other-channel",
+      { currentChannelId: ELSEWHERE },
+      { action: "ignore", reason: "other-channel" },
+      { action: "ignore", reason: "other-channel" },
+    ],
+    [
+      "not-in-call",
+      OFF_CALL,
+      { action: "ignore", reason: "not-in-call" },
+      { action: "ignore", reason: "not-in-call" },
+    ],
+    [
+      "not-in-call, marker past the notice window",
+      { ...OFF_CALL, ...droppedFrom(FROM, MOVE_NOTICE_WINDOW_MS) },
+      { action: "ignore", reason: "not-in-call" },
+      { action: "ignore", reason: "not-in-call" },
+    ],
+  ];
+  for (const [name, shape, ungated, gated] of rows) {
+    assert.deepEqual(
+      decide({ ...shape, destinationGated: false }),
+      ungated,
+      `${name}, ungated`,
+    );
+    assert.deepEqual(
+      decide({ ...shape, destinationGated: true }),
+      gated,
+      `${name}, gated`,
+    );
+  }
+});
+
 // --- The sweep ------------------------------------------------------------
 
 /** A world without its three nonce fields, which the sweeps add per shape. */
@@ -1559,6 +2194,23 @@ type BaseWorld = Omit<
  * S-a's three fields are yielded ABSENT (`NO_SA`), so every sweep that does
  * not add them walks exactly the worlds it walked at 16734940. The S-a
  * sweeps overlay `SA_SHAPES` on top.
+ *
+ * 🔴 FE-2's three new inputs are yielded as the LEGACY EMBEDDING: the values
+ * under which the new ladder is fed exactly what the old one read. The token
+ * is always present and always minted for this connection, so the token arm
+ * passes it through as the old ladder did (FE2WA-9's check is true and drops
+ * out); the identity is device-qualified exactly when the device matched, so
+ * step 4's proof (`token && tokenForThisConnection && lastIdentityIsDevice`)
+ * is the old device match; and no gate. The only tokenless answers the
+ * embedding can produce come from a blank URL, which the old ladder answered
+ * `no-url`. `legacyKey` reads that back. The new dimensions are swept
+ * separately, on top of this embedding, by the traced FE-2 test below.
+ *
+ * The embedding was `tokenForThisConnection = deviceMatches`,
+ * `lastIdentityIsDevice = true` until FE2WA-9 made the token arm read
+ * `tokenForThisConnection` too: under that mapping a device-mismatched
+ * CONNECTED seat would now `join` where the old ladder moved, so the mapping
+ * moved to the other conjunct. The inputs changed; the fingerprints did not.
  */
 function* sweepWorlds(): Generator<BaseWorld> {
   const markers = [
@@ -1605,6 +2257,12 @@ function* sweepWorlds(): Generator<BaseWorld> {
                   ...device,
                   ...marker,
                   ...NO_SA,
+                  // The legacy embedding (see above).
+                  tokenForThisConnection: true,
+                  lastIdentityIsDevice:
+                    device.deviceId !== undefined &&
+                    device.deviceId === device.sessionDeviceId,
+                  destinationGated: false,
                 };
 }
 
@@ -1612,7 +2270,17 @@ function* sweepWorlds(): Generator<BaseWorld> {
 const answerKey = (d: MoveDecision) =>
   d.action === "move"
     ? `move|${d.url}|${d.token}|${d.to}`
-    : `${d.action}|${d.reason}`;
+    : d.action === "join"
+      ? `join|${d.to}`
+      : `${d.action}|${d.reason}`;
+
+/**
+ * An answer as the pre-FE-2 ladders spelled it. Under the legacy embedding
+ * the one answer they did not have, the tokenless `join`, comes only from a
+ * blank URL, and that is exactly what they answered `no-url` (ruling D2).
+ */
+const legacyKey = (d: MoveDecision) =>
+  d.action === "join" ? "fail-loud|no-url" : answerKey(d);
 
 /** Nonce shapes under which the gate is INACTIVE on every clause. */
 const INACTIVE_NONCES = [
@@ -1731,13 +2399,88 @@ const OLD_LADDER_HISTOGRAM = {
   [`move|${NODE_URL}|${TOKEN}|${TO}`]: 51,
 };
 
-test("the decision is exhaustive — every world answers with one of three actions", () => {
+/**
+ * D2's one rename, applied to a pre-FE-2 histogram: every `no-url` becomes
+ * the tokenless `join` to `TO` (the only destination an addressed sweep world
+ * has, since `to: FROM` is `already-there`), count for count. Nothing else in
+ * a legacy-embedding histogram may differ; see `legacyKey`.
+ */
+function renamedByD2(histogram: Record<string, number>) {
+  const renamed: Record<string, number> = {};
+  for (const [key, count] of Object.entries(histogram))
+    renamed[key === "fail-loud|no-url" ? `join|${TO}` : key] = count;
+  return renamed;
+}
+
+/**
+ * The 66c575a8 histogram as the FE-2 ladder spells it under the legacy
+ * embedding. REGENERATED FOR FE-2, and traced rather than re-captured: the
+ * test "FE-2 regenerated histograms" asserts it is exactly
+ * `renamedByD2(OLD_LADDER_HISTOGRAM)`, and the fingerprint test asserts the
+ * sweep produces it while reproducing the 66c575a8 fingerprint.
+ */
+const OLD_LADDER_HISTOGRAM_FE2 = {
+  "fail-loud|stale-notice": 864,
+  "fail-loud|unknown-channel": 204,
+  "fail-loud|unverified-session": 384,
+  "ignore|already-there": 3240,
+  "ignore|not-in-call": 1152,
+  "ignore|other-channel": 432,
+  "ignore|other-device": 4320,
+  [`join|${TO}`]: 153,
+  [`move|${NODE_URL}|${TOKEN}|${TO}`]: 51,
+};
+
+/**
+ * FE-2's three new inputs, and the token, at every value that matters,
+ * overlaid on the legacy embedding: token proof x identity kind x token
+ * present/absent/empty x gate. 2 x 2 x 3 x 2.
+ */
+const FE2_SHAPES: {
+  tokenForThisConnection: boolean;
+  lastIdentityIsDevice: boolean;
+  token: string | undefined;
+  destinationGated: boolean;
+}[] = [];
+for (const tokenForThisConnection of [false, true])
+  for (const lastIdentityIsDevice of [false, true])
+    for (const token of [TOKEN, undefined, ""])
+      for (const destinationGated of [false, true])
+        FE2_SHAPES.push({
+          tokenForThisConnection,
+          lastIdentityIsDevice,
+          token,
+          destinationGated,
+        });
+
+/**
+ * The S-a shapes the FE-2 sweeps overlay: none, Na's pending match, and Nb's
+ * replaced match inside the verified window and inside the notice window.
+ * The full `SA_SHAPES` product is not needed to reach every arm the new
+ * inputs touch, and would multiply the FE-2 sweep past 400M decisions.
+ */
+const FE2_SA_SHAPES = [
+  NO_SA,
+  { ...NO_SA, pendingConnNonce: NONCE },
+  { ...NO_SA, replacedConnNonce: NONCE, replacedLeftAt: NOW - 250 },
+  { ...NO_SA, replacedConnNonce: NONCE, replacedLeftAt: NOW - STALE_MS },
+];
+
+test("the decision is exhaustive — every world answers with one of four actions", () => {
   // Cartesian sweep, WITH the nonce dimension — S-a's pending and replaced
   // nonces and the replaced drop's age included: no combination falls off
   // the end or returns undefined. One world object per nonce shape, with the
-  // S-a fields overwritten in place, because this is 15.7M decisions.
+  // S-a fields overwritten in place, because this is 15.7M decisions. Then
+  // FE-2's new inputs, over every nonce shape.
   const actions = new Set<MoveDecision["action"]>();
   const reasons = new Set<string>();
+  const record = (decision: MoveDecision) => {
+    if (!["ignore", "fail-loud", "move", "join"].includes(decision.action))
+      assert.fail(`unexpected action ${decision.action}`);
+    actions.add(decision.action);
+    if (decision.action === "ignore" || decision.action === "fail-loud")
+      reasons.add(decision.reason);
+  };
   let worlds = 0;
   for (const base of sweepWorlds())
     for (const nonces of ALL_NONCES) {
@@ -1746,30 +2489,49 @@ test("the decision is exhaustive — every world answers with one of three actio
         world.pendingConnNonce = sa.pendingConnNonce;
         world.replacedConnNonce = sa.replacedConnNonce;
         world.replacedLeftAt = sa.replacedLeftAt;
-        const decision = moveDecision(world);
-        if (!["ignore", "fail-loud", "move"].includes(decision.action))
-          assert.fail(`unexpected action ${decision.action}`);
-        actions.add(decision.action);
-        if (decision.action !== "move") reasons.add(decision.reason);
+        record(moveDecision(world));
         worlds++;
       }
     }
-  // Not vacuous: the sweep actually walked the space it claims to.
+  // FE-2's inputs over every nonce shape, S-a absent (the traced FE-2 test
+  // below walks the S-a subset as well).
+  let fe2Worlds = 0;
+  for (const base of sweepWorlds())
+    for (const nonces of ALL_NONCES) {
+      const world: MoveWorld = { ...base, ...nonces };
+      for (const fe2 of FE2_SHAPES) {
+        world.tokenForThisConnection = fe2.tokenForThisConnection;
+        world.lastIdentityIsDevice = fe2.lastIdentityIsDevice;
+        world.token = fe2.token;
+        world.destinationGated = fe2.destinationGated;
+        record(moveDecision(world));
+        fe2Worlds++;
+      }
+    }
+  // Not vacuous: the sweeps actually walked the space they claim to.
   assert.equal(SA_SHAPES.length, 4 * 4 * 8);
   assert.equal(
     worlds,
     10_800 * (INACTIVE_NONCES.length + ACTIVE_NONCES.length) * SA_SHAPES.length,
   );
-  // All three are reachable, so the sweep is not vacuously passing on one.
-  assert.deepEqual([...actions].sort(), ["fail-loud", "ignore", "move"]);
+  assert.equal(FE2_SHAPES.length, 2 * 2 * 3 * 2);
+  assert.equal(fe2Worlds, 10_800 * ALL_NONCES.length * FE2_SHAPES.length);
+  // All four are reachable, so the sweep is not vacuously passing on one.
+  assert.deepEqual([...actions].sort(), [
+    "fail-loud",
+    "ignore",
+    "join",
+    "move",
+  ]);
   // And every named reason is reachable — a reason no world can produce is
   // either dead code or a branch that was quietly rewired. All NINE: the
-  // four `ignore` kinds and the five `fail-loud` ones. A branch pointed at a
-  // reason nothing can reach fails HERE and nowhere else.
+  // four `ignore` kinds and the five `fail-loud` ones (`no-url` retired by
+  // D2, `gated-destination` added). A branch pointed at a reason nothing can
+  // reach fails HERE and nowhere else.
   assert.deepEqual([...reasons].sort(), [
     "already-there",
+    "gated-destination",
     "moved-elsewhere",
-    "no-url",
     "not-in-call",
     "other-channel",
     "other-device",
@@ -1783,28 +2545,32 @@ test("the decision is exhaustive — every world answers with one of three actio
 test("🔴 gate INACTIVE => exactly the old ladder's answer, in every world of the sweep", () => {
   // The truth table the nonce must not disturb. First, with no nonce at all,
   // the whole sweep reproduces the OLD ladder's answers, pinned as a
-  // fingerprint captured from commit 66c575a8 rather than restated here.
+  // fingerprint captured from commit 66c575a8 rather than restated here. The
+  // sweep runs under FE-2's legacy embedding, and the fingerprint is taken
+  // over `legacyKey`, which reads D2's `join` back as the `no-url` the old
+  // ladder answered; the histogram is taken over the FE-2 spelling.
   const keys: string[] = [];
   const histogram: Record<string, number> = {};
   for (const base of sweepWorlds()) {
-    const key = answerKey(moveDecision({ ...base, ...NO_NONCES }));
-    keys.push(key);
+    const decision = moveDecision({ ...base, ...NO_NONCES });
+    const key = answerKey(decision);
+    keys.push(legacyKey(decision));
     histogram[key] = (histogram[key] ?? 0) + 1;
   }
   assert.equal(keys.length, 10_800);
   assert.equal(
     createHash("sha256").update(keys.join("\n")).digest("hex"),
     OLD_LADDER_FINGERPRINT,
-    `with no nonce, the sweep no longer answers as the 66c575a8 ladder did — histogram now ${JSON.stringify(histogram)}, was ${JSON.stringify(OLD_LADDER_HISTOGRAM)}`,
+    `with no nonce, the sweep no longer answers as the 66c575a8 ladder did — histogram now ${JSON.stringify(histogram)}, was ${JSON.stringify(OLD_LADDER_HISTOGRAM_FE2)}`,
   );
-  assert.deepEqual(histogram, OLD_LADDER_HISTOGRAM);
+  assert.deepEqual(histogram, OLD_LADDER_HISTOGRAM_FE2);
   // Second, every nonce shape that leaves the gate inactive answers exactly
   // as no nonce does, world by world. A one-sided or empty nonce is an
   // absence, never a mismatch.
   let i = 0;
   for (const base of sweepWorlds()) {
     for (const nonces of INACTIVE_NONCES) {
-      const key = answerKey(moveDecision({ ...base, ...nonces }));
+      const key = legacyKey(moveDecision({ ...base, ...nonces }));
       if (key !== keys[i])
         assert.fail(
           `an INACTIVE nonce shape changed the answer: ${JSON.stringify({ ...base, ...nonces })} answered ${key}, the old ladder ${keys[i]}`,
@@ -1882,26 +2648,78 @@ const PRE_SA_LADDER_HISTOGRAM = {
   [`move|${NODE_URL}|${TOKEN}|${TO}`]: 738,
 };
 
+/**
+ * The 16734940 histogram as the FE-2 ladder spells it under the legacy
+ * embedding. REGENERATED FOR FE-2, traced exactly like
+ * `OLD_LADDER_HISTOGRAM_FE2`: it must equal
+ * `renamedByD2(PRE_SA_LADDER_HISTOGRAM)`.
+ */
+const PRE_SA_LADDER_HISTOGRAM_FE2 = {
+  "fail-loud|moved-elsewhere": 8280,
+  "fail-loud|stale-notice": 9792,
+  "fail-loud|unknown-channel": 2952,
+  "fail-loud|unverified-session": 3072,
+  "ignore|already-there": 47640,
+  "ignore|not-in-call": 14976,
+  "ignore|other-channel": 5616,
+  "ignore|other-device": 45120,
+  [`join|${TO}`]: 2214,
+  [`move|${NODE_URL}|${TOKEN}|${TO}`]: 738,
+};
+
 test("🔴 S-a fields absent => exactly the 16734940 ladder's answer, over the whole nonce sweep", () => {
   // Stronger than the 66c575a8 pin above, which only covers the no-nonce
   // world: this one covers every nonce shape, active gates included, so the
   // refactor that S-a needed (one shared feasibility tail) is pinned to have
-  // changed no answer that S-a does not own.
+  // changed no answer that S-a does not own. Under FE-2's legacy embedding,
+  // fingerprinted over `legacyKey` like the pin above.
   const keys: string[] = [];
   const histogram: Record<string, number> = {};
   for (const base of sweepWorlds())
     for (const nonces of ALL_NONCES) {
-      const key = answerKey(moveDecision({ ...base, ...nonces, ...NO_SA }));
-      keys.push(key);
+      const decision = moveDecision({ ...base, ...nonces, ...NO_SA });
+      const key = answerKey(decision);
+      keys.push(legacyKey(decision));
       histogram[key] = (histogram[key] ?? 0) + 1;
     }
   assert.equal(keys.length, 10_800 * ALL_NONCES.length);
   assert.equal(
     createHash("sha256").update(keys.join("\n")).digest("hex"),
     PRE_SA_LADDER_FINGERPRINT,
-    `with the S-a fields absent, the nonce sweep no longer answers as the 16734940 ladder did — histogram now ${JSON.stringify(histogram)}, was ${JSON.stringify(PRE_SA_LADDER_HISTOGRAM)}`,
+    `with the S-a fields absent, the nonce sweep no longer answers as the 16734940 ladder did — histogram now ${JSON.stringify(histogram)}, was ${JSON.stringify(PRE_SA_LADDER_HISTOGRAM_FE2)}`,
   );
-  assert.deepEqual(histogram, PRE_SA_LADDER_HISTOGRAM);
+  assert.deepEqual(histogram, PRE_SA_LADDER_HISTOGRAM_FE2);
+});
+
+test("FE-2 regenerated histograms — each is the old one with D2's rename, and nothing else", () => {
+  // What changed and why, for the two regenerated literals: `no-url` is
+  // retired (ruling D2) and its worlds take the tokenless `join`, count for
+  // count. Every other bucket is carried over unchanged, because under the
+  // legacy embedding the step-4 proof reads exactly the old device match
+  // (D1/FE2A-2 change nothing there), the token is always present and this
+  // connection's (FE2WA-2 and FE2WA-9 change nothing there either), and no
+  // destination is gated. FE2WA-9 did change the embedding's INPUTS (see
+  // `sweepWorlds`) but not these numbers: they are still exactly the rename.
+  // The fingerprint tests then show the sweep really produces these.
+  assert.deepEqual(OLD_LADDER_HISTOGRAM_FE2, renamedByD2(OLD_LADDER_HISTOGRAM));
+  assert.deepEqual(
+    PRE_SA_LADDER_HISTOGRAM_FE2,
+    renamedByD2(PRE_SA_LADDER_HISTOGRAM),
+  );
+  // Not vacuous: the rename had something to rename, and removed the old
+  // key rather than adding beside it.
+  for (const [old, renamed] of [
+    [OLD_LADDER_HISTOGRAM, OLD_LADDER_HISTOGRAM_FE2],
+    [PRE_SA_LADDER_HISTOGRAM, PRE_SA_LADDER_HISTOGRAM_FE2],
+  ] as Record<string, number>[][]) {
+    assert.ok(old["fail-loud|no-url"] > 0);
+    assert.equal(renamed[`join|${TO}`], old["fail-loud|no-url"]);
+    assert.equal("fail-loud|no-url" in renamed, false);
+    assert.equal(
+      Object.values(renamed).reduce((a, b) => a + b, 0),
+      Object.values(old).reduce((a, b) => a + b, 0),
+    );
+  }
 });
 
 test("🔴 G1 under S-a — no pending, replaced or age value moves an answer while the gate is inactive", () => {
@@ -1940,10 +2758,11 @@ test("🔴 S-a widens ONLY — every changed answer was moved-elsewhere, and is 
   // is an addressed answer (a move, a feasibility failure, or the stale
   // notice), and exactly one of the two new nonces carried it — removing
   // that one restores the old answer — in the shape that nonce belongs to.
+  // FE-2: the tokenless `join` stands where `no-url` stood (D2).
   const addressed = new Set([
     `move|${NODE_URL}|${TOKEN}|${TO}`,
     "fail-loud|unknown-channel",
-    "fail-loud|no-url",
+    `join|${TO}`,
     "fail-loud|stale-notice",
   ]);
   const byPending: Record<string, number> = {};
@@ -2015,18 +2834,14 @@ test("🔴 S-a widens ONLY — every changed answer was moved-elsewhere, and is 
   assert.ok(changed > 0, "S-a changed no answer anywhere in the sweep");
   const move = `move|${NODE_URL}|${TOKEN}|${TO}`;
   for (const [arm, seen, expected] of [
-    [
-      "pending",
-      byPending,
-      [move, "fail-loud|unknown-channel", "fail-loud|no-url"],
-    ],
+    ["pending", byPending, [move, "fail-loud|unknown-channel", `join|${TO}`]],
     [
       "replaced",
       byReplaced,
       [
         move,
         "fail-loud|unknown-channel",
-        "fail-loud|no-url",
+        `join|${TO}`,
         "fail-loud|stale-notice",
       ],
     ],
@@ -2036,6 +2851,183 @@ test("🔴 S-a widens ONLY — every changed answer was moved-elsewhere, and is 
       [...expected].sort(),
       `the ${arm} arm reached ${JSON.stringify(seen)}`,
     );
+});
+
+test("🔴 FE-2 — every answer that differs from the legacy embedding is traced to exactly one ruling", () => {
+  // The new inputs, swept over every base world, every nonce shape and the
+  // FE-2 S-a subset. `old` is the same world under the legacy embedding,
+  // which the fingerprints above pin to the old ladders world by world. Each
+  // difference is peeled off in a fixed order and must be explained, in its
+  // own shape, by exactly one ruling:
+  //
+  //   G       the destination is gated (and known): an addressed answer
+  //           (`move`, `join`) or a carding loud arm (`unverified-session`,
+  //           `stale-notice`) becomes `gated-destination`, and NOTHING else
+  //           changes. Checked both ways: a gated world whose ungated answer
+  //           is one of those four MUST be `gated-destination`.
+  //   FE2WA-2 the token is absent or empty IN THE PROOF SHAPE (fresh marker,
+  //           no marker nonce gate): an answer the token proof addressed
+  //           becomes `unverified-session`. A missing token is never a
+  //           `join` there.
+  //   D2      the token is absent or empty ANYWHERE ELSE: a `move` becomes
+  //           the tokenless `join`, and nothing else changes.
+  //   FE2WA-9 the token is not this connection's, outside the proof shape: a
+  //           `move` becomes the tokenless `join`.
+  //   D1      (as amended by FE2A-2) the step-4 proof is the token proof, not
+  //           the device match: only in the proof shape, and only in the two
+  //           directions the swap allows. A device match without the proof
+  //           goes from addressed to `unverified-session` (A); the proof
+  //           without a named device goes from `unverified-session` to
+  //           addressed (B).
+  //
+  // And, over every world: a `move` always carries a token minted for this
+  // connection (FE2WA-9 is a property, not only a trace).
+  const move = `move|${NODE_URL}|${TOKEN}|${TO}`;
+  const join = `join|${TO}`;
+  const gated = "fail-loud|gated-destination";
+  const unverified = "fail-loud|unverified-session";
+  const cardedOrAddressed = new Set([
+    move,
+    join,
+    unverified,
+    "fail-loud|stale-notice",
+  ]);
+  const addressed = new Set([move, join, "fail-loud|unknown-channel"]);
+  const traced: Record<string, number> = {};
+  const trace = (why: string) => (traced[why] = (traced[why] ?? 0) + 1);
+  let worlds = 0;
+  for (const base of sweepWorlds())
+    for (const nonces of ALL_NONCES)
+      for (const sa of FE2_SA_SHAPES) {
+        const legacy: MoveWorld = { ...base, ...nonces, ...sa };
+        const old = answerKey(moveDecision(legacy));
+        const world: MoveWorld = { ...legacy };
+        // The proof shape: a fresh marker for `from`, no nonce gate on the
+        // marker clause, and something actually moved. Only here does step 4
+        // read the token proof.
+        const markerAge =
+          world.lastInvoluntaryLeftAt === undefined
+            ? undefined
+            : world.now - world.lastInvoluntaryLeftAt;
+        const proofShape =
+          world.callState !== "CONNECTED" &&
+          world.lastInvoluntaryChannelId === world.from &&
+          markerAge !== undefined &&
+          markerAge >= 0 &&
+          markerAge < MOVE_VERIFIED_WINDOW_MS &&
+          !(world.connNonce && world.lastInvoluntaryConnNonce) &&
+          world.from !== world.to;
+        for (const fe2 of FE2_SHAPES) {
+          world.tokenForThisConnection = fe2.tokenForThisConnection;
+          world.lastIdentityIsDevice = fe2.lastIdentityIsDevice;
+          world.token = fe2.token;
+          world.destinationGated = fe2.destinationGated;
+          worlds++;
+          const now = answerKey(moveDecision(world));
+          const where = () => `${JSON.stringify(world)} (old ${old})`;
+          if (now === move && !world.tokenForThisConnection)
+            assert.fail(`a foreign token was passed through: ${where()}`);
+          // G — peel the gate off first. (Each peel re-decides only when its
+          // field is actually set; otherwise it IS the answer above.)
+          let ungated = now;
+          if (fe2.destinationGated) {
+            world.destinationGated = false;
+            ungated = answerKey(moveDecision(world));
+            world.destinationGated = true;
+          }
+          if (
+            world.destinationGated &&
+            world.destinationKnown &&
+            cardedOrAddressed.has(ungated)
+          ) {
+            if (now !== gated)
+              assert.fail(`the gate let a ${ungated} through: ${where()}`);
+            trace(`G ${ungated}`);
+          } else if (now !== ungated)
+            assert.fail(`the gate turned ${ungated} into ${now}: ${where()}`);
+          // FE2WA-2 / D2 — then the missing token.
+          let tokened = ungated;
+          if (!fe2.token) {
+            world.destinationGated = false;
+            world.token = TOKEN;
+            tokened = answerKey(moveDecision(world));
+            world.token = fe2.token;
+            world.destinationGated = fe2.destinationGated;
+          }
+          const proof =
+            world.tokenForThisConnection && world.lastIdentityIsDevice;
+          if (!world.token && proofShape && addressed.has(tokened) && proof) {
+            if (ungated !== unverified)
+              assert.fail(
+                `a token-less marker was addressed (${ungated}): ${where()}`,
+              );
+            trace("FE2WA-2 token-less marker->unverified");
+          } else if (!world.token && tokened === move) {
+            if (proofShape)
+              assert.fail(`D2 claimed the proof shape: ${where()}`);
+            if (ungated !== join)
+              assert.fail(`a missing token did not join: ${where()}`);
+            trace("D2 move->join");
+          } else if (ungated !== tokened)
+            assert.fail(
+              `a missing token turned ${tokened} into ${ungated}: ${where()}`,
+            );
+          // FE2WA-9 and D1/FE2A-2 — what is left against the embedding.
+          if (tokened === old) continue;
+          if (!proofShape) {
+            if (
+              old === move &&
+              tokened === join &&
+              !world.tokenForThisConnection
+            )
+              trace("FE2WA-9 foreign token move->join");
+            else
+              assert.fail(
+                `${old} became ${tokened} outside the proof shape by no ruling: ${where()}`,
+              );
+            continue;
+          }
+          const deviceMatches =
+            world.deviceId !== undefined &&
+            world.deviceId === world.sessionDeviceId;
+          if (
+            addressed.has(old) &&
+            tokened === unverified &&
+            deviceMatches &&
+            !proof
+          )
+            trace("D1 A addressed->unverified");
+          else if (
+            old === unverified &&
+            addressed.has(tokened) &&
+            world.deviceId === undefined &&
+            proof
+          )
+            trace("D1 B unverified->addressed");
+          else assert.fail(`${old} became ${tokened} by no ruling: ${where()}`);
+        }
+      }
+  assert.equal(
+    worlds,
+    10_800 * ALL_NONCES.length * FE2_SA_SHAPES.length * FE2_SHAPES.length,
+  );
+  // Not vacuous, and nothing else: every ruling fired, the gate hit each of
+  // the four answers it replaces, and no other trace exists.
+  assert.deepEqual(
+    Object.keys(traced).sort(),
+    [
+      "D1 A addressed->unverified",
+      "D1 B unverified->addressed",
+      "D2 move->join",
+      "FE2WA-2 token-less marker->unverified",
+      "FE2WA-9 foreign token move->join",
+      `G ${unverified}`,
+      "G fail-loud|stale-notice",
+      `G ${join}`,
+      `G ${move}`,
+    ].sort(),
+    JSON.stringify(traced),
+  );
 });
 
 test("🔴 the pre-connect budget stays well inside the token's 10 s TTL", () => {
@@ -2197,8 +3189,18 @@ function stripComments(source: string): string {
 
 const STATE_CODE = stripComments(STATE);
 
+/**
+ * The move handler, from its header to its own two-space-indented `}`. The
+ * header is pinned whole, parameter type included: `VoiceMoveRequest` is the
+ * SDK's type for the event, so tsc checks every field the handler reads
+ * against what stoat.js actually emits. An inline type compiles against the
+ * emitter's catch-all `string` overload whatever the event really carries,
+ * which is how a listener for an event nobody sends type-checked (FE1-1).
+ */
 const MOVE_HANDLER =
-  /#handleVoiceMove\(move: \{[\s\S]*?\n {2}\}\n/.exec(STATE_CODE)?.[0] ?? "";
+  /async #handleVoiceMove\(move: VoiceMoveRequest\): Promise<void> \{[\s\S]*?\n {2}\}\n/.exec(
+    STATE_CODE,
+  )?.[0] ?? "";
 
 test("state.tsx has a #handleVoiceMove body the scans below can read", () => {
   // Without this every scan that follows passes vacuously on an empty string.
@@ -2218,12 +3220,15 @@ test("state.tsx calls moveDecision instead of restating it", () => {
   );
 });
 
+/** The text of the object `#handleVoiceMove` hands `moveDecision`, or `""`. */
+const MOVE_WORLD_SOURCE =
+  /moveDecision\(\{([\s\S]*?)\n {4}\}\);/.exec(MOVE_HANDLER)?.[1] ?? "";
+
 const MOVE_WORLD = Object.fromEntries(
-  [
-    ...(
-      /moveDecision\(\{([\s\S]*?)\n {4}\}\);/.exec(MOVE_HANDLER)?.[1] ?? ""
-    ).matchAll(/^\s*(\w+):\s*(.+?),\s*$/gm),
-  ].map((m) => [m[1], m[2].trim()]),
+  [...MOVE_WORLD_SOURCE.matchAll(/^\s*(\w+):\s*(.+?),\s*$/gm)].map((m) => [
+    m[1],
+    m[2].trim(),
+  ]),
 );
 
 test("🔴 the move world is READ, never asserted as a constant", () => {
@@ -2268,6 +3273,29 @@ test("🔴 the move world is READ, never asserted as a constant", () => {
   // CONNECTED-to-`from` shape into the target: a sibling that the server is
   // evicting would redeem the single-mint token. `replacedLeftAt` must be the
   // replaced drop's own time, not the clock, or the window never closes.
+  //
+  // The three verdicts the handler computes itself are the newest members.
+  // `tokenForThisConnection: true` is one token and gives every device seat
+  // with a fresh marker step 4's proof without the token ever being checked.
+  // `lastIdentityIsDevice: true` is one token and lets a BARE seat with a
+  // fresh marker and no nonce follow (FE2A-2): the same-session sibling that
+  // rule exists to refuse, joining with a live mic.
+  // `destinationGated: false` is one token and walks every move, a
+  // moderator's or the AFK sweep's, straight past an age, password or
+  // spoiler check. Each must be the handler's own local, and the next test
+  // pins what those locals are computed from.
+  //
+  // One `key: value,` per line and no shorthand: this scan reads nothing
+  // else, so a shorthand key would simply vanish from the map. The line
+  // check below says so directly instead of leaving it to the map diff.
+  const unread = MOVE_WORLD_SOURCE.split("\n").filter(
+    (line) => line.trim() !== "" && !/^\s*(\w+):\s*(.+?),\s*$/.test(line),
+  );
+  assert.deepEqual(
+    unread,
+    [],
+    `the moveDecision world has lines that are not one \`key: value,\` each (shorthand, or a value split over lines), so this scan cannot read them: ${JSON.stringify(unread)}`,
+  );
   assert.deepEqual(MOVE_WORLD, {
     callState: "this.state()",
     currentChannelId: "this.channel()?.id",
@@ -2275,7 +3303,10 @@ test("🔴 the move world is READ, never asserted as a constant", () => {
     to: "move.to",
     url: "move.url",
     token: "move.token",
+    tokenForThisConnection: "forThisConnection",
+    lastIdentityIsDevice: "identityIsDevice",
     destinationKnown: "destination !== undefined",
+    destinationGated: "gated",
     lastInvoluntaryChannelId: "this.#lastInvoluntaryChannelId",
     lastInvoluntaryLeftAt: "this.#lastInvoluntaryLeftAt",
     deviceId: "move.deviceId",
@@ -2288,6 +3319,50 @@ test("🔴 the move world is READ, never asserted as a constant", () => {
     replacedLeftAt: "this.#replacedLeftAt",
     now: "Date.now()",
   });
+});
+
+test("🔴 the move world's locals are computed from this session and the event, once each", () => {
+  // The map above pins WHICH local each key reads. This pins what the local
+  // holds: `const gated = false;` or `const forThisConnection = true;` keeps
+  // the map green and is the same one-token bypass, one line up. Each local
+  // is declared exactly once, off exactly these inputs, and never assigned
+  // again: the gate off THIS member's own check state for the resolved
+  // destination, the token verdict off the identity THIS connection last
+  // joined as (never off the event, which would make it a tautology), and
+  // the device test off that same identity.
+  assert.ok(MOVE_HANDLER.length > 0, "no #handleVoiceMove body to scan");
+  const code = MOVE_HANDLER.replace(/\s+/g, " ");
+  for (const [name, declaration] of [
+    [
+      "destination",
+      "const destination = this.getClient()?.channels.get(move.to);",
+    ],
+    [
+      "gated",
+      "const gated = destination !== undefined && this.#memberGate(destination);",
+    ],
+    [
+      "forThisConnection",
+      'const forThisConnection = moveTokenUsable({ token: move.token, expectedIdentity: this.#lastLocalIdentity ?? "", to: move.to, });',
+    ],
+    [
+      "identityIsDevice",
+      'const identityIsDevice = (this.#lastLocalIdentity ?? "").includes(":");',
+    ],
+  ]) {
+    assert.equal(
+      code.split(declaration).length - 1,
+      1,
+      `#handleVoiceMove no longer declares \`${declaration}\` exactly once`,
+    );
+    const writes =
+      MOVE_HANDLER.match(new RegExp(`(?<![\\w.#])${name} =(?!=)`, "g")) ?? [];
+    assert.equal(
+      writes.length,
+      1,
+      `\`${name}\` is assigned ${writes.length} times in #handleVoiceMove — only its declaration may set it`,
+    );
+  }
 });
 
 test("🔴 the move path disarms the auto-rejoin loop before connecting", () => {
@@ -2318,23 +3393,100 @@ test("#rejoinSeq is bumped in exactly the two places that may cancel the loop", 
   );
 });
 
-test("the move releases the destination's join-refusal latch first", () => {
+/**
+ * Every `this.connect(…)` call in `#handleVoiceMove`: the index it starts at
+ * and its argument list, whitespace-squashed, with no padding inside the
+ * parentheses and no trailing commas, so line wrapping cannot change it.
+ */
+function moveConnectCalls(): { at: number; call: string }[] {
+  return [...MOVE_HANDLER.matchAll(/this\.connect\(/g)].map((m) => ({
+    at: m.index,
+    call: balancedGroup(MOVE_HANDLER, m.index + m[0].length - 1)
+      .replace(/\s+/g, " ")
+      .replace(/,\s*\}/g, " }")
+      .replace(/,\s*\)/g, ")")
+      .replace(/\(\s+/g, "(")
+      .replace(/\s+\)/g, ")"),
+  }));
+}
+
+/** The token arm's exact arguments: the event's credentials, the budget, S1. */
+const MOVE_TOKEN_ARM_CALL =
+  "(destination, { url: decision.url, token: decision.token }, { movePreConnectBudgetMs: MOVE_PRECONNECT_BUDGET_MS, moveLatchBypass: true })";
+
+test("🔴 the move never releases a join-refusal latch; only the token arm steps past one (D4)", () => {
+  // An earlier cut RELEASED the destination's latch before connecting. That
+  // is a permanent side effect of an event, and a tokenless follow (an
+  // ordinary join) would then dial a channel the server has already refused
+  // this member, with nothing to show for it but the refusal again. The
+  // merged rule is voice-move's S1: the latch stays, and only an attempt
+  // carrying the server's own move token may step past it, for the reasons
+  // `moveBypassesRefusalLatch` allows. `#releaseJoinRefusal` keeps its other
+  // callers; the move is not one of them.
+  assert.ok(MOVE_HANDLER.length > 0, "no #handleVoiceMove body to scan");
   assert.ok(
-    MOVE_HANDLER.includes("this.#releaseJoinRefusal(decision.to);"),
-    "a latched refusal on the destination would swallow a server-ordered move",
+    !MOVE_HANDLER.includes("#releaseJoinRefusal("),
+    "#handleVoiceMove calls #releaseJoinRefusal — a move clears a refusal the server gave, and the tokenless arm then re-dials it (D4)",
   );
+  // The bypass flag: exactly one in the store's code, and it is inside the
+  // token arm's call. On a tokenless call (the join arm, the D5 retry, the
+  // rejoin loop) `connect()` ignores it today, because it reads
+  // `opts?.moveLatchBypass` only alongside `auth`. That makes a second one
+  // dead weight until someone relaxes that guard, and from then on a way
+  // for an attempt with no move token past a refusal the server gave.
+  const bypasses = STATE_CODE.match(/moveLatchBypass:/g) ?? [];
+  assert.equal(
+    bypasses.length,
+    1,
+    `expected exactly 1 \`moveLatchBypass:\` in state.tsx (the move's token arm), saw ${bypasses.length}`,
+  );
+  const calls = moveConnectCalls();
+  const withBypass = calls.filter(({ call }) =>
+    call.includes("moveLatchBypass: true"),
+  );
+  assert.equal(
+    withBypass.length,
+    1,
+    `expected exactly 1 connect() call in #handleVoiceMove passing \`moveLatchBypass: true\`, saw ${withBypass.length}: ${JSON.stringify(calls.map(({ call }) => call))}`,
+  );
+  assert.equal(
+    withBypass[0].call,
+    MOVE_TOKEN_ARM_CALL,
+    "the only connect() that passes `moveLatchBypass: true` is not the token arm's",
+  );
+  // And every other connect() in the handler is the bare tokenless join:
+  // no credentials, no budget, no bypass, not a rejoin.
+  for (const { call } of calls.filter((c) => c !== withBypass[0]))
+    assert.equal(
+      call,
+      "(destination)",
+      `#handleVoiceMove has a connect() that is neither the token arm nor the bare tokenless join: \`this.connect${call}\``,
+    );
 });
 
-test("the move connects with the event's own credentials and a bounded budget", () => {
-  assert.ok(
-    MOVE_HANDLER.includes("{ url: decision.url, token: decision.token }"),
-    "the move no longer hands connect() the pre-minted token",
+test("the move's token arm connects with the event's own credentials and a bounded budget, only on `move`", () => {
+  // One call, pinned whole. The credentials are the DECISION's (so a url-less
+  // or token-less event never reaches this arm, D2), the budget is what keeps
+  // a 10 s token alive past the 45 s MLS deadline, and the bypass is S1.
+  const calls = moveConnectCalls().filter(
+    ({ call }) => call === MOVE_TOKEN_ARM_CALL,
   );
+  assert.equal(
+    calls.length,
+    1,
+    `expected exactly 1 \`this.connect${MOVE_TOKEN_ARM_CALL}\` in #handleVoiceMove, saw ${calls.length}: ${JSON.stringify(moveConnectCalls().map(({ call }) => call))}`,
+  );
+  // Inside the `move` branch, never on the tokenless `join`.
+  const inMoveBranch = [
+    ...MOVE_HANDLER.matchAll(/if \(decision\.action === "move"\) \{/g),
+  ].some((branch) => {
+    const blockAt = branch.index + branch[0].length - 1;
+    const block = balancedGroup(MOVE_HANDLER, blockAt);
+    return calls[0].at > blockAt && calls[0].at < blockAt + block.length;
+  });
   assert.ok(
-    MOVE_HANDLER.includes(
-      "{ movePreConnectBudgetMs: MOVE_PRECONNECT_BUDGET_MS }",
-    ),
-    "the move no longer bounds its pre-connect work — the 10 s token dies behind the 45 s MLS deadline",
+    inMoveBranch,
+    'the token arm\'s connect() is not inside an `if (decision.action === "move") { … }` block',
   );
 });
 
@@ -2353,6 +3505,70 @@ test("the pre-connect budget actually reaches both unbounded pre-connect awaits"
       STATE_CODE,
     ),
     "the MLS registration deadline is no longer clamped to the move budget",
+  );
+});
+
+test("🔴 M3 lifts the move budget together with a dropped token, and only there", () => {
+  // The budget exists because a pre-minted token is ticking. When M3 drops
+  // that token (`join`), the attempt mints its own after setup like any other
+  // join, and a budget left standing clamps the MLS key listener to what is
+  // left of 3 s for no reason: an E2EE call held loud on every move whose
+  // token M3 dropped. So the deadline is a `let`, it is assigned exactly
+  // once after its declaration, to `undefined`, in M3's `join` case beside
+  // the token drop, and that case sits between the two budget reads: after
+  // device enumeration (which runs before M3 and has to stay bounded) and
+  // before the MLS clamp (which must see the lifted budget).
+  const declarations =
+    STATE_CODE.match(/\blet preConnectDeadlineAt =(?!=)/g) ?? [];
+  assert.equal(
+    declarations.length,
+    1,
+    `expected exactly 1 \`let preConnectDeadlineAt =\` in state.tsx, saw ${declarations.length}`,
+  );
+  const assignments = [
+    ...STATE_CODE.matchAll(/(?<!let )\bpreConnectDeadlineAt = ([^;]+);/g),
+  ];
+  assert.deepEqual(
+    assignments.map((m) => m[1].trim()),
+    ["undefined"],
+    "the move budget's deadline is reassigned somewhere other than M3's single clear to `undefined`",
+  );
+  const switches = [...STATE_CODE.matchAll(/switch \(authDecision\) \{/g)];
+  assert.equal(
+    switches.length,
+    1,
+    `expected exactly 1 \`switch (authDecision)\` (M3) in state.tsx, saw ${switches.length}`,
+  );
+  const switchAt = switches[0].index + switches[0][0].length - 1;
+  const m3 = balancedGroup(STATE_CODE, switchAt);
+  const join = /case "join":([\s\S]*?)\bbreak;/.exec(m3);
+  assert.ok(join, 'M3\'s switch has no `case "join": … break;`');
+  for (const stmt of ["auth = undefined;", "preConnectDeadlineAt = undefined;"])
+    assert.ok(
+      join[1].includes(stmt),
+      `M3's \`join\` case does not run \`${stmt}\``,
+    );
+  const clearAt = switchAt + m3.indexOf("preConnectDeadlineAt = undefined;");
+  assert.equal(
+    assignments[0].index,
+    clearAt,
+    "the budget's one clear is not the one in M3's `join` case",
+  );
+  const reads = [...STATE_CODE.matchAll(/preConnectBudgetLeft\(\)/g)].map(
+    (m) => m.index,
+  );
+  assert.ok(
+    reads.length === 2 && reads[0] < switchAt && clearAt < reads[1],
+    "M3's budget clear is not between the device-enumeration read and the MLS clamp read",
+  );
+  // `isMove` answers "did this attempt START as a move" (chime suppression),
+  // so it is fixed off the deadline BEFORE M3 can lift it.
+  const isMoveAt = STATE_CODE.indexOf(
+    "const isMove = preConnectDeadlineAt !== undefined;",
+  );
+  assert.ok(
+    isMoveAt >= 0 && isMoveAt < switchAt,
+    "`const isMove = preConnectDeadlineAt !== undefined;` is gone or now reads the deadline after M3 has lifted it",
   );
 });
 
@@ -3171,39 +4387,137 @@ test("🔴 SnackbarController is imported TYPE-ONLY, so state.tsx takes no runti
 
 test("🔴 state.tsx is SUBSCRIBED to the move event, exactly once, with its remover", () => {
   // Everything above this line decides what to do with an event nobody is
-  // listening for unless this one statement exists. Deleting
-  // `client.addListener("userMoveVoiceChannel", onMoved);` is a ONE-TOKEN
-  // revert that takes the whole feature dead — a moved member lands in no
-  // call at all, which is the shipped bug this slice exists to repair — and
-  // it was measured to leave the entire suite green and `tsc` clean, because
-  // `onMoved` stays "used" by the `onCleanup` remover below it. So the
-  // subscription is pinned here, where nothing else can see it.
+  // listening for unless this one statement exists. Deleting the
+  // `client.addListener(…)` is a ONE-TOKEN revert that takes the whole
+  // feature dead — a moved member lands in no call at all, which is the
+  // shipped bug this slice exists to repair — and it was measured to leave
+  // the entire suite green and `tsc` clean, because the handler stays "used"
+  // by the `onCleanup` remover below it. So the subscription is pinned here,
+  // where nothing else can see it.
+  //
+  // And it was not hypothetical. The AFK side subscribed to
+  // `"userMoveVoiceChannel"`, a name stoat.js no longer emits: the emitter's
+  // catch-all `string` overload compiled it, every scan here (then pinned to
+  // that literal) was green, and the handler was dead (FE1-1). So the name
+  // goes through the `VOICE_MOVE_REQUESTED` constant, which `satisfies keyof
+  // Events` checks at compile time, and the test after this one checks it
+  // against what stoat.js really emits.
   const subscribes =
     STATE_CODE.match(
-      /client\.addListener\(\s*"userMoveVoiceChannel",\s*onMoved\s*\)/g,
+      /client\.addListener\(\s*VOICE_MOVE_REQUESTED,\s*handler\s*\)/g,
     ) ?? [];
   assert.equal(
     subscribes.length,
     1,
-    `expected exactly 1 userMoveVoiceChannel subscription, saw ${subscribes.length} — at 0 the move handler is dead code and a moved member lands nowhere; above 1 the move is handled twice and two connects race`,
+    `expected exactly 1 \`client.addListener(VOICE_MOVE_REQUESTED, handler)\`, saw ${subscribes.length} — at 0 the move handler is dead code and a moved member lands nowhere; above 1 the move is handled twice and two connects race`,
+  );
+  // Any other subscription to the same event is the same double-handling,
+  // whatever it is called.
+  const anySubscribe =
+    STATE_CODE.match(/\.(?:addListener|on|once)\(\s*VOICE_MOVE_REQUESTED\b/g) ??
+    [];
+  assert.equal(
+    anySubscribe.length,
+    1,
+    `expected exactly 1 subscription to VOICE_MOVE_REQUESTED in state.tsx, saw ${anySubscribe.length}`,
   );
   // Paired with its remover, inside `onCleanup`. An app-lifetime listener
   // that survives a client swap re-fires the handler on a client this state
   // no longer belongs to.
   const unsubscribes =
     STATE_CODE.match(
-      /client\.removeListener\(\s*"userMoveVoiceChannel",\s*onMoved\s*\)/g,
+      /client\.removeListener\(\s*VOICE_MOVE_REQUESTED,\s*handler\s*\)/g,
     ) ?? [];
   assert.equal(
     unsubscribes.length,
     1,
-    `expected exactly 1 userMoveVoiceChannel removeListener, saw ${unsubscribes.length}`,
+    `expected exactly 1 \`client.removeListener(VOICE_MOVE_REQUESTED, handler)\`, saw ${unsubscribes.length}`,
   );
   assert.ok(
-    /onCleanup\([\s\S]{0,120}?client\.removeListener\(\s*"userMoveVoiceChannel",\s*onMoved\s*\)/.test(
+    /onCleanup\([\s\S]{0,120}?client\.removeListener\(\s*VOICE_MOVE_REQUESTED,\s*handler\s*\)/.test(
       STATE_CODE,
     ),
-    "the userMoveVoiceChannel remover is no longer inside an onCleanup — the listener outlives the effect that bound it",
+    "the VOICE_MOVE_REQUESTED remover is no longer inside an onCleanup — the listener outlives the effect that bound it",
+  );
+  // The subscribed `handler` is the one that reaches `#handleVoiceMove`, typed
+  // with the SDK's payload, and nothing else calls the handler.
+  const subscribeAt = STATE_CODE.search(
+    /client\.addListener\(\s*VOICE_MOVE_REQUESTED,\s*handler\s*\)/,
+  );
+  const binding = STATE_CODE.slice(0, subscribeAt).lastIndexOf(
+    "const handler =",
+  );
+  assert.ok(
+    binding >= 0 &&
+      STATE_CODE.slice(binding, subscribeAt).replace(/\s+/g, " ").trim() ===
+        "const handler = (move: VoiceMoveRequest) => void this.#handleVoiceMove(move);",
+    `the subscribed \`handler\` is not \`(move: VoiceMoveRequest) => void this.#handleVoiceMove(move)\` declared right above the subscription — saw \`${STATE_CODE.slice(Math.max(binding, 0), subscribeAt).trim()}\``,
+  );
+  assert.equal(
+    (STATE_CODE.match(/this\.#handleVoiceMove\(/g) ?? []).length,
+    1,
+    "#handleVoiceMove is called from somewhere other than the VOICE_MOVE_REQUESTED listener",
+  );
+  // The retired name is gone from the store's CODE, in any quoting. Comments
+  // are excluded on purpose: they may name it to explain what went wrong,
+  // and the backend's wire event `UserMoveVoiceChannel` keeps its own name.
+  // (`stripComments` only drops whole-line and block comments, so the retired
+  // name in a trailing `//` comment still fails here; that is conservative.)
+  assert.doesNotMatch(
+    STATE_CODE,
+    /(["'`])userMoveVoiceChannel\1/,
+    'state.tsx code carries a "userMoveVoiceChannel" literal — stoat.js no longer emits that event, so anything keyed on it is dead (FE1-1)',
+  );
+});
+
+test("🔴 VOICE_MOVE_REQUESTED names the event stoat.js actually emits for UserMoveVoiceChannel", () => {
+  // `satisfies keyof Events` proves the name is SOME declared event, not that
+  // it is the one the move arrives as. A rename on one side only (the SDK's
+  // emit, or this constant to another declared event) compiles on both sides
+  // and leaves the listener deaf. So the two literals are compared here.
+  //
+  // Read lazily and failing loudly, like the stoat.js section below: stoat.js
+  // is a submodule, and an unread SDK is an unchecked contract, not a pass.
+  const declarations = [
+    ...STATE_CODE.matchAll(
+      /^const VOICE_MOVE_REQUESTED = "([^"]+)" satisfies keyof Events;$/gm,
+    ),
+  ];
+  assert.equal(
+    declarations.length,
+    1,
+    `expected exactly 1 \`const VOICE_MOVE_REQUESTED = "…" satisfies keyof Events;\` in state.tsx, saw ${declarations.length}`,
+  );
+  assert.equal(
+    (STATE_CODE.match(/\bVOICE_MOVE_REQUESTED\s*=/g) ?? []).length,
+    1,
+    "VOICE_MOVE_REQUESTED is declared or assigned more than once in state.tsx",
+  );
+  const v1Url = new URL("../../../stoat.js/src/events/v1.ts", import.meta.url);
+  let v1: string;
+  try {
+    v1 = stripComments(readFileSync(v1Url, "utf8"));
+  } catch (error) {
+    throw new Error(
+      `stoat.js submodule not checked out: cannot read ${v1Url.pathname} (${(error as Error).message}). Run \`git submodule update --init packages/stoat.js\`; this contract is unchecked until then.`,
+    );
+  }
+  const moveCase =
+    /case "UserMoveVoiceChannel": \{[\s\S]*?\bbreak;/.exec(v1)?.[0] ?? "";
+  const emitted = [
+    ...moveCase.matchAll(
+      /client\.emit\(\s*"([^"]+)" satisfies keyof Events\s*,/g,
+    ),
+  ].map((m) => m[1]);
+  assert.equal(
+    emitted.length,
+    1,
+    `expected stoat.js's UserMoveVoiceChannel case to emit exactly once through \`client.emit("…" satisfies keyof Events, …)\`, saw ${JSON.stringify(emitted)}`,
+  );
+  assert.equal(
+    declarations[0][1],
+    emitted[0],
+    `state.tsx listens for "${declarations[0][1]}" but stoat.js emits the move as "${emitted[0]}" — the move handler is dead`,
   );
 });
 
@@ -3216,35 +4530,50 @@ test("🔴 connect() forwards its `opts` to #connectAttempt", () => {
   // 10 s token, so the token is dead before `room.connect()` is reached; and
   // `isMove` goes false, so the entrance chime plays at a user who did not
   // choose to join anything. Both were measured green on this tree.
+  //
+  // The fourth argument is the latched refusal the move token stepped past
+  // (S1 / F4). It is optional too, so dropping it is just as silent: M3 then
+  // never re-reads the latch when it drops that token, and a dropped-token
+  // move dials `join_call` into a channel the server has refused instead of
+  // answering from the latch.
   const forwards =
     STATE_CODE.match(
-      /this\.#connectAttempt\(\s*channel,\s*auth,\s*opts,?\s*\)/g,
+      /this\.#connectAttempt\(\s*channel,\s*auth,\s*opts,\s*latchedReason,?\s*\)/g,
     ) ?? [];
   assert.equal(
     forwards.length,
     1,
-    `expected connect() to call this.#connectAttempt(channel, auth, opts), saw ${forwards.length} such calls — without the third argument the move's pre-connect budget is silently dropped and the 10 s token dies behind the 45 s MLS deadline`,
+    `expected connect() to call this.#connectAttempt(channel, auth, opts, latchedReason), saw ${forwards.length} such calls — without \`opts\` the move's pre-connect budget is silently dropped and the 10 s token dies behind the 45 s MLS deadline; without \`latchedReason\` M3 cannot fall back on the latch (F4)`,
+  );
+  assert.equal(
+    (STATE_CODE.match(/this\.#connectAttempt\(/g) ?? []).length,
+    1,
+    "#connectAttempt is called from somewhere other than connect() — that call skips the refusal latch and the marker clears connect() runs first",
   );
 });
 
 // --- Textual contract against stoat.js --------------------------------------
 //
-// The event's nonce and device reach `#handleVoiceMove` through stoat.js's
-// re-emit of `UserMoveVoiceChannel`, and stoat.js has no tests of its own.
-// `connNonce: undefined` there passes tsc and every test above, because every
-// nonce test in this file builds the world by hand and the MOVE_WORLD scan
-// only sees `move.connNonce`, whatever it holds. Nothing fails, and the gate
-// goes inactive on every seat. A missing nonce is, by design, the old ladder,
-// so the P-1 hole reopens with no signal anywhere. The same holds for
-// `deviceId`, so both mappings are pinned here, where the submodule is read.
+// The event's token, URL, nonce and device reach `#handleVoiceMove` through
+// stoat.js's re-emit of `UserMoveVoiceChannel` as `voiceMoveRequested`, and
+// stoat.js has no tests of its own. `connNonce: undefined` there passes tsc
+// and every test above, because every test in this file builds the world by
+// hand and the MOVE_WORLD scan only sees `move.connNonce`, whatever it holds.
+// Nothing fails, and the gate goes inactive on every seat. A missing nonce is,
+// by design, the old ladder, so the P-1 hole reopens with no signal anywhere.
+// The same holds for every other field: `token: undefined` silently turns
+// every move into the tokenless join, `url: undefined` does the same, and a
+// `deviceId` that is not the wire's blanks or forges step 1. So all seven
+// mappings are pinned here, exactly and once each, where the submodule is
+// read (FE1-3).
 //
-// 🔴 The read is LAZY, and only the two tests below call it. stoat.js is a
-// git submodule, and in a tree where it was never checked out the file is
-// simply not there. Read at module scope, that one missing file failed the
-// whole spec as a single file-level error and hid every test above, none of
-// which reads stoat.js. Now exactly these two tests FAIL, with a message
-// that names the cause, and the rest still run. It is a failure and never a
-// skip: an unread stoat.js is an unchecked contract, not a passing one.
+// 🔴 The read is LAZY, and only the tests below call it. stoat.js is a git
+// submodule, and in a tree where it was never checked out the file is simply
+// not there. Read at module scope, that one missing file failed the whole
+// spec as a single file-level error and hid every test above, none of which
+// reads stoat.js. Now exactly these tests FAIL, with a message that names the
+// cause, and the rest still run. It is a failure and never a skip: an unread
+// stoat.js is an unchecked contract, not a passing one.
 const STOAT_EVENTS_URL = new URL(
   "../../../stoat.js/src/events/v1.ts",
   import.meta.url,
@@ -3276,18 +4605,57 @@ function stoatMoveCase(): string {
   );
 }
 
+/**
+ * The exact emit statement the case must open with. `satisfies keyof Events`
+ * is part of it on purpose: `emit` has a catch-all `string` overload, so a
+ * stale or misspelled event name compiles and leaves every listener deaf.
+ */
+const STOAT_MOVE_EMIT =
+  'client.emit("voiceMoveRequested" satisfies keyof Events, {';
+
 /** Every `key: value,` line of the object the case emits, in order. */
 function stoatMoveEmitted(moveCase: string) {
   return [
     ...(
-      /client\.emit\("userMoveVoiceChannel", \{([\s\S]*?)\n\s*\}\);/.exec(
+      /client\.emit\("voiceMoveRequested" satisfies keyof Events, \{([\s\S]*?)\n\s*\}\);/.exec(
         moveCase,
       )?.[1] ?? ""
     ).matchAll(/^\s*(\w+):\s*(.+?),\s*$/gm),
   ].map((m) => [m[1], m[2].trim()] as const);
 }
 
-test("🔴 stoat.js maps the wire's conn_nonce and device_id onto the emitted move", () => {
+/**
+ * The seven mappings, right-hand sides EXACT. `|| undefined` on every
+ * optional field so consumers have one absent value to test: an absent key,
+ * an explicit null and an empty string all arrive as `undefined`.
+ */
+const STOAT_MOVE_MAPPING: readonly (readonly [string, string, string])[] = [
+  ["node", "event.node", "the node NAME, kept for wire parity"],
+  [
+    "url",
+    "event.url || undefined",
+    "without it every move takes the tokenless join",
+  ],
+  [
+    "deviceId",
+    "event.device_id || undefined",
+    "anything else blanks or forges the step-1 device test on every seat",
+  ],
+  [
+    "connNonce",
+    "event.conn_nonce || undefined",
+    "anything else blanks or forges the nonce gate on every seat",
+  ],
+  ["from", "event.from", "the source the whole ladder addresses against"],
+  ["to", "event.to", "the destination every arm names"],
+  [
+    "token",
+    "event.token || undefined",
+    "without it every move takes the tokenless join, and a forged value is redeemed",
+  ],
+];
+
+test("🔴 FE1-3 — stoat.js re-emits the move as voiceMoveRequested with all seven fields mapped exactly, once each", () => {
   const STOAT_EVENTS_CODE = stoatEventsCode();
   const STOAT_MOVE_CASE = stoatMoveCase();
   const STOAT_MOVE_EMITTED = stoatMoveEmitted(STOAT_MOVE_CASE);
@@ -3297,55 +4665,74 @@ test("🔴 stoat.js maps the wire's conn_nonce and device_id onto the emitted mo
     1,
     "expected exactly one UserMoveVoiceChannel case in stoat.js's v1 handler",
   );
-  assert.ok(
-    STOAT_MOVE_CASE.includes('client.emit("userMoveVoiceChannel", {'),
-    "stoat.js's UserMoveVoiceChannel case no longer emits userMoveVoiceChannel — every scan below would pass vacuously",
+  assert.equal(
+    STOAT_MOVE_CASE.split(STOAT_MOVE_EMIT).length - 1,
+    1,
+    `stoat.js's UserMoveVoiceChannel case does not emit exactly once through \`${STOAT_MOVE_EMIT}\` — every scan below would pass vacuously`,
+  );
+  // The pre-merge name is gone from the case: an emit under the old name
+  // would feed the dead listener's shape (FE1-1) and not the merged handler.
+  assert.equal(
+    STOAT_MOVE_CASE.includes('"userMoveVoiceChannel"'),
+    false,
+    'stoat.js\'s UserMoveVoiceChannel case still mentions "userMoveVoiceChannel"',
   );
   assert.ok(
     STOAT_MOVE_EMITTED.length > 0,
-    "no `key: value,` lines found in the emitted userMoveVoiceChannel object",
+    "no `key: value,` lines found in the emitted voiceMoveRequested object",
   );
-  // Each key exactly once. In an object literal a later duplicate WINS, so
-  // a second `connNonce: undefined,` below a correct one would blank it.
-  for (const [key, pattern, why] of [
-    [
-      "connNonce",
-      /^event\.conn_nonce\s*\|\|/,
-      "`connNonce` must be `event.conn_nonce || …` — off the wire, with `||` so an empty nonce normalizes to absent; anything else blanks or forges the nonce gate on every seat",
-    ],
-    [
-      "deviceId",
-      /^event\.device_id(?![\w$])/,
-      "`deviceId` must be read off `event.device_id` — anything else blanks or forges the device test on every seat",
-    ],
-  ] as const) {
+  // Each key exactly once, with exactly its right-hand side. In an object
+  // literal a later duplicate WINS, so a second `connNonce: undefined,` below
+  // a correct one would blank it.
+  for (const [key, value, why] of STOAT_MOVE_MAPPING) {
     const values = STOAT_MOVE_EMITTED.filter(([k]) => k === key).map(
       ([, v]) => v,
     );
     assert.equal(
       values.length,
       1,
-      `expected exactly one \`${key}:\` in the emitted userMoveVoiceChannel object, saw ${JSON.stringify(values)}`,
+      `expected exactly one \`${key}:\` in the emitted voiceMoveRequested object, saw ${JSON.stringify(values)}`,
     );
-    assert.match(values[0], pattern, `${why}; saw \`${key}: ${values[0]}\``);
+    assert.equal(
+      values[0],
+      value,
+      `\`${key}\` must be exactly \`${value}\` (${why}); saw \`${key}: ${values[0]}\``,
+    );
   }
+  // And nothing else: an eighth key is a field no consumer was reviewed for.
+  assert.deepEqual(
+    STOAT_MOVE_EMITTED.map(([k]) => k).sort(),
+    STOAT_MOVE_MAPPING.map(([k]) => k).sort(),
+    `the emitted voiceMoveRequested object has keys ${JSON.stringify(STOAT_MOVE_EMITTED.map(([k]) => k))}`,
+  );
 });
 
-test("🔴 stoat.js's wire type for UserMoveVoiceChannel declares `conn_nonce?: string`", () => {
-  // The other half of the map. Without the declaration the handler cannot
-  // read `event.conn_nonce` at all, and the natural fix for the resulting
-  // tsc error is to delete the read.
+test("🔴 stoat.js's wire type for UserMoveVoiceChannel declares its four optional fields optional", () => {
+  // The other half of the map. Without the declarations the handler cannot
+  // read `event.conn_nonce` (or the rest) at all, and the natural fix for the
+  // resulting tsc error is to delete the read. `token` and `url` are optional
+  // on the merged backend, which leaves them out whenever it has nothing to
+  // send; declaring either required would teach the client to trust a value
+  // that is often absent.
   const member =
     /type: "UserMoveVoiceChannel";([\s\S]*?)\n\s*\}/.exec(
       stoatEventsCode(),
     )?.[1] ?? "";
-  assert.ok(
-    member.includes("token: string;"),
-    "no UserMoveVoiceChannel wire type found in stoat.js's v1 events — the declaration scan would pass vacuously",
-  );
-  assert.match(
-    member,
-    /^\s*conn_nonce\?: string;\s*$/m,
-    "stoat.js's UserMoveVoiceChannel wire type no longer declares `conn_nonce?: string`",
-  );
+  const declares = (line: string) =>
+    new RegExp(`^\\s*${line.replace("?", "\\?")}\\s*$`, "m").test(member);
+  for (const required of ["node: string;", "from: string;", "to: string;"])
+    assert.ok(
+      declares(required),
+      `no \`${required}\` in stoat.js's UserMoveVoiceChannel wire type — the declaration scan would pass vacuously`,
+    );
+  for (const optional of [
+    "token?: string;",
+    "url?: string;",
+    "device_id?: string;",
+    "conn_nonce?: string;",
+  ])
+    assert.ok(
+      declares(optional),
+      `stoat.js's UserMoveVoiceChannel wire type no longer declares \`${optional}\``,
+    );
 });

@@ -1,23 +1,33 @@
-import { useLingui } from "@lingui-solid/solid/macro";
+import { Plural, useLingui } from "@lingui-solid/solid/macro";
 import { createResizeObserver } from "@solid-primitives/resize-observer";
-import { createEffect, createSignal, For, onMount, Show } from "solid-js";
 import {
-  type TrackReferenceOrPlaceholder,
-  TrackLoop,
-} from "solid-livekit-components";
+  createEffect,
+  createMemo,
+  createSignal,
+  For,
+  onMount,
+  Show,
+} from "solid-js";
+import { TrackLoop } from "solid-livekit-components";
 
-import { Track } from "livekit-client";
 import { styled } from "styled-system/jsx";
 
 import { CONFIGURATION } from "@revolt/common";
 import { InRoom, useVoice } from "@revolt/rtc";
+import { useState } from "@revolt/state";
 import { IconButton } from "@revolt/ui/components/design";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 import { scrollableStyles } from "@revolt/ui/directives";
 
 import { MinigameChip } from "../minigame/MinigameChip";
+import { participantUserId } from "../participantIdentity";
 import { WatchOverlay } from "../watch/WatchOverlay";
 import { watchOverlayVisible } from "../watch/watchPolicy";
+import {
+  hasLiveVideo,
+  liveVideoCount,
+  selectCallTiles,
+} from "./callTileSelection";
 import { ParticipantTile, tile } from "./ParticipantTile";
 import { VoiceCallAudioBlockedBanner } from "./VoiceCallAudioBlockedBanner";
 import { VoiceCallCardActions } from "./VoiceCallCardActions";
@@ -27,8 +37,8 @@ import {
 } from "./VoiceCallCardStatus";
 import { VoiceCallDowngradeBanner } from "./VoiceCallDowngradeBanner";
 import { VoiceCallRecordingBanner } from "./VoiceCallRecordingBanner";
-import { VoiceCallWhisperBanner } from "./VoiceCallWhisperBanner";
 import { VoiceCallRosterPanel } from "./VoiceCallRosterPanel";
+import { VoiceCallWhisperBanner } from "./VoiceCallWhisperBanner";
 
 /**
  * Call card (active)
@@ -82,6 +92,7 @@ export function VoiceCallCardActiveRoom() {
       <Show when={!voice.immersive()} fallback={<ImmersiveExit />}>
         <VoiceCallControls>
           <VoiceCallControlHolder right>
+            <VoiceCallHideNonVideo />
             <VoiceCallTheater />
             <VoiceCallFullscreen />
           </VoiceCallControlHolder>
@@ -108,6 +119,48 @@ function VoiceCallFullscreen() {
         <Symbol>fullscreen_exit</Symbol>
       </Show>
     </IconButton>
+  );
+}
+
+/**
+ * "Hide participants without video" (call-view plan decision B): keep only the
+ * tiles with a live feed so the shares and cameras get the room. A device-local
+ * setting, so it is read straight off the store rather than kept per call.
+ *
+ * Offered while there is live video to keep, and ALSO whenever the filter is
+ * on: with nobody's video live the grid falls back to showing everyone, and
+ * the button has to stay reachable to turn the filter back off.
+ */
+function VoiceCallHideNonVideo() {
+  const voice = useVoice();
+  const state = useState();
+  const { t } = useLingui();
+
+  const hiding = () => state.voice.hideNonVideoParticipants;
+  // One label for the tooltip and the accessible name, so they cannot drift.
+  const label = () =>
+    hiding() ? t`Show all participants` : t`Hide participants without video`;
+
+  return (
+    <Show when={hiding() || liveVideoCount(voice.vidTracks()) > 0}>
+      <IconButton
+        size="sm"
+        variant={"standard"}
+        aria-label={label()}
+        aria-pressed={hiding()}
+        onPress={() => (state.voice.hideNonVideoParticipants = !hiding())}
+        use:floating={{
+          tooltip: {
+            placement: "top",
+            content: label(),
+          },
+        }}
+      >
+        <Show when={hiding()} fallback={<Symbol>videocam</Symbol>}>
+          <Symbol>groups</Symbol>
+        </Show>
+      </IconButton>
+    </Show>
   );
 }
 
@@ -218,6 +271,7 @@ const TILE_MIN_WIDTH = "250px",
  */
 function Participants() {
   const voice = useVoice();
+  const state = useState();
   const { t } = useLingui();
 
   // Modify this value to get test tracks
@@ -228,26 +282,49 @@ function Participants() {
   const [callWidth, setCallWidth] = createSignal(0);
   const [callHeight, setCallHeight] = createSignal(0);
 
-  /** A real, unmuted feed rather than a camera-off placeholder. */
-  const isLiveVideo = (t: TrackReferenceOrPlaceholder) =>
-    "publication" in t && !!t.publication && !t.publication.isMuted;
+  /**
+   * The ONE selection of tiles for everything outside the focus box: the list
+   * the TrackLoop draws, the count the grid is sized from, and the hidden
+   * count the pill shows all come from here, so the sizing can never describe
+   * a different set of tiles than the one on screen (the two used to be
+   * separate expressions). Muted screen shares are dropped (ParticipantTile
+   * renders nothing for one) and the focused track is left out.
+   *
+   * The "hide participants without video" filter applies HERE, in the view,
+   * and never in `vidTracks()`: focus, theater, PiP, auto-focus and the
+   * watch-together strip all read that list and must keep seeing everyone.
+   *
+   * `participantOf` is the USER id: a phone's screen leg
+   * (`user:device:screen`) and each of a user's devices are one person, and
+   * the pill counts people, not tiles.
+   */
+  const selection = createMemo(() =>
+    selectCallTiles(voice.vidTracks(), {
+      hideNonVideo: state.voice.hideNonVideoParticipants,
+      isFocused: (track) => voice.isFocus(track),
+      participantOf: (track) => participantUserId(track.participant.identity),
+    }),
+  );
+
+  /** The tracks that actually get a tile outside the focus box. */
+  const gridTracks = () => selection().tiles;
 
   /**
-   * The tracks that actually get a tile. Everyone in the call carries a camera
-   * placeholder, but ParticipantTile drops a muted screen share — counting
-   * those would size the grid around a tile that never renders.
+   * Something is focused and there is nobody left to put beside it: the
+   * focused window is the only live video and the filter hid the rest (or
+   * everyone else left). The side column, the bottom strip and the Hide/Show
+   * Others button are then left out entirely, so the focused window takes the
+   * whole card instead of sitting next to an empty column.
    */
-  const gridTracks = () =>
-    voice
-      .vidTracks()
-      .filter((t) => t.source !== Track.Source.ScreenShare || isLiveVideo(t));
+  const othersEmpty = () =>
+    !!voice.focusId() && gridTracks().length + testTrackCount === 0;
 
   /**
    * Fill the card with the tiles instead of pinning them to TILE_MIN_WIDTH:
    * nobody focused (both focus layouts size their own tiles) and at least one
    * live feed worth making big.
    */
-  const fill = () => !voice.focusId() && gridTracks().some(isLiveVideo);
+  const fill = () => !voice.focusId() && gridTracks().some(hasLiveVideo);
 
   /**
    * Focus layout: everyone else goes into a vertical column down the left and
@@ -275,6 +352,7 @@ function Participants() {
   const sidebar = () =>
     !!voice.focusId() &&
     !voice.immersive() &&
+    !othersEmpty() &&
     callWidth() >= SIDEBAR_MIN_CARD_WIDTH;
 
   /**
@@ -282,8 +360,7 @@ function Participants() {
    * 20%)` so it stays usable in the controller's own 640px float (128px)
    * without eating a 1920px frame (160px, ~8%).
    */
-  const narrowSidebar = () =>
-    sidebar() && !!voice.remoteControl.controlling();
+  const narrowSidebar = () => sidebar() && !!voice.remoteControl.controlling();
 
   /**
    * Theater mode WHILE CONTROLLING: the other participants become small
@@ -323,8 +400,10 @@ function Participants() {
    */
   const tileWidth = () => {
     if (voice.focusId()) {
+      // The drawn tiles plus the focused one. With the filter off and no
+      // muted share in the call, that is the old `vidTracks().length`.
       const vidWidth = Math.round(
-        100 / (voice.vidTracks().length + testTrackCount),
+        100 / (gridTracks().length + 1 + testTrackCount),
       );
       return `max(${TILE_MIN_WIDTH}, ${vidWidth}% - var(--gap-md))`;
     }
@@ -400,7 +479,7 @@ function Participants() {
     >
       <InRoom>
         <FocusedParticipant sidebar={sidebar()} />
-        <Show when={voice.focusId() && !voice.immersive()}>
+        <Show when={voice.focusId() && !voice.immersive() && !othersEmpty()}>
           <ShowBarButtonHolder sidebar={sidebar()}>
             <div style={{ "margin-bottom": "10px" }}>
               <IconButton
@@ -430,51 +509,80 @@ function Participants() {
             </div>
           </ShowBarButtonHolder>
         </Show>
-        <Grid
-          /* One layout variant at a time: the column and the strip set the same
-             properties to different values, and a recipe merges its variants in
-             declaration order — so letting both match would make the layout a
-             function of which one is written first in the file. */
-          focus={!!voice.focusId() && !sidebar() && !controlOverlay()}
-          sidebar={sidebar()}
-          overlay={controlOverlay()}
-          fill={fill()}
-          show={voice.showBar()}
-          class={
-            sidebar() || controlOverlay()
-              ? scrollableStyles({ direction: "y" })
-              : voice.focusId()
-                ? scrollableStyles({ direction: "x" })
-                : ""
-          }
-          style={{
-            "--vc-tile-width": tileWidth(),
-            ...(narrowSidebar()
-              ? { "--vc-sidebar-w": NARROW_SIDEBAR_WIDTH }
-              : {}),
-            // While the watch overlay covers this area (§7.3 4c), the grid's
-            // full-size <video>s would keep compositing invisibly under its
-            // opaque background — with adaptiveStream deliberately OFF,
-            // nothing throttles them, so N hidden tiles + the movie is real
-            // work for nothing. display:none keeps the tiles MOUNTED (no
-            // track detach churn when the overlay toggles) but skips the
-            // compositing; the overlay's side-strip re-renders what matters.
-            ...(watchCovering() ? { display: "none" } : {}),
-          }}
-        >
-          <TrackLoop
-            tracks={() => voice.vidTracks().filter((t) => !voice.isFocus(t))}
+        {/* No grid at all when the focused window has nobody beside it: an
+            empty strip would still take its `max(20%, 100px)` of the height. */}
+        <Show when={!othersEmpty()}>
+          <Grid
+            /* One layout variant at a time: the column and the strip set the
+               same properties to different values, and a recipe merges its
+               variants in declaration order — so letting both match would make
+               the layout a function of which one is written first in the file. */
+            focus={!!voice.focusId() && !sidebar() && !controlOverlay()}
+            sidebar={sidebar()}
+            overlay={controlOverlay()}
+            fill={fill()}
+            show={voice.showBar()}
+            class={
+              sidebar() || controlOverlay()
+                ? scrollableStyles({ direction: "y" })
+                : voice.focusId()
+                  ? scrollableStyles({ direction: "x" })
+                  : ""
+            }
+            style={{
+              "--vc-tile-width": tileWidth(),
+              ...(narrowSidebar()
+                ? { "--vc-sidebar-w": NARROW_SIDEBAR_WIDTH }
+                : {}),
+              // While the watch overlay covers this area (§7.3 4c), the grid's
+              // full-size <video>s would keep compositing invisibly under its
+              // opaque background — with adaptiveStream deliberately OFF,
+              // nothing throttles them, so N hidden tiles + the movie is real
+              // work for nothing. display:none keeps the tiles MOUNTED (no
+              // track detach churn when the overlay toggles) but skips the
+              // compositing; the overlay's side-strip re-renders what matters.
+              ...(watchCovering() ? { display: "none" } : {}),
+            }}
           >
-            {() => <ParticipantTile />}
-          </TrackLoop>
-          <For each={Array(testTrackCount)}>
-            {() => (
-              <div
-                class={tile({ fullscreen: voice.fullscreen() }) + " vc_tile"}
-              />
-            )}
-          </For>
-        </Grid>
+            {/* Exactly the list `tileWidth` counts: both read `selection`. */}
+            <TrackLoop tracks={gridTracks}>
+              {() => <ParticipantTile />}
+            </TrackLoop>
+            <For each={Array(testTrackCount)}>
+              {() => (
+                <div
+                  class={tile({ fullscreen: voice.fullscreen() }) + " vc_tile"}
+                />
+              )}
+            </For>
+          </Grid>
+        </Show>
+        {/* Who the filter took off screen, and the way back. Pinned over the
+            participant area rather than laid out in the grid: an extra flex
+            item would take a row of its own and push a grid sized to fill the
+            card into scrolling. Top-left because every other corner of a tile
+            is spoken for (the corner stack top-right, the drawing banner
+            top-center, the name and captions along the bottom). */}
+        <Show
+          when={
+            selection().hiddenCount > 0 &&
+            !voice.immersive() &&
+            !watchCovering()
+          }
+        >
+          <HiddenParticipantsPill
+            type="button"
+            onClick={() => (state.voice.hideNonVideoParticipants = false)}
+            title={t`Show all participants`}
+          >
+            <Symbol size={16}>videocam_off</Symbol>
+            <Plural
+              value={selection().hiddenCount}
+              one="# participant without video hidden"
+              other="# participants without video hidden"
+            />
+          </HiddenParticipantsPill>
+        </Show>
       </InRoom>
       {/* "Play while you wait": only offered while ALONE in the call, and its
           overlay covers the participant AREA only — inside this relative
@@ -691,6 +799,37 @@ const ShowBarButtonHolder = styled("div", {
         alignSelf: "auto",
       },
     },
+  },
+});
+
+/**
+ * "N participants without video hidden", pinned top-left over the participant
+ * area; pressing it turns the filter off. `zIndex: 3` keeps it under the
+ * card-level banners (5) and the watch overlay (4), which both outrank it.
+ */
+const HiddenParticipantsPill = styled("button", {
+  base: {
+    position: "absolute",
+    top: "var(--gap-md)",
+    left: "var(--gap-md)",
+    zIndex: 3,
+
+    display: "flex",
+    alignItems: "center",
+    gap: "var(--gap-sm)",
+    padding: "4px var(--gap-md)",
+
+    fontFamily: "inherit",
+    fontSize: "0.75rem",
+    fontWeight: 600,
+    whiteSpace: "nowrap",
+
+    border: "none",
+    cursor: "pointer",
+    borderRadius: "var(--borderRadius-full)",
+    color: "var(--md-sys-color-on-secondary-container)",
+    background: "var(--md-sys-color-secondary-container)",
+    boxShadow: "0 2px 8px rgba(0, 0, 0, 0.35)",
   },
 });
 

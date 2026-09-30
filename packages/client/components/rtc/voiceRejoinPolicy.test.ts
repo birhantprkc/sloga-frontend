@@ -455,9 +455,10 @@ test("🔴 #connectAttempt passes opts?.rejoinAttempt to joinCall as its 5th arg
 
 test("🔴 the rejoin flag is raised by the auto-rejoin loop and nowhere else", () => {
   // The rest of the wire behind the 5th argument: `connect()` hands its
-  // `opts` on unchanged, and the only `rejoinAttempt: true` in the store is
-  // the loop's own attempt. A second one would send `rejoin: true` on a join
-  // the user asked for, and a deliberate return would be turned away.
+  // `opts` on unchanged (third, ahead of the latched refusal a move token
+  // stepped past), and the only `rejoinAttempt: true` in the store is the
+  // loop's own attempt. A second one would send `rejoin: true` on a join the
+  // user asked for, and a deliberate return would be turned away.
   const code = stateCode();
   const connect = methodText(code, "async connect(");
   assert.ok(
@@ -466,9 +467,14 @@ test("🔴 the rejoin flag is raised by the auto-rejoin loop and nowhere else", 
   );
   assert.ok(
     squash(connect).includes(
-      "return await this.#connectAttempt(channel, auth, opts);",
+      "return await this.#connectAttempt(channel, auth, opts, latchedReason);",
     ),
     "connect() no longer hands its own opts to #connectAttempt",
+  );
+  assert.equal(
+    (connect.match(/this\.#connectAttempt\(/g) ?? []).length,
+    1,
+    "connect() calls #connectAttempt more than once — the scan above cannot say which call carries opts",
   );
   const raised = code.match(/\brejoinAttempt: true\b/g) ?? [];
   assert.equal(

@@ -1,5 +1,6 @@
 // Wire-literal and UI-gate pins for the AFK channel (AFK plan Stage 6,
-// remediation round S6-R1: findings F-B5 and F-B7, 2026-09-23).
+// remediation round S6-R1: findings F-B5 and F-B7, 2026-09-23; merge
+// Phase FE: FXA-3, 2026-09-29).
 //   node --test --conditions=browser src/lib/afkWireContract.test.ts
 //
 // F-B5. stoat.js carries four hand-typed copies of backend wire names for the
@@ -20,19 +21,43 @@
 // because the routes behind them demand it. A gate relaxed to ManageChannel
 // renders a control that answers 403, and nothing but these scans notices.
 //
-// The literal pins run unconditionally. The one backend cross-check is
-// OPT-IN: it runs only with `SLOGA_BACKEND_DIR` set to a backend checkout
-// (e.g. `SLOGA_BACKEND_DIR=/path/to/stoatchat node --test …`), and otherwise
-// reports itself as SKIPPED. A gate that must prove the cross-check ran has
-// to set the variable and read the skip count, not just the exit status.
+// FXA-3. The idle beacon (`PUT /channels/{id}/afk_idle`) has three refusals
+// that no retry can fix, and `IDLE_LATCH_ERRORS` (`idlePolicy.ts`) must name
+// each, so the client stops posting at once instead of spending its back-off
+// on them:
 //
-// 🔴 These are textual scans of source that cannot be imported here (Solid,
-// lingui macros, the stoat.js package). They are blunt by nature; each one is
+// - 400 `NotAVoiceChannel`: the channel is not a call;
+// - 400 `IsBot`: a bot account. The route takes an optional session, so a bot
+//   is answered `IsBot` in the contract order, no longer a 401 from a session
+//   guard ahead of every check;
+// - 403 `NotOwner`: the request's session is not the one recorded as owning
+//   the member's seat in the call. That covers a foreign session (another tab
+//   or device, or a call joined before the record existed) and a missing one
+//   (practically unreachable past the bot check: a session revoked mid-request
+//   gets 403 here, not 401). It stays true for that session until it joins
+//   again.
+//
+// A 403 (or a 401) from the beacon cannot sign the user out: it is a raw
+// `fetch` in `state.tsx`'s `#postAfkIdle`, outside the stoat.js client, and
+// the session ends only on the event socket's `InvalidSession` / `Logout`.
+//
+// The literal pins run unconditionally. The two backend cross-checks are
+// OPT-IN: they run only with `SLOGA_BACKEND_DIR` set to a backend checkout
+// (e.g. `SLOGA_BACKEND_DIR=/path/to/stoatchat node --test …`), and otherwise
+// report themselves as SKIPPED. A gate that must prove the cross-checks ran
+// has to set the variable and read the skip count (0), not just the exit
+// status.
+//
+// 🔴 Apart from `idlePolicy.ts`, which is dependency-free and imported, these
+// are textual scans of source that cannot be imported here (Solid, lingui
+// macros, the stoat.js package). They are blunt by nature; each one is
 // anchored to the AFK code itself so that an unrelated occurrence of the same
 // literal elsewhere in the file cannot satisfy it.
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { test } from "node:test";
+
+import { IDLE_LATCH_ERRORS } from "../../components/rtc/idlePolicy.ts";
 
 function read(relative: string): string {
   return readFileSync(new URL(relative, import.meta.url), "utf8");
@@ -464,4 +489,140 @@ test("🔴 the create-channel modal offers the AFK tickbox only to ManageServer 
     ["ManageServer"],
     "CreateChannel.tsx: canDesignateAfk() must ask for ManageServer, and only that",
   );
+});
+
+// --- FXA-3: the idle beacon's permanent refusals latch ----------------------
+
+/**
+ * The beacon's refusals that no retry can fix, each with the Rocket status
+ * the backend answers it with (`crates/core/result/src/rocket.rs`). The wire
+ * `type` is the `ErrorType` variant name (`crates/core/result/src/lib.rs`,
+ * `serde(tag = "type")`, nothing renamed): `IsBot` :164, `NotOwner` :236,
+ * `NotAVoiceChannel` :264 (backend `db744bc1`). `IDLE_LATCH_ERRORS` must
+ * name exactly these: one missing spends the back-off re-sending a PUT that
+ * can never land; one extra stops a connection over a refusal that clears.
+ */
+const BEACON_PERMANENT_REFUSALS = {
+  IsBot: "BadRequest",
+  NotAVoiceChannel: "BadRequest",
+  NotOwner: "Forbidden",
+} as const;
+
+test("🔴 the idle beacon's 403 NotOwner latches the connection", () => {
+  // Merge slice F11 / M2C-7: every PUT from a session that is not the one
+  // recorded for the call is refused `NotOwner`, and keeps being refused
+  // until that session joins again.
+  assert.ok(
+    IDLE_LATCH_ERRORS.includes("NotOwner"),
+    `idlePolicy.ts: IDLE_LATCH_ERRORS (${JSON.stringify(IDLE_LATCH_ERRORS)}) does not name "NotOwner" — a session that does not own the seat re-sends a refused PUT until the failure limit`,
+  );
+  assert.deepEqual(
+    [...IDLE_LATCH_ERRORS].sort(),
+    Object.keys(BEACON_PERMANENT_REFUSALS).sort(),
+    "idlePolicy.ts: IDLE_LATCH_ERRORS is not exactly the beacon's permanent refusals",
+  );
+});
+
+/**
+ * The variant names of a comment-blanked Rust enum body: attributes and
+ * every nested `{…}` / `(…)` payload removed, then split on the commas.
+ */
+function enumVariants(body: string): string[] {
+  let flat = body.replace(/#\[[^\]]*\]/g, " ");
+  for (let previous = ""; previous !== flat; ) {
+    previous = flat;
+    flat = flat.replace(/\{[^{}]*\}|\([^()]*\)/g, " ");
+  }
+  return flat
+    .split(",")
+    .map((variant) => variant.trim())
+    .filter((variant) => /^[A-Z]\w*$/.test(variant));
+}
+
+// OPT-IN, like the cross-check above: unset, it SKIPS; set to a path that is
+// not a backend tree, it FAILS.
+test("the idle latch errors are backend ErrorType variants the beacon raises", (t) => {
+  if (BACKEND_DIR === undefined || BACKEND_DIR === "") {
+    t.skip(
+      "backend cross-check not run: set SLOGA_BACKEND_DIR to a backend checkout to run it (the latch pin above ran regardless)",
+    );
+    return;
+  }
+  const BACKEND_ERRORS = `${BACKEND_DIR}/crates/core/result/src/lib.rs`;
+  const BACKEND_STATUS = `${BACKEND_DIR}/crates/core/result/src/rocket.rs`;
+  const BACKEND_BEACON = `${BACKEND_DIR}/crates/delta/src/routes/channels/afk_idle.rs`;
+  for (const file of [BACKEND_ERRORS, BACKEND_STATUS, BACKEND_BEACON]) {
+    assert.ok(
+      existsSync(file),
+      `SLOGA_BACKEND_DIR=${BACKEND_DIR} is not a backend tree: ${file} is missing`,
+    );
+  }
+
+  // Every latch entry is a variant, and the variant name is the wire `type`.
+  const errors = blankComments(readFileSync(BACKEND_ERRORS, "utf8"));
+  const errorEnum = blockAfter(
+    errors,
+    "pub enum ErrorType",
+    "backend ErrorType",
+  );
+  const variants = enumVariants(errorEnum);
+  assert.ok(
+    variants.includes("LabelMe") && variants.length > 50,
+    `the ErrorType parser read ${variants.length} variants — the scan itself is broken`,
+  );
+  for (const type of IDLE_LATCH_ERRORS) {
+    assert.ok(
+      variants.includes(type),
+      `IDLE_LATCH_ERRORS names "${type}", which is not a variant of the backend's ErrorType — no response can carry it, so it latches nothing`,
+    );
+  }
+  const enumAt = errors.indexOf("pub enum ErrorType");
+  const enumAttributes = errors.slice(errors.lastIndexOf("}", enumAt), enumAt);
+  assert.match(
+    enumAttributes,
+    /serde\(\s*tag\s*=\s*"type"\s*\)/,
+    'backend ErrorType is no longer `serde(tag = "type")` — the client reads `body.type`',
+  );
+  assert.doesNotMatch(
+    `${enumAttributes}\n${errorEnum}`,
+    /rename/,
+    "backend ErrorType carries a serde rename — the wire type is no longer the variant name",
+  );
+
+  // The status each is answered with, as the FXA-3 wording above states it.
+  const status = blankComments(readFileSync(BACKEND_STATUS, "utf8"));
+  for (const [type, expected] of Object.entries(BEACON_PERMANENT_REFUSALS)) {
+    const arms = [
+      ...status.matchAll(
+        new RegExp(`ErrorType::${type}\\b[^,;]*?=>\\s*Status::(\\w+)`, "g"),
+      ),
+    ];
+    assert.equal(
+      arms.length,
+      1,
+      `rocket.rs: expected one status arm for ErrorType::${type}, found ${arms.length}`,
+    );
+    assert.equal(
+      arms[0][1],
+      expected,
+      `rocket.rs: ErrorType::${type} is answered Status::${arms[0][1]}, not Status::${expected}`,
+    );
+  }
+
+  // The beacon's PUT really raises each (its test module, which quotes the
+  // same literals, is cut off first).
+  const beaconSource = readFileSync(BACKEND_BEACON, "utf8");
+  const testsAt = beaconSource.indexOf("#[cfg(test)]");
+  const put = blockAfter(
+    testsAt === -1 ? beaconSource : beaconSource.slice(0, testsAt),
+    "pub async fn afk_idle_set(",
+    "backend afk_idle_set",
+  );
+  for (const type of IDLE_LATCH_ERRORS) {
+    assert.match(
+      put,
+      new RegExp(`\\bcreate_error!\\(\\s*${type}\\s*\\)`),
+      `afk_idle.rs: afk_idle_set never answers ${type}`,
+    );
+  }
 });

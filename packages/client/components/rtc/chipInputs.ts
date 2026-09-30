@@ -42,6 +42,7 @@ import {
 } from "../ui/components/features/voice/participantIdentity.ts";
 import {
   type LocalPublicationEncryption,
+  ENCRYPTION_TYPE_GCM,
   localPublicationsEncrypted,
 } from "./localPublicationEncryption.ts";
 import {
@@ -52,12 +53,64 @@ import {
   type DecodeWitness,
   chipState,
 } from "./mlsCallModePolicy.ts";
+import { isShareSource } from "./screenShareWatchPolicy.ts";
 
 /**
  * The session lifecycle states the chip distinguishes. Taken from `ChipInputs`
  * rather than imported from `mlsCallSession`, which `node --test` cannot load.
  */
 export type ChipSessionState = ChipInputs["sessionState"];
+
+/**
+ * One REMOTE publication, reduced to what the share-only contradiction reads
+ * (see {@link shareOnlyDeclarationContradicts}).
+ */
+export interface ChipPublication {
+  /** The LiveKit `Track.Source` string value. */
+  source: string;
+  /** `RemoteTrackPublication.isDesired`: we asked the SFU for it. */
+  desired: boolean;
+  /** `RemoteTrackPublication.isSubscribed`: its track is attached here. */
+  subscribed: boolean;
+  /**
+   * `publication.trackInfo?.encryption`, the publisher's declaration as the
+   * SFU relayed it. `undefined` when the field is missing.
+   */
+  encryption: number | undefined;
+}
+
+/**
+ * A remote participant's publications, reduced to {@link ChipPublication}s.
+ * `state.tsx` passes `participant.trackPublications.values()`.
+ *
+ * 🔴 This mapping used to sit inline in `state.tsx`, which `node --test`
+ * cannot load. There, changing one token (`desired: true`, or dropping
+ * `subscribed`) switched the F2 share-only contradiction off for every
+ * participant and left every gate green. Keep it here, where specs and
+ * mutations can reach it.
+ *
+ * Structural on purpose: no LiveKit import. `Track.Source` is a string enum,
+ * so it is accepted as a string. `isDesired` and `isSubscribed` are getters
+ * on `RemoteTrackPublication`, so each publication is read field by field;
+ * spreading it would drop them. A missing `trackInfo`, or a `trackInfo`
+ * without `encryption`, stays `undefined`, never a default: F2 compares with
+ * exactly GCM, and a defaulted GCM would wave a dropped declaration through.
+ */
+export function chipPublicationsOf(
+  pubs: Iterable<{
+    source: string;
+    isDesired: boolean;
+    isSubscribed: boolean;
+    trackInfo?: { encryption?: number };
+  }>,
+): ChipPublication[] {
+  return Array.from(pubs, (pub) => ({
+    source: pub.source,
+    desired: pub.isDesired,
+    subscribed: pub.isSubscribed,
+    encryption: pub.trackInfo?.encryption,
+  }));
+}
 
 /** One SFU participant, reduced to what the assembly actually reads. */
 export interface ChipParticipant {
@@ -68,6 +121,16 @@ export interface ChipParticipant {
    * trackless listeners are covered by MLS membership, not gate (b).
    */
   publicationCount: number;
+  /**
+   * A REMOTE participant's publications, for the share-only contradiction.
+   * Omitted for the local participant, whose declaration is judged through
+   * `ChipRoom.localPublications` instead. Omitted or empty means the
+   * contradiction never applies: the reading falls back to the observed
+   * status alone, never to anything greener. Optional so the MLS session
+   * harness, which models one generic publication per participant, keeps
+   * building rooms without it.
+   */
+  publications?: readonly ChipPublication[];
 }
 
 /** The SFU room, reduced to what the assembly actually reads. */
@@ -131,11 +194,26 @@ export interface ChipSources {
  * Two exclusions, both load-bearing:
  *
  * - 🔴 OUR OWN screen leg (plan §6.7). This device minted the leg's key and
- *   does not subscribe to it (§0.9), so LiveKit never reports an encryption
- *   status for it — leaving it here with nothing in the observed map reads as
- *   "a publisher we cannot vouch for" and pins the sharer's own phone at amber
- *   for the whole share. Compared by DEVICE, not user: another of our devices'
- *   legs is a genuine remote publisher that we DO observe.
+ *   does not subscribe to it (§0.9). Compared by DEVICE, not user: another
+ *   of our devices' legs is a genuine remote publisher that we DO observe.
+ *
+ *   Media-e2ee final audit F7, and the reviewer's ruling on it. This
+ *   exclusion was justified by two claims, and neither holds:
+ *
+ *   - "LiveKit never reports a status for the leg" is false. The pinned
+ *     source (livekit-client 2.15.13 `src/e2ee/E2eeManager.ts` ~:221-236)
+ *     sets a remote participant's status from `trackInfo.encryption !==
+ *     NONE` on `TrackPublished` and on every `ConnectionStateChanged
+ *     (Connected)`, subscribed or not, and the worker's `enable` reply emits
+ *     it for any remote identity (~:173-180).
+ *   - "No decode witness can vouch for it" is not a reason either. The
+ *     witness never vouches for anyone; it can only contradict a green.
+ *
+ *   The ruling KEEPS the exclusion for now, for one reason only: removing it
+ *   changes what the sharer's own phone shows. Before it goes, measure on a
+ *   live Android leg whether this webview sees a status for its own leg
+ *   within the admit grace. If it does, the leg is judged like any other
+ *   publisher. If it does not, including it would hold that phone amber.
  * - FE-2: participants with no published track never report a status at all.
  */
 export function publishingIdentities(room: ChipRoom | undefined): string[] {
@@ -161,17 +239,68 @@ export function publishingIdentities(room: ChipRoom | undefined): string[] {
  * this map as one it cannot vouch for, which is the fail-closed reading;
  * defaulting it either way would either manufacture a green or a red out of an
  * absence.
+ *
+ * 🔴 ONE-WAY share-only contradiction (media-e2ee final audit F2). After the
+ * observed statuses are read, a publisher for which
+ * {@link shareOnlyDeclarationContradicts} holds is entered as `false`,
+ * whatever LiveKit observed and even when it observed nothing. It never
+ * enters `true`, never deletes an entry, and never touches
+ * `publishingIdentities`: it can only turn a green into a not-green.
  */
 export function observedEncryptionMap(
   publishing: readonly string[],
   observedEncryption: (identity: string) => boolean | undefined,
+  participants: readonly ChipParticipant[],
 ): Map<string, boolean> {
   const observed = new Map<string, boolean>();
   for (const identity of publishing) {
     const status = observedEncryption(identity);
     if (status !== undefined) observed.set(identity, status);
   }
+  const judged = new Set(publishing);
+  for (const participant of participants) {
+    if (!judged.has(participant.identity)) continue;
+    if (shareOnlyDeclarationContradicts(participant))
+      observed.set(participant.identity, false);
+  }
   return observed;
+}
+
+/**
+ * Whether a remote participant's own declaration contradicts an "encrypted"
+ * reading that nothing else on this device can check.
+ *
+ * LiveKit's observed status for a remote participant is
+ * `trackInfo.encryption !== NONE` (livekit-client 2.15.13
+ * `src/e2ee/E2eeManager.ts` ~:221-236), so a declaration that is missing, or
+ * that is some value other than GCM, reads as encrypted. Before opt-in
+ * shares every viewer subscribed every share, and the decode witness
+ * (gate d) would catch plaintext frames behind such a declaration. A share
+ * nobody here watches is never decoded here, so for a participant whose ONLY
+ * publications are such shares nothing is left to contradict the lie: an
+ * Android leg whose native cryptor failed but that declares a non-GCM value,
+ * or an SFU that drops the field, would read green on every non-watching
+ * viewer while the SFU receives plaintext.
+ *
+ * True when the participant has at least one publication, EVERY publication
+ * is a share (video or its audio) that is neither desired nor subscribed,
+ * and ANY of them is declared other than exactly GCM. The comparison is
+ * `!== ENCRYPTION_TYPE_GCM`, never `=== NONE`: a missing field and an
+ * unknown enum value both contradict.
+ *
+ * A mic, camera or any watched share returns false: that participant's
+ * frames reach the decode witness, which remains the judge.
+ */
+export function shareOnlyDeclarationContradicts(
+  participant: ChipParticipant,
+): boolean {
+  const publications = participant.publications ?? [];
+  if (publications.length === 0) return false;
+  const allUnwatchedShares = publications.every(
+    (pub) => isShareSource(pub.source) && !pub.desired && !pub.subscribed,
+  );
+  if (!allUnwatchedShares) return false;
+  return publications.some((pub) => pub.encryption !== ENCRYPTION_TYPE_GCM);
 }
 
 /**
@@ -228,8 +357,10 @@ export function chipInputsFrom(sources: ChipSources): ChipInputs {
     // other accessor is invoked as `sources.foo()`, and handing this one over
     // detached silently loses `this` for any implementation that is not an
     // arrow function.
-    observedEncrypted: observedEncryptionMap(publishing, (identity) =>
-      sources.observedEncryption(identity),
+    observedEncrypted: observedEncryptionMap(
+      publishing,
+      (identity) => sources.observedEncryption(identity),
+      room?.participants ?? [],
     ),
     // 🔴 The worker's "encrypted" status for OUR identity says the cryptor is
     // on, not what the SFU was told; the declaration receivers arm from is

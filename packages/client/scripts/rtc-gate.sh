@@ -80,7 +80,9 @@ run() { # run <label> <tail-lines> <cmd...>
 #             the exit status at 0, and stops asserting anything. Pinning both
 #             numbers means such a change moves `skipped` off its pin and the
 #             gate goes red. `pass` is then asserted to be exactly
-#             `tests - skipped`, and `fail` to be 0.
+#             `tests - skipped`, and `fail` to be 0. This column is 0 on
+#             every row, and must be: the only skip this gate accepts is an
+#             opt-in one, pinned in OPT_IN_SKIPS below.
 #
 # A spec that runs with NO row is a failure, not a skip — that is how a new
 # spec file is forced to declare its count instead of drifting in unmeasured.
@@ -126,12 +128,59 @@ EXPECTED=(
   "components/rtc/micPipelinePolicy.test.ts 4 0"
   "components/rtc/publishKickPolicy.test.ts 4 0"
   "components/rtc/decodeWitnessListener.test.ts 42 0"
-  "components/rtc/chipInputs.test.ts 31 0"
+  "components/rtc/chipInputs.test.ts 50 0"
   "components/rtc/screenAudioWire.test.ts 17 0"
   "components/rtc/screenAudioNativeWin.test.ts 51 0"
   "components/rtc/pauseClauseHold.test.ts 7 0"
   "components/client/mlsInboundBuffer.test.ts 11 0"
   "components/client/mlsEnvelopeClassify.test.ts 12 0"
+  # Call-view suggestions (opt-in screen shares, video-only grid, member
+  # moves, opt-in share recording), first measured at 0c672a54; the watch,
+  # move and chip counts were re-measured after the final-audit fix rounds.
+  # The move, redaction, moderation and wiring rows were re-measured again
+  # when the AFK channel merged with member moves (FE-2).
+  "components/rtc/screenShareWatchPolicy.test.ts 66 0"
+  "components/rtc/voiceMovePolicy.test.ts 53 0"
+  "components/rtc/moveEventRedaction.test.ts 7 0"
+  "components/rtc/callModerationPolicy.test.ts 22 0"
+  "components/rtc/callRecorder.test.ts 25 0"
+  "components/ui/components/features/voice/callCard/callTileSelection.test.ts 23 0"
+  # Source pins over the state.tsx wiring of member moves and the chip's
+  # publication read (wave 7): no spec can load state.tsx itself.
+  "components/rtc/stateWiring.test.ts 21 0"
+  # The AFK channel and its merge with member moves (FE-2). Before it this
+  # gate ran NO AFK spec, and none of the ladder that decides whether a
+  # client follows a move. memberGate's opt-in skip is not in its row: see
+  # OPT_IN_SKIPS.
+  "components/rtc/movePolicy.test.ts 108 0"
+  "components/rtc/voiceRejoinPolicy.test.ts 32 0"
+  "components/rtc/moveSurfacePins.test.ts 10 0"
+  "components/rtc/idlePolicy.test.ts 54 0"
+  "components/rtc/afkPolicy.test.ts 20 0"
+  "src/interface/channels/memberGate.test.ts 13 0"
+  "src/lib/afkChannelSettings.test.ts 51 0"
+)
+
+# --- skips -------------------------------------------------------------------
+#
+# A skip is never a pass, and exactly one kind is allowed: an OPT-IN
+# cross-check, which a spec runs only when the environment names what it
+# checks against, and otherwise skips with that variable's name in the reason.
+# One row per spec that has any: `<path> <count> <VARIABLE>`.
+#
+#   VARIABLE unset or empty — the spec must skip exactly <count> test(s), and
+#       every skipped test's reason must name VARIABLE.
+#   VARIABLE set — it must skip NONE: the cross-checks ran.
+#
+# Every other skip fails the gate. EXPECTED's skipped column is 0 on every row
+# and a non-zero one is refused (below), so a skip cannot be pinned there to
+# make it pass; and the reason check stops an ordinary test skipping in the
+# opt-in's place with the count unchanged.
+#
+# D9: afkWireContract.test.ts (two opt-in skips of the same kind) stays out of
+# this gate, by ruling; the AFK lanes run it with the variable set.
+OPT_IN_SKIPS=(
+  "src/interface/channels/memberGate.test.ts 1 SLOGA_BACKEND_DIR"
 )
 
 counter() { # counter <log> <name> — the runner's own summary counter, or ""
@@ -156,9 +205,23 @@ expected_for() { # expected_for <spec> — prints "<tests> <skipped>", or fails
   return 1
 }
 
+opt_in_for() { # opt_in_for <spec> — prints "<count> <VARIABLE>", or fails
+  local spec="$1" row
+  for row in "${OPT_IN_SKIPS[@]}"; do
+    case "$row" in
+    "$spec "*)
+      echo "${row#"$spec" }"
+      return 0
+      ;;
+    esac
+  done
+  return 1
+}
+
 check_counts() { # check_counts <spec> <log>
   local spec="$1" log="$2" row want_tests want_skipped
   local got_tests got_pass got_fail got_skipped
+  local opt opt_count opt_var opt_named
   got_tests=$(counter "$log" tests)
   got_pass=$(counter "$log" pass)
   got_fail=$(counter "$log" fail)
@@ -182,6 +245,28 @@ check_counts() { # check_counts <spec> <log>
   fi
   want_tests=${row%% *}
   want_skipped=${row##* }
+  # See OPT_IN_SKIPS. The reason check reads the reporter's own skip line,
+  # `﹣ <name> (<duration>) # <reason>`, out of the full log.
+  if opt=$(opt_in_for "$spec"); then
+    opt_count=${opt%% *}
+    opt_var=${opt##* }
+    opt_named=$(grep -c -E "\) # .*\<${opt_var}\>" "$log")
+    if [ -z "${!opt_var:-}" ]; then
+      echo "    opt-in: $opt_var is unset, so exactly $opt_count skip(s)" \
+        "naming it are expected"
+      want_skipped=$((want_skipped + opt_count))
+      if [ "$opt_named" -ne "$opt_count" ]; then
+        note_fail "$spec: $opt_named skipped test(s) name $opt_var in their" \
+          "reason, EXPECTED $opt_count — a skip that is not the opt-in"
+      fi
+    else
+      echo "    opt-in: $opt_var is set, so its cross-check(s) must RUN"
+      if [ "$opt_named" -ne 0 ]; then
+        note_fail "$spec: $opt_var is set, yet $opt_named test(s) skipped" \
+          "naming it"
+      fi
+    fi
+  fi
   if [ "$got_tests" -ne "$want_tests" ]; then
     note_fail "$spec: executed $got_tests test(s), EXPECTED $want_tests" \
       "— bump the EXPECTED row in the same commit as the spec change"
@@ -198,6 +283,22 @@ check_counts() { # check_counts <spec> <log>
       "$got_skipped — the run did not account for every test"
   fi
 }
+
+# The manifest itself, before anything runs: no EXPECTED row may pin a skip
+# (only OPT_IN_SKIPS allows one), and every opt-in row names a counted spec.
+for row in "${EXPECTED[@]}"; do
+  case "$row" in
+  *" 0") ;;
+  *)
+    note_fail "EXPECTED row '$row' pins a non-zero skip — a skip is never" \
+      "a pass; only OPT_IN_SKIPS may allow one"
+    ;;
+  esac
+done
+for row in "${OPT_IN_SKIPS[@]}"; do
+  expected_for "${row%% *}" >/dev/null ||
+    note_fail "OPT_IN_SKIPS row '$row' names a spec with no EXPECTED row"
+done
 
 # An unmatched glob stays literal in bash, and `[ -e "$f" ] || continue` would
 # then skip it and report a clean gate with ZERO specs run — the same silent
@@ -229,7 +330,40 @@ SPECS=(components/rtc/mls*.test.ts components/rtc/rosterReconcile.test.ts
   # session's drain acts on. The classifier's spec ran nowhere before these
   # two lines.
   components/client/mlsInboundBuffer.test.ts
-  components/client/mlsEnvelopeClassify.test.ts)
+  components/client/mlsEnvelopeClassify.test.ts
+  # Call-view suggestions. The watch policy decides which remote shares we
+  # subscribe to (a share nobody chose to watch must never be pulled); the
+  # voice-move policy decides whether a move token is usable here, how a
+  # refused move reads, and who may be dragged; the redaction spec keeps the
+  # move token (a live SFU credential) out of the SDK's debug event log. It
+  # imports the stoat.js SOURCE module, but it is a client spec and runs from
+  # here.
+  components/rtc/screenShareWatchPolicy.test.ts
+  components/rtc/voiceMovePolicy.test.ts
+  components/rtc/moveEventRedaction.test.ts
+  # Moderation (disconnect / move offer) and opt-in share recording both
+  # changed shape in this work and had no gate running them.
+  components/rtc/callModerationPolicy.test.ts
+  components/rtc/callRecorder.test.ts
+  # Outside components/rtc: which tiles the video-only grid shows.
+  components/ui/components/features/voice/callCard/callTileSelection.test.ts
+  # The state.tsx move and chip wiring, pinned as comment-stripped source.
+  components/rtc/stateWiring.test.ts
+  # The AFK channel and its merge with member moves (FE-2). The move ladder
+  # (whether this client follows a move at all, and how) and the pins over
+  # the handler feeding it; the rejoin path the move shares `connect()` with;
+  # the member surfaces a move starts from; the idle beacon and AFK policies.
+  components/rtc/movePolicy.test.ts
+  components/rtc/voiceRejoinPolicy.test.ts
+  components/rtc/moveSurfacePins.test.ts
+  components/rtc/idlePolicy.test.ts
+  components/rtc/afkPolicy.test.ts
+  # 🔴 Outside components/rtc, so no glob reaches them: the client-side check
+  # gate a move must never walk past, and the AFK settings surfaces (whose
+  # spec also pins Overview.tsx's check rules). D9: afkWireContract.test.ts
+  # is NOT here, by ruling.
+  src/interface/channels/memberGate.test.ts
+  src/lib/afkChannelSettings.test.ts)
 # 🔴 Arguments ADD to that set; they do not replace it. They used to replace
 # it, so the natural invocation for this branch —
 #   rtc-gate.sh components/rtc/mls*.test.ts
@@ -305,7 +439,57 @@ FILES=(components/rtc/mlsCallSession.ts components/rtc/mlsCallModePolicy.ts
   # Enrolled because it is clean: `prettier --check` passes on it (and passed
   # at base c219c107), and eslint exits 0 on it with ONE pre-existing warning
   # (see the eslint step below).
-  components/client/e2ee.ts)
+  components/client/e2ee.ts
+  # Call-view suggestions. Enrolled because every file here is clean:
+  # `prettier --check` exits 0 and `eslint --max-warnings 0` exits 0 on each,
+  # one file at a time (measured at 0c672a54). The policies and their specs:
+  components/rtc/screenShareWatchPolicy.ts
+  components/rtc/screenShareWatchPolicy.test.ts
+  components/rtc/voiceMovePolicy.ts components/rtc/voiceMovePolicy.test.ts
+  components/rtc/voiceMoveDrag.ts components/rtc/moveEventRedaction.test.ts
+  components/rtc/callModerationPolicy.ts
+  components/rtc/callModerationPolicy.test.ts
+  components/rtc/callRecorder.ts components/rtc/callRecorder.test.ts
+  components/rtc/stateWiring.test.ts components/rtc/sourcePins.harness.ts
+  components/ui/components/features/voice/callCard/callTileSelection.ts
+  components/ui/components/features/voice/callCard/callTileSelection.test.ts
+  # The files this work edits to wire those policies in. Same rule as
+  # VoiceCallDowngradeBanner.tsx above: a file the branch modifies is linted
+  # and formatted, or nothing is. RoomAudioManager.tsx failed `prettier
+  # --check` before 0c672a54 fixed it; it is clean now.
+  components/rtc/components/RoomAudioManager.tsx components/rtc/index.ts
+  components/ui/components/features/voice/callCard/ParticipantTile.tsx
+  components/ui/components/features/voice/callCard/VoiceCallCardActiveRoom.tsx
+  components/ui/components/features/voice/callCard/VoiceCallCardPiP.tsx
+  components/ui/components/features/voice/callCard/VoiceMoveNotices.tsx
+  components/ui/components/features/voice/VoiceChannelPreview.tsx
+  components/app/menus/UserContextMenu.tsx
+  components/state/stores/Voice.ts
+  src/interface/navigation/channels/ServerSidebar.tsx
+  # The AFK channel and its merge with member moves (FE-2): the pure modules
+  # and specs that work added or edited. Enrolled because each is clean:
+  # `prettier --check` and `eslint --max-warnings 0` both exit 0 on it, one
+  # file at a time (measured in FE-2 wave C).
+  components/rtc/movePolicy.ts components/rtc/movePolicy.test.ts
+  components/rtc/voiceRejoinPolicy.test.ts
+  components/rtc/idlePolicy.ts components/rtc/idlePolicy.test.ts
+  components/rtc/moveSurfacePins.test.ts
+  src/interface/channels/memberGate.ts
+  src/interface/channels/memberGate.test.ts
+  src/lib/afkChannelSettings.test.ts)
+# 🔴 NOT in FILES: components/app/interface/settings/channel/Overview.tsx.
+# FE-2 edits it (the AFK channel's check rules), but eslint reports two
+# pre-existing solid/reactivity warnings on it, present before that edit in
+# lines it did not touch. Same call as src/Interface.tsx below: enrolling it
+# would only raise the prose baseline. `prettier --check` is clean on it, tsc
+# still type-checks it, and afkChannelSettings.test.ts pins its rules.
+# 🔴 NOT in FILES: src/lib/afkWireContract.test.ts, edited by FE-2 but kept
+# out of this gate entirely by ruling (D9), specs and formatting alike.
+# 🔴 NOT in FILES: src/Interface.tsx. This work adds 4 lines to it, but eslint
+# reports two pre-existing solid/components-return-once warnings on it (both
+# present at base 3e9df3e8, in lines the work did not touch). The eslint step
+# below is warning-blind, so enrolling it would only raise the prose baseline;
+# `prettier --check` is clean on it and tsc still type-checks it.
 # 🔴 NOT in FILES: components/ui/components/features/voice/watch/WatchOverlay.tsx.
 # Wave 3 changes ONE line of it (`bannerParksFloat(voice.callBanner())`), but
 # the file carries 101 pre-existing prettier/prettier warnings and fails
@@ -533,7 +717,9 @@ run "prettier --check" 12 "$ROOT/node_modules/.bin/prettier" --check "${FILES[@]
 # real one. A FOURTH, not solid/reactivity, arrived with `e2ee.ts` (wave 1 of
 # the rejoin-resume plan): @typescript-eslint/no-unused-vars on the unused
 # `catch (error)` binding in the encrypted-send path, pre-existing at base
-# c219c107 and in no line that wave touched.
+# c219c107 and in no line that wave touched. The call-view suggestions files
+# enrolled in FILES add none: each was measured at `--max-warnings 0`. Nor do
+# the FE-2 files, measured the same way.
 #
 # 🔴 This gate reads eslint's EXIT STATUS and eslint exits 0 on warnings, so
 # this step is WARNING-BLIND by construction. Do not read the count above as
