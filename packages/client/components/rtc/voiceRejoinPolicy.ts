@@ -114,3 +114,34 @@ export function totalRejoinWindowMs(): number {
     total += rejoinDelayMs(attempt);
   return total;
 }
+
+/**
+ * Did the server turn this rejoin attempt away because the user's call has
+ * already carried on somewhere else?
+ *
+ * The loop's own attempts send `rejoin: true` on `join_call`. For those, and
+ * only those, delta checks for a LIVE seat in another channel before it
+ * touches anything, and answers `AlreadyConnected` instead of force-
+ * disconnecting it. The case this exists for: a moderator or the AFK sweep
+ * moved the user while this session's voice transport and app socket were
+ * both down, so this session never heard about the move. Without the flag,
+ * its rejoin would kick the moved seat out of the destination channel. So
+ * this answer means "the call went on without you", and the loop must end
+ * quietly. Retrying gets the same answer every time, and the Rejoin card the
+ * loop leaves when it gives up would force-join and cause that same kick.
+ *
+ * 🔴 Deliberately NOT a terminal join refusal (`TERMINAL_JOIN_REFUSALS` in
+ * `joinRefusalPolicy.ts`). That latch refuses every join to the channel for
+ * 30 s. A user who then chooses to come back makes an ordinary join (no
+ * `rejoin` flag), which the server lets through, and the latch would refuse
+ * it before it was even sent.
+ *
+ * The type is read the same way `classifyJoinRefusal` reads it: stoat.js
+ * rejects with the raw API error body (`{ type, ... }`), and anything else,
+ * such as a network `TypeError`, a LiveKit error or nothing at all, is not
+ * this answer. The spec checks that the two readings agree.
+ */
+export function isRejoinPreempted(error: unknown): boolean {
+  const type = (error as { type?: unknown } | null | undefined)?.type;
+  return typeof type === "string" && type === "AlreadyConnected";
+}

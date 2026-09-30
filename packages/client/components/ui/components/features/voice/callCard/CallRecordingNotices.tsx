@@ -10,8 +10,11 @@ import { useSnackbar } from "../../../design/Snackbar";
  *
  * **Why this component exists at all.** The `Voice` instance is constructed
  * inside `VoiceContext`, which wraps `SnackbarProvider` — so Voice sits OUTSIDE
- * the snackbar context and cannot show one itself. It publishes a
- * `recordingNotice` signal instead and this reads it.
+ * the snackbar context and cannot call `useSnackbar()`. Recording notices reach
+ * the snackbar through the `recordingNotice` signal, which this reads. Voice
+ * can also show a snackbar directly, through the controller `VoiceContext`
+ * hands it with `setSnackbar` (the `moved-elsewhere` notice does); the signal
+ * remains the path for recording notices.
  *
  * **Why it is mounted at APP level** (`Interface.tsx`), not in the call card:
  * the most important notice is the one that fires when a recording ends, and a

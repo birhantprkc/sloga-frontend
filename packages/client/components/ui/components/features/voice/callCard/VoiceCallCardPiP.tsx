@@ -2,6 +2,7 @@ import { createMemo, Show } from "solid-js";
 import {
   TrackLoop,
   TrackReference,
+  TrackReferenceOrPlaceholder,
   useEnsureParticipant,
   useIsMuted,
   useIsSpeaking,
@@ -18,7 +19,12 @@ import { useVoice } from "@revolt/rtc";
 import { Avatar } from "@revolt/ui/components/design";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
-import { dropLegPlaceholders, participantUserId } from "../participantIdentity";
+import {
+  dropLegPlaceholders,
+  isScreenLeg,
+  participantUserId,
+  stripLeg,
+} from "../participantIdentity";
 
 import { VoiceCallCardActions } from "./VoiceCallCardActions";
 import { VoiceCallCardStatus } from "./VoiceCallCardStatus";
@@ -48,17 +54,46 @@ export function VoiceCallCardPiP() {
   const shownTracks = createMemo(() => audTracks().slice(0, PIP_ROSTER_LIMIT));
   const hiddenCount = () => audTracks().length - shownTracks().length;
 
+  /**
+   * Whether the PiP may draw this screen share as video (plan decision A).
+   * `MiniVideo` is a `manageSubscription` VideoTrack, which SUBSCRIBES the
+   * track the moment it is visible, so drawing an unwatched share here would
+   * bypass the Watch gate; it gets the roster instead.
+   *
+   * Our own participant's share (a desktop sharing its own screen) is local
+   * media with nothing to subscribe, so it is drawn.
+   *
+   * Our own device's screen leg is NEVER drawn, watched or not. It is a
+   * separate SFU participant, so drawing it would subscribe the phone to its
+   * own full-rate share: the download `ParticipantTile`'s `SelfLegPlaceholder`
+   * exists to avoid, and one that `RoomAudioManager`'s explicit-unsubscribe
+   * effect (`sharesToUnsubscribe`, which always drops a self leg) fights. Auto
+   * focus already skips the leg, but a manual click on its tile still focuses
+   * it. Compared by DEVICE, as `isSelfLeg` is in `ParticipantTile`: another
+   * of our devices' legs is a remote share and still needs a Watch.
+   */
+  const isDrawableShare = (track: TrackReferenceOrPlaceholder) => {
+    const identity = track.participant.identity;
+    if (track.participant.isLocal) return true;
+    if (
+      isScreenLeg(identity) &&
+      stripLeg(identity) === voice.room()?.localParticipant.identity
+    )
+      return false;
+    return voice.isWatchingShare(identity);
+  };
+
   const hasFocusVideo = () => {
     const track = voice.focusTrack();
     if (!track) return false;
 
-    return (
-      track.source === Track.Source.ScreenShare ||
-      !useIsMuted({
-        participant: track.participant,
-        source: Track.Source.Camera,
-      })()
-    );
+    if (track.source === Track.Source.ScreenShare)
+      return isDrawableShare(track);
+
+    return !useIsMuted({
+      participant: track.participant,
+      source: Track.Source.Camera,
+    })();
   };
 
   return (

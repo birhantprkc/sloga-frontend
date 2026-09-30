@@ -33,6 +33,7 @@ import { CircularProgress, useLayoutSides } from "@revolt/ui";
 import { IncomingCallOverlay } from "@revolt/ui/components/features/voice/IncomingCallOverlay";
 import { CallRecordingNotices } from "@revolt/ui/components/features/voice/callCard/CallRecordingNotices";
 import { RemoteControlOverlays } from "@revolt/ui/components/features/voice/callCard/RemoteControlOverlays";
+import { VoiceMoveNotices } from "@revolt/ui/components/features/voice/callCard/VoiceMoveNotices";
 import { VoiceTranscriptPanel } from "@revolt/ui/components/features/voice/callCard/VoiceTranscriptPanel";
 import { Symbol } from "@revolt/ui/components/utils/Symbol";
 
@@ -228,6 +229,9 @@ const Interface = (props: { children: JSX.Element }) => {
             the call, which unmounts the call card — mounted there, this would
             be destroyed in the same tick as the message it has to deliver. */}
         <CallRecordingNotices />
+        {/* "Moved to #channel". APP LEVEL because following a move reconnects to
+            the destination, which tears down the source call card. */}
+        <VoiceMoveNotices />
         {/* The live transcript and its Export/Copy/Discard controls. APP LEVEL
             for the same reason again, and it was caught the hard way: mounted
             inside the call card, the panel unmounted the instant a call ended

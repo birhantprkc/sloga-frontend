@@ -1,6 +1,6 @@
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 
-import { Trans } from "@lingui-solid/solid/macro";
+import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import {
   TrackReference,
   useEnsureParticipant,
@@ -57,6 +57,7 @@ const RE_ASK_COOLDOWN_MS = 30_000;
  * Individual participant tile
  */
 export function ParticipantTile(props: TileProps) {
+  const { t } = useLingui();
   const voice = useVoice();
   const state = useState();
   const participant = useEnsureParticipant();
@@ -77,6 +78,10 @@ export function ParticipantTile(props: TileProps) {
         })
       : undefined;
   };
+
+  /** The name the tile shows: server nickname, display name, username. */
+  const displayName = () =>
+    callMember()?.displayName ?? user().user?.displayName ?? user().username;
 
   let videoRef: HTMLVideoElement | undefined;
 
@@ -174,9 +179,23 @@ export function ParticipantTile(props: TileProps) {
   /** This tile is mine — my participant, or my own device's screen leg. */
   const isOwnTile = () => participant.isLocal || isSelfLeg();
 
+  /**
+   * Click-to-watch (plan decision A). A REMOTE share, including another of
+   * my own devices' shares, shows a Watch placeholder until this viewer
+   * presses Watch; nothing that needs its video may exist before then. My
+   * own share and my own device's leg are exempt: there is nothing to watch.
+   */
+  const isRemoteShare = () => isScreenShare() && !isOwnTile();
+  /** A remote share this viewer is watching right now (reactive). */
+  const watchingShare = () =>
+    isRemoteShare() && voice.isWatchingShare(participant.identity);
+  /** False only for a remote share that is not being watched. */
+  const videoAllowed = () => !isRemoteShare() || watchingShare();
+
   const canAsk = () =>
     isScreenShare() &&
     !isOwnTile() &&
+    watchingShare() &&
     // Never on a phone-share tile (plan §7.8): a leg is minted
     // `can_subscribe:false` and holds no session — it could neither see an
     // offer nor accept control, and sharer-side RC is desktop-only by the
@@ -222,6 +241,7 @@ export function ParticipantTile(props: TileProps) {
   const canDraw = () =>
     isScreenShare() &&
     !isOwnTile() &&
+    watchingShare() &&
     !controlling() &&
     voice.annotations.mayDraw(sharerUserId(), voice.annotations.localUserId);
   // Consent revoked (or the share/control state changed): leave draw mode
@@ -262,6 +282,20 @@ export function ParticipantTile(props: TileProps) {
    * unsubscribed.
    */
   const [feedSubscribed, setFeedSubscribed] = createSignal(true);
+  /**
+   * An unwatched share mounts no `<VideoTrack>`, and unmounting one reports
+   * nothing, so the last report (and the last frame size) would outlive a
+   * Stop watching. Reset both: the feed counts as lost until a re-mounted
+   * `<VideoTrack>` reports its own state, and a focused placeholder is not
+   * sized to the video it no longer shows.
+   */
+  createEffect(() => {
+    if (videoAllowed()) return;
+    setFeedSubscribed(false);
+    setVideoDims({ height: 0, width: 0 });
+  });
+  /** The feed is flowing AND this viewer may see it (click-to-watch). */
+  const feedLive = () => videoAllowed() && feedSubscribed();
 
   const [quality, setQuality] = createSignal<ConnectionQuality>(
     participant.connectionQuality,
@@ -402,7 +436,8 @@ export function ParticipantTile(props: TileProps) {
         class={
           tile({
             speaking: !isScreenShare() && isSpeaking(),
-            video: isVideo() || isScreenShare(),
+            // A Watch placeholder sizes like an avatar tile, not a video.
+            video: (isVideo() || isScreenShare()) && videoAllowed(),
             fullscreen: voice.fullscreen(),
             ...props,
           }) + (isScreenShare() ? " vc_tile group" : " vc_tile")
@@ -463,47 +498,81 @@ export function ParticipantTile(props: TileProps) {
             </Show>
           }
         >
-          <VideoTrack
-            style={{
-              "grid-area": "1/1",
-              "object-fit": "contain",
-              width: "100%",
-              height: "100%",
-              overflow: "hidden",
-            }}
-            trackRef={track as TrackReference}
-            manageSubscription={true}
-            /* `VideoTrack`'s visibility observer calls `setSubscribed(false)`
-               below 80% visibility after 3s, which FREEZES the last frame
-               with no `ended`, no `pause` and no `stalled` — so scrolling the
-               participant strip would leave a controller injecting against a
-               still image. An immediate hard auto-pause, controller-side, not
-               only a sharer-side concern. Wiring the callback here keeps the
-               `dist/`-shipped submodule untouched.
+          {/* Click-to-watch (plan decision A): an unwatched remote share
+              mounts NO <VideoTrack>. Its visibility observer would subscribe
+              the stream the moment the tile is on screen, which is exactly
+              what the viewer has not asked for. */}
+          <Show
+            when={videoAllowed()}
+            fallback={
+              <WatchPlaceholder>
+                <Avatar
+                  src={user().avatar}
+                  fallback={user().username}
+                  size={40}
+                  interactive={false}
+                />
+                <WatchPlaceholderText>
+                  <Trans>{displayName()} is sharing their screen</Trans>
+                </WatchPlaceholderText>
+                <WatchShareButton
+                  type="button"
+                  aria-label={t`Watch stream from ${displayName()}`}
+                  onClick={(event: MouseEvent) => {
+                    // The tile's own click toggles focus; watching must not
+                    // also rearrange the grid.
+                    event.stopPropagation();
+                    voice.watchShare(participant.identity);
+                  }}
+                >
+                  <Symbol size={16}>visibility</Symbol>
+                  <Trans>Watch stream</Trans>
+                </WatchShareButton>
+              </WatchPlaceholder>
+            }
+          >
+            <VideoTrack
+              style={{
+                "grid-area": "1/1",
+                "object-fit": "contain",
+                width: "100%",
+                height: "100%",
+                overflow: "hidden",
+              }}
+              trackRef={track as TrackReference}
+              manageSubscription={true}
+              /* `VideoTrack`'s visibility observer calls `setSubscribed(false)`
+                 below 80% visibility after 3s, which FREEZES the last frame
+                 with no `ended`, no `pause` and no `stalled` — so scrolling the
+                 participant strip would leave a controller injecting against a
+                 still image. An immediate hard auto-pause, controller-side, not
+                 only a sharer-side concern. Wiring the callback here keeps the
+                 `dist/`-shipped submodule untouched.
 
-               GATED on this tile being the controlled screenshare: the
-               callback is wired on EVERY tile's VideoTrack, so without the
-               gate any camera tile scrolling out of view in a 3+-person call
-               would kill the live capture — a tile can only ever speak for
-               its OWN feed. The stop itself rides the `feedSubscribed` gate
-               on the capture surface's `<Show>` below: unmounting runs the
-               surface's own generation-checked cleanup (release-all
-               included), and a resubscribe remounts it with a fresh capture
-               instead of leaving a dead surface that discards every event. */
-            onSubscriptionStatusChanged={(subscribed: boolean) => {
-              setFeedSubscribed(subscribed);
-              if (!subscribed && isScreenShare() && controlling()) {
-                voice.remoteControl.onFeedLost("unsubscribed");
-              }
-            }}
-            ref={videoRef}
-            on:resize={() => {
-              setVideoDims({
-                height: videoRef?.videoHeight || 0,
-                width: videoRef?.videoWidth || 0,
-              });
-            }}
-          />
+                 GATED on this tile being the controlled screenshare: the
+                 callback is wired on EVERY tile's VideoTrack, so without the
+                 gate any camera tile scrolling out of view in a 3+-person call
+                 would kill the live capture — a tile can only ever speak for
+                 its OWN feed. The stop itself rides the `feedSubscribed` gate
+                 on the capture surface's `<Show>` below: unmounting runs the
+                 surface's own generation-checked cleanup (release-all
+                 included), and a resubscribe remounts it with a fresh capture
+                 instead of leaving a dead surface that discards every event. */
+              onSubscriptionStatusChanged={(subscribed: boolean) => {
+                setFeedSubscribed(subscribed);
+                if (!subscribed && isScreenShare() && controlling()) {
+                  voice.remoteControl.onFeedLost("unsubscribed");
+                }
+              }}
+              ref={videoRef}
+              on:resize={() => {
+                setVideoDims({
+                  height: videoRef?.videoHeight || 0,
+                  width: videoRef?.videoWidth || 0,
+                });
+              }}
+            />
+          </Show>
         </Show>
         <Overlay showOnHover={isScreenShare()}>
           <OverlayInner>
@@ -511,11 +580,7 @@ export function ParticipantTile(props: TileProps) {
               <DisplayName
                 user={user().user}
                 member={callMember()}
-                name={
-                  callMember()?.displayName ??
-                  user().user?.displayName ??
-                  user().username
-                }
+                name={displayName()}
                 brand={isSlogaStaff(user().user)}
               />
             </OverflowingText>
@@ -566,8 +631,9 @@ export function ParticipantTile(props: TileProps) {
             condition so losing the feed unmounts the surface (its cleanup
             releases everything held) and a resubscribe REMOUNTS it with a
             fresh capture — the surface can only ever capture against video
-            that is actually flowing. */}
-        <Show when={isScreenShare() && controlling() && feedSubscribed()}>
+            that is actually flowing. `feedLive` also requires a remote share
+            to be WATCHED, so a Watch placeholder never mounts a capture. */}
+        <Show when={isScreenShare() && controlling() && feedLive()}>
           <RemoteControlCapture
             video={videoRef}
             videoDims={videoDims}
@@ -589,8 +655,9 @@ export function ParticipantTile(props: TileProps) {
             three-segment identity. Without the strip the lookup misses and ink
             never renders on a phone share at all (plan §6.5). Same reason on
             the capture surface below, whose batches must be addressed the way
-            the server will key them. */}
-        <Show when={isScreenShare()}>
+            the server will key them. Not on a Watch placeholder: ink is
+            positioned over the video, and there is none. */}
+        <Show when={isScreenShare() && videoAllowed()}>
           <AnnotationLayer
             identity={stripLeg(participant.identity)}
             videoDims={videoDims}
@@ -598,7 +665,7 @@ export function ParticipantTile(props: TileProps) {
         </Show>
         {/* Draw surface — only while this sharer's server-enforced allowlist
             names us, draw mode is on, and no RC session holds the tile. */}
-        <Show when={canDraw() && drawMode() && feedSubscribed()}>
+        <Show when={canDraw() && drawMode() && feedLive()}>
           <AnnotationCapture
             video={videoRef}
             videoDims={videoDims}
@@ -668,8 +735,9 @@ export function ParticipantTile(props: TileProps) {
             stack's zIndex clears the z8 draw surface so "Stop drawing"
             stays clickable mid-draw. Once asked, the turn button becomes a
             non-interactive confirmation — the streamer decides, and
-            re-asking is rate-limited server-side anyway. */}
-        <Show when={canDraw() || canAsk()}>
+            re-asking is rate-limited server-side anyway. Stop watching joins
+            the stack on every watched remote share (plan decision A). */}
+        <Show when={canDraw() || canAsk() || watchingShare()}>
           <TileCornerStack>
             <Show when={canDraw()}>
               <DrawToggleButton
@@ -699,6 +767,20 @@ export function ParticipantTile(props: TileProps) {
                   <Trans>Asked</Trans>
                 </Show>
               </AskTurnButton>
+            </Show>
+            <Show when={watchingShare()}>
+              <StopWatchingButton
+                type="button"
+                aria-label={t`Stop watching stream from ${displayName()}`}
+                onClick={(event: MouseEvent) => {
+                  // The tile's own click toggles focus; leave the grid alone.
+                  event.stopPropagation();
+                  voice.stopWatchingShare(participant.identity);
+                }}
+              >
+                <Symbol size={14}>visibility_off</Symbol>
+                <Trans>Stop watching</Trans>
+              </StopWatchingButton>
             </Show>
           </TileCornerStack>
         </Show>
@@ -814,6 +896,62 @@ const StopShareButton = styled("button", {
     borderRadius: "var(--borderRadius-lg)",
     background: "var(--md-sys-color-error-container)",
     color: "var(--md-sys-color-on-error-container)",
+  },
+});
+
+/**
+ * An unwatched remote share (plan decision A): avatar, who is sharing, and
+ * the Watch button. It shares grid cell 1/1 with `Overlay` but comes EARLIER
+ * in the DOM (it is the `<Show>` fallback rendered before `<Overlay>`), and
+ * `Overlay` is not click-through, so by source order alone `Overlay` would
+ * paint on top and swallow the button's clicks. What lifts it is `zIndex: 1`:
+ * a grid item with a non-`auto` z-index forms its own stacking context
+ * without needing `position`, and `Overlay` has no z-index (at most it sits
+ * at level 0, as a stacking context from its hover `opacity`), so the
+ * placeholder stacks and hit-tests above it. It passes clicks through
+ * everywhere else, so the tile's click-to-focus and context menu still work
+ * around the button.
+ */
+const WatchPlaceholder = styled("div", {
+  base: {
+    gridArea: "1/1",
+    zIndex: 1,
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "var(--gap-md)",
+    minWidth: 0,
+    overflow: "hidden",
+    textAlign: "center",
+    padding: "var(--gap-md)",
+    pointerEvents: "none",
+  },
+});
+
+const WatchPlaceholderText = styled("span", {
+  base: {
+    maxWidth: "100%",
+    overflow: "hidden",
+    lineClamp: 2,
+    overflowWrap: "anywhere",
+  },
+});
+
+const WatchShareButton = styled("button", {
+  base: {
+    display: "flex",
+    alignItems: "center",
+    gap: "4px",
+    flexShrink: 0,
+    pointerEvents: "auto",
+    cursor: "pointer",
+    fontWeight: 600,
+    padding: "var(--gap-sm) var(--gap-lg)",
+    borderRadius: "var(--borderRadius-lg)",
+    border: "none",
+    color: "var(--md-sys-color-on-primary)",
+    background: "var(--md-sys-color-primary)",
   },
 });
 
@@ -957,8 +1095,8 @@ const AskTurnButton = styled("button", {
 
 /**
  * Top-right column holding the viewer's actions on a share (Draw, Ask for a
- * turn). Positioning lives HERE, not on the buttons — see the usage comment
- * for why the tile's bottom edge is off limits.
+ * turn, Stop watching). Positioning lives HERE, not on the buttons — see the
+ * usage comment for why the tile's bottom edge is off limits.
  */
 const TileCornerStack = styled("div", {
   base: {
@@ -997,6 +1135,24 @@ const DrawToggleButton = styled("button", {
       color: "#fff",
       background: "rgba(0,0,0,0.65)",
     },
+  },
+});
+
+/** Stop watching a remote share (plan decision A), in `TileCornerStack`. */
+const StopWatchingButton = styled("button", {
+  base: {
+    display: "flex",
+    alignItems: "center",
+    gap: "4px",
+
+    fontSize: "11px",
+    fontWeight: 600,
+    padding: "4px 8px",
+    borderRadius: "var(--borderRadius-full)",
+    border: "none",
+    cursor: "pointer",
+    color: "#fff",
+    background: "rgba(0,0,0,0.65)",
   },
 });
 

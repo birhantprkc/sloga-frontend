@@ -12,7 +12,14 @@ import {
   Form2,
   MenuItem,
   Radio2,
+  Text,
 } from "@revolt/ui";
+
+import {
+  afkCreateChannelFields,
+  afkTimeoutChoice,
+  parseAfkTimeoutChoice,
+} from "../../../src/lib/afkChannelSettings";
 
 import { useModals } from "..";
 import { Modals } from "../types";
@@ -31,6 +38,17 @@ export function CreateChannelModal(
     name: createFormControl("", { required: true }),
     type: createFormControl("Text"),
     announcement: createFormControl(false),
+    afk: createFormControl(false),
+    // Seeded from the server's current idle timeout, not from a constant.
+    // Designating a channel without naming a timeout makes the backend KEEP
+    // the timeout the server already had — which may have been chosen for a
+    // different channel by somebody else. Seeding the select from it, and
+    // sending the seeded value back, is what stops that adoption being
+    // invisible. A server with no timeout seeds "never" — the same helper
+    // channel settings use — never a five-minute default nobody chose.
+    afkTimeout: createFormControl(
+      String(afkTimeoutChoice(props.server.afkTimeout)),
+    ),
     category: createFormControl(props.categoryId ?? "default"),
   });
 
@@ -38,6 +56,16 @@ export function CreateChannelModal(
    * Real categories on the server ("default" is the synthetic uncategorised
    * bucket, offered as the "No category" option instead)
    */
+  /**
+   * Whether to offer the AFK option at all.
+   *
+   * 🔴 ManageServer, not the ManageChannel that got you into this modal. The
+   * AFK designation is a server field and the create route demands BOTH bits;
+   * offering the tickbox to someone holding only ManageChannel would turn the
+   * whole channel creation into a 403, not just the AFK half of it.
+   */
+  const canDesignateAfk = () => props.server.havePermission("ManageServer");
+
   const categories = createMemo(() =>
     props.server.orderedChannels.filter(
       (category) => category.id !== "default",
@@ -46,6 +74,15 @@ export function CreateChannelModal(
 
   async function onSubmit() {
     try {
+      // 🔴 Parsed, never `Number(...)`: "never" is NaN as a number and would
+      // be sent as the five-minute fallback. The select cannot hold anything
+      // the parser refuses, so `undefined` is refused here rather than
+      // guessed.
+      const afkTimeout = parseAfkTimeoutChoice(group.controls.afkTimeout.value);
+      if (afkTimeout === undefined) {
+        throw new Error("Unrecognized AFK timeout selection");
+      }
+
       const channel = await props.server.createChannel({
         // "Forum" is an additive server channel type the typed client
         // predates; the route passes it through verbatim.
@@ -57,6 +94,18 @@ export function CreateChannelModal(
         group.controls.announcement.value
           ? { announcement: true }
           : {}),
+        // `afk` / `afk_timeout` are additive too, and only meaningful on a
+        // voice channel. The mapper drops them on every other type, because
+        // the route rejects `afk: true` outright rather than ignoring it —
+        // ticking the box and then switching the radio back to Text would
+        // otherwise be a 400. "Never" travels as `afk_timeout_never: true`,
+        // which the typed client also predates; the `as never` below covers
+        // it like the rest.
+        ...afkCreateChannelFields({
+          channelType: group.controls.type.value,
+          afk: group.controls.afk.value,
+          timeout: afkTimeout,
+        }),
       } as never);
 
       // File the channel into the chosen category; without this edit it
@@ -139,6 +188,59 @@ export function CreateChannelModal(
             >
               <Trans>Announcement channel</Trans>
             </Form2.Checkbox>
+          </Show>
+
+          <Show
+            when={group.controls.type.value === "Voice" && canDesignateAfk()}
+          >
+            <Form2.Checkbox name="afk" control={group.controls.afk}>
+              <Trans>AFK channel</Trans>
+            </Form2.Checkbox>
+
+            <Show when={group.controls.afk.value}>
+              <Text>
+                <Trans>
+                  Nobody can speak, share video or share their screen in the AFK
+                  channel. A server has one AFK channel, so choosing this one
+                  replaces any previous choice.
+                </Trans>
+              </Text>
+
+              {/* AFK_TIMEOUT_PRESETS contract: the five numeric options are
+                  pinned to AFK_TIMEOUT_PRESETS by
+                  src/lib/afkChannelSettings.test.ts, which fails if they
+                  drift, and the one "never" option is pinned to
+                  AFK_TIMEOUT_NEVER by the same file. Written out rather than
+                  generated from the list because each needs its own lingui
+                  message, and because the slowmode select in channel settings
+                  — the select this copies — is written the same way. The
+                  value shown is the timeout this server already has ("never"
+                  when it has none), so a timeout inherited from an earlier AFK
+                  channel is visible before it is adopted. */}
+              <Form2.Select
+                label={t`Move idle members here after`}
+                control={group.controls.afkTimeout}
+              >
+                <MenuItem value="never">
+                  <Trans>Never</Trans>
+                </MenuItem>
+                <MenuItem value="60">
+                  <Trans>1 minute</Trans>
+                </MenuItem>
+                <MenuItem value="300">
+                  <Trans>5 minutes</Trans>
+                </MenuItem>
+                <MenuItem value="900">
+                  <Trans>15 minutes</Trans>
+                </MenuItem>
+                <MenuItem value="1800">
+                  <Trans>30 minutes</Trans>
+                </MenuItem>
+                <MenuItem value="3600">
+                  <Trans>1 hour</Trans>
+                </MenuItem>
+              </Form2.Select>
+            </Show>
           </Show>
 
           <Show when={categories().length}>

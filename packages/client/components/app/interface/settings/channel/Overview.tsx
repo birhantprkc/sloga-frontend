@@ -13,6 +13,13 @@ import {
 import { Trans, useLingui } from "@lingui-solid/solid/macro";
 import type { API } from "stoat.js";
 
+import { channelHasClientGate } from "../../../../../src/interface/channels/memberGate";
+import {
+  afkDesignationEdit,
+  afkTimeoutChoice,
+  afkTimeoutEdit,
+  parseAfkTimeoutChoice,
+} from "../../../../../src/lib/afkChannelSettings";
 import {
   buildDescriptionWithHash,
   hashPassword,
@@ -22,6 +29,7 @@ import {
 import { useClient } from "@revolt/client";
 import { CONFIGURATION } from "@revolt/common";
 import { useModals } from "@revolt/modal";
+import { isAfkChannel } from "@revolt/rtc/afkPolicy";
 import {
   Button,
   CircularProgress,
@@ -40,9 +48,161 @@ import { ChannelSettingsProps } from "../ChannelSettings";
 export default function ChannelOverview(props: ChannelSettingsProps) {
   const { t } = useLingui();
   const client = useClient();
-  const { openModal } = useModals();
+  const { openModal, showError } = useModals();
 
   const canManageChannel = () => props.channel.havePermission("ManageChannel");
+
+  /**
+   * 🔴 The AFK gate is ManageServer, NOT `canManageChannel()`.
+   *
+   * The designation lives on the SERVER (`Server.afk_channel_id`) even though
+   * this UI sits in channel settings, and the routes that write it require
+   * ManageServer. Gating on ManageChannel would show the toggle to a moderator
+   * who holds only that bit; they would press it and take a 403 from a route
+   * they were never allowed to call.
+   */
+  const canManageServer = () =>
+    !!props.channel.serverId &&
+    !!props.channel.server?.havePermission("ManageServer");
+
+  /**
+   * Whether to offer the AFK section at all.
+   *
+   * 🔴 `isVoice && serverId`, not `type === "TextChannel"`. The gate used by
+   * the announcement, spoiler and slowmode sections above is the latter, which
+   * is why those three already render on voice channels — a real bug, out of
+   * scope here. `isVoice` on its own is also true for DMs and group DMs, which
+   * have no server to designate anything on, hence the `serverId` term.
+   */
+  const canConfigureAfk = () =>
+    props.channel.isVoice && !!props.channel.serverId && canManageServer();
+
+  /** Whether this channel is the one the server currently points at. */
+  const isDesignatedAfk = () =>
+    isAfkChannel(props.channel.server?.afkChannelId, props.channel.id);
+
+  /**
+   * 🔴 The AFK channel can't be behind an age, password or spoiler check. The
+   * idle sweep moves members into it without asking, including members who
+   * never passed the check. The backend refuses both directions: designating
+   * a checked channel answers `InvalidProperty`, and an edit that turns a
+   * check ON for the designated channel answers `InvalidOperation`, for the
+   * owner too. These mirror it so the controls say why instead of failing.
+   * Turning a check OFF is always allowed.
+   *
+   * `channelHasClientGate` mirrors the backend's `Channel::has_client_gate`.
+   */
+  const gateBlocksAfk = () =>
+    !isDesignatedAfk() && channelHasClientGate(props.channel);
+
+  /**
+   * Whether the control that turns one check ON is refused. Asked per check,
+   * so a check that is on can always be turned off. The backend refuses only
+   * an edit that takes the channel from no check at all to some check, so on
+   * an AFK channel that already carries one (reachable only through a race
+   * between two admins) this refuses a second check the server would allow.
+   * That is the fail-closed side.
+   */
+  const afkBlocksGate = (gateIsOn: boolean) => isDesignatedAfk() && !gateIsOn;
+
+  /* eslint-disable solid/reactivity */
+  // Initial value only. Seeded from the timeout the SERVER already holds, not
+  // from a constant: designating a channel without naming a timeout makes the
+  // backend keep the existing one, which may have been chosen for a different
+  // channel. The toggle sends this value back explicitly, so the timeout that
+  // gets adopted is the timeout the user could see. A server with no timeout
+  // seeds "never", not five minutes: nobody is moved on such a server, and
+  // the select must not say otherwise.
+  const afkTimeoutControl = createFormControl<string>(
+    String(afkTimeoutChoice(props.channel.server?.afkTimeout)),
+  );
+  /* eslint-enable solid/reactivity */
+
+  const [afkSaving, setAfkSaving] = createSignal(false);
+  const [afkFailed, setAfkFailed] = createSignal(false);
+
+  /**
+   * Designate this voice channel as the server's AFK channel, or clear the
+   * designation.
+   *
+   * 🔴 This is `server.edit(...)`, not `channel.edit(...)`. The channel route
+   * does not carry these fields and would drop them without complaining.
+   *
+   * 🔴 Clearing goes through `remove: ["AfkChannel"]`, built by the tested
+   * mapper. A clear written as `afk_channel_id: null` is answered with a 200
+   * and changes nothing, which is indistinguishable from success here.
+   *
+   * 🔴 Unlike the announcement and calls toggles in this file, this one
+   * catches. Those are `try { … } finally { setSaving(false) }` with no
+   * error path, so a refused edit flips the label back and says nothing at
+   * all. That is not safe to copy onto a route whose whole point is that a
+   * permission refusal is possible.
+   */
+  async function toggleAfkChannel() {
+    const server = props.channel.server;
+    if (!server) return;
+
+    // 🔴 Parsed, never `Number(...)`: "never" is NaN as a number and would be
+    // saved as the five-minute fallback. The select cannot hold anything the
+    // parser refuses, so `undefined` is refused here rather than guessed.
+    const timeout = parseAfkTimeoutChoice(afkTimeoutControl.value);
+    if (timeout === undefined) {
+      setAfkFailed(true);
+      return;
+    }
+
+    setAfkSaving(true);
+    setAfkFailed(false);
+    try {
+      await server.edit(
+        afkDesignationEdit({
+          designate: !isDesignatedAfk(),
+          channelId: props.channel.id,
+          timeout,
+        }) as never,
+      );
+      afkTimeoutControl.markDirty(false);
+    } catch (error) {
+      setAfkFailed(true);
+      showError(error);
+    } finally {
+      setAfkSaving(false);
+    }
+  }
+
+  /**
+   * Save a changed idle timeout for a channel that is already designated.
+   *
+   * The mapper returns `undefined` for every request the backend would refuse
+   * — no channel designated, a different channel designated, or a value
+   * outside the presets — and the button is only offered when it will not.
+   * "Never" saves as a removal of the timeout; the designation stays.
+   */
+  async function saveAfkTimeout() {
+    const server = props.channel.server;
+    const timeout = parseAfkTimeoutChoice(afkTimeoutControl.value);
+    const payload =
+      timeout === undefined
+        ? undefined
+        : afkTimeoutEdit({
+            afkChannelId: server?.afkChannelId,
+            channelId: props.channel.id,
+            timeout,
+          });
+    if (!server || !payload) return;
+
+    setAfkSaving(true);
+    setAfkFailed(false);
+    try {
+      await server.edit(payload as never);
+      afkTimeoutControl.markDirty(false);
+    } catch (error) {
+      setAfkFailed(true);
+      showError(error);
+    } finally {
+      setAfkSaving(false);
+    }
+  }
 
   const [announcementSaving, setAnnouncementSaving] = createSignal(false);
 
@@ -60,15 +220,24 @@ export default function ChannelOverview(props: ChannelSettingsProps) {
   }
 
   const [spoilerSaving, setSpoilerSaving] = createSignal(false);
+  const [spoilerFailed, setSpoilerFailed] = createSignal(false);
 
-  /** Toggle this channel's click-to-reveal spoiler flag. */
+  /**
+   * Toggle this channel's click-to-reveal spoiler flag. Catches, like the AFK
+   * toggle: marking the AFK channel as a spoiler is refused by the backend,
+   * and a refusal must not look like nothing happened.
+   */
   async function toggleSpoiler() {
     setSpoilerSaving(true);
+    setSpoilerFailed(false);
     try {
       await props.channel.edit({
         // stoat-api predates `spoiler` — pass it through verbatim.
         spoiler: !props.channel.isSpoiler,
       } as never);
+    } catch (error) {
+      setSpoilerFailed(true);
+      showError(error);
     } finally {
       setSpoilerSaving(false);
     }
@@ -147,22 +316,44 @@ export default function ChannelOverview(props: ChannelSettingsProps) {
   const [pwStatus, setPwStatus] = createSignal<"idle" | "saved" | "removed">(
     "idle",
   );
+  const [pwFailed, setPwFailed] = createSignal(false);
 
+  /**
+   * Whether the channel has a password now. Read live for the AFK rule;
+   * `existingHash` above is taken once, when the page opens.
+   */
+  const hasPassword = () =>
+    !!parseChannelPassword(props.channel.description).passwordHash;
+
+  /**
+   * Set, change or remove the channel password. Catches, and clears the
+   * saving flag in `finally`: setting a password on the AFK channel is
+   * refused by the backend, and without both a refusal was invisible and
+   * left the buttons disabled for good. The typed password is kept on a
+   * failure so the user can try again.
+   */
   async function setChannelPassword() {
     const pw = pwInput().trim();
     setPwSaving(true);
-    const hash = pw ? await hashPassword(pw) : null;
-    const newDesc = hash
-      ? buildDescriptionWithHash(cleanDescription, hash)
-      : cleanDescription;
-    await props.channel.edit({
-      description: newDesc || undefined,
-      remove: newDesc ? [] : ["Description"],
-    });
-    setPwInput("");
-    setPwStatus(pw ? "saved" : "removed");
-    setPwSaving(false);
-    setTimeout(() => setPwStatus("idle"), 2500);
+    setPwFailed(false);
+    try {
+      const hash = pw ? await hashPassword(pw) : null;
+      const newDesc = hash
+        ? buildDescriptionWithHash(cleanDescription, hash)
+        : cleanDescription;
+      await props.channel.edit({
+        description: newDesc || undefined,
+        remove: newDesc ? [] : ["Description"],
+      });
+      setPwInput("");
+      setPwStatus(pw ? "saved" : "removed");
+      setTimeout(() => setPwStatus("idle"), 2500);
+    } catch (error) {
+      setPwFailed(true);
+      showError(error);
+    } finally {
+      setPwSaving(false);
+    }
   }
 
   /* eslint-disable solid/reactivity */
@@ -368,7 +559,11 @@ export default function ChannelOverview(props: ChannelSettingsProps) {
           />
           <Button
             onPress={setChannelPassword}
-            isDisabled={pwSaving() || (!pwInput().trim() && !existingHash)}
+            isDisabled={
+              pwSaving() ||
+              (!pwInput().trim() && !existingHash) ||
+              (!!pwInput().trim() && afkBlocksGate(hasPassword()))
+            }
           >
             <Switch
               fallback={
@@ -400,6 +595,19 @@ export default function ChannelOverview(props: ChannelSettingsProps) {
             </Button>
           </Show>
         </div>
+        <Show when={afkBlocksGate(hasPassword())}>
+          <Text>
+            <Trans>
+              This is the server's AFK channel, so it can't have an age,
+              password or spoiler check. Choose another AFK channel first.
+            </Trans>
+          </Text>
+        </Show>
+        <Show when={pwFailed()}>
+          <Text>
+            <Trans>That change was not saved.</Trans>
+          </Text>
+        </Show>
       </Column>
 
       <Show when={props.channel.type === "TextChannel" && canManageChannel()}>
@@ -440,7 +648,12 @@ export default function ChannelOverview(props: ChannelSettingsProps) {
             </Trans>
           </Text>
           <div>
-            <Button onPress={toggleSpoiler} isDisabled={spoilerSaving()}>
+            <Button
+              onPress={toggleSpoiler}
+              isDisabled={
+                spoilerSaving() || afkBlocksGate(props.channel.isSpoiler)
+              }
+            >
               <Switch fallback={<Trans>Mark as Spoiler</Trans>}>
                 <Match when={props.channel.isSpoiler}>
                   <Trans>Remove Spoiler Mark</Trans>
@@ -448,6 +661,19 @@ export default function ChannelOverview(props: ChannelSettingsProps) {
               </Switch>
             </Button>
           </div>
+          <Show when={afkBlocksGate(props.channel.isSpoiler)}>
+            <Text>
+              <Trans>
+                This is the server's AFK channel, so it can't have an age,
+                password or spoiler check. Choose another AFK channel first.
+              </Trans>
+            </Text>
+          </Show>
+          <Show when={spoilerFailed()}>
+            <Text>
+              <Trans>That change was not saved.</Trans>
+            </Text>
+          </Show>
         </Column>
       </Show>
 
@@ -538,6 +764,7 @@ export default function ChannelOverview(props: ChannelSettingsProps) {
                 channel: props.channel,
               })
             }
+            isDisabled={afkBlocksGate(props.channel.mature)}
           >
             <Switch fallback={<Trans>Mark as Mature</Trans>}>
               <Match when={props.channel.mature}>
@@ -546,7 +773,115 @@ export default function ChannelOverview(props: ChannelSettingsProps) {
             </Switch>
           </Button>
         </div>
+        <Show when={afkBlocksGate(props.channel.mature)}>
+          <Text>
+            <Trans>
+              This is the server's AFK channel, so it can't have an age,
+              password or spoiler check. Choose another AFK channel first.
+            </Trans>
+          </Text>
+        </Show>
       </Column>
+
+      <Show when={canConfigureAfk()}>
+        <Column>
+          <Text class="label">
+            <Trans>AFK Channel</Trans>
+          </Text>
+          <Text>
+            <Trans>
+              Nobody can speak, share video or share their screen in the AFK
+              channel, including you. A server has one AFK channel, so making
+              this one replaces any previous choice.
+            </Trans>
+          </Text>
+
+          {/* AFK_TIMEOUT_PRESETS contract: the five numeric options are pinned
+              to AFK_TIMEOUT_PRESETS by src/lib/afkChannelSettings.test.ts,
+              which fails if they drift, and the one "never" option is pinned
+              to AFK_TIMEOUT_NEVER by the same file. Written out rather than
+              generated from the list because each needs its own lingui
+              message, and because the slowmode select above — the select this
+              copies — is written the same way. The backend rejects any number
+              outside the five; it does not clamp. "Never" is the server
+              holding no timeout at all, and is saved as a removal. */}
+          <Form2.Select
+            label={t`Move idle members here after`}
+            control={afkTimeoutControl}
+          >
+            <MenuItem value="never">
+              <Trans>Never</Trans>
+            </MenuItem>
+            <MenuItem value="60">
+              <Trans>1 minute</Trans>
+            </MenuItem>
+            <MenuItem value="300">
+              <Trans>5 minutes</Trans>
+            </MenuItem>
+            <MenuItem value="900">
+              <Trans>15 minutes</Trans>
+            </MenuItem>
+            <MenuItem value="1800">
+              <Trans>30 minutes</Trans>
+            </MenuItem>
+            <MenuItem value="3600">
+              <Trans>1 hour</Trans>
+            </MenuItem>
+          </Form2.Select>
+
+          <Show when={!isDesignatedAfk()}>
+            <Text>
+              <Trans>
+                This is the idle timeout that will be used once this channel is
+                the AFK channel. It starts from whatever this server already
+                has.
+              </Trans>
+            </Text>
+          </Show>
+
+          <Row>
+            <Button
+              onPress={toggleAfkChannel}
+              isDisabled={afkSaving() || gateBlocksAfk()}
+            >
+              <Switch fallback={<Trans>Make AFK Channel</Trans>}>
+                <Match when={isDesignatedAfk()}>
+                  <Trans>Stop being the AFK Channel</Trans>
+                </Match>
+              </Switch>
+            </Button>
+            <Show when={isDesignatedAfk()}>
+              <Button
+                onPress={saveAfkTimeout}
+                isDisabled={afkSaving() || !afkTimeoutControl.isDirty}
+              >
+                <Trans>Save idle timeout</Trans>
+              </Button>
+            </Show>
+            <Show when={afkSaving()}>
+              <CircularProgress />
+            </Show>
+          </Row>
+
+          <Show when={gateBlocksAfk()}>
+            <Text>
+              <Trans>
+                A channel with an age, password or spoiler check can't be the
+                AFK channel. Remove the check first.
+              </Trans>
+            </Text>
+          </Show>
+
+          <Show when={afkFailed()}>
+            <Text>
+              {/* Deliberately does not guess WHY. The real error is shown in
+                  the modal that `showError` opens; naming a cause here would
+                  be wrong for a network failure or a validation refusal. */}
+              <Trans>That change was not saved.</Trans>
+            </Text>
+          </Show>
+        </Column>
+      </Show>
     </Column>
   );
 }
