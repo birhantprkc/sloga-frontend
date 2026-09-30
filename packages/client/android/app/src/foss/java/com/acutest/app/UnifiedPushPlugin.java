@@ -130,7 +130,7 @@ public class UnifiedPushPlugin extends Plugin {
             // one (the cancel button, back, a tap outside, activity teardown).
             boolean[] picked = { false };
             picker = new AlertDialog.Builder(activity)
-                    .setTitle("Choose a UnifiedPush app")
+                    .setTitle(R.string.sloga_unifiedpush_picker_title)
                     .setSingleChoiceItems(labels, -1, (dialog, which) -> {
                         picked[0] = true;
                         String distributor = distributors.get(which);

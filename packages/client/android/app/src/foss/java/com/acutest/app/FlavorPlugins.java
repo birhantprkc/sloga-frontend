@@ -12,6 +12,10 @@ import com.getcapacitor.BridgeActivity;
  *
  * Background push for this flavor comes from UnifiedPushPlugin (src/foss),
  * registered below.
+ *
+ * UpdateNoticePlugin (src/foss), also registered below, only tells website
+ * installs that a newer APK is out and installs nothing itself, so this
+ * flavor still ships no self-updater.
  */
 final class FlavorPlugins {
     private FlavorPlugins() {}
@@ -19,5 +23,7 @@ final class FlavorPlugins {
     static void register(BridgeActivity activity) {
         // UnifiedPush replaces FCM here. No self-update on foss builds; see class docs.
         activity.registerPlugin(UnifiedPushPlugin.class);
+        // Tells website installs a newer APK is out; installs nothing itself.
+        activity.registerPlugin(UpdateNoticePlugin.class);
     }
 }
