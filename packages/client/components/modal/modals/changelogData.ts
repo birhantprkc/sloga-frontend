@@ -9,9 +9,10 @@ import type { ChangelogResponse } from "./Changelog";
  */
 export const CHANGELOGS: ChangelogResponse[] = [
   // ==========================================================================
-  // v0.64.0 (written 2026-09-29 by the merge steward from the v0.64 inbox,
-  // ~/.claude/plans/v064-patch-notes-inbox.md). NOT CUT YET: the release
-  // sweep bumps the root version and sets `published_at` to the release day.
+  // v0.64.0 (cut 2026-09-30 at main `99ae1b47`; written 2026-09-29 by the
+  // merge steward from the v0.64 inbox, ~/.claude/plans/v064-patch-notes-inbox.md).
+  // The live web serves nothing newer than `sloga-2026-09-23` (v0.63.0), so
+  // this entry pops once. A further edit after the cut moves the cut point.
   // Copy constraints, load-bearing — READ BEFORE EDITING:
   // - 🔴 This entry may only ship AFTER the AFK + voice-move backend is
   //   deployed (bonfire, then every delta, then crond, then voice-ingress, at
@@ -69,7 +70,7 @@ export const CHANGELOGS: ChangelogResponse[] = [
   {
     id: "sloga-2026-09-29",
     title: "Patch Notes",
-    published_at: "2026-09-29T12:00:00.000Z",
+    published_at: "2026-09-30T12:00:00.000Z",
     web_version: "0.64.0",
     markdown_content: `## v0.64.0 — AFK Channels and Moving Members
 
