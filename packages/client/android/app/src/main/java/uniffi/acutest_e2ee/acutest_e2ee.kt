@@ -1585,7 +1585,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_status() != 12604.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_store_owner() != 40906.toShort()) {
+    if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_store_owner() != 49521.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_acutest_e2ee_checksum_method_e2eeengine_wipe() != 31954.toShort()) {
@@ -2561,11 +2561,11 @@ public interface E2eeEngineInterface {
      * never an all-clear; see [`E2ee::store_owner`], including why this is
      * never-provisioning but NOT the cheap `is_provisioned` class of call.
      *
-     * 🔴 EXPORTED BUT NOT REACHABLE FROM THE APP YET: `E2eePlugin.kt`'s
-     * command multiplexer has no `e2ee_store_owner` case and the checked-in
-     * uniffi bindings carry no `storeOwner`, so a call rejects and the client
-     * reads UNKNOWN — fail-safe, and dark. Wiring it needs the Kotlin case
-     * AND a binding regeneration, and no JS gate can see either.
+     * 🔴 EXPORTED BUT NOT REACHABLE FROM THE APP YET: the uniffi bindings
+     * carry `storeOwner`, but `E2eePlugin.kt`'s command multiplexer has no
+     * `e2ee_store_owner` case, so a call rejects and the client reads
+     * UNKNOWN — fail-safe, and dark. Wiring it needs only that Kotlin case,
+     * which no JS gate can see.
      */
     fun `storeOwner`(): kotlin.String?
     
@@ -3927,11 +3927,11 @@ open class E2eeEngine: Disposable, AutoCloseable, E2eeEngineInterface
      * never an all-clear; see [`E2ee::store_owner`], including why this is
      * never-provisioning but NOT the cheap `is_provisioned` class of call.
      *
-     * 🔴 EXPORTED BUT NOT REACHABLE FROM THE APP YET: `E2eePlugin.kt`'s
-     * command multiplexer has no `e2ee_store_owner` case and the checked-in
-     * uniffi bindings carry no `storeOwner`, so a call rejects and the client
-     * reads UNKNOWN — fail-safe, and dark. Wiring it needs the Kotlin case
-     * AND a binding regeneration, and no JS gate can see either.
+     * 🔴 EXPORTED BUT NOT REACHABLE FROM THE APP YET: the uniffi bindings
+     * carry `storeOwner`, but `E2eePlugin.kt`'s command multiplexer has no
+     * `e2ee_store_owner` case, so a call rejects and the client reads
+     * UNKNOWN — fail-safe, and dark. Wiring it needs only that Kotlin case,
+     * which no JS gate can see.
      */
     @Throws(E2eeException::class)override fun `storeOwner`(): kotlin.String? {
             return FfiConverterOptionalString.lift(
