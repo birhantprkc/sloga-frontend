@@ -265,6 +265,52 @@ export default {
       (import.meta.env.VITE_CFG_ENABLE_WATCH_TOGETHER as string) ?? ""
     ).toLowerCase() == "true",
   /**
+   * Google Translate — message translation and call-caption translation,
+   * both of which send text to `translate.googleapis.com`.
+   *
+   * DEFAULT ON, unlike the flags around it: only `false` (any case) turns it
+   * off, so play, sideload, web and desktop builds, whose `.env` never sets
+   * it, keep translation. The F-Droid (foss) Android build passes
+   * `VITE_CFG_ENABLE_GOOGLE_TRANSLATE=false` in the `vite build` environment
+   * (never in a `.env` file) so its Google-free claim holds.
+   *
+   * This key is the flag's registry entry and the artifact-literal anchor
+   * for the foss release gate, which counts this key's inlined, minified
+   * value in the built dist. It is NOT the runtime gate. That is
+   * `translationAvailable()` in `translation.ts`, which reads the SAME
+   * variable with the SAME parse, because that module must stay
+   * import-free: `translation.test.ts` loads it under `node --test`, where
+   * this file dies at module load on `import.meta.env.DEV`. Change the
+   * parse in both places or neither.
+   *
+   * Set `VITE_CFG_ENABLE_GOOGLE_TRANSLATE=false` for builds that must never
+   * reach Google Translate.
+   */
+  ENABLE_GOOGLE_TRANSLATE:
+    (
+      (import.meta.env.VITE_CFG_ENABLE_GOOGLE_TRANSLATE as string) ?? ""
+    ).toLowerCase() !== "false",
+  /**
+   * Click-to-load special embeds — the YouTube, Twitch, Lightspeed, Spotify,
+   * SoundCloud and Bandcamp players. When on, each embed shows a local
+   * "Load <provider>" button and mounts the third-party iframe only after a
+   * tap, so opening a channel contacts none of those hosts.
+   *
+   * DEFAULT OFF: unset, the iframe mounts immediately, as it always has. The
+   * F-Droid (foss) Android build passes `VITE_CFG_EMBEDS_CLICK_TO_LOAD=true`
+   * in the `vite build` environment (never in a `.env` file).
+   *
+   * Read once per embed in `SpecialEmbed.tsx`, its only reader, negated as
+   * the initial value of the `loaded` signal; the foss release gate counts
+   * that single negated read in the dist, so don't add another reader.
+   *
+   * Set `VITE_CFG_EMBEDS_CLICK_TO_LOAD=true` for builds that should have it.
+   */
+  EMBEDS_CLICK_TO_LOAD:
+    (
+      (import.meta.env.VITE_CFG_EMBEDS_CLICK_TO_LOAD as string) ?? ""
+    ).toLowerCase() == "true",
+  /**
    * Native Android screen share (the "screen leg" publisher, screen-leg plan
    * §7). DEFAULT OFF, baked at APK BUILD time — this is the `.env` worktree
    * landmine (§0.8), NOT an `inject.js` runtime flag: verify the flag ON THE
