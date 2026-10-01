@@ -7948,6 +7948,10 @@ msgstr "This attachment expired before it reached this device. Ask the sender to
 msgid "This attachment failed verification and was discarded (it may have been tampered with in transit)."
 msgstr "This attachment failed verification and was discarded (it may have been tampered with in transit)."
 
+#: components/app/interface/channels/text/EncryptedAttachment.tsx
+msgid "This attachment is larger than this version of the app can open."
+msgstr "This attachment is larger than this version of the app can open."
+
 #: components/i18n/errors.ts
 msgid "This bot is private and can only be added by the creator."
 msgstr "This bot is private and can only be added by the creator."
