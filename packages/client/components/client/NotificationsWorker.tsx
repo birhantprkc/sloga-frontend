@@ -58,9 +58,10 @@ export function NotificationsWorker() {
   const { lifecycle } = useClientLifecycle();
 
   // Tell the native layer whether this web layer can currently present the
-  // ringing popup, so SlogaMessagingService can suppress the DUPLICATE
-  // notification. Without this an incoming call shows an Android notification
-  // AND an in-app popup, each needing its own Decline (reported 2026-08-30).
+  // ringing popup, so SlogaNotifier.notifyIncomingCall (shared by the FCM and
+  // UnifiedPush services) can suppress the DUPLICATE notification. Without
+  // this an incoming call shows an Android notification AND an in-app popup,
+  // each needing its own Decline (reported 2026-08-30).
   //
   // Reported on every connection-state change rather than once at mount: the
   // popup rides the websocket VoiceChannelJoin event, so a disconnected client
