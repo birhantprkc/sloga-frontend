@@ -301,7 +301,8 @@ def verifyStandardWebAssets = tasks.register('verifyStandardWebAssets') {
         if (kind != 'standard') {
             throw new GradleException("verifyStandardWebAssets: src/main/assets/public/index.html: ${found}; want the standard CSP " +
                 "(translate.googleapis.com in connect-src, both hCaptcha origins in script-src). " +
-                "Re-run the release's build-android-0NN.sh (it syncs the standard bundle with webDir dist_apk).")
+                "Re-run the release's build-android-0NN.sh with SLOGA_FDROID unset in the environment (it syncs the standard " +
+                "bundle with webDir dist_apk; with SLOGA_FDROID=1 exported, that sync injects the foss CSP instead).")
         }
         task.logger.lifecycle('verifyStandardWebAssets: OK (standard CSP in src/main/assets/public/index.html)')
     }
@@ -313,7 +314,7 @@ def verifyFossWebAssets = tasks.register('verifyFossWebAssets') {
         def (kind, found) = classifyWebAssetsCsp(webAssetsIndexHtml)
         if (kind != 'foss') {
             throw new GradleException("verifyFossWebAssets: src/main/assets/public/index.html: ${found}; want the foss CSP " +
-                "(no Google or hCaptcha origin anywhere). " +
+                "(no translate.googleapis.com or hCaptcha origin, and no googleapis/hcaptcha text, in index.html). " +
                 "Build foss with /home/mcp/build-android-foss.sh.")
         }
         task.logger.lifecycle('verifyFossWebAssets: OK (foss CSP in src/main/assets/public/index.html)')
